@@ -24,8 +24,8 @@ export interface AgentTeamDerivedTurn {
 
 /**
  * `events` must be exactly one Turn's events. Returns `undefined` when the Turn is
- * incomplete, when the window holds more than one Turn, or when its usage cannot be
- * proven exact. A wider window would fold other Turns' tool calls and ends into
+ * incomplete, when it ended in an error or an abort, when the window holds more than
+ * one Turn, or when its usage cannot be proven exact. A wider window would fold other Turns' tool calls and ends into
  * these numbers, so it is refused rather than summarized.
  */
 export function deriveAgentTeamTurn(events: readonly SessionEvent[]): AgentTeamDerivedTurn | undefined {
@@ -35,6 +35,9 @@ export function deriveAgentTeamTurn(events: readonly SessionEvent[]): AgentTeamD
   if (start === undefined || ends.length !== 1) return undefined
   if (new Set(starts.map(event => event.data.turn)).size !== 1) return undefined
   const end = ends[0]!
+  // Only a completed Turn is a settled record. An errored or aborted Turn can carry a
+  // zero usage sample from a failed provider call; that is not proof of zero tokens.
+  if (end.data.reason.kind !== 'completed') return undefined
   const usage = deriveTurnTokenUsage(events)
   if (usage === undefined) return undefined
   const timing = foldTurnWallTime(events)

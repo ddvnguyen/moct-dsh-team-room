@@ -34,6 +34,21 @@ describe('deriveAgentTeamTurn (§3.2)', () => {
     expect(deriveAgentTeamTurn(events)).toBeUndefined()
   })
 
+  it('refuses a Turn that ended in an error, even when its failed attempt reported zero usage', () => {
+    // The shape of a failed provider call: the attempt's usage chunk reads 0/0/0 and turn/end carries the error.
+    const events = completeTurnEvents().map(event => event.type === 'turn/end'
+      ? { ...event, data: { turn: event.data.turn, reason: { kind: 'error', error: { message: '400: MissingSessionID' } } } } as never
+      : event)
+    expect(deriveAgentTeamTurn(events)).toBeUndefined()
+  })
+
+  it('still records a completed Turn whose provider reports zero tokens', () => {
+    const events = completeTurnEvents().map(event => event.type === 'assistant/message'
+      ? { ...event, data: { ...(event.data as object), usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, stream: [] } } as never
+      : event)
+    expect(deriveAgentTeamTurn(events)).toMatchObject({ usage: { uncachedInputTokens: 0, outputTokens: 0 } })
+  })
+
   it('refuses a window that holds more than one Turn', () => {
     const first = completeTurnEvents({ turn: 1 })
     const second = completeTurnEvents({ turn: 2, firstSeq: 10, startTime: Date.UTC(2026, 9, 11, 1, 1, 0) })
