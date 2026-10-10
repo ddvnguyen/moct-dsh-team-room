@@ -204,6 +204,18 @@ export interface AgentTeamRecordSessionTurnRequest {
   readonly actor: AgentTeamMemberActor
 }
 
+/** A committed or resolved Turn record: its receipt, and the Session's folded row when this projection holds it. */
+export interface AgentTeamSessionTurnResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly run: AgentTeamSessionRun | undefined
+}
+
+/** A committed or resolved seat binding: its receipt, and the binding itself. */
+export interface AgentTeamThreadSessionBindResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly binding: AgentTeamThreadSessionBinding
+}
+
 export interface AgentTeamBindThreadSessionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -1793,20 +1805,20 @@ export class AgentTeamLedger {
    * actor; an exact retry (same requestId, same Turn) resolves to the recorded
    * Turn; the same requestId with different data collides.
    */
-  recordSessionTurn(request: AgentTeamRecordSessionTurnRequest): Promise<AgentTeamLedgerResult<AgentTeamSessionRun>> {
+  recordSessionTurn(request: AgentTeamRecordSessionTurnRequest): Promise<AgentTeamLedgerResult<AgentTeamSessionTurnResult>> {
     return this.enqueue(async () => {
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameSessionTurn(existing, request)
-        return this.resolved(this.state.sessionRuns.get(request.sessionId)!)
+        return this.resolved(this.sessionTurnResult(existing))
       }
       if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Session turn requires the Member\'s own authority')
       this.assertActorForWorkspace(request.actor, request.workspaceId)
       // A host retry after a crash may arrive with a fresh requestId; the Turn itself is the dedupe key.
       const recordedTurn = this.state.sessionTurns.get(sessionTurnKey(request.sessionId, request.turn))
       if (recordedTurn !== undefined) {
-        if (!this.sameSessionTurnData(recordedTurn, request)) throw new Error(`agent-team Session '${request.sessionId}' turn ${request.turn} was already recorded with different data`)
-        return this.resolved(this.state.sessionRuns.get(request.sessionId)!)
+        if (!this.sameSessionTurnData(recordedTurn.data, request)) throw new Error(`agent-team Session '${request.sessionId}' turn ${request.turn} was already recorded with different data`)
+        return this.resolved(this.sessionTurnResult(recordedTurn))
       }
       for (const threadRef of request.threadRefs) this.requireThread(threadRef)
       this.requireMember(request.memberId)
@@ -1820,8 +1832,13 @@ export class AgentTeamLedger {
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
-      return this.committed(this.state.sessionRuns.get(request.sessionId)!)
+      return this.committed(this.sessionTurnResult(operation))
     })
+  }
+
+  /** The receipt of the recorded Turn, plus the Session's folded row when this projection holds it. */
+  private sessionTurnResult(operation: AgentTeamSessionTurnRecordedOperation): AgentTeamSessionTurnResult {
+    return Object.freeze({ receipt: this.receipt(operation), run: this.state.sessionRuns.get(operation.data.sessionId) })
   }
 
   /** The folded stats row for one Session, or undefined before its first recorded Turn. */
@@ -1835,12 +1852,12 @@ export class AgentTeamLedger {
    * An exact retry resolves to the recorded binding; the same requestId with
    * different data collides.
    */
-  bindThreadSession(request: AgentTeamBindThreadSessionRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadSessionBinding>> {
+  bindThreadSession(request: AgentTeamBindThreadSessionRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadSessionBindResult>> {
     return this.enqueue(async () => {
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameThreadSessionBound(existing, request)
-        return this.resolved(this.threadSessionBinding(existing))
+        return this.resolved(this.threadSessionBindResult(existing))
       }
       if (request.actor.kind !== 'member') throw new Error('Thread session bind requires Member authority')
       this.assertActorForWorkspace(request.actor, request.workspaceId)
@@ -1857,8 +1874,13 @@ export class AgentTeamLedger {
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
-      return this.committed(this.threadSessionBinding(operation))
+      return this.committed(this.threadSessionBindResult(operation))
     })
+  }
+
+  /** The receipt of the binding, plus the binding itself; derived from the stored record alone. */
+  private threadSessionBindResult(operation: AgentTeamThreadSessionBoundOperation): AgentTeamThreadSessionBindResult {
+    return Object.freeze({ receipt: this.receipt(operation), binding: this.threadSessionBinding(operation) })
   }
 
   /** Bindings for one seat in one Thread, oldest first; the last entry is the active Session. */

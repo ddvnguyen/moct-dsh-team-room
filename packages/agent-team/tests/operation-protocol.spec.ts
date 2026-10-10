@@ -1142,7 +1142,7 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
           usage: sessionTurnRecorded.data.usage,
           actor: memberActor,
         })
-        expect(out.value.turns, 'the stats row answers with the recorded Turn').toBe(1)
+        expect(out.value.receipt.operationId, 'the Turn record answers with its stored receipt').toBe(sessionTurnRecorded.operationId)
         return out
       },
       changed: () => ledger.recordSessionTurn({
@@ -1176,7 +1176,7 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
           reason: 'start',
           actor: memberActor,
         })
-        expect(out.value.memberId, 'the binding answers with the recorded Member').toBe(memberId)
+        expect(out.value.binding.memberId, 'the binding answers with the recorded Member').toBe(memberId)
         return out
       },
       changed: () => ledger.bindThreadSession({

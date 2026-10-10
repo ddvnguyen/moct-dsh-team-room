@@ -170,7 +170,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect((await ledger.bindThreadSession(start)).committed).toBe(true)
     const coldRestart = await ledger.bindThreadSession({ requestId: requestId('bind-cold'), workspaceId: alpha, threadRef,
       sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1, actor })
-    expect(coldRestart).toMatchObject({ committed: true, value: { sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1 } })
+    expect(coldRestart).toMatchObject({ committed: true, value: { binding: { sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1 } } })
     // The last binding is the active Session; earlier ones stay as lineage.
     expect(ledger.threadSessionsOf(threadRef, member.memberId).map(binding => binding.sessionId))
       .toEqual([SessionId('session:bind-a'), SessionId('session:bind-b')])
@@ -202,7 +202,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     })
     await ledger.recordSessionTurn(turn(1, { cacheReadTokens: 50 }))
     const second = await ledger.recordSessionTurn(turn(2, { cacheReadTokens: null }))
-    expect(second).toMatchObject({ committed: true, value: { turns: 2, tokensIn: 200, tokensOut: 40, cacheReadTokens: null, toolCalls: 2, runMs: 10000 } })
+    expect(second).toMatchObject({ committed: true, value: { run: { turns: 2, tokensIn: 200, tokensOut: 40, cacheReadTokens: null, toolCalls: 2, runMs: 10000 } } })
     // An exact retry resolves to the recorded row and does not fold the Turn twice.
     expect((await ledger.recordSessionTurn(turn(2, { cacheReadTokens: null }))).committed).toBe(false)
     expect(ledger.sessionRun(sessionId)?.turns).toBe(2)
@@ -228,7 +228,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     }
     expect((await ledger.recordSessionTurn(base)).committed).toBe(true)
     // Same requestId, one field changed at a time: every recorded field is compared, so each change collides.
-    const changes: Array<Partial<typeof base>> = [
+    const changes: Array<Partial<typeof base> & { parentSessionId?: SessionId }> = [
       { startedAt: '2026-10-11T01:01:01+08:00' }, { endedAt: '2026-10-11T01:01:06+08:00' }, { toolCalls: 9 }, { runMs: 1 },
       { threadRefs: [] }, { parentSessionId: SessionId('session:dup-parent') }, { sessionId: SessionId('session:dup-b') },
       { usage: { ...base.usage, outputTokens: 21 } },
