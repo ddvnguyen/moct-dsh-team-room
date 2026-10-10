@@ -10,6 +10,7 @@ import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersio
 import { cachedResolvedThreadRef, resolveUnknownThreadRefs, useResolvedThreadRefVersion, type ResolvedThreadRef } from './refs.ts'
 import { formatMessageTime, isSingleBrandedRef, memberHue, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames, type MentionHandle } from './team-formatters.ts'
 import { useAvatarImage } from './avatar-image.ts'
+import type { ReplyStatsView } from './reply-stats.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -46,6 +47,8 @@ export interface TeamMessageProps {
   readonly memberOf?: ((ref: AgentTeamMemberId) => ResolvedMemberRef | undefined) | undefined
   /** Agent-card session jump for member chips; absent renders them as plain text. */
   readonly onOpenMemberSession?: ((sessionId: SessionId) => void) | undefined
+  /** Per-reply usage row under an agent reply; absent when the reply carries no row. */
+  readonly replyStats?: ReplyStatsView | undefined
   readonly children?: ReactNode
 }
 
@@ -57,7 +60,7 @@ export interface TeamMessageProps {
  * skipping a render here never detaches it. Callers must therefore keep the
  * props they derive per render (mention names, ref callbacks) identity-stable.
  */
-export const TeamMessage = memo(function TeamMessage({ senderName, memberId, human, avatarUrl, body, occurredAt, mentionNames, senderTitle, grouped, showGroupedTime, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, onResolveThreadRefs, channelNameOf, memberOf, onOpenMemberSession, children }: TeamMessageProps) {
+export const TeamMessage = memo(function TeamMessage({ senderName, memberId, human, avatarUrl, body, occurredAt, mentionNames, senderTitle, grouped, showGroupedTime, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, onResolveThreadRefs, channelNameOf, memberOf, onOpenMemberSession, replyStats, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
   // Only the Human's own row may draw a picture: the profile owns those bytes,
   // and one seat painting the reader's face for another author would name two
@@ -211,11 +214,19 @@ export const TeamMessage = memo(function TeamMessage({ senderName, memberId, hum
           {...(loadAttachment === undefined ? {} : { loadAttachment })}
           {...(t === undefined ? {} : { t })}
         />}
+        {replyStats !== undefined && <TeamReplyStatsRow view={replyStats} {...(t === undefined ? {} : { t })} />}
         {children}
       </div>
     </article>
   )
 })
+
+/** The usage line under an agent reply: `1.2k in / 340 out · 12s · cache 94% · 7 tools`. */
+function TeamReplyStatsRow({ view, t }: { readonly view: ReplyStatsView; readonly t?: TeamConversationProps['t'] | undefined }) {
+  const text = t?.('replyStatsRow', { input: view.input, output: view.output, seconds: view.seconds, cache: view.cache, tools: t?.('replyStatsTools', { count: view.tools }) ?? `${view.tools} tools` })
+    ?? `${view.input} in / ${view.output} out · ${view.seconds} · cache ${view.cache} · ${view.tools} tools`
+  return <div className={css.replyStats} data-testid="reply-stats">{text}</div>
+}
 
 /** Text nodes that Markdown rendered as prose rather than code or a link. */
 function markdownProseTextNodes(root: HTMLElement): Text[] {

@@ -19,6 +19,7 @@ import { TeamComposer } from './TeamComposer.tsx'
 import { diagnosticText, TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
+import { replyStatsView, type ReplyStatsView } from './reply-stats.ts'
 import { firstSentence, formatActivity, formatClaimState, formatRiskClass, formatTaskStatus, formatTaskTitle, mentionNameOf, mentionNamesOf, mentionedMemberIds, taskStatusDot, type MentionHandle } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
@@ -44,6 +45,7 @@ interface TeamThreadPageProps {
   readonly readThread: TeamConversationProps['readThread']
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   readonly threadObservations: TeamConversationProps['threadObservations']
+  readonly threadReplyStats: TeamConversationProps['threadReplyStats']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly drafts: TeamDraftStore
@@ -108,7 +110,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, openMemberSession, putAttachment,
-    loadChannels, readThread, loadThreadHistory, threadObservations,
+    loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats,
     subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, promoteThread, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
@@ -314,6 +316,24 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     }
   }
 
+  // Reply stats are keyed by message ref, so each agent row finds its own line.
+  // A failed read leaves the rows without their line rather than surfacing an error.
+  const [replyStats, setReplyStats] = useState<ReadonlyMap<string, ReplyStatsView>>(() => new Map())
+  const refreshReplyStats = async (): Promise<void> => {
+    try {
+      const result = await threadReplyStats({ workspaceId, threadRef })
+      if (!mountedRef.current || !result.ok) return
+      const views = new Map<string, ReplyStatsView>()
+      for (const stat of result.value) {
+        const view = replyStatsView(stat)
+        if (view !== undefined) views.set(stat.messageRef, view)
+      }
+      setReplyStats(views)
+    } catch {
+      // The next thread-scope wake retries; the rows stay without their line until then.
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true
     // The previous mount's supplemental round must not answer for this one.
@@ -324,6 +344,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setChannelView(undefined)
     setMembers([])
     setFollowerIds(new Set())
+    setReplyStats(new Map())
     setCurrentFacts([])
     currentFactsRef.current = []
     setOlderFacts([])
@@ -376,6 +397,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       await drainUnread()
     })()
     void refreshSupplemental()
+    void refreshReplyStats()
     const disposers = [
       subscribeChanges({ kind: 'thread', threadRef }, update => {
         if (!mountedRef.current) return
@@ -383,6 +405,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         void refreshPassiveFacts()
         // Attention changes wake this scope too; keep the mention ranking current.
         void refreshFollowers()
+        // A new reply or a finished Turn changes the usage lines.
+        void refreshReplyStats()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
         if (!mountedRef.current) return
@@ -527,6 +551,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {...(human && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {})}
         body={fact.message.body}
         attachments={fact.message.attachments}
+        {...(human ? {} : { replyStats: replyStats.get(fact.message.messageRef) })}
         loadAttachment={getAttachment}
         t={t}
         occurredAt={fact.message.occurredAt}

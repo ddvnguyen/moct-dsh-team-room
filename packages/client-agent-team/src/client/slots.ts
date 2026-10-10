@@ -43,6 +43,8 @@ import type {
   AgentTeamThreadObservationsRequest,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
+  AgentTeamThreadReplyStat,
+  AgentTeamThreadRef,
   AgentTeamPromoteThreadRequest,
   AgentTeamPromoteThreadResult,
   AgentTeamTaskRequest,
@@ -159,6 +161,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   /** Human-only Thread Attention observations; the Thread composer ranks the returned followers first. */
   threadObservations: (request: AgentTeamThreadObservationsRequest) => Promise<RemoteResult<AgentTeamThreadObservations>>
+  /** Per-reply usage of one Thread's agent replies; the page keys the rows by message ref. */
+  threadReplyStats: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadReplyStat[]>>
   /** Agent-card session jump, shared by every slot; message member chips reuse it. */
   openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
 }
