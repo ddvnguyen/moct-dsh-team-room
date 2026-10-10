@@ -40,7 +40,7 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult, type AgentTeamThreadReplyStat } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult, type AgentTeamThreadReplyStat, type AgentTeamThreadSessionRuns } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
@@ -2067,11 +2067,11 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().threadHistory(agentTeamHumanActor(), request)
   }
 
-  /** Human's read of one seat's Session bindings in one Thread, oldest first; the last is active (§3.1). */
+  /** Human's per-seat Session runs in one Thread: the active run and the history of runs (contract §4). */
   @Remote('threadSessions')
-  threadSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef; memberId: AgentTeamMemberId }): readonly AgentTeamThreadSessionBinding[] {
+  threadSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadSessionRuns[] {
     this.requireWorkspace(request.workspaceId)
-    return this.requireLedger().threadSessionsOf(request.threadRef, request.memberId)
+    return this.requireLedger().threadSessionRuns(request.threadRef)
   }
 
   /** Human's per-Member Session list, newest first, with each Session's folded stats row. */

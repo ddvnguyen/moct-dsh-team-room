@@ -215,6 +215,13 @@ export interface AgentTeamSessionTurnResult {
 }
 
 /** A committed or resolved seat binding: its receipt, and the binding itself. */
+/** One seat's Session runs in one Thread (contract §4 threadSessions). */
+export interface AgentTeamThreadSessionRuns {
+  readonly memberId: AgentTeamMemberId
+  readonly active: AgentTeamSessionRun | undefined
+  readonly history: readonly AgentTeamSessionRun[]
+}
+
 /** One reply's per-reply stats: the recorded Turn that holds it, and whether it is the Member's last reply in that Turn. */
 export interface AgentTeamThreadReplyStat {
   readonly messageRef: AgentTeamMessageRef
@@ -1877,6 +1884,22 @@ export class AgentTeamLedger {
     return Object.freeze([...this.state.sessionRuns.values()]
       .filter(run => run.memberId === memberId)
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt)))
+  }
+
+  /**
+   * Per seat in one Thread: its active Session's run and its history of Session runs
+   * (contract §4). History is oldest first, one entry per bound Session that holds a
+   * recorded Turn; `active` is the last binding's run, or undefined before its first Turn.
+   */
+  threadSessionRuns(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadSessionRuns[] {
+    const byMember = this.state.threadSessions.get(threadRef)
+    if (byMember === undefined) return Object.freeze([])
+    return Object.freeze([...byMember.entries()].map(([memberId, bindings]) => {
+      const sessionIds = [...new Set(bindings.map(binding => binding.sessionId))]
+      const history = sessionIds.map(sessionId => this.state.sessionRuns.get(sessionId)).filter((run): run is AgentTeamSessionRun => run !== undefined)
+      const last = bindings.at(-1)
+      return Object.freeze({ memberId, active: last === undefined ? undefined : this.state.sessionRuns.get(last.sessionId), history: Object.freeze(history) })
+    }))
   }
 
   /**

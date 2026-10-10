@@ -2941,8 +2941,11 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
       requestId: requestId('a4-bind-spoof'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bound-spoof'), reason: 'resume', ...spoof,
     } as never)
     expect(spoofed).toMatchObject({ memberId: seatB.memberId })
-    expect(host.threadSessions({ workspaceId: alpha, threadRef, memberId: seatA.memberId })).toEqual([])
-    expect(host.threadSessions({ workspaceId: alpha, threadRef, memberId: seatB.memberId }).map(binding => binding.sessionId)).toEqual(['session:bound-b', 'session:bound-spoof'])
+    // Bindings are checked on the ledger; the RPC shows only seats with bindings, and no Turns exist here, so no run yet.
+    const ledger = replayLedger(test)
+    expect(ledger.threadSessionsOf(threadRef, seatA.memberId)).toEqual([])
+    expect(ledger.threadSessionsOf(threadRef, seatB.memberId).map(binding => binding.sessionId)).toEqual(['session:bound-b', 'session:bound-spoof'])
+    expect(host.threadSessions({ workspaceId: alpha, threadRef })).toEqual([{ memberId: seatB.memberId, active: undefined, history: [] }])
     const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
     await expect(host.bindThreadSessionForAgent(stranger, { requestId: requestId('a4-bind-stranger'), workspaceId: alpha, threadRef, sessionId: SessionId('session:stranger'), reason: 'start' })).rejects.toThrow(/not an active Team Member/)
   })
