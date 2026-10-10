@@ -16,6 +16,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_TOKENS } from '@contexera/dsh-context-continuity'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { completeTurnEvents } from './helpers/turn-events.ts'
 import { snapshotReadData, receiptReadData } from './helpers/legacy-thread-read.ts'
 import AgentTeam, { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor, isThreadReadSnapshot } from '../src/ledger.ts'
@@ -2858,16 +2859,20 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     await expect(host.sendMessageForAgent(stranger, { requestId: requestId('a4-stranger'), workspaceId: alpha, channelRef, body: 'intrude', asTask: false } as never)).rejects.toThrow(/not an active Team Member/)
   })
 
-  it('attributes a session event to the live handle of its own session, never to a Member named in the event', async () => {
-    const { test, host, seatA, seatB, agentB } = await seatedHost()
-    const turnCountBefore = host.unrecordedTurns().unprovable
+  it('records a provable Turn against the live handle of its own session, never a Member named in the payload', async () => {
+    const { test, seatA, seatB, agentB } = await seatedHost()
     const sessionB = (agentB as unknown as { session: never }).session
-    const spoofedData = { turn: 1, memberId: seatA.memberId, handle: seatA.handle, sessionId: seatA.sessionId }
-    test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: spoofedData } as never)
-    test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: spoofedData } as never)
-    // Usage is unprovable for these bare events, so the Turn is counted, not recorded. It is recorded against seat B's live handle, and never seat A.
-    await vi.waitFor(() => expect(host.unrecordedTurns().unprovable).toBe(turnCountBefore + 1))
-    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => JSON.stringify(operation))
-    expect(records.filter(record => record.includes('"kind":"team/session-turn-recorded"') && record.includes(seatA.memberId))).toHaveLength(0)
+    // Every event of seat B's Turn names seat A in its payload; the host must ignore it and key on the live handle.
+    const spoof = { memberId: seatA.memberId, handle: seatA.handle, sessionId: seatA.sessionId, actor: { kind: 'member', memberId: seatA.memberId } }
+    for (const event of completeTurnEvents({ turn: 1, startData: spoof })) test.ctx.emit('session/event', sessionB, event as never)
+    const turnRows = () => [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { memberId: string; sessionId: string }; actor: { memberId: string } })
+      .filter(operation => operation.kind === 'team/session-turn-recorded')
+    await vi.waitFor(() => expect(turnRows()).toHaveLength(1))
+    const [row] = turnRows()
+    expect(row!.data.memberId).toBe(seatB.memberId)
+    expect(row!.actor.memberId).toBe(seatB.memberId)
+    expect(row!.data.sessionId).toBe(seatB.sessionId)
+    expect(turnRows().some(operation => operation.data.memberId === seatA.memberId || operation.actor.memberId === seatA.memberId)).toBe(false)
   })
 })
