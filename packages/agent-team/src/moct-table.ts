@@ -17,6 +17,7 @@ export const MOCT_TEAM_URL_DEFAULT = 'http://127.0.0.1:8110'
 const PAGE_LIMIT = 1000
 const WRITE_ATTEMPTS = 4
 const RETRY_BASE_MS = 250
+const REQUEST_TIMEOUT_MS = 10_000
 
 /** Backend answered with a non-retryable status (409 conflict, 400 bad record, 404, ...). */
 export class MoctTeamError extends Error {
@@ -31,6 +32,8 @@ export interface MoctOperationsOptions {
   baseUrl?: string
   /** Team Room workspace id that owns this ledger's sequence space. */
   workspaceId: string
+  /** Per-request timeout. A timed-out request is a transport error: writes retry with the same operationId. */
+  requestTimeoutMs?: number
   fetch?: typeof fetch
   sleep?: (ms: number) => Promise<void>
 }
@@ -45,15 +48,21 @@ export class MoctOperationsTable<K extends string = string, V = StoredRecord> im
   private readonly workspaceId: string
   private readonly fetchImpl: typeof fetch
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly requestTimeoutMs: number
 
   private constructor(options: MoctOperationsOptions) {
     this.baseUrl = (options.baseUrl ?? MOCT_TEAM_URL_DEFAULT).replace(/\/+$/, '')
     this.workspaceId = options.workspaceId
     this.fetchImpl = options.fetch ?? fetch
     this.sleep = options.sleep ?? defaultSleep
+    this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
   }
 
-  /** Loads the whole stored log, in sequence order, before the ledger replays it. */
+  /**
+   * Loads the whole stored log, in sequence order, before the ledger replays it.
+   * Memory: the full log is held in RAM. That is fine at current ledger sizes; once it
+   * is not, replay needs to stream pages into the ledger instead.
+   */
   static async open<K extends string = string, V = StoredRecord>(options: MoctOperationsOptions): Promise<MoctOperationsTable<K, V>> {
     const table = new MoctOperationsTable<K, V>(options)
     let after = 0
@@ -74,6 +83,7 @@ export class MoctOperationsTable<K extends string = string, V = StoredRecord> im
     return this.records.get(key)
   }
 
+  /** Order is Map insertion order, which `open()` fills in sequence order. Replay depends on it. */
   entries(): IterableIterator<[K, V]> {
     return new Map(this.records).entries()
   }
@@ -119,6 +129,7 @@ export class MoctOperationsTable<K extends string = string, V = StoredRecord> im
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body,
+          signal: AbortSignal.timeout(this.requestTimeoutMs),
         })
       } catch (error) {
         if (attempt >= WRITE_ATTEMPTS) throw error
@@ -137,7 +148,7 @@ export class MoctOperationsTable<K extends string = string, V = StoredRecord> im
   }
 
   private async getJson<T>(path: string): Promise<T> {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`)
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, { signal: AbortSignal.timeout(this.requestTimeoutMs) })
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as { error?: string }
       throw new MoctTeamError(response.status, undefined, payload.error ?? `backend answered ${response.status}`)

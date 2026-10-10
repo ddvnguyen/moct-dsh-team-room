@@ -18,10 +18,11 @@ function canonical(value: unknown): string {
 }
 
 /** In-memory stand-in for /team/v1/operations with the backend's rules. */
-function fakeBackend(options: { failNextPosts?: number; postStatus?: number; pageCap?: number } = {}) {
+function fakeBackend(options: { failNextPosts?: number; hangNextPosts?: number; postStatus?: number; pageCap?: number } = {}) {
   const logs = new Map<string, Rec[]>()
   const byId = new Map<string, { workspaceId: string; record: Rec }>()
   let failures = options.failNextPosts ?? 0
+  let hangs = options.hangNextPosts ?? 0
   let posts = 0
   const fetchImpl = (async (input: string | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input))
@@ -29,6 +30,13 @@ function fakeBackend(options: { failNextPosts?: number; postStatus?: number; pag
     if (url.pathname !== '/team/v1/operations') return json(404, { ok: false })
     if (init?.method === 'POST') {
       posts++
+      if (hangs > 0) {
+        // A hung backend: never answers, only the caller's abort signal ends the request.
+        hangs--
+        return new Promise<Response>((_, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')))
+        })
+      }
       if (failures > 0) {
         failures--
         throw new TypeError('fetch failed')
@@ -138,5 +146,29 @@ describe('MoctOperationsTable — fail-closed writes (A3)', () => {
     const backend = fakeBackend()
     const table = await MoctOperationsTable.open({ baseUrl: 'http://x', workspaceId: 'host-a', fetch: backend.fetch, sleep: sleepless })
     await expect(table.delete('operation:1')).rejects.toMatchObject({ code: 'APPEND_ONLY' })
+  })
+
+  it('times out a hung write and retries it with the same operationId (R1)', async () => {
+    const backend = fakeBackend({ hangNextPosts: 2 })
+    const table = await MoctOperationsTable.open({ baseUrl: 'http://x', workspaceId: 'host-a', fetch: backend.fetch, sleep: sleepless, requestTimeoutMs: 20 })
+    await table.put('operation:1', rec(1))
+    expect(backend.posts).toBe(3)
+    expect(table.size).toBe(1)
+    expect(backend.logs.get('host-a')?.map(r => r.operationId)).toEqual(['operation:1'])
+  })
+
+  it('a backend that never answers fails the write closed and leaves no local state (R1, A3)', async () => {
+    const backend = fakeBackend({ hangNextPosts: 99 })
+    const table = await MoctOperationsTable.open({ baseUrl: 'http://x', workspaceId: 'host-a', fetch: backend.fetch, sleep: sleepless, requestTimeoutMs: 20 })
+    await expect(table.put('operation:1', rec(1))).rejects.toBeDefined()
+    expect(backend.posts).toBe(4)
+    expect(table.size).toBe(0)
+  })
+
+  it('a backend that never answers fails open instead of hanging the ledger (R1)', async () => {
+    const hung = (async (_input: string | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+    })) as typeof fetch
+    await expect(MoctOperationsTable.open({ baseUrl: 'http://x', workspaceId: 'host-a', fetch: hung, sleep: sleepless, requestTimeoutMs: 20 })).rejects.toBeDefined()
   })
 })
