@@ -17,7 +17,7 @@ const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
 function injectedNames(text: string): Set<string> {
   const block = /static inject = \[([\s\S]*?)\]/.exec(text)
   if (block === null) throw new Error('static inject array not found in src/index.ts')
-  return new Set([...block[1].matchAll(/'([^']+)'/g)].map(match => match[1]))
+  return new Set([...(block[1] ?? '').matchAll(/'([^']+)'/g)].map(match => match[1] ?? ''))
 }
 
 /** Every `this.ctx.<name>` property read in the source, with its line number. */
@@ -25,7 +25,7 @@ function contextReads(text: string): Array<{ name: string; line: number }> {
   const reads: Array<{ name: string; line: number }> = []
   text.split('\n').forEach((lineText, index) => {
     for (const match of lineText.matchAll(/this\.ctx\.([A-Za-z_]\w*)/g)) {
-      reads.push({ name: match[1], line: index + 1 })
+      reads.push({ name: match[1] ?? '', line: index + 1 })
     }
   })
   return reads
