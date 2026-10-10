@@ -46,6 +46,7 @@ import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
 import { agentTeamDomainSpec } from './spec.ts'
+import { MoctOperationsTable } from './moct-table.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -154,6 +155,12 @@ import type {
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) throw new Error(`${name} must be set when MOCT_TEAM_URL is set`)
+  return value
+}
+
 export type * from './types.ts'
 export { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './ledger.ts'
 export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName } from './human-profile.ts'
@@ -910,7 +917,18 @@ export default class AgentTeam extends TypertRemoteService {
       await domain.close()
     }, 'agentTeam.dispose')
     this.domain = domain
-    const ledger = new AgentTeamLedger(domain.table('operations'))
+    // MOCT Team Room (contract v0.3 §2): when MOCT_TEAM_URL is set, the ledger's
+    // operations table is the backend's log, not the local domain table. The
+    // domain still opens for the other tables. The workspace id is required so
+    // a shared backend never mixes two hosts' sequence spaces.
+    const mocUrl = process.env.MOCT_TEAM_URL?.trim()
+    const operationsTable = mocUrl
+      ? await MoctOperationsTable.open<AgentTeamOperationId, AgentTeamOperation>({
+          baseUrl: mocUrl,
+          workspaceId: requiredEnv('MOCT_TEAM_WORKSPACE'),
+        })
+      : domain.table('operations')
+    const ledger = new AgentTeamLedger(operationsTable)
     this.ledger = ledger
     // A live Config edit in the constructor's window may have arrived before
     // the ledger existed; sync once here so @ matching starts from the stored
