@@ -654,7 +654,8 @@ export default class AgentTeam extends TypertRemoteService {
     // Prior summary plus as many oldest Messages as fit; coverage stops at the last one included.
     const window = selectSummaryWindow(latest?.text, lines)
     if (!window.ok) {
-      this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped: the next Message alone exceeds the ${SUMMARY_INPUT_TOKEN_CAP} estimated input token cap (${window.tokens})`)
+      // The blocking Message is the oldest uncovered one: the window always starts there.
+      this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped at Message '${messages[0]!.messageRef}': it alone exceeds the ${SUMMARY_INPUT_TOKEN_CAP} estimated input token cap (${window.tokens}); this Thread's summaries stall until resolved`)
       return undefined
     }
     const last = messages[window.included - 1]!
