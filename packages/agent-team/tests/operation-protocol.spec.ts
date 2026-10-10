@@ -440,6 +440,14 @@ const threadRead: Op<'team/thread-read'> = {
   data: threadReadReceipt,
 }
 
+/** A Member binds its own Session for one Thread: the sessionId is the Member's Session in that Thread. */
+const threadSessionBound: Op<'team/thread-session-bound'> = {
+  ...opBase('operation:protocol-27', 'request:protocol-thread-session-bound', 27, memberActor),
+  previousOperationId,
+  kind: 'team/thread-session-bound',
+  data: { workspaceId: threadRead.data.workspaceId, threadRef: memberThread, memberId, sessionId: SessionId('session:protocol-thread'), reason: 'start' },
+}
+
 /**
  * The pre-receipt snapshot: the same protocol kind in its legacy stored shape,
  * with a bare anchor Message (no `occurredAt`) exactly as ledgers written
@@ -1102,6 +1110,34 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
     },
     legacy: { normalize: 'pre-receipt-stamp', repair: 'none' },
     intent: { scopes: 'no-op', inbox: 'delta' },
+  },
+  'team/thread-session-bound': {
+    stored: threadSessionBound,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.bindThreadSession({
+          requestId: threadSessionBound.requestId,
+          workspaceId: threadSessionBound.data.workspaceId,
+          threadRef: memberThread,
+          sessionId: SessionId('session:protocol-thread'),
+          reason: 'start',
+          actor: memberActor,
+        })
+        expect(out.value.memberId, 'the binding answers with the recorded Member').toBe(memberId)
+        return out
+      },
+      changed: () => ledger.bindThreadSession({
+        requestId: threadSessionBound.requestId,
+        workspaceId: threadSessionBound.data.workspaceId,
+        threadRef: memberThread,
+        sessionId: SessionId('session:protocol-thread'),
+        reason: 'resume',
+        actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
   },
   'team/member-removed': {
     stored: memberRemoved,

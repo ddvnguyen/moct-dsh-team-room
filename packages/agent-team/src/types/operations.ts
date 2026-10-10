@@ -411,6 +411,37 @@ export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
   readonly data: AgentTeamThreadReadData
 }
 
+/** Why a Member's turns in a Thread moved onto a Session. */
+export type AgentTeamThreadSessionReason = 'start' | 'resume' | 'fork' | 'cold-restart' | 'rollover'
+
+/** The durable facts of one thread-session binding. */
+export interface AgentTeamThreadSessionBoundData {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  /** The seat that binds itself: the Member is the only actor allowed to record its own session. */
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly reason: AgentTeamThreadSessionReason
+  readonly parentSessionId?: SessionId
+  /** Summary generation the seeded Session was started from, when a summary seeded it. */
+  readonly summaryGeneration?: number
+}
+
+/** One binding in projection order; the last binding for a (Thread, Member) pair is the active Session. */
+export interface AgentTeamThreadSessionBinding extends AgentTeamThreadSessionBoundData {
+  readonly sequence: number
+}
+
+/**
+ * Durable record that one Member's turns in one Thread run on a given Session
+ * (contract §3.1). The Member's home Session stays on the Member record; this
+ * binding only says which Session that Member's turns in this Thread use.
+ */
+export interface AgentTeamThreadSessionBoundOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-session-bound'
+  readonly data: AgentTeamThreadSessionBoundData
+}
+
 /** Durable irreversible Member removal and global inbox cleanup. */
 export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-removed'
@@ -454,6 +485,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberContextClearedOperation
   | AgentTeamMemberSessionRenewedOperation
   | AgentTeamMemberSessionRolledOverOperation
+  | AgentTeamThreadSessionBoundOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation

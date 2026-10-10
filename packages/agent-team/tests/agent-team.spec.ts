@@ -157,6 +157,34 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     replay.validate()
   })
 
+  it('binds a seat to one Session per Thread, keeps the last binding active, and replays it (§3.1)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('bind-channel'), workspaceId: alpha, name: 'bind', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('bind-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Start', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const start = { requestId: requestId('bind-start'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bind-a'), reason: 'start' as const, actor }
+    expect((await ledger.bindThreadSession(start)).committed).toBe(true)
+    const coldRestart = await ledger.bindThreadSession({ requestId: requestId('bind-cold'), workspaceId: alpha, threadRef,
+      sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1, actor })
+    expect(coldRestart).toMatchObject({ committed: true, value: { sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1 } })
+    // The last binding is the active Session; earlier ones stay as lineage.
+    expect(ledger.threadSessionsOf(threadRef, member.memberId).map(binding => binding.sessionId))
+      .toEqual([SessionId('session:bind-a'), SessionId('session:bind-b')])
+    // An exact retry resolves to the recorded binding; the same request with other data collides.
+    expect((await ledger.bindThreadSession(start)).committed).toBe(false)
+    await expect(ledger.bindThreadSession({ ...start, reason: 'resume' })).rejects.toThrow()
+    // Only the Member itself binds its own Session, never the Human on its behalf.
+    await expect(ledger.bindThreadSession({ ...start, requestId: requestId('bind-human'), actor: agentTeamHumanActor() as never }))
+      .rejects.toThrow(/requires Member authority/)
+    const replay = replayLedger(test)
+    expect(replay.threadSessionsOf(threadRef, member.memberId)).toEqual(ledger.threadSessionsOf(threadRef, member.memberId))
+    replay.validate()
+  })
+
   it('withdraws only the target Workspace and rejects subsequent work there', async () => {
     const test = await harness(new MemoryMediaPool(), [alpha, beta])
     const ledger = replayLedger(test)

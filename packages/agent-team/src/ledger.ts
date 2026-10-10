@@ -109,6 +109,10 @@ import type {
   AgentTeamThreadReadFact,
   AgentTeamThreadReadData,
   AgentTeamThreadReadOperation,
+  AgentTeamThreadSessionBinding,
+  AgentTeamThreadSessionBoundData,
+  AgentTeamThreadSessionBoundOperation,
+  AgentTeamThreadSessionReason,
   AgentTeamThreadReadReceipt,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
@@ -176,6 +180,18 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
 }
 
 /** Host-authorized intent to move one enabled Member onto a fresh Session id. */
+export interface AgentTeamBindThreadSessionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly sessionId: SessionId
+  readonly reason: AgentTeamThreadSessionReason
+  readonly parentSessionId?: SessionId
+  readonly summaryGeneration?: number
+  /** The seat binding itself; the host passes the calling Member's actor, never a caller-supplied id. */
+  readonly actor: AgentTeamMemberActor
+}
+
 export interface AgentTeamAuthorizedRenewMemberSessionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -383,6 +399,8 @@ interface Projection {
   readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
   /** Latest retired Session id per Member, from the most recent renewal or rollover record. */
   readonly previousSessions: Map<AgentTeamMemberId, SessionId>
+  /** Session bindings per Thread and Member, in sequence order; the last entry is the active Session. */
+  readonly threadSessions: Map<AgentTeamThreadRef, Map<AgentTeamMemberId, AgentTeamThreadSessionBinding[]>>
   /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
   readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
   /** Top-level anchor Message per Thread; the first topLevel Message wins, like the linear scan it replaces. */
@@ -414,7 +432,7 @@ function emptyProjection(): Projection {
     claims: new Map(), tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], claimsByTask: new Map(), factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     messagesByRef: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map(), rolloverSeeds: new Map(),
+    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), rolloverSeeds: new Map(),
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
@@ -1707,6 +1725,43 @@ export class AgentTeamLedger {
       facts: this.unreadFor(memberId, item.thread.threadRef) })))
   }
 
+  /**
+   * Record that one Member's turns in one Thread run on a Session. Append-only:
+   * a later binding supersedes an earlier one by sequence, never by overwrite.
+   * An exact retry resolves to the recorded binding; the same requestId with
+   * different data collides.
+   */
+  bindThreadSession(request: AgentTeamBindThreadSessionRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadSessionBinding>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameThreadSessionBound(existing, request)
+        return this.resolved(this.threadSessionBinding(existing))
+      }
+      if (request.actor.kind !== 'member') throw new Error('Thread session bind requires Member authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      const member = this.requireMember(request.actor.memberId)
+      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can bind a Session`)
+      const data: AgentTeamThreadSessionBoundData = Object.freeze({
+        workspaceId: request.workspaceId, threadRef: request.threadRef, memberId: request.actor.memberId, sessionId: request.sessionId, reason: request.reason,
+        ...(request.parentSessionId === undefined ? {} : { parentSessionId: request.parentSessionId }),
+        ...(request.summaryGeneration === undefined ? {} : { summaryGeneration: request.summaryGeneration }),
+      })
+      const operation: AgentTeamThreadSessionBoundOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/thread-session-bound', data,
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.threadSessionBinding(operation))
+    })
+  }
+
+  /** Bindings for one seat in one Thread, oldest first; the last entry is the active Session. */
+  threadSessionsOf(threadRef: AgentTeamThreadRef, memberId: AgentTeamMemberId): readonly AgentTeamThreadSessionBinding[] {
+    return Object.freeze([...(this.state.threadSessions.get(threadRef)?.get(memberId) ?? [])])
+  }
+
   readThread(request: AgentTeamAuthorizedThreadReadRequest): Promise<AgentTeamThreadReadOutcome> {
     return this.enqueue(async () => {
       const existing = this.state.byRequest.get(request.requestId)
@@ -2123,6 +2178,7 @@ export class AgentTeamLedger {
         return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
+      case 'team/thread-session-bound':
       case 'team/thread-read':
         // A read advances only the reader's private watermark; no projection
         // visible to other participants changes, so nobody is woken.
@@ -2188,6 +2244,7 @@ export class AgentTeamLedger {
       case 'team/member-session-rolled-over':
       case 'team/member-updated':
       case 'team/channel-member-added':
+      case 'team/thread-session-bound':
       case 'team/thread-read':
       case 'team/dm-sent':
         return []
@@ -2434,6 +2491,16 @@ export class AgentTeamLedger {
         : this.inboxDelta([], [{ memberId: operation.data.memberId, threadRef: thread.threadRef }], [], this.directMarkersForFrom(projection, operation.data.memberId, thread.threadRef))
       if (!isDeepStrictEqual(operation.data.inbox, expected)) throw new Error('invalid Attention projection')
       this.validateInboxDelta(operation.data.inbox, projection, refs)
+      return
+    }
+    if (operation.kind === 'team/thread-session-bound') {
+      // Self-scoped: a Member records only its own Session per Thread.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the bound Member's own authority`)
+      }
+      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Thread session bind names an unknown Thread')
+      const member = projection.members.get(operation.data.memberId)
+      if (member === undefined || member.state !== 'enabled') throw new Error('Thread session bind requires an enabled Member')
       return
     }
     if (operation.kind === 'team/thread-read') {
@@ -2990,6 +3057,13 @@ export class AgentTeamLedger {
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/thread-session-bound') {
+      const byMember = target.threadSessions.get(operation.data.threadRef) ?? new Map<AgentTeamMemberId, AgentTeamThreadSessionBinding[]>()
+      target.threadSessions.set(operation.data.threadRef, byMember)
+      const bindings = byMember.get(operation.data.memberId) ?? []
+      byMember.set(operation.data.memberId, [...bindings, Object.freeze({ ...operation.data, sequence: operation.sequence })])
       return
     }
     if (operation.kind === 'team/thread-attention-changed' || operation.kind === 'team/thread-read') {
@@ -4322,6 +4396,17 @@ export class AgentTeamLedger {
       || (request.taskRef !== undefined && operation.data.task?.taskRef !== request.taskRef)
       || (request.threadRef === undefined && request.taskRef === undefined)
       || operation.data.action !== request.action) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameThreadSessionBound(operation: AgentTeamOperation, request: AgentTeamBindThreadSessionRequest): asserts operation is AgentTeamThreadSessionBoundOperation {
+    const data = operation.kind === 'team/thread-session-bound' ? operation.data : undefined
+    if (data === undefined || !this.sameActor(operation.actor, request.actor)
+      || data.workspaceId !== request.workspaceId || data.threadRef !== request.threadRef || data.sessionId !== request.sessionId
+      || data.reason !== request.reason || data.parentSessionId !== request.parentSessionId || data.summaryGeneration !== request.summaryGeneration) this.throwRequestCollision(request.requestId)
+  }
+
+  private threadSessionBinding(operation: AgentTeamThreadSessionBoundOperation): AgentTeamThreadSessionBinding {
+    return Object.freeze({ ...operation.data, sequence: operation.sequence })
   }
 
   private assertSameThreadRead(operation: AgentTeamOperation, request: AgentTeamAuthorizedThreadReadRequest): asserts operation is AgentTeamThreadReadOperation {

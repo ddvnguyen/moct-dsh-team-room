@@ -524,6 +524,20 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-session-bound'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      memberId: memberIdSchema,
+      sessionId: sessionIdSchema,
+      reason: z.enum(['start', 'resume', 'fork', 'cold-restart', 'rollover']),
+      parentSessionId: sessionIdSchema.optional(),
+      summaryGeneration: z.number().int().nonnegative().optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/member-removed'),
     data: z.object({
       member: memberSchema,
