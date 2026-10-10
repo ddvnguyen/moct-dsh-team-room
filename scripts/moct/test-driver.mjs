@@ -284,8 +284,10 @@ async function mocOpsDetailed() {
  * Pass/fail is read from the MOCT op log and the per-Turn usage, not from this report.
  */
 async function runA5() {
-  const model = process.env.DRIVER_A5_MODEL ?? 'opencode-go/deepseek-v4-flash'
-  const [provider, modelId] = model.split('/')
+  // DRIVER_A5_MODEL=default adds the seat with no pinned model, so it takes the Host default route.
+  const pinned = process.env.DRIVER_A5_MODEL !== 'default'
+  const model = pinned ? (process.env.DRIVER_A5_MODEL ?? 'opencode-go/deepseek-v4-flash') : 'default'
+  const [provider, modelId] = pinned ? model.split('/') : []
   const presetId = process.env.DRIVER_A5_PRESET ?? 'team-member'
   const ttlSeconds = Number(process.env.DRIVER_A5_TTL_SECONDS ?? 300)
   const handle = `a5-${RUN}`
@@ -302,12 +304,12 @@ async function runA5() {
     handle,
     description: 'A5 cache probe seat',
     presetId,
-    model: { provider, model: modelId },
+    ...(pinned ? { model: { provider, model: modelId } } : {}),
     channelRefs: [channelRef],
   })
   const memberId = added.status.member.memberId
   const sessionFirst = added.status.member.sessionId
-  log('seat', { handle, memberId, presetId, model, sessionFirst, ttlSeconds })
+  log('seat', { handle, memberId, presetId, requested: model, actualModel: added.status.member.model ?? null, sessionFirst, ttlSeconds })
 
   const opening = await rpc('agentTeam/sendMessage', {
     requestId: requestId('open'),
