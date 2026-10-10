@@ -6,7 +6,10 @@
  *
  * Contract, mirrored from the provider path the plugin actually calls:
  * - binds 127.0.0.1 only, never 0.0.0.0;
- * - answers POST /zen/v1/chat/completions only; every other path or method gets 404;
+ * - answers POST /zen/v1/chat/completions and POST /v1/chat/completions only — the first is the
+ *   path pi-ai's builtin opencode catalog calls, the second is what a hand-configured profile's
+ *   `baseURL: http://127.0.0.1:8100/v1` composes (the OpenAI SDK appends `/chat/completions` to the
+ *   api root, never a further prefix); every other path or method gets 404;
  * - no `x-opencode-session` header gets 400 `MissingSessionID`, the check that caught the pi-ai route;
  * - usage carries the cache fields in the provider's own shape (`prompt_tokens_details`), and an
  *   absent field is left absent so MOCT records null, not 0.
@@ -31,7 +34,7 @@ const listenPort = Number(process.env.STUB_PORT ?? port ?? 8100)
 const runLog = process.env.RUN_LOG ?? '/home/ddv/work/fix-llm-logs/cache-stub-run.log'
 const cases = (process.env.STUB_CASES ?? 'cache-read').split(',').map(id => id.trim()).filter(Boolean)
 const first429 = process.env.STUB_429_FIRST === '1'
-const ENDPOINT = '/zen/v1/chat/completions'
+const ENDPOINTS = new Set(['/zen/v1/chat/completions', '/v1/chat/completions'])
 const MODEL = 'cache-stub-1'
 
 let count = 0 // model requests only: drives the case sequence and the 429 slot
@@ -81,7 +84,7 @@ const server = http.createServer((req, res) => {
   const caseId = cases[Math.min(count, cases.length - 1)]
   const base = { n, offsetMs, method: req.method, path: req.url, sessionHeaderPresent: sessionPresent, sessionValue: sessionPresent ? sessionValue : null, caseId }
 
-  if (req.method !== 'POST' || req.url !== ENDPOINT) {
+  if (req.method !== 'POST' || !ENDPOINTS.has(req.url)) {
     log({ ...base, status: 404 })
     return json(res, 404, { error: { message: 'not found' } })
   }
