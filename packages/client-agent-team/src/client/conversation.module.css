@@ -7,6 +7,14 @@
   overflow: hidden;
 }
 
+/* Per-reply usage line under an agent reply; quiet, tabular, never a control. */
+.replyStats {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+
 .surfaceHeader {
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   min-width: 0;
