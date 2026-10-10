@@ -456,11 +456,11 @@ interface AgentTeamAttentionObservation {
   readonly action: 'follow' | 'unfollow'
 }
 
-/** Combines a running cache bucket with one Turn's bucket: null is sticky, because one unreported attempt makes the session total unknown. */
 function sessionTurnKey(sessionId: SessionId, turn: number): string {
   return `${sessionId}\u0000${turn}`
 }
 
+/** Combines a running cache bucket with one Turn's bucket: null is sticky, because one unreported attempt makes the session total unknown. */
 function sumBucket(prior: number | null | undefined, turn: number | null): number | null {
   if (turn === null || prior === null) return null
   return prior === undefined ? turn : prior + turn
