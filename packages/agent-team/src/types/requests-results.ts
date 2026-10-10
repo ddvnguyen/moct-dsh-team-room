@@ -1,3 +1,4 @@
+import type { AgentTeamSessionRun, AgentTeamSessionTurnRecordedData } from "./operations.ts"
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
 import type { SessionId as AgentTeamMemberSessionId, SessionLogOffset as AgentTeamMemberSessionLogOffset, SessionSeq as AgentTeamMemberSessionSeq } from "@deepseek-ai/dsh-session"
 import type {
@@ -16,6 +17,7 @@ import type {
   AgentTeamDirectMarker,
   AgentTeamMemberCapabilities,
   AgentTeamMemberId,
+  AgentTeamMessageRef,
   AgentTeamMessage,
   AgentTeamModelSelection,
   AgentTeamOperationId,
@@ -1056,4 +1058,19 @@ export interface AgentTeamStatus {
   readonly channelCount: number
   readonly agentMemberCount: number
   readonly humanMemberId: AgentTeamMemberId
+}
+
+/** One seat's Session runs in one Thread (contract §4 threadSessions). */
+export interface AgentTeamThreadSessionRuns {
+  readonly memberId: AgentTeamMemberId
+  readonly active: AgentTeamSessionRun | null
+  readonly history: readonly AgentTeamSessionRun[]
+}
+
+/** One reply's per-reply stats: the recorded Turn that holds it, and whether it is the Member's last reply in that Turn. */
+export interface AgentTeamThreadReplyStat {
+  readonly messageRef: AgentTeamMessageRef
+  readonly memberId: AgentTeamMemberId
+  readonly turn: AgentTeamSessionTurnRecordedData
+  readonly isLastOfTurn: boolean
 }

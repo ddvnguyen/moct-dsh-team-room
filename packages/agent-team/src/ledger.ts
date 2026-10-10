@@ -115,6 +115,8 @@ import type {
   AgentTeamThreadSessionReason,
   AgentTeamSessionRun,
   AgentTeamSessionTurnRecordedData,
+  AgentTeamThreadReplyStat,
+  AgentTeamThreadSessionRuns,
   AgentTeamSessionTurnRecordedOperation,
   AgentTeamSessionTurnUsage,
   AgentTeamThreadReadReceipt,
@@ -215,21 +217,6 @@ export interface AgentTeamSessionTurnResult {
 }
 
 /** A committed or resolved seat binding: its receipt, and the binding itself. */
-/** One seat's Session runs in one Thread (contract §4 threadSessions). */
-export interface AgentTeamThreadSessionRuns {
-  readonly memberId: AgentTeamMemberId
-  readonly active: AgentTeamSessionRun | null
-  readonly history: readonly AgentTeamSessionRun[]
-}
-
-/** One reply's per-reply stats: the recorded Turn that holds it, and whether it is the Member's last reply in that Turn. */
-export interface AgentTeamThreadReplyStat {
-  readonly messageRef: AgentTeamMessageRef
-  readonly memberId: AgentTeamMemberId
-  readonly turn: AgentTeamSessionTurnRecordedData
-  readonly isLastOfTurn: boolean
-}
-
 export interface AgentTeamThreadSessionBindResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly binding: AgentTeamThreadSessionBinding
