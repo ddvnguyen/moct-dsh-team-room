@@ -202,6 +202,7 @@ async function realHarness(
   adapter: LlmAdapter = new EmptyAdapter(),
   persistenceBackend: PersistenceBackend = 'jsonl',
   reopen?: { readonly root: string },
+  options: { readonly llm?: boolean } = {},
 ): Promise<{
   readonly ctx: Context
   readonly workspaceId: WorkspaceId
@@ -252,8 +253,11 @@ async function realHarness(
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   ctx.loader.builtins.group = Group
-  await ctx.plugin(LlmRuntime)
-  ctx.llm.registerAdapter(['mock'], adapter)
+  // An LLM runtime is optional: a Host that does not mount one has no 'llm' service at all.
+  if (options.llm !== false) {
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter(['mock'], adapter)
+  }
   await ctx.plugin(SessionStore)
   // The preset registry injects 'sessionProjections'; the roster stays PENDING without it.
   await ctx.plugin(SessionProjectionRegistry)
@@ -5287,6 +5291,16 @@ describe('Agent Team model route rejection (issue #43 #6)', () => {
       description: 'Builds the implementation', presetId: 'team-member', channelRefs: [],
       model: { provider: 'no-such-provider', model: 'whatever' },
     })).rejects.toThrow(/provider 'no-such-provider' is not registered/)
+  })
+
+  it('accepts a pinned model when no LLM service is mounted, instead of reading an undeclared service', async () => {
+    const { ctx, workspaceId } = await realHarness(new ScriptedAdapter(), 'jsonl', undefined, { llm: false })
+    const added = await ctx.agentTeam.addMember({
+      requestId: requestId('no-llm-add'), workspaceId, handle: 'builder',
+      description: 'Builds the implementation', presetId: 'team-member', channelRefs: [],
+      model: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
+    })
+    expect(added.status.member.model).toEqual({ provider: 'opencode-go', model: 'deepseek-v4-flash' })
   })
 
   it('rejects an unregistered provider on update too', async () => {
