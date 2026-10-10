@@ -50,6 +50,11 @@ export function turnFailureReason(message: string): string {
     .replaceAll('@', '')
     .replace(/https?:\/\/\S+/gi, '[url]')
     .replace(/\b(api[_-]?key|token|secret|authorization|password)\b\s*[:=]\s*\S+/gi, '$1=[redacted]')
+    // Provider errors name credentials without a `key=` form: a bearer header, a JWT, an sk- key, or any long opaque run.
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}/g, '[redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '[redacted]')
+    .replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]')
   const bounded = firstLine.length <= 200 ? firstLine : `${firstLine.slice(0, 199)}…`
   return bounded === '' ? 'Turn ended in error' : bounded
 }
@@ -63,7 +68,8 @@ export class AgentTeamTurnRecorder {
 
   /**
    * Turns this host did not record: `failed` when the ledger write threw (a
-   * backend outage, say), `unprovable` when usage could not be proven exact. The
+   * backend outage, say), `unprovable` when usage could not be proven exact or the Turn ended in error (its
+   * failure notice is extra visibility, never a replacement for this count). The
    * SessionRun stats under-count by exactly these, so they are surfaced, never silent.
    */
   get unrecordedTurns(): { readonly failed: number; readonly unprovable: number } {
@@ -106,6 +112,8 @@ export class AgentTeamTurnRecorder {
     // An errored Turn is noted on its delivered Threads, not recorded: it has no provable usage (contract §6.0).
     // The event path never throws: a turn/end without a reason is treated as not errored.
     if (event.data.reason?.kind === 'error') {
+      // Every turn/end is either recorded or counted: an errored Turn is counted here, and the notice is only extra visibility.
+      this.unprovableTurns += 1
       this.noteFailure(memberId, turn, event.data.reason.error.message).catch(error => {
         this.onError(`agent-team: turn failure notice for '${memberId}' failed`, error)
       })

@@ -42,7 +42,28 @@ describe('AgentTeamTurnRecorder: errored Turns (contract §6.0)', () => {
       reason: 'provider returned 503', actor: { kind: 'member', memberId, handle: 'notice-a' },
     })
     expect(ledger.recordSessionTurn).not.toHaveBeenCalled()
-    expect(recorder.unrecordedTurns).toEqual({ failed: 0, unprovable: 0 })
+    // Two Threads, one errored Turn: the counter moves once, not once per Thread.
+    expect(recorder.unrecordedTurns).toEqual({ failed: 0, unprovable: 1 })
+  })
+
+  it('an errored Turn delivered to no Thread writes no notice and still moves the counter', async () => {
+    const ledger = fakeLedger()
+    const recorder = new AgentTeamTurnRecorder(() => ledger as unknown as AgentTeamLedger, () => undefined)
+    recorder.onSessionEvent(memberId, sessionId, event('turn/start', 9))
+    recorder.onSessionEvent(memberId, sessionId, errorEnd(9, 'boom'))
+    await vi.waitFor(() => expect(recorder.unrecordedTurns.unprovable).toBe(1))
+    expect(ledger.recordTurnFailureNotice).not.toHaveBeenCalled()
+  })
+
+  it('a failed notice write still leaves the errored Turn counted', async () => {
+    const ledger = fakeLedger()
+    ledger.recordTurnFailureNotice.mockRejectedValue(new Error('backend down'))
+    const recorder = new AgentTeamTurnRecorder(() => ledger as unknown as AgentTeamLedger, () => undefined)
+    recorder.noteDelivered(memberId, [threadA])
+    recorder.onSessionEvent(memberId, sessionId, event('turn/start', 10))
+    recorder.onSessionEvent(memberId, sessionId, errorEnd(10, 'boom'))
+    await vi.waitFor(() => expect(ledger.recordTurnFailureNotice).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(recorder.unrecordedTurns.unprovable).toBe(1))
   })
 
   it('writes no notice for an aborted Turn, and counts it unprovable as before', async () => {
@@ -93,8 +114,23 @@ describe('AgentTeamTurnRecorder: errored Turns (contract §6.0)', () => {
 describe('turnFailureReason and turnFailureNoticeRequestId', () => {
   it('keeps the first line, drops mentions, URLs and key-like values, and bounds the length', () => {
     expect(turnFailureReason('boom @alice see https://example.test/x token=abc123\nstack at line 4')).toBe('boom alice see [url] token=[redacted]')
-    expect(turnFailureReason('x'.repeat(500))).toHaveLength(200)
+    // Ordinary words, not one long run: a long opaque run is a credential and is redacted instead.
+    expect(turnFailureReason('lorem ipsum '.repeat(60))).toHaveLength(200)
     expect(turnFailureReason('   ')).toBe('Turn ended in error')
+  })
+
+  it('redacts each credential shape a provider error can carry, and the ledger text never holds a key', () => {
+    // The exact provider message from the Architect's review.
+    const provider = turnFailureReason('Incorrect API key provided: sk-live-ABCDEF1234567890')
+    expect(provider).toBe('Incorrect API key provided: [redacted]')
+    expect(provider).not.toContain('sk-')
+    expect(turnFailureReason('Authorization failed for Bearer eyJhbGciOiJIUzI1NiJ9.abc.def')).not.toMatch(/Bearer eyJ|eyJ/)
+    expect(turnFailureReason('Authorization failed for Bearer eyJhbGciOiJIUzI1NiJ9.abc.def')).toBe('Authorization failed for Bearer [redacted]')
+    expect(turnFailureReason('jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig failed')).toBe('jwt [redacted].[redacted].sig failed')
+    expect(turnFailureReason('bad key sk-abc123XYZ')).toBe('bad key [redacted]')
+    expect(turnFailureReason('opaque ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd here')).toBe('opaque [redacted] here')
+    // A word that merely contains "sk-" is not a key.
+    expect(turnFailureReason('task-runner timed out')).toBe('task-runner timed out')
   })
 
   it('derives a deterministic requestId per Session, Turn and Thread', () => {
