@@ -5293,7 +5293,9 @@ describe('Agent Team model route rejection (issue #43 #6)', () => {
     })).rejects.toThrow(/provider 'no-such-provider' is not registered/)
   })
 
-  it('accepts a pinned model when no LLM service is mounted, instead of reading an undeclared service', async () => {
+  // Behaviour check, not a regression guard: the in-process harness does not throw on an
+  // undeclared read, so this passes on the old source too. The guard is ctx-service-reads.spec.ts.
+  it('behaviour: accepts a pinned model when no LLM service is mounted', async () => {
     const { ctx, workspaceId } = await realHarness(new ScriptedAdapter(), 'jsonl', undefined, { llm: false })
     const added = await ctx.agentTeam.addMember({
       requestId: requestId('no-llm-add'), workspaceId, handle: 'builder',
