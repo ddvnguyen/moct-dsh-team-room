@@ -483,6 +483,9 @@ export const TEAM_HOST_ROW_SETTINGS_SCHEMA = z.object({
   jev: TEAM_JUDGE_SETTINGS_SCHEMA,
 })
 
+/** The default thread-summary model has no LLM service to call; the caller logs this once per Thread. */
+class ThreadSummaryLlmUnavailable extends Error {}
+
 /** Host owner of the single Agent Team in one dshHome. */
 export default class AgentTeam extends TypertRemoteService {
   static Config = TEAM_HOST_ROW_SETTINGS_SCHEMA
@@ -598,10 +601,13 @@ export default class AgentTeam extends TypertRemoteService {
   /** Thread summary policy and model call (contract §3.3). Plugin settings are not wired yet; `configureThreadSummary` is the seam. */
   private threadSummaryPolicy: ThreadSummaryPolicy = DEFAULT_THREAD_SUMMARY_POLICY
   private threadSummaryModel: (call: ThreadSummaryModelCall) => Promise<ThreadSummaryModelResult> = call => {
-    const llm = this.ctx.llm
-    if (llm === undefined) throw new Error('no LLM runtime is available for the thread summary')
+    // get(), not a bare read: 'llm' is not in static inject, and a bare read of it throws on the live Host.
+    const llm = this.ctx.get('llm')
+    if (llm === undefined) throw new ThreadSummaryLlmUnavailable('no LLM runtime is available for the thread summary')
     return callThreadSummaryModel(llm, call)
   }
+  /** Threads whose summary was skipped for want of an LLM service, so the skip logs once per Thread. */
+  private readonly summaryLlmUnavailableThreads = new Set<string>()
   /** Threads with a summary call in flight, keyed by workspace and Thread, so one Thread never runs two calls at once. */
   private readonly summarizingThreads = new Set<string>()
 
@@ -663,6 +669,14 @@ export default class AgentTeam extends TypertRemoteService {
     try {
       output = await this.threadSummaryModel({ model: this.threadSummaryPolicy.model, input: window.input, maxTokens: SUMMARY_OUTPUT_TOKEN_CAP })
     } catch (error) {
+      if (error instanceof ThreadSummaryLlmUnavailable) {
+        // No LLM service is mounted: log once per Thread, commit nothing, and do not retry.
+        if (!this.summaryLlmUnavailableThreads.has(threadRef)) {
+          this.summaryLlmUnavailableThreads.add(threadRef)
+          this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped: no LLM service is mounted; nothing committed, no retry`)
+        }
+        return undefined
+      }
       this.ctx.logger.warn(`agent-team: thread summary model call for '${threadRef}' failed, no retry: ${error instanceof Error ? error.message : String(error)}`)
       return undefined
     }

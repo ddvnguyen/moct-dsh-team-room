@@ -3030,6 +3030,23 @@ describe('AgentTeam thread summary (§3.3)', () => {
     expect(replayLedger(test).latestThreadSummary(message.threadRef)).toMatchObject({ generation: 1, text: `Decided: first decision [${message.messageRef}]` })
   })
 
+  it('with no LLM service mounted, a due summary logs once per Thread, commits nothing, and does not throw', async () => {
+    const { test, host, channelRef, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-nollm-post'), workspaceId: alpha, channelRef, body: 'no model here', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = sent.message.threadRef
+    // The default model is in use, and this harness mounts no 'llm' service.
+    const logger = (host as unknown as { ctx: { logger: { warn: (...args: unknown[]) => void } } }).ctx.logger
+    const warn = vi.spyOn(logger, 'warn')
+    expect(await host.runThreadSummary(alpha, threadRef, 'rolling')).toBeUndefined()
+    expect(await host.runThreadSummary(alpha, threadRef, 'rolling')).toBeUndefined()
+    const skipped = warn.mock.calls.map(args => String(args[0])).filter(line => line.includes(threadRef))
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0]).toMatch(/no LLM service is mounted; nothing committed, no retry/)
+    expect(host.threadSummary({ workspaceId: alpha, threadRef })).toBeNull()
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toBeUndefined()
+    warn.mockRestore()
+  })
+
   it('a second summary reads only the Messages after the first, folds the prior text in, and advances the generation', async () => {
     const { test, host, channelRef, agentA, agentB } = await seatedHost()
     const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-post-a'), workspaceId: alpha, channelRef, body: 'alpha point', asTask: false } as never) as AgentTeamSendMessageCommittedResult
