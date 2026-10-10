@@ -450,6 +450,8 @@ export interface AgentTeamSessionTurnUsage {
   /** null when any attempt did not report the bucket. Never 0 for "unknown". */
   readonly cacheReadTokens: number | null
   readonly cacheWriteTokens: number | null
+  /** Output subset, null when not reported. */
+  readonly reasoningTokens: number | null
   /** The last billed route of the Turn, when every attempt carried attribution. */
   readonly route?: { readonly provider: string; readonly model: string }
 }
@@ -482,6 +484,7 @@ export interface AgentTeamSessionRun {
   readonly tokensOut: number
   readonly cacheReadTokens: number | null
   readonly cacheWriteTokens: number | null
+  readonly reasoningTokens: number | null
   readonly toolCalls: number
   readonly runMs: number
   readonly model: { readonly provider: string; readonly model: string } | null

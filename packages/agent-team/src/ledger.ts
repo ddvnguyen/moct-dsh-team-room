@@ -472,6 +472,7 @@ function foldSessionTurn(prior: AgentTeamSessionRun | undefined, data: AgentTeam
     tokensOut: (prior?.tokensOut ?? 0) + usage.outputTokens,
     cacheReadTokens: sumBucket(prior === undefined ? undefined : prior.cacheReadTokens, usage.cacheReadTokens),
     cacheWriteTokens: sumBucket(prior === undefined ? undefined : prior.cacheWriteTokens, usage.cacheWriteTokens),
+    reasoningTokens: sumBucket(prior === undefined ? undefined : prior.reasoningTokens, usage.reasoningTokens),
     toolCalls: (prior?.toolCalls ?? 0) + data.toolCalls,
     runMs: (prior?.runMs ?? 0) + data.runMs,
     model: usage.route ?? prior?.model ?? null,

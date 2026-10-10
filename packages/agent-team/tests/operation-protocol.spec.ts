@@ -456,7 +456,7 @@ const sessionTurnRecorded: Op<'team/session-turn-recorded'> = {
   data: {
     workspaceId: threadRead.data.workspaceId, memberId, sessionId: SessionId('session:protocol-thread'), threadRef: memberThread, turn: 1,
     startedAt: '2026-10-11T01:00:00+08:00', endedAt: '2026-10-11T01:00:05+08:00', toolCalls: 2, runMs: 5000,
-    usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: null, route: { provider: 'opencode-go', model: 'mimo-v2.6-flash' } },
+    usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: null, reasoningTokens: null, route: { provider: 'opencode-go', model: 'mimo-v2.6-flash' } },
   },
 }
 

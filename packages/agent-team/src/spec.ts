@@ -541,6 +541,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
         outputTokens: z.number().int().nonnegative(),
         cacheReadTokens: z.number().int().nonnegative().nullable(),
         cacheWriteTokens: z.number().int().nonnegative().nullable(),
+        reasoningTokens: z.number().int().nonnegative().nullable(),
         route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).strict().optional(),
       }).strict(),
     }).strict(),
