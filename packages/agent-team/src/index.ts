@@ -1221,7 +1221,7 @@ export default class AgentTeam extends TypertRemoteService {
    * per-Thread sessions are not supported yet.
    */
   @Remote('resumeMemberSession')
-  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: WorkspaceId; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<{ sessionId: SessionId; cache: 'warm' | 'cold'; action: 'resumed' | 'seeded-new' }> {
+  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<{ sessionId: SessionId; cache: 'warm' | 'cold'; action: 'resumed' | 'seeded-new' }> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const ledger = this.requireLedger()
@@ -1253,7 +1253,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Deferred past TEST (contract §4): a Session for one Thread needs a per-Session live handle, which is not built yet. */
   @Remote('forkMemberSession')
-  forkMemberSession(request: { workspaceId: WorkspaceId; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef?: AgentTeamThreadRef; seed: 'summary' | 'full' }): never {
+  forkMemberSession(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef?: AgentTeamThreadRef; seed: 'summary' | 'full' }): never {
     this.requireWorkspace(request.workspaceId)
     throw new Error(`forkMemberSession is not supported yet (seed '${request.seed}'): per-Thread sessions are deferred past TEST`)
   }
