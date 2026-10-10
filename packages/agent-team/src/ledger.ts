@@ -138,6 +138,7 @@ import type {
 import { formatTeamTimestamp } from './time-format.ts'
 import { resolveBodyMentions } from './mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
+import type { AgentTeamRepliedThread } from './turn-threads.ts'
 
 /** Stable Human Member identity shared by every replay of one dshHome Team. */
 export const AGENT_TEAM_HUMAN_MEMBER_ID = 'member:human' as AgentTeamMemberId
@@ -1844,6 +1845,25 @@ export class AgentTeamLedger {
   /** The folded stats row for one Session, or undefined before its first recorded Turn. */
   sessionRun(sessionId: SessionId): AgentTeamSessionRun | undefined {
     return this.state.sessionRuns.get(sessionId)
+  }
+
+  /**
+   * This Member's committed operations that name a Thread, inside [startSequence, endSequence].
+   * The host's replied list for one Turn window (turn-threads.ts). Walks back from the head, so
+   * the cost is the window, not the whole log.
+   */
+  repliedThreadsBetween(memberId: AgentTeamMemberId, startSequence: number, endSequence: number): readonly AgentTeamRepliedThread[] {
+    const replied: AgentTeamRepliedThread[] = []
+    for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
+      const operation = this.state.ordered[index]!
+      if (operation.sequence > endSequence) continue
+      if (operation.sequence < startSequence) break
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== memberId) continue
+      if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
+        replied.push(Object.freeze({ sequence: operation.sequence, threadRef: operation.data.message.threadRef }))
+      }
+    }
+    return Object.freeze(replied)
   }
 
   /**

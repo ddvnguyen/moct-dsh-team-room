@@ -45,6 +45,7 @@ import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName,
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
+import { AgentTeamTurnRecorder } from './turn-recorder.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { MoctOperationsTable } from './moct-table.ts'
 import { formatTeamTimestamp } from './time-format.ts'
@@ -581,6 +582,10 @@ export default class AgentTeam extends TypertRemoteService {
    * unit owns intent, and this coordinator owns only reconstructible process
    * state. See docs/architecture/README.md and docs/team-collaboration/README.md.
    */
+  /** Records each completed Turn with its Threads (contract §3.2). Reads the ledger lazily, so it can exist before the ledger does. */
+  private readonly turnRecorder = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
+    this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
+  })
   private readonly contextManagement = createTeamContextManagement({
     agentForMember: memberId => this.handles.get(memberId)?.agent,
     memberForAgent: agent => this.memberForAgent(agent),
@@ -884,6 +889,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (memberId === undefined) return
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
+      this.turnRecorder.onSessionEvent(memberId, session.id, event)
       // A successful assistant response ends any open provider-overflow
       // recovery sequence for this Member.
       if (event.type === 'assistant/message') this.pressurePolicy.onAssistantMessage(memberId)
@@ -3523,6 +3529,7 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     const notifications = this.requireLedger().notificationFacts(member.memberId)
+    this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
     const scope = this.memberScope(member.memberId, agent.id)
     const causeText = this.notificationCauseText(cause)
     if (notifications.length === 0) {
