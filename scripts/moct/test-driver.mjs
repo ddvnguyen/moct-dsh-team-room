@@ -235,14 +235,156 @@ async function runA3() {
   check('local ledger row count unchanged by the outage and the retry', localOperationCount() === localBefore, { localBefore, local: localOperationCount() })
 }
 
+/** Wait until the seat's reply stat count grows past `before`; returns the newest Turn's stat. */
+async function waitForReply(threadRef, memberId, before, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const stats = await rpc('agentTeam/threadReplyStats', { workspaceId: WORKSPACE, threadRef })
+    const mine = stats.filter(stat => stat.memberId === memberId && stat.isLastOfTurn)
+    if (mine.length > before) return mine[mine.length - 1]
+    if (Date.now() > deadline) throw new Error(`no reply from seat within ${timeoutMs} ms`)
+    await sleep(3_000)
+  }
+}
+
+/** The seat's home Session and its runs, read through memberSessions. */
+async function seatSessions(memberId) {
+  return rpc('agentTeam/memberSessions', { workspaceId: WORKSPACE, memberId })
+}
+
+/** Tokens a Turn spent, from its recorded usage (null buckets stay null). */
+function turnTokens(stat) {
+  const usage = stat.turn.usage
+  return {
+    uncachedInputTokens: usage.uncachedInputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    outputTokens: usage.outputTokens,
+  }
+}
+
+/** Committed MOCT ops with their kind and payload, for the session-bound check. */
+async function mocOpsDetailed() {
+  const out = []
+  let after = 0
+  for (;;) {
+    const res = await fetch(`${MOCT}/team/v1/operations?workspaceId=${MOCT_WORKSPACE}&afterSequence=${after}`)
+    if (!res.ok) throw new Error(`moct ops: HTTP ${res.status}`)
+    const page = await res.json()
+    out.push(...page.operations)
+    if (!page.hasMore) break
+    after = page.nextAfterSequence
+  }
+  return out
+}
+
+/**
+ * A5: cold-cache detection on a real model. Warm resume inside the TTL keeps the Session;
+ * a resume after the TTL seeds a new Session and binds the Thread with reason cold-restart.
+ * Pass/fail is read from the MOCT op log and the per-Turn usage, not from this report.
+ */
+async function runA5() {
+  const model = process.env.DRIVER_A5_MODEL ?? 'opencode-go/deepseek-v4-flash'
+  const [provider, modelId] = model.split('/')
+  const presetId = process.env.DRIVER_A5_PRESET ?? 'team-member'
+  const ttlSeconds = Number(process.env.DRIVER_A5_TTL_SECONDS ?? 300)
+  const handle = `a5-${RUN}`
+  const channel = await rpc('agentTeam/createChannel', {
+    requestId: requestId('channel'),
+    workspaceId: WORKSPACE,
+    name: `driver-a5-${RUN}`,
+    description: 'TEST-1 A5 driver run channel',
+  })
+  const channelRef = channel.channel.channelRef
+  const added = await rpc('agentTeam/addMember', {
+    requestId: requestId('add-seat'),
+    workspaceId: WORKSPACE,
+    handle,
+    description: 'A5 cache probe seat',
+    presetId,
+    model: { provider, model: modelId },
+    channelRefs: [channelRef],
+  })
+  const memberId = added.status.member.memberId
+  const sessionFirst = added.status.member.sessionId
+  log('seat', { handle, memberId, presetId, model, sessionFirst, ttlSeconds })
+
+  const opening = await rpc('agentTeam/sendMessage', {
+    requestId: requestId('open'),
+    workspaceId: WORKSPACE,
+    channelRef,
+    body: `@${handle} Reply with the single word "one".`,
+  })
+  const threadRef = opening.message.threadRef
+
+  // Turn 1: a real model run on a fresh Session.
+  const turn1 = await waitForReply(threadRef, memberId, 0, 240_000)
+  const after1 = await seatSessions(memberId)
+  check('turn 1 recorded usage', turn1.turn.usage !== null, turnTokens(turn1))
+  check('turn 1 ran on the seat\'s first Session', after1.current === sessionFirst, { current: after1.current, sessionFirst })
+
+  // Warm: within the TTL, resumeMemberSession must resume the same Session.
+  const warm = await rpc('agentTeam/resumeMemberSession', {
+    requestId: requestId('resume-warm'),
+    workspaceId: WORKSPACE,
+    memberId,
+    sessionId: sessionFirst,
+    threadRef,
+  })
+  check('warm resume inside the TTL returns resumed with the same sessionId', warm.action === 'resumed' && warm.sessionId === sessionFirst, warm)
+  const turn2 = await waitForReply(threadRef, memberId, 1, 240_000)
+  check('turn 2 (warm) recorded usage', turn2.turn.usage !== null, turnTokens(turn2))
+
+  // Cold: wait until the last assistant turn is older than the TTL, then resume.
+  const lastAssistant = (await seatSessions(memberId)).runs.find(run => run.sessionId === sessionFirst)?.lastAssistantAt
+  const dueAt = Date.parse(lastAssistant) + ttlSeconds * 1000 + 5_000
+  const waitMs = dueAt - Date.now()
+  log('wait', { phase: 'idle-past-ttl', lastAssistantAt: lastAssistant, waitMs })
+  if (waitMs > 0) await sleep(waitMs)
+
+  const coldRequestId = requestId('resume-cold')
+  const cold = await rpc('agentTeam/resumeMemberSession', {
+    requestId: coldRequestId,
+    workspaceId: WORKSPACE,
+    memberId,
+    sessionId: sessionFirst,
+    threadRef,
+  })
+  check('cold resume after the TTL returns seeded-new', cold.action === 'seeded-new' && cold.cache === 'cold', cold)
+  check('cold resume issues a different sessionId', cold.sessionId !== sessionFirst, { before: sessionFirst, after: cold.sessionId })
+
+  const ops = await mocOpsDetailed()
+  const bind = ops.filter(op => op.kind === 'team/thread-session-bound' && op.requestId === `${coldRequestId}:bind`)
+  check('MOCT log has a team/thread-session-bound op with reason cold-restart', bind.length === 1 && JSON.stringify(bind[0]).includes('cold-restart'), { ops: bind.map(op => ({ sequence: op.sequence, requestId: op.requestId })) })
+
+  const sessionsAfterCold = await seatSessions(memberId)
+  check('old Session run stays readable through memberSessions', sessionsAfterCold.runs.some(run => run.sessionId === sessionFirst), { runs: sessionsAfterCold.runs.map(run => run.sessionId) })
+  check('seat now points at the new Session', sessionsAfterCold.current === cold.sessionId, { current: sessionsAfterCold.current, expected: cold.sessionId })
+
+  // Extra cross-check on the cache buckets, reported alongside the verdict and never in place of it.
+  const turn3 = await waitForReply(threadRef, memberId, 2, 240_000)
+  check('turn 3 (after cold) recorded usage', turn3.turn.usage !== null, turnTokens(turn3))
+
+  const headAfter = await mocHead()
+  const opsAfter = await mocOps()
+  const counts = new Map()
+  for (const op of opsAfter) counts.set(op.requestId, (counts.get(op.requestId) ?? 0) + 1)
+  check('exactly one MOCT op per requestId', [...counts.values()].every(n => n === 1))
+  check('MOCT head equals the last sequence', headAfter === opsAfter[opsAfter.length - 1]?.sequence, { headAfter })
+
+  const tokens = [turn1, turn2, turn3].map(turnTokens)
+  log('tokens', { phase: 'a5', turns: tokens, ttlSeconds, model })
+}
+
 async function main() {
   const phase = process.argv[2]
-  if (!['a2', 'a3'].includes(phase)) throw new Error('usage: test-driver.mjs a2|a3')
+  if (!['a2', 'a3', 'a5'].includes(phase)) throw new Error('usage: test-driver.mjs a2|a3|a5')
   if (WORKSPACE === undefined || WORKSPACE === '' || WORKSPACE.includes('eda6b45f')) {
     throw new Error('DRIVER_WORKSPACE must name a TEST-only dsh workspace, not the Team workspace eda6b45f-')
   }
   if (phase === 'a2') await runA2()
-  else await runA3()
+  else if (phase === 'a3') await runA3()
+  else await runA5()
   const failed = verdicts.filter(v => !v.pass)
   log('verdict', { phase, run: RUN, checks: verdicts.length, failed: failed.map(v => v.name), result: failed.length === 0 ? 'PASS' : 'FAIL' })
   process.exitCode = failed.length === 0 ? 0 : 1
