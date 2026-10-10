@@ -548,6 +548,22 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       endSequence: z.number().int().positive().optional(),
     }).strict(),
   }).strict(),
+  // TEST-2 only (contract §6.0 rollback rule). A Turn that ended in error on one Thread: a diagnostic
+  // notice. No unread fact, no wake, no mention, and not a reply, so no fold of message-sent sees it.
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/turn-failure-notice'),
+    data: z.object({
+      requestId: requestIdSchema,
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      memberId: memberIdSchema,
+      sessionId: sessionIdSchema,
+      turn: z.number().int().nonnegative(),
+      reason: z.string().min(1).max(200),
+    }).strict(),
+  }).strict(),
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),

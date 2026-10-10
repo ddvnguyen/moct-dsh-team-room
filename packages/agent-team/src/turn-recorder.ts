@@ -36,6 +36,24 @@ export function sessionTurnRequestId(sessionId: SessionId, turn: number): AgentT
   return `turn:${sessionId}:${turn}` as AgentTeamRequestId
 }
 
+/** The deterministic request id of one errored Turn's notice on one Thread (contract §6.0). */
+export function turnFailureNoticeRequestId(sessionId: SessionId, turn: number, threadRef: AgentTeamThreadRef): AgentTeamRequestId {
+  return `turn-failed:${sessionId}:${turn}:${threadRef}` as AgentTeamRequestId
+}
+
+/**
+ * The notice's reason: the first line of the error, at most 200 characters, with no mention
+ * (`@` removed), no URL and no key-like value. Nothing else of the error leaves the Turn.
+ */
+export function turnFailureReason(message: string): string {
+  const firstLine = (message.split('\n')[0] ?? '').trim()
+    .replaceAll('@', '')
+    .replace(/https?:\/\/\S+/gi, '[url]')
+    .replace(/\b(api[_-]?key|token|secret|authorization|password)\b\s*[:=]\s*\S+/gi, '$1=[redacted]')
+  const bounded = firstLine.length <= 200 ? firstLine : `${firstLine.slice(0, 199)}…`
+  return bounded === '' ? 'Turn ended in error' : bounded
+}
+
 export class AgentTeamTurnRecorder {
   private readonly open = new Map<AgentTeamMemberId, OpenTurn>()
   /** Threads delivered to a Member before its next Turn starts; they belong to that Turn. */
@@ -85,6 +103,14 @@ export class AgentTeamTurnRecorder {
     turn.events.push(event)
     if (event.type !== 'turn/end') return
     this.open.delete(memberId)
+    // An errored Turn is noted on its delivered Threads, not recorded: it has no provable usage (contract §6.0).
+    // The event path never throws: a turn/end without a reason is treated as not errored.
+    if (event.data.reason?.kind === 'error') {
+      this.noteFailure(memberId, turn, event.data.reason.error.message).catch(error => {
+        this.onError(`agent-team: turn failure notice for '${memberId}' failed`, error)
+      })
+      return
+    }
     this.record(memberId, turn).catch(error => {
       this.failedWrites += 1
       this.onError(`agent-team: Turn record for '${memberId}' failed (${this.failedWrites} unrecorded so far)`, error)
@@ -97,6 +123,30 @@ export class AgentTeamTurnRecorder {
     const created = new Set<AgentTeamThreadRef>()
     this.pending.set(memberId, created)
     return created
+  }
+
+  /**
+   * One audit notice per delivered Thread, each under its own requestId, so a re-delivery of the same
+   * Turn resolves to the notice already committed. Nothing is retried: a failed write is reported once.
+   */
+  private async noteFailure(memberId: AgentTeamMemberId, turn: OpenTurn, message: string): Promise<void> {
+    const start = turn.events.find((event): event is SessionEvent<'turn/start'> => event.type === 'turn/start')
+    if (start === undefined) return
+    const ledger = this.ledger()
+    const member = ledger.getMember(memberId)
+    const workspaceId = ledger.workspacesOf(memberId)[0]
+    if (member === undefined || workspaceId === undefined) return
+    const reason = turnFailureReason(message)
+    // One Thread's failed write must not stop the others, so each write reports on its own.
+    for (const threadRef of turn.delivered) {
+      await ledger.recordTurnFailureNotice({
+        requestId: turnFailureNoticeRequestId(turn.sessionId, start.data.turn, threadRef),
+        workspaceId, threadRef, memberId, sessionId: turn.sessionId, turn: start.data.turn, reason,
+        actor: { kind: 'member', memberId, handle: member.handle },
+      }).catch(error => {
+        this.onError(`agent-team: turn failure notice for '${memberId}' on '${threadRef}' failed`, error)
+      })
+    }
   }
 
   private async record(memberId: AgentTeamMemberId, turn: OpenTurn): Promise<void> {

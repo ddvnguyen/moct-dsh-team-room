@@ -460,6 +460,17 @@ const sessionTurnRecorded: Op<'team/session-turn-recorded'> = {
   },
 }
 
+// TEST-2 only (contract §6.0): fc28cd8 does not know this kind; see the rollback rule before shipping it.
+const turnFailureNotice: Op<'team/turn-failure-notice'> = {
+  ...opBase('operation:protocol-30', 'turn-failed:session:protocol-thread:1:protocol-thread', 30, memberActor),
+  previousOperationId,
+  kind: 'team/turn-failure-notice',
+  data: {
+    requestId: 'turn-failed:session:protocol-thread:1:protocol-thread' as AgentTeamRequestId, workspaceId: threadRead.data.workspaceId, threadRef: memberThread,
+    memberId, sessionId: SessionId('session:protocol-thread'), turn: 1, reason: 'provider returned 503',
+  },
+}
+
 const threadSummaryCommitted: Op<'team/thread-summary-committed'> = {
   ...opBase('operation:protocol-29', 'request:protocol-thread-summary', 29, memberActor),
   previousOperationId,
@@ -1169,6 +1180,26 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
         runMs: 5000,
         usage: sessionTurnRecorded.data.usage,
         actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
+  },
+  'team/turn-failure-notice': {
+    stored: turnFailureNotice,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.recordTurnFailureNotice({
+          requestId: turnFailureNotice.requestId, workspaceId: turnFailureNotice.data.workspaceId, threadRef: memberThread, memberId,
+          sessionId: turnFailureNotice.data.sessionId, turn: 1, reason: turnFailureNotice.data.reason, actor: memberActor,
+        })
+        expect(out.value.operationId, 'the failure notice answers with its stored receipt').toBe(turnFailureNotice.operationId)
+        return out
+      },
+      changed: () => ledger.recordTurnFailureNotice({
+        requestId: turnFailureNotice.requestId, workspaceId: turnFailureNotice.data.workspaceId, threadRef: memberThread, memberId,
+        sessionId: turnFailureNotice.data.sessionId, turn: 1, reason: 'changed', actor: memberActor,
       }),
     },
     legacy: { normalize: 'none', repair: 'none' },

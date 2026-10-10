@@ -118,6 +118,8 @@ import type {
   AgentTeamThreadReplyStat,
   AgentTeamThreadSessionRuns,
   AgentTeamSessionTurnRecordedOperation,
+  AgentTeamTurnFailureNoticeData,
+  AgentTeamTurnFailureNoticeOperation,
   AgentTeamThreadSummaryCommittedData,
   AgentTeamThreadSummaryCommittedOperation,
   AgentTeamSessionTurnUsage,
@@ -203,6 +205,18 @@ export interface AgentTeamCommitThreadSummaryRequest {
   readonly transcriptTokens: number
   readonly model: { readonly provider: string; readonly model: string }
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number } | null
+}
+
+/** A Turn that ended in error on one delivered Thread (contract §6.0). The Member is the only author. */
+export interface AgentTeamRecordTurnFailureNoticeRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly turn: number
+  readonly reason: string
+  readonly actor: AgentTeamMemberActor
 }
 
 export interface AgentTeamRecordSessionTurnRequest {
@@ -1869,6 +1883,42 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * Note one errored Turn on one Thread (contract §6.0, TEST-2 only). Audit-only by construction: it
+   * creates no unread fact, wakes nobody, and changes no projection a reader folds. A retry with the
+   * same requestId resolves to the committed notice; the same requestId with other data collides.
+   */
+  recordTurnFailureNotice(request: AgentTeamRecordTurnFailureNoticeRequest): Promise<AgentTeamLedgerResult<AgentTeamOperationReceipt>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/turn-failure-notice' || existing.data.threadRef !== request.threadRef || existing.data.sessionId !== request.sessionId
+          || existing.data.turn !== request.turn || existing.data.reason !== request.reason) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.receipt(existing))
+      }
+      if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Turn failure notice requires the Member\'s own authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      this.requireMember(request.memberId)
+      const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
+      const data: AgentTeamTurnFailureNoticeData = Object.freeze({
+        requestId: request.requestId, workspaceId: request.workspaceId, threadRef: request.threadRef, memberId: request.memberId,
+        sessionId: request.sessionId, turn: request.turn, reason: request.reason,
+      })
+      const operation: AgentTeamTurnFailureNoticeOperation = Object.freeze({ ...base, kind: 'team/turn-failure-notice', data })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.receipt(operation))
+    })
+  }
+
+  /** The failure notices a Thread carries, in ledger order (contract §6.0). Read-only; no wake, no receipt. */
+  turnFailureNotices(threadRef: AgentTeamThreadRef): readonly AgentTeamTurnFailureNoticeOperation[] {
+    return Object.freeze(this.state.ordered.filter((operation): operation is AgentTeamTurnFailureNoticeOperation =>
+      operation.kind === 'team/turn-failure-notice' && operation.data.threadRef === threadRef))
+  }
+
   /** The receipt of the recorded Turn, plus the Session's folded row when this projection holds it. */
   /**
    * Commit one Thread summary. The generation is assigned here (prior + 1), and coverage must move
@@ -2470,6 +2520,7 @@ export class AgentTeamLedger {
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-session-bound':
       case 'team/session-turn-recorded':
+      case 'team/turn-failure-notice':
       case 'team/thread-summary-committed':
       case 'team/thread-read':
         // A read advances only the reader's private watermark; no projection
@@ -2538,6 +2589,7 @@ export class AgentTeamLedger {
       case 'team/channel-member-added':
       case 'team/thread-session-bound':
       case 'team/session-turn-recorded':
+      case 'team/turn-failure-notice':
       case 'team/thread-summary-committed':
       case 'team/thread-read':
       case 'team/dm-sent':
@@ -2795,6 +2847,15 @@ export class AgentTeamLedger {
       if (operation.data.threadRefs.some(threadRef => !projection.threads.has(threadRef))) throw new Error('Session turn names an unknown Thread')
       if (!projection.members.has(operation.data.memberId)) throw new Error('Session turn names an unknown Member')
       if (projection.sessionTurns.has(sessionTurnKey(operation.data.sessionId, operation.data.turn))) throw new Error('Session turn duplicates an already-recorded Turn')
+      return
+    }
+    if (operation.kind === 'team/turn-failure-notice') {
+      // Self-scoped: a Member notes only its own errored Turns.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the Member's own authority`)
+      }
+      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Turn failure notice names an unknown Thread')
+      if (!projection.members.has(operation.data.memberId)) throw new Error('Turn failure notice names an unknown Member')
       return
     }
     if (operation.kind === 'team/thread-summary-committed') {
@@ -3374,6 +3435,10 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/session-turn-recorded') {
       target.sessionRuns.set(operation.data.sessionId, foldSessionTurn(target.sessionRuns.get(operation.data.sessionId), operation.data))
       target.sessionTurns.set(sessionTurnKey(operation.data.sessionId, operation.data.turn), operation)
+      return
+    }
+    if (operation.kind === 'team/turn-failure-notice') {
+      // Audit-only: the notice is read back from the ledger, not folded into a projection.
       return
     }
     if (operation.kind === 'team/thread-summary-committed') {

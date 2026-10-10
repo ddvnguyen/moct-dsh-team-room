@@ -20,6 +20,7 @@ import { completeTurnEvents } from './helpers/turn-events.ts'
 import { snapshotReadData, receiptReadData } from './helpers/legacy-thread-read.ts'
 import AgentTeam, { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor, isThreadReadSnapshot } from '../src/ledger.ts'
+import { turnFailureNoticeRequestId } from '../src/turn-recorder.ts'
 import { agentTeamDomainSpec } from '../src/spec.ts'
 import { SUMMARY_OUTPUT_TOKEN_CAP } from '../src/thread-summary.ts'
 import type { ThreadSummaryModelCall } from '../src/thread-summary-model.ts'
@@ -269,6 +270,64 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     // A window that ends two or more before it starts is a derivation bug, and the ledger refuses it.
     await expect(ledger.recordSessionTurn(turn(2, 20, 18))).rejects.toThrow(/window ends before it starts/)
     expect(ledger.sessionRun(SessionId('session:window'))).toMatchObject({ turns: 1 })
+  })
+
+  // TEST-2 only (contract §6.0): a failure notice is audit-only, so it must change no unread fact, wake, reply or stats row.
+  it('a turn failure notice is audit-only: no unread, no wake, no reply, no stats row, and it replays through this fold', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('notice-channel'), workspaceId: alpha, name: 'notice', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('notice-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Notice', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const before = {
+      facts: ledger.notificationFacts(member.memberId),
+      replied: ledger.repliedThreadsBetween(member.memberId, 0, ledger.projectionSequence()),
+      stats: ledger.threadReplyStats(threadRef),
+      projection: ledger.projectionSequence(),
+    }
+    const notice = {
+      requestId: turnFailureNoticeRequestId(SessionId('session:notice'), 1, threadRef), workspaceId: alpha, threadRef, memberId: member.memberId,
+      sessionId: SessionId('session:notice'), turn: 1, reason: 'provider returned 503', actor,
+    }
+    expect((await ledger.recordTurnFailureNotice(notice)).committed).toBe(true)
+    // The notice is durable and ordered, but no unread fact, inbox entry, reply or stats row changes.
+    expect(ledger.turnFailureNotices(threadRef)).toHaveLength(1)
+    expect(ledger.turnFailureNotices(threadRef)[0]!.sequence).toBeGreaterThan(sent.message.sequence)
+    expect(ledger.notificationFacts(member.memberId)).toEqual(before.facts)
+    expect(ledger.repliedThreadsBetween(member.memberId, 0, ledger.projectionSequence())).toEqual(before.replied)
+    expect(ledger.threadReplyStats(threadRef)).toEqual(before.stats)
+    expect(ledger.projectionSequence()).toBe(before.projection)
+    // Replay the stored log through this branch's schema and fold: the notice parses, and every projection a reader folds is unchanged.
+    const replayed = replayLedger(test)
+    expect(replayed.turnFailureNotices(threadRef)).toHaveLength(1)
+    expect(replayed.notificationFacts(member.memberId)).toEqual(before.facts)
+    expect(replayed.threadReplyStats(threadRef)).toEqual(before.stats)
+    expect(replayed.projectionSequence()).toBe(before.projection)
+  })
+
+  it('a re-delivered turn failure notice resolves to the committed one, and a changed reason collides', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('redeliver-channel'), workspaceId: alpha, name: 'redeliver', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('redeliver-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Again', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const notice = {
+      requestId: turnFailureNoticeRequestId(SessionId('session:redeliver'), 2, threadRef), workspaceId: alpha, threadRef, memberId: member.memberId,
+      sessionId: SessionId('session:redeliver'), turn: 2, reason: 'provider returned 503', actor,
+    }
+    const first = await ledger.recordTurnFailureNotice(notice)
+    const again = await ledger.recordTurnFailureNotice(notice)
+    expect(first.committed).toBe(true)
+    expect(again.committed).toBe(false)
+    expect(again.value.operationId).toBe(first.value.operationId)
+    expect(ledger.turnFailureNotices(threadRef)).toHaveLength(1)
+    await expect(ledger.recordTurnFailureNotice({ ...notice, reason: 'a different error' })).rejects.toThrow()
   })
 
   it('withdraws only the target Workspace and rejects subsequent work there', async () => {

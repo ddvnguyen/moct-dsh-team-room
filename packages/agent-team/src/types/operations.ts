@@ -12,6 +12,7 @@ import type {
   AgentTeamInboxDelta,
   AgentTeamMemberId,
   AgentTeamMessage,
+  AgentTeamRequestId,
   AgentTeamStoredMessage,
   AgentTeamStoredThreadReadFact,
   AgentTeamTask,
@@ -505,6 +506,26 @@ export interface AgentTeamSessionTurnRecordedOperation extends AgentTeamOperatio
   readonly data: AgentTeamSessionTurnRecordedData
 }
 
+/**
+ * A Turn that ended in error, noted on one Thread it was delivered to. TEST-2 only: `fc28cd8` does
+ * not know this kind and refuses to open a log that holds it (contract §6.0 rollback rule).
+ */
+export interface AgentTeamTurnFailureNoticeData {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly turn: number
+  /** Short, first line only, at most 200 characters; no stack, prompt text or keys. */
+  readonly reason: string
+}
+
+export interface AgentTeamTurnFailureNoticeOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/turn-failure-notice'
+  readonly data: AgentTeamTurnFailureNoticeData
+}
+
 /** One committed Thread summary (contract §3.3). Generation N+1 follows N; the ledger assigns it. */
 export interface AgentTeamThreadSummaryCommittedData {
   readonly workspaceId: WorkspaceId
@@ -572,6 +593,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberSessionRolledOverOperation
   | AgentTeamThreadSessionBoundOperation
   | AgentTeamSessionTurnRecordedOperation
+  | AgentTeamTurnFailureNoticeOperation
   | AgentTeamThreadSummaryCommittedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
