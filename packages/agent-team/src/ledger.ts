@@ -218,7 +218,7 @@ export interface AgentTeamSessionTurnResult {
 /** One seat's Session runs in one Thread (contract §4 threadSessions). */
 export interface AgentTeamThreadSessionRuns {
   readonly memberId: AgentTeamMemberId
-  readonly active: AgentTeamSessionRun | undefined
+  readonly active: AgentTeamSessionRun | null
   readonly history: readonly AgentTeamSessionRun[]
 }
 
@@ -1898,7 +1898,7 @@ export class AgentTeamLedger {
       const sessionIds = [...new Set(bindings.map(binding => binding.sessionId))]
       const history = sessionIds.map(sessionId => this.state.sessionRuns.get(sessionId)).filter((run): run is AgentTeamSessionRun => run !== undefined)
       const last = bindings.at(-1)
-      return Object.freeze({ memberId, active: last === undefined ? undefined : this.state.sessionRuns.get(last.sessionId), history: Object.freeze(history) })
+      return Object.freeze({ memberId, active: last === undefined ? null : this.state.sessionRuns.get(last.sessionId) ?? null, history: Object.freeze(history) })
     }))
   }
 

@@ -2122,18 +2122,18 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Human's per-Member Session list, newest first, with each Session's folded stats row. */
   @Remote('memberSessions')
-  memberSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId }): { current: SessionId | undefined; runs: readonly AgentTeamSessionRun[] } {
+  memberSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId }): { current: SessionId | null; runs: readonly AgentTeamSessionRun[] } {
     this.requireWorkspace(request.workspaceId)
     const ledger = this.requireLedger()
     if (ledger.getMember(request.memberId) === undefined) throw new Error(`Member '${request.memberId}' is not known to this Team`)
-    return { current: ledger.getMember(request.memberId)?.sessionId, runs: ledger.memberSessionRuns(request.memberId) }
+    return { current: ledger.getMember(request.memberId)?.sessionId ?? null, runs: ledger.memberSessionRuns(request.memberId) }
   }
 
   /** One Session's folded stats row, plus this host's count of Turns it did not record (the sessionStats contract). */
   @Remote('sessionStats')
-  sessionStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; sessionId: SessionId }): { run: AgentTeamSessionRun | undefined; unrecorded: { failed: number; unprovable: number } } {
+  sessionStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; sessionId: SessionId }): { run: AgentTeamSessionRun | null; unrecorded: { failed: number; unprovable: number } } {
     this.requireWorkspace(request.workspaceId)
-    return { run: this.requireLedger().sessionRun(request.sessionId), unrecorded: this.unrecordedTurns() }
+    return { run: this.requireLedger().sessionRun(request.sessionId) ?? null, unrecorded: this.unrecordedTurns() }
   }
 
   /** Per-reply stats for one Thread: only replies inside a recorded Turn window; read-only. */

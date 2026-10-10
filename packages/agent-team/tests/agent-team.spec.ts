@@ -2945,7 +2945,7 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     const ledger = replayLedger(test)
     expect(ledger.threadSessionsOf(threadRef, seatA.memberId)).toEqual([])
     expect(ledger.threadSessionsOf(threadRef, seatB.memberId).map(binding => binding.sessionId)).toEqual(['session:bound-b', 'session:bound-spoof'])
-    expect(host.threadSessions({ workspaceId: alpha, threadRef })).toEqual([{ memberId: seatB.memberId, active: undefined, history: [] }])
+    expect(host.threadSessions({ workspaceId: alpha, threadRef })).toEqual([{ memberId: seatB.memberId, active: null, history: [] }])
     const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
     await expect(host.bindThreadSessionForAgent(stranger, { requestId: requestId('a4-bind-stranger'), workspaceId: alpha, threadRef, sessionId: SessionId('session:stranger'), reason: 'start' })).rejects.toThrow(/not an active Team Member/)
   })
