@@ -3019,17 +3019,20 @@ export default class AgentTeam extends TypertRemoteService {
     // No route to check: absent keeps the stored selection and null clears it.
     if (model === undefined || model === null) return
     // No LLM service means no adapter to check against; the reasoning-effort
-    // branch below already defers in that case, and so does this one.
-    const providers = this.ctx.llm?.listProviders()
+    // branch below already defers in that case, and so does this one. The
+    // service is read with get(), not a bare property: the Host does not inject
+    // 'llm', and a bare read of an undeclared service throws.
+    const llm = this.ctx.get('llm')
+    const providers = llm?.listProviders()
     if (providers !== undefined && !providers.some(provider => provider.id === model.provider)) {
       throw new Error(`provider '${model.provider}' is not registered`)
     }
     // Validate a pinned route's reasoning effort against the adapter's own
     // metadata when the LLM service is reachable; unknown routes defer to the
     // LLM layer's runtime check at call time.
-    if (model.reasoningEffort === undefined) return
+    if (model.reasoningEffort === undefined || llm === undefined) return
     try {
-      const resolved = await this.ctx.llm.resolveModelInfo(model.provider, model.model)
+      const resolved = await llm.resolveModelInfo(model.provider, model.model)
       const efforts = resolved.reasoning?.efforts ?? []
       if (efforts.length > 0 && !efforts.some(effort => effort.id === model.reasoningEffort)) {
         throw new Error(`reasoning effort '${model.reasoningEffort}' is not supported by ${model.provider}/${model.model}`)
