@@ -21,7 +21,10 @@ import { snapshotReadData, receiptReadData } from './helpers/legacy-thread-read.
 import AgentTeam, { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor, isThreadReadSnapshot } from '../src/ledger.ts'
 import { agentTeamDomainSpec } from '../src/spec.ts'
+import { SUMMARY_OUTPUT_TOKEN_CAP } from '../src/thread-summary.ts'
+import type { ThreadSummaryModelCall } from '../src/thread-summary-model.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
+import type { AgentTeamReplyCommittedResult, AgentTeamSendMessageCommittedResult } from '../src/types.ts'
 import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamTask, AgentTeamTaskRef, AgentTeamThreadReadData, AgentTeamThreadReadOperation, AgentTeamThreadReadReceipt, AgentTeamThreadReadResult, AgentTeamThreadRef } from '../src/types.ts'
 
 interface TeamHarness {
@@ -2823,26 +2826,26 @@ describe('AgentTeam sendMessage asTask is explicit (issue #43 #9)', () => {
  * so the event path here asserts the recorder's attribution through the
  * unprovable-usage counter, not through a recorded Turn.
  */
-describe('AgentTeam host seat identity (A4, §4.1)', () => {
-  async function seatedHost() {
-    const test = await harness()
-    const host = test.ctx.agentTeam
-    const channel = await host.createChannel({ requestId: requestId('a4-channel'), workspaceId: alpha, name: 'a4', description: '' })
-    const seatA = (await host.addMember({ requestId: requestId('a4-seat-a'), workspaceId: alpha, handle: 'seat-a', description: 'Seat A', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
-    const seatB = (await host.addMember({ requestId: requestId('a4-seat-b'), workspaceId: alpha, handle: 'seat-b', description: 'Seat B', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
-    // Seat the two Members on live stub agent identities. The host matches by object identity (memberForAgent), so these stand in for live handles without an activation.
-    const seat = (member: AgentTeamAgentMember) => {
-      // A bare session stub: the projection registry folds history on first sight, so it needs an empty log, header and cursor.
-      const session = { id: member.sessionId, header: {}, inheritedEventCount: 0, seq: 0, snapshotEvents: () => [] }
-      const agent = { id: `agent-${member.handle}`, session, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
-      const internals = host as unknown as { handles: Map<unknown, unknown>; memberBySessionId: Map<unknown, unknown> }
-      internals.handles.set(member.memberId, { agent })
-      internals.memberBySessionId.set(member.sessionId, member.memberId)
-      return agent
-    }
-    return { test, host, channelRef: channel.channel.channelRef, seatA, seatB, agentA: seat(seatA), agentB: seat(seatB), seat }
+async function seatedHost() {
+  const test = await harness()
+  const host = test.ctx.agentTeam
+  const channel = await host.createChannel({ requestId: requestId('a4-channel'), workspaceId: alpha, name: 'a4', description: '' })
+  const seatA = (await host.addMember({ requestId: requestId('a4-seat-a'), workspaceId: alpha, handle: 'seat-a', description: 'Seat A', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
+  const seatB = (await host.addMember({ requestId: requestId('a4-seat-b'), workspaceId: alpha, handle: 'seat-b', description: 'Seat B', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
+  // Seat the two Members on live stub agent identities. The host matches by object identity (memberForAgent), so these stand in for live handles without an activation.
+  const seat = (member: AgentTeamAgentMember) => {
+    // A bare session stub: the projection registry folds history on first sight, so it needs an empty log, header and cursor.
+    const session = { id: member.sessionId, header: {}, inheritedEventCount: 0, seq: 0, snapshotEvents: () => [] }
+    const agent = { id: `agent-${member.handle}`, session, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+    const internals = host as unknown as { handles: Map<unknown, unknown>; memberBySessionId: Map<unknown, unknown> }
+    internals.handles.set(member.memberId, { agent })
+    internals.memberBySessionId.set(member.sessionId, member.memberId)
+    return agent
   }
+  return { test, host, channelRef: channel.channel.channelRef, seatA, seatB, agentA: seat(seatA), agentB: seat(seatB), seat }
+}
 
+describe('AgentTeam host seat identity (A4, §4.1)', () => {
   it('posts as the calling seat even when the request names another Member', async () => {
     const { test, host, channelRef, seatA, seatB, agentA } = await seatedHost()
     const spoof = { memberId: seatB.memberId, actor: { kind: 'member', memberId: seatB.memberId, handle: seatB.handle } }
@@ -2977,5 +2980,83 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     ;(host as unknown as { handles: Map<unknown, unknown> }).handles.delete(seatB.memberId)
     await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
       .rejects.toThrow(/no live Session to start a fresh context from/)
+  })
+})
+
+describe('AgentTeam thread summary (§3.3)', () => {
+  // A stub model: zero tokens, and every call's input kept for inspection.
+  function stubModel(text: string) {
+    const calls: { system: string; transcript: string; maxTokens: number }[] = []
+    const model = async (call: ThreadSummaryModelCall) => {
+      calls.push({ system: call.input.system, transcript: call.input.transcript, maxTokens: call.maxTokens })
+      return { text, model: call.model, usage: { inputTokens: 0, outputTokens: 0 } }
+    }
+    return { calls, model }
+  }
+
+  it('commits a rolling summary that cites ledger handles, and the RPC reads it back', async () => {
+    const { test, host, channelRef, seatA, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-post-1'), workspaceId: alpha, channelRef, body: 'first decision', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const { message } = sent
+    const stub = stubModel(`Decided: first decision [${message.messageRef}]`)
+    host.configureThreadSummary({ model: stub.model })
+    const summary = await host.runThreadSummary(alpha, message.threadRef, 'rolling')
+    expect(summary).toMatchObject({ generation: 1, trigger: 'rolling', coversThroughSequence: message.sequence, model: { provider: 'opencode-go', model: 'mimo-v2.6-flash' }, usage: { inputTokens: 0, outputTokens: 0 } })
+    expect(stub.calls).toHaveLength(1)
+    expect(stub.calls[0]!.transcript).toContain(`[${message.messageRef}] ${seatA.handle}: first decision`)
+    expect(stub.calls[0]!.maxTokens).toBe(SUMMARY_OUTPUT_TOKEN_CAP)
+    expect(host.threadSummary({ workspaceId: alpha, threadRef: message.threadRef })).toMatchObject({ generation: 1, trigger: 'rolling', text: `Decided: first decision [${message.messageRef}]` })
+    expect(replayLedger(test).latestThreadSummary(message.threadRef)).toMatchObject({ generation: 1, text: `Decided: first decision [${message.messageRef}]` })
+  })
+
+  it('a second summary reads only the Messages after the first, folds the prior text in, and advances the generation', async () => {
+    const { test, host, channelRef, agentA, agentB } = await seatedHost()
+    const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-post-a'), workspaceId: alpha, channelRef, body: 'alpha point', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    host.configureThreadSummary({ model: stubModel('summary one').model })
+    await host.runThreadSummary(alpha, threadRef, 'rolling')
+    const reply = await host.replyForAgent(agentB as never, { requestId: requestId('ts-post-b'), workspaceId: alpha, threadRef, body: 'beta point', baseRevision: first.thread.revision } as never) as AgentTeamReplyCommittedResult
+    const second = { message: reply.message }
+    const stub = stubModel('summary two')
+    host.configureThreadSummary({ model: stub.model })
+    const summary = await host.runThreadSummary(alpha, threadRef, 'rolling')
+    expect(summary).toMatchObject({ generation: 2, coversThroughSequence: second.message.sequence })
+    const [call] = stub.calls
+    expect(call!.transcript).toContain('Prior summary:\nsummary one')
+    expect(call!.transcript).toContain(`[${second.message.messageRef}]`)
+    expect(call!.transcript).not.toContain(`[${first.message.messageRef}]`)
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 2, text: 'summary two' })
+  })
+
+  it('skips input over the cap, logs, and calls no model', async () => {
+    const { host, channelRef, agentA } = await seatedHost()
+    const huge = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-huge'), workspaceId: alpha, channelRef, body: 'x'.repeat(120_000), asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const stub = stubModel('never used')
+    host.configureThreadSummary({ model: stub.model })
+    await expect(host.runThreadSummary(alpha, huge.message.threadRef, 'rolling')).resolves.toBeUndefined()
+    expect(stub.calls).toHaveLength(0)
+    expect(host.threadSummary({ workspaceId: alpha, threadRef: huge.message.threadRef })).toBeNull()
+  })
+
+  it('a failing model call logs, commits nothing, and leaves the send path working', async () => {
+    const { host, channelRef, agentA } = await seatedHost()
+    const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-fail-1'), workspaceId: alpha, channelRef, body: 'before the failure', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    host.configureThreadSummary({ model: async () => { throw new Error('upstream 503') } })
+    await expect(host.runThreadSummary(alpha, threadRef, 'rolling')).resolves.toBeUndefined()
+    expect(host.threadSummary({ workspaceId: alpha, threadRef })).toBeNull()
+    const after = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-fail-2'), workspaceId: alpha, channelRef, body: 'after the failure', asTask: false, threadRef } as never)
+    expect(after).toMatchObject({ kind: 'committed' })
+  })
+
+  it('a threshold crossing schedules one summary off the send path', async () => {
+    const { host, channelRef, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-threshold'), workspaceId: alpha, channelRef, body: 'due now', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = sent.message.threadRef
+    const stub = stubModel('scheduled summary')
+    host.configureThreadSummary({ policy: { everyTokens: 1 }, model: stub.model })
+    ;(host as unknown as { scheduleThreadSummaries(workspaceId: WorkspaceId, threadRefs: readonly AgentTeamThreadRef[]): void }).scheduleThreadSummaries(alpha, [threadRef])
+    await vi.waitFor(() => expect(host.threadSummary({ workspaceId: alpha, threadRef })).toMatchObject({ generation: 1, text: 'scheduled summary' }))
+    expect(stub.calls).toHaveLength(1)
   })
 })

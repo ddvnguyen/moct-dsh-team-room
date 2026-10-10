@@ -16,6 +16,7 @@ import type { AgentTeamLedger } from './ledger.ts'
 import { deriveAgentTeamTurn } from './session-turn-usage.ts'
 import { threadRefsForTurn } from './turn-threads.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { AgentTeamMemberId, AgentTeamRequestId, AgentTeamThreadRef } from './types.ts'
 
 interface OpenTurn {
@@ -54,6 +55,8 @@ export class AgentTeamTurnRecorder {
   constructor(
     private readonly ledger: () => AgentTeamLedger,
     private readonly onError: (message: string, error: unknown) => void,
+    /** Runs after a Turn is committed; it must not throw, since a throw here would count as a failed write. */
+    private readonly onRecorded: (workspaceId: WorkspaceId, threadRefs: readonly AgentTeamThreadRef[]) => void = () => undefined,
   ) {}
 
   /** Threads of Team facts just delivered to a Member: into its open Turn, or held for the next one. */
@@ -127,5 +130,6 @@ export class AgentTeamTurnRecorder {
       endSequence: window.endSequence,
       actor: { kind: 'member', memberId, handle: member.handle },
     })
+    this.onRecorded(workspaceId, threadRefs)
   }
 }

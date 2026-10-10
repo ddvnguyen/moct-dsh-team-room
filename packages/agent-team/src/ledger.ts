@@ -118,6 +118,8 @@ import type {
   AgentTeamThreadReplyStat,
   AgentTeamThreadSessionRuns,
   AgentTeamSessionTurnRecordedOperation,
+  AgentTeamThreadSummaryCommittedData,
+  AgentTeamThreadSummaryCommittedOperation,
   AgentTeamSessionTurnUsage,
   AgentTeamThreadReadReceipt,
   AgentTeamThreadReadRequest,
@@ -190,6 +192,19 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
  * One completed Turn of a Member's own Session. The Member is the only actor.
  * runMs is model plus tool time (llm + tool wall time), not the Turn's wall-clock span.
  */
+export interface AgentTeamCommitThreadSummaryRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+  readonly threadRef: AgentTeamThreadRef
+  readonly trigger: 'rolling' | 'wrapup'
+  readonly text: string
+  readonly coversThroughSequence: number
+  readonly transcriptTokens: number
+  readonly model: { readonly provider: string; readonly model: string }
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number }
+}
+
 export interface AgentTeamRecordSessionTurnRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -214,6 +229,11 @@ export interface AgentTeamRecordSessionTurnRequest {
 export interface AgentTeamSessionTurnResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly run: AgentTeamSessionRun | undefined
+}
+
+export interface AgentTeamThreadSummaryResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly summary: AgentTeamThreadSummaryCommittedData
 }
 
 /** A committed or resolved seat binding: its receipt, and the binding itself. */
@@ -448,6 +468,8 @@ interface Projection {
   readonly sessionRuns: Map<SessionId, AgentTeamSessionRun>
   /** The recorded Turn per (sessionId, turn); a second record for the same key is a duplicate fold and is rejected. */
   readonly sessionTurns: Map<string, AgentTeamSessionTurnRecordedOperation>
+  /** Committed Thread summaries per Thread, oldest first; the last entry is the current summary (contract §3.3). */
+  readonly threadSummaries: Map<AgentTeamThreadRef, AgentTeamThreadSummaryCommittedOperation[]>
   /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
   readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
   /** Top-level anchor Message per Thread; the first topLevel Message wins, like the linear scan it replaces. */
@@ -513,7 +535,7 @@ function emptyProjection(): Projection {
     claims: new Map(), tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], claimsByTask: new Map(), factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     messagesByRef: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), sessionRuns: new Map(), sessionTurns: new Map(), rolloverSeeds: new Map(),
+    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), sessionRuns: new Map(), sessionTurns: new Map(), threadSummaries: new Map(), rolloverSeeds: new Map(),
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
@@ -1844,6 +1866,60 @@ export class AgentTeamLedger {
   }
 
   /** The receipt of the recorded Turn, plus the Session's folded row when this projection holds it. */
+  /**
+   * Commit one Thread summary. The generation is assigned here (prior + 1), and coverage must move
+   * forward and stay within the ledger. A retry with the same requestId resolves to the committed summary.
+   */
+  commitThreadSummary(request: AgentTeamCommitThreadSummaryRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadSummaryResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/thread-summary-committed' || existing.data.threadRef !== request.threadRef
+          || existing.data.coversThroughSequence !== request.coversThroughSequence || existing.data.text !== request.text) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.threadSummaryResult(existing))
+      }
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      const prior = this.state.threadSummaries.get(request.threadRef)?.at(-1)?.data
+      if (prior !== undefined && request.coversThroughSequence <= prior.coversThroughSequence) {
+        throw new Error(`Thread '${request.threadRef}' already has a summary covering through sequence ${prior.coversThroughSequence}`)
+      }
+      if (request.coversThroughSequence > this.projectionSequence()) throw new Error('Thread summary covers a sequence the ledger has not reached')
+      const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
+      const data: AgentTeamThreadSummaryCommittedData = Object.freeze({
+        workspaceId: request.workspaceId, threadRef: request.threadRef, generation: (prior?.generation ?? 0) + 1, trigger: request.trigger, text: request.text,
+        coversThroughSequence: request.coversThroughSequence, transcriptTokens: request.transcriptTokens,
+        model: Object.freeze({ ...request.model }), usage: Object.freeze({ ...request.usage }), at: base.occurredAt,
+      })
+      const operation: AgentTeamThreadSummaryCommittedOperation = Object.freeze({ ...base, kind: 'team/thread-summary-committed', data })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.threadSummaryResult(operation))
+    })
+  }
+
+  private threadSummaryResult(operation: AgentTeamThreadSummaryCommittedOperation): AgentTeamThreadSummaryResult {
+    return Object.freeze({ receipt: this.receipt(operation), summary: operation.data })
+  }
+
+  /** The current Thread summary, or undefined before the first commit. */
+  latestThreadSummary(threadRef: AgentTeamThreadRef): AgentTeamThreadSummaryCommittedData | undefined {
+    return this.state.threadSummaries.get(threadRef)?.at(-1)?.data
+  }
+
+  /** Thread Messages committed after a sequence, oldest first: the input a summary has not yet read. */
+  threadMessagesAfter(threadRef: AgentTeamThreadRef, sequence: number): readonly AgentTeamMessage[] {
+    return [...this.state.messagesByRef.values()].filter(message => message.threadRef === threadRef && message.sequence > sequence).sort((left, right) => left.sequence - right.sequence)
+  }
+
+  /** Recorded Turns that named this Thread and were committed after a sequence: the count a rolling trigger reads. */
+  recordedTurnsNamingThreadAfter(threadRef: AgentTeamThreadRef, sequence: number): number {
+    let count = 0
+    for (const turn of this.state.sessionTurns.values()) if (turn.sequence > sequence && turn.data.threadRefs.includes(threadRef)) count += 1
+    return count
+  }
+
   private sessionTurnResult(operation: AgentTeamSessionTurnRecordedOperation): AgentTeamSessionTurnResult {
     return Object.freeze({ receipt: this.receipt(operation), run: this.state.sessionRuns.get(operation.data.sessionId) })
   }
@@ -2390,6 +2466,7 @@ export class AgentTeamLedger {
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-session-bound':
       case 'team/session-turn-recorded':
+      case 'team/thread-summary-committed':
       case 'team/thread-read':
         // A read advances only the reader's private watermark; no projection
         // visible to other participants changes, so nobody is woken.
@@ -2457,6 +2534,7 @@ export class AgentTeamLedger {
       case 'team/channel-member-added':
       case 'team/thread-session-bound':
       case 'team/session-turn-recorded':
+      case 'team/thread-summary-committed':
       case 'team/thread-read':
       case 'team/dm-sent':
         return []
@@ -2713,6 +2791,14 @@ export class AgentTeamLedger {
       if (operation.data.threadRefs.some(threadRef => !projection.threads.has(threadRef))) throw new Error('Session turn names an unknown Thread')
       if (!projection.members.has(operation.data.memberId)) throw new Error('Session turn names an unknown Member')
       if (projection.sessionTurns.has(sessionTurnKey(operation.data.sessionId, operation.data.turn))) throw new Error('Session turn duplicates an already-recorded Turn')
+      return
+    }
+    if (operation.kind === 'team/thread-summary-committed') {
+      const { threadRef, generation, coversThroughSequence } = operation.data
+      if (!projection.threads.has(threadRef)) throw new Error('Thread summary names an unknown Thread')
+      const prior = projection.threadSummaries.get(threadRef)?.at(-1)?.data
+      if (generation !== (prior?.generation ?? 0) + 1) throw new Error('Thread summary generation does not follow its predecessor')
+      if (coversThroughSequence <= (prior?.coversThroughSequence ?? 0) || coversThroughSequence >= operation.sequence) throw new Error('Thread summary coverage is not monotonic')
       return
     }
     if (operation.kind === 'team/thread-session-bound') {
@@ -3284,6 +3370,10 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/session-turn-recorded') {
       target.sessionRuns.set(operation.data.sessionId, foldSessionTurn(target.sessionRuns.get(operation.data.sessionId), operation.data))
       target.sessionTurns.set(sessionTurnKey(operation.data.sessionId, operation.data.turn), operation)
+      return
+    }
+    if (operation.kind === 'team/thread-summary-committed') {
+      target.threadSummaries.set(operation.data.threadRef, [...(target.threadSummaries.get(operation.data.threadRef) ?? []), operation])
       return
     }
     if (operation.kind === 'team/thread-session-bound') {

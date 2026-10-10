@@ -460,6 +460,17 @@ const sessionTurnRecorded: Op<'team/session-turn-recorded'> = {
   },
 }
 
+const threadSummaryCommitted: Op<'team/thread-summary-committed'> = {
+  ...opBase('operation:protocol-29', 'request:protocol-thread-summary', 29, memberActor),
+  previousOperationId,
+  kind: 'team/thread-summary-committed',
+  data: {
+    workspaceId: threadRead.data.workspaceId, threadRef: memberThread, generation: 1, trigger: 'rolling', text: 'Summary of the protocol thread.',
+    coversThroughSequence: 3, transcriptTokens: 12, model: { provider: 'opencode-go', model: 'mimo-v2.6-flash' }, usage: { inputTokens: 40, outputTokens: 9 },
+    at: '2026-10-11T01:00:06+08:00',
+  },
+}
+
 /**
  * The pre-receipt snapshot: the same protocol kind in its legacy stored shape,
  * with a bare anchor Message (no `occurredAt`) exactly as ledgers written
@@ -1158,6 +1169,42 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
         runMs: 5000,
         usage: sessionTurnRecorded.data.usage,
         actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
+  },
+  'team/thread-summary-committed': {
+    stored: threadSummaryCommitted,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.commitThreadSummary({
+          requestId: threadSummaryCommitted.requestId,
+          workspaceId: threadSummaryCommitted.data.workspaceId,
+          actor: memberActor,
+          threadRef: memberThread,
+          trigger: 'rolling',
+          text: threadSummaryCommitted.data.text,
+          coversThroughSequence: 3,
+          transcriptTokens: 12,
+          model: threadSummaryCommitted.data.model,
+          usage: threadSummaryCommitted.data.usage,
+        })
+        expect(out.value.receipt.operationId, 'the summary answers with its stored receipt').toBe(threadSummaryCommitted.operationId)
+        return out
+      },
+      changed: () => ledger.commitThreadSummary({
+        requestId: threadSummaryCommitted.requestId,
+        workspaceId: threadSummaryCommitted.data.workspaceId,
+        actor: memberActor,
+        threadRef: memberThread,
+        trigger: 'rolling',
+        text: 'A different summary.',
+        coversThroughSequence: 3,
+        transcriptTokens: 12,
+        model: threadSummaryCommitted.data.model,
+        usage: threadSummaryCommitted.data.usage,
       }),
     },
     legacy: { normalize: 'none', repair: 'none' },

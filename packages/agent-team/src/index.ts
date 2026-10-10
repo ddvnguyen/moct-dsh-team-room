@@ -13,6 +13,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, buildSummaryInput, estimateTokens, summaryDue, type ThreadSummaryPolicy } from './thread-summary.ts'
+import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-app-boot'
@@ -158,6 +160,7 @@ import type {
   AgentTeamViewRequest,
   AgentTeamThreadReplyStat,
   AgentTeamThreadSessionRuns,
+  AgentTeamThreadSummaryCommittedData,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -590,7 +593,97 @@ export default class AgentTeam extends TypertRemoteService {
   /** Records each completed Turn with its Threads (contract §3.2). Reads the ledger lazily, so it can exist before the ledger does. */
   private readonly turnRecorder = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
     this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
-  })
+  }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs))
+
+  /** Thread summary policy and model call (contract §3.3). Plugin settings are not wired yet; `configureThreadSummary` is the seam. */
+  private threadSummaryPolicy: ThreadSummaryPolicy = DEFAULT_THREAD_SUMMARY_POLICY
+  private threadSummaryModel: (call: ThreadSummaryModelCall) => Promise<ThreadSummaryModelResult> = call => {
+    const llm = this.ctx.llm
+    if (llm === undefined) throw new Error('no LLM runtime is available for the thread summary')
+    return callThreadSummaryModel(llm, call)
+  }
+  /** Threads with a summary call in flight, keyed by workspace and Thread, so one Thread never runs two calls at once. */
+  private readonly summarizingThreads = new Set<string>()
+
+  /** Replace the summary policy and/or the model call. Tests use it; plugin settings will call it once their schema lands. */
+  configureThreadSummary(options: { readonly policy?: Partial<ThreadSummaryPolicy>; readonly model?: (call: ThreadSummaryModelCall) => Promise<ThreadSummaryModelResult> }): void {
+    if (options.policy !== undefined) this.threadSummaryPolicy = { ...this.threadSummaryPolicy, ...options.policy }
+    if (options.model !== undefined) this.threadSummaryModel = options.model
+  }
+
+  /** Runs after a Turn is recorded, off the send path. Never throws into the recorder. */
+  private scheduleThreadSummaries(workspaceId: WorkspaceId, threadRefs: readonly AgentTeamThreadRef[]): void {
+    for (const threadRef of threadRefs) {
+      const key = `${workspaceId}|${threadRef}`
+      if (this.summarizingThreads.has(key)) continue
+      let due: boolean
+      try {
+        due = this.threadSummaryDue(threadRef)
+      } catch (error) {
+        this.ctx.logger.warn(`agent-team: thread summary check for '${threadRef}' failed: ${error instanceof Error ? error.message : String(error)}`)
+        continue
+      }
+      if (!due) continue
+      this.summarizingThreads.add(key)
+      void this.runThreadSummary(workspaceId, threadRef, 'rolling')
+        .catch(error => this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' failed, no retry: ${error instanceof Error ? error.message : String(error)}`))
+        .finally(() => this.summarizingThreads.delete(key))
+    }
+  }
+
+  /** Due when enough Turns name the Thread, or enough Message tokens accrued, since its last summary. */
+  private threadSummaryDue(threadRef: AgentTeamThreadRef): boolean {
+    if (!this.threadSummaryPolicy.enabled) return false
+    const ledger = this.requireLedger()
+    const since = ledger.latestThreadSummary(threadRef)?.coversThroughSequence ?? 0
+    const tokens = ledger.threadMessagesAfter(threadRef, since).reduce((sum, message) => sum + estimateTokens(message.body), 0)
+    return summaryDue({ turns: ledger.recordedTurnsNamingThreadAfter(threadRef, since), tokens }, this.threadSummaryPolicy)
+  }
+
+  /**
+   * Summarize one Thread from the committed Messages after its last summary. Over the input cap the
+   * call is skipped and logged, never truncated; a model failure logs and commits nothing. Returns the
+   * committed summary, or undefined when none was committed.
+   */
+  async runThreadSummary(workspaceId: WorkspaceId, threadRef: AgentTeamThreadRef, trigger: 'rolling' | 'wrapup'): Promise<AgentTeamThreadSummaryCommittedData | undefined> {
+    const ledger = this.requireLedger()
+    const latest = ledger.latestThreadSummary(threadRef)
+    const messages = ledger.threadMessagesAfter(threadRef, latest?.coversThroughSequence ?? 0)
+    const last = messages.at(-1)
+    if (last === undefined) return undefined
+    const lines = messages.map(message => ({ messageRef: message.messageRef, sender: ledger.getMember(message.sender)?.handle ?? message.sender, body: message.body }))
+    const input = buildSummaryInput(latest?.text, lines)
+    if (!input.ok) {
+      this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped: ${input.tokens} estimated input tokens exceed the ${SUMMARY_INPUT_TOKEN_CAP} cap`)
+      return undefined
+    }
+    let output: ThreadSummaryModelResult
+    try {
+      output = await this.threadSummaryModel({ model: this.threadSummaryPolicy.model, input, maxTokens: SUMMARY_OUTPUT_TOKEN_CAP })
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: thread summary model call for '${threadRef}' failed, no retry: ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
+    if (output.text.length === 0) {
+      this.ctx.logger.warn(`agent-team: thread summary model returned no text for '${threadRef}', nothing committed`)
+      return undefined
+    }
+    const result = await ledger.commitThreadSummary({
+      requestId: `thread-summary:${threadRef}:${last.sequence}` as AgentTeamRequestId,
+      workspaceId, actor: agentTeamHumanActor(), threadRef, trigger, text: output.text,
+      coversThroughSequence: last.sequence, transcriptTokens: input.tokens, model: output.model, usage: output.usage,
+    })
+    return result.value.summary
+  }
+
+  /** The current summary of one Thread, or null before its first summary commits (contract §3.3). */
+  @Remote('threadSummary')
+  threadSummary(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): { generation: number; text: string; trigger: 'rolling' | 'wrapup'; at: string } | null {
+    this.requireWorkspace(request.workspaceId)
+    const latest = this.requireLedger().latestThreadSummary(request.threadRef)
+    if (latest === undefined) return null
+    return { generation: latest.generation, text: latest.text, trigger: latest.trigger, at: latest.at }
+  }
 
   /** Turns this host did not record since start; `sessionStats` reports them so SessionRun under-counts are visible. */
   unrecordedTurns(): { readonly failed: number; readonly unprovable: number } {

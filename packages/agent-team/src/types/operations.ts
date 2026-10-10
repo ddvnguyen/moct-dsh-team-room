@@ -505,6 +505,27 @@ export interface AgentTeamSessionTurnRecordedOperation extends AgentTeamOperatio
   readonly data: AgentTeamSessionTurnRecordedData
 }
 
+/** One committed Thread summary (contract §3.3). Generation N+1 follows N; the ledger assigns it. */
+export interface AgentTeamThreadSummaryCommittedData {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly generation: number
+  readonly trigger: 'rolling' | 'wrapup'
+  readonly text: string
+  /** Ledger sequence of the last Message the summary read; the next summary starts after it. */
+  readonly coversThroughSequence: number
+  /** Estimated input size of the call, the figure the input cap was checked against. */
+  readonly transcriptTokens: number
+  readonly model: { readonly provider: string; readonly model: string }
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number }
+  readonly at: string
+}
+
+export interface AgentTeamThreadSummaryCommittedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-summary-committed'
+  readonly data: AgentTeamThreadSummaryCommittedData
+}
+
 /** Durable irreversible Member removal and global inbox cleanup. */
 export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-removed'
@@ -550,6 +571,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberSessionRolledOverOperation
   | AgentTeamThreadSessionBoundOperation
   | AgentTeamSessionTurnRecordedOperation
+  | AgentTeamThreadSummaryCommittedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation
