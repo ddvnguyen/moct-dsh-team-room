@@ -530,7 +530,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       memberId: memberIdSchema,
       sessionId: sessionIdSchema,
       parentSessionId: sessionIdSchema.optional(),
-      threadRef: threadRefSchema,
+      threadRefs: z.array(threadRefSchema),
       turn: z.number().int().nonnegative(),
       startedAt: z.string().min(1),
       endedAt: z.string().min(1),

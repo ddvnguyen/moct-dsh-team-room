@@ -462,7 +462,8 @@ export interface AgentTeamSessionTurnRecordedData {
   readonly memberId: AgentTeamMemberId
   readonly sessionId: SessionId
   readonly parentSessionId?: SessionId
-  readonly threadRef: AgentTeamThreadRef
+  /** Threads the Turn belongs to (delivered or replied); empty means "no thread". */
+  readonly threadRefs: readonly AgentTeamThreadRef[]
   readonly turn: number
   readonly startedAt: string
   readonly endedAt: string

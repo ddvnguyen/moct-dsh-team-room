@@ -196,7 +196,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const threadRef = sent.message.threadRef
     const sessionId = SessionId('session:run-a')
     const turn = (number: number, usage: { cacheReadTokens: number | null }) => ({
-      requestId: requestId(`run-turn-${number}`), workspaceId: alpha, memberId: member.memberId, sessionId, threadRef, turn: number,
+      requestId: requestId(`run-turn-${number}`), workspaceId: alpha, memberId: member.memberId, sessionId, threadRefs: [threadRef], turn: number,
       startedAt: `2026-10-11T01:0${number}:00+08:00`, endedAt: `2026-10-11T01:0${number}:05+08:00`, toolCalls: 1, runMs: 5000,
       usage: { uncachedInputTokens: 100, outputTokens: 20, cacheWriteTokens: 0, reasoningTokens: null, ...usage }, actor,
     })

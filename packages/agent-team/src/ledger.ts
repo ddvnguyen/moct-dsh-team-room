@@ -190,7 +190,7 @@ export interface AgentTeamRecordSessionTurnRequest {
   readonly memberId: AgentTeamMemberId
   readonly sessionId: SessionId
   readonly parentSessionId?: SessionId
-  readonly threadRef: AgentTeamThreadRef
+  readonly threadRefs: readonly AgentTeamThreadRef[]
   readonly turn: number
   readonly startedAt: string
   readonly endedAt: string
@@ -459,7 +459,7 @@ function sumBucket(prior: number | null | undefined, turn: number | null): numbe
 /** Folds one recorded Turn into its Session's stats row. Pure, so replay derives the same row. */
 function foldSessionTurn(prior: AgentTeamSessionRun | undefined, data: AgentTeamSessionTurnRecordedData): AgentTeamSessionRun {
   const usage: AgentTeamSessionTurnUsage = data.usage
-  const threadRefs = prior?.threadRefs.includes(data.threadRef) ? prior.threadRefs : [...(prior?.threadRefs ?? []), data.threadRef]
+  const threadRefs = [...new Set<AgentTeamThreadRef>([...(prior?.threadRefs ?? []), ...data.threadRefs])]
   return Object.freeze({
     sessionId: data.sessionId,
     memberId: data.memberId,
@@ -1792,10 +1792,10 @@ export class AgentTeamLedger {
       }
       if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Session turn requires the Member\'s own authority')
       this.assertActorForWorkspace(request.actor, request.workspaceId)
-      this.requireThread(request.threadRef)
+      for (const threadRef of request.threadRefs) this.requireThread(threadRef)
       this.requireMember(request.memberId)
       const data: AgentTeamSessionTurnRecordedData = Object.freeze({
-        workspaceId: request.workspaceId, memberId: request.memberId, sessionId: request.sessionId, threadRef: request.threadRef, turn: request.turn,
+        workspaceId: request.workspaceId, memberId: request.memberId, sessionId: request.sessionId, threadRefs: Object.freeze([...request.threadRefs]), turn: request.turn,
         startedAt: request.startedAt, endedAt: request.endedAt, toolCalls: request.toolCalls, runMs: request.runMs, usage: Object.freeze({ ...request.usage }),
         ...(request.parentSessionId === undefined ? {} : { parentSessionId: request.parentSessionId }),
       })
@@ -2588,7 +2588,7 @@ export class AgentTeamLedger {
       if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
         throw new Error(`agent-team operation ${operation.sequence} requires the Member's own authority`)
       }
-      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Session turn names an unknown Thread')
+      if (operation.data.threadRefs.some(threadRef => !projection.threads.has(threadRef))) throw new Error('Session turn names an unknown Thread')
       if (!projection.members.has(operation.data.memberId)) throw new Error('Session turn names an unknown Member')
       return
     }
@@ -4504,7 +4504,7 @@ export class AgentTeamLedger {
   private assertSameSessionTurn(operation: AgentTeamOperation, request: AgentTeamRecordSessionTurnRequest): asserts operation is AgentTeamSessionTurnRecordedOperation {
     const data = operation.kind === 'team/session-turn-recorded' ? operation.data : undefined
     if (data === undefined || !this.sameActor(operation.actor, request.actor)
-      || data.workspaceId !== request.workspaceId || data.sessionId !== request.sessionId || data.turn !== request.turn || data.threadRef !== request.threadRef
+      || data.workspaceId !== request.workspaceId || data.sessionId !== request.sessionId || data.turn !== request.turn || !isDeepStrictEqual(data.threadRefs, request.threadRefs)
       || data.endedAt !== request.endedAt || data.toolCalls !== request.toolCalls || data.runMs !== request.runMs
       || !isDeepStrictEqual(data.usage, request.usage)) this.throwRequestCollision(request.requestId)
   }
