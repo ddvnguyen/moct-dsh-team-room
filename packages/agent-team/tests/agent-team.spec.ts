@@ -247,6 +247,27 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     replay.validate()
   })
 
+  it('accepts the empty window (end = start - 1) and refuses a window that ends before it (§3.2)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('window-channel'), workspaceId: alpha, name: 'window', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('window-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Window', asTask: false, actor })).value)
+    const turn = (number: number, startSequence: number, endSequence: number) => ({
+      requestId: requestId(`window-turn-${number}`), workspaceId: alpha, memberId: member.memberId, sessionId: SessionId('session:window'),
+      threadRefs: [sent.message.threadRef], turn: number, startedAt: '2026-10-11T01:02:00+08:00', endedAt: '2026-10-11T01:02:05+08:00',
+      toolCalls: 0, runMs: 0, startSequence, endSequence,
+      usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null }, actor,
+    })
+    // No ledger op landed during the Turn: the window is empty, end = start - 1.
+    expect((await ledger.recordSessionTurn(turn(1, 20, 19))).committed).toBe(true)
+    // A window that ends two or more before it starts is a derivation bug, and the ledger refuses it.
+    await expect(ledger.recordSessionTurn(turn(2, 20, 18))).rejects.toThrow(/window ends before it starts/)
+    expect(ledger.sessionRun(SessionId('session:window'))).toMatchObject({ turns: 1 })
+  })
+
   it('withdraws only the target Workspace and rejects subsequent work there', async () => {
     const test = await harness(new MemoryMediaPool(), [alpha, beta])
     const ledger = replayLedger(test)

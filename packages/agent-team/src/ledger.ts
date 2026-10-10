@@ -1820,6 +1820,10 @@ export class AgentTeamLedger {
       }
       if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Session turn requires the Member\'s own authority')
       this.assertActorForWorkspace(request.actor, request.workspaceId)
+      // A window ends at or after startSequence - 1. end = start - 1 is the empty window: no ledger op landed during the Turn.
+      if (request.startSequence !== undefined && request.endSequence !== undefined && request.endSequence < request.startSequence - 1) {
+        throw new Error(`Session turn window ends before it starts: ${request.startSequence}..${request.endSequence}`)
+      }
       // A host retry after a crash may arrive with a fresh requestId; the Turn itself is the dedupe key.
       const recordedTurn = this.state.sessionTurns.get(sessionTurnKey(request.sessionId, request.turn))
       if (recordedTurn !== undefined) {
