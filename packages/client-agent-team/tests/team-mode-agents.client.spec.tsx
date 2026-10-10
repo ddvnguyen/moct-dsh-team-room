@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'
@@ -294,6 +294,22 @@ describe('Team agent surfaces', () => {
     expect(await b.view.findByText('# platform')).toBeTruthy()
     expect(b.view.queryByText('# engineering')).toBeNull()
     fireEvent.keyDown(document, { key: 'Escape' })
+    await b.runtime.dispose()
+  })
+
+  it('copies the seat Session id from the row menu and shows a refusal instead of throwing', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '复制会话 ID' }))
+    await waitFor(() => { expect(writeText).toHaveBeenCalledWith('session:member:builder') })
+    writeText.mockRejectedValueOnce(new Error('denied'))
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '复制会话 ID' }))
+    await waitFor(() => { expect(b.view.getByRole('alert').textContent).toContain('无法复制会话 ID') })
     await b.runtime.dispose()
   })
 
