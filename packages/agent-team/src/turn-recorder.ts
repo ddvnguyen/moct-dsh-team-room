@@ -39,6 +39,17 @@ export class AgentTeamTurnRecorder {
   private readonly open = new Map<AgentTeamMemberId, OpenTurn>()
   /** Threads delivered to a Member before its next Turn starts; they belong to that Turn. */
   private readonly pending = new Map<AgentTeamMemberId, Set<AgentTeamThreadRef>>()
+  private failedWrites = 0
+  private unprovableTurns = 0
+
+  /**
+   * Turns this host did not record: `failed` when the ledger write threw (a
+   * backend outage, say), `unprovable` when usage could not be proven exact. The
+   * SessionRun stats under-count by exactly these, so they are surfaced, never silent.
+   */
+  get unrecordedTurns(): { readonly failed: number; readonly unprovable: number } {
+    return { failed: this.failedWrites, unprovable: this.unprovableTurns }
+  }
 
   constructor(
     private readonly ledger: () => AgentTeamLedger,
@@ -71,7 +82,10 @@ export class AgentTeamTurnRecorder {
     turn.events.push(event)
     if (event.type !== 'turn/end') return
     this.open.delete(memberId)
-    this.record(memberId, turn).catch(error => this.onError(`agent-team: Turn record for '${memberId}' failed`, error))
+    this.record(memberId, turn).catch(error => {
+      this.failedWrites += 1
+      this.onError(`agent-team: Turn record for '${memberId}' failed (${this.failedWrites} unrecorded so far)`, error)
+    })
   }
 
   private pendingFor(memberId: AgentTeamMemberId): Set<AgentTeamThreadRef> {
@@ -85,9 +99,13 @@ export class AgentTeamTurnRecorder {
   private async record(memberId: AgentTeamMemberId, turn: OpenTurn): Promise<void> {
     const derived = deriveAgentTeamTurn(turn.events)
     // A Turn whose usage cannot be proven exact is not recorded (contract §3.2).
-    if (derived === undefined) return
+    if (derived === undefined) {
+      this.unprovableTurns += 1
+      return
+    }
     const ledger = this.ledger()
     const member = ledger.getMember(memberId)
+    // One Workspace per Member today; a multi-Workspace Member needs the Turn's Workspace named explicitly.
     const workspaceId = ledger.workspacesOf(memberId)[0]
     if (member === undefined || workspaceId === undefined) return
     const endSequence = ledger.projectionSequence()

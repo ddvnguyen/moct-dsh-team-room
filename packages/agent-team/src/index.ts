@@ -586,6 +586,12 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly turnRecorder = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
     this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
   })
+
+  /** Turns this host did not record since start; `sessionStats` reports them so SessionRun under-counts are visible. */
+  unrecordedTurns(): { readonly failed: number; readonly unprovable: number } {
+    return this.turnRecorder.unrecordedTurns
+  }
+
   private readonly contextManagement = createTeamContextManagement({
     agentForMember: memberId => this.handles.get(memberId)?.agent,
     memberForAgent: agent => this.memberForAgent(agent),
@@ -1602,6 +1608,7 @@ export default class AgentTeam extends TypertRemoteService {
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) throw new Error(`member '${member.handle}' has no active session`)
     const notifications = this.requireLedger().notificationFacts(member.memberId)
+    this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
     const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
     const hint = createUserMessage({
       content: [{ type: 'text', text: body }],

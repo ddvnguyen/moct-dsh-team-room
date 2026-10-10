@@ -2806,3 +2806,68 @@ describe('AgentTeam sendMessage asTask is explicit (issue #43 #9)', () => {
     expect(plain.task).toBeUndefined()
   })
 })
+
+/**
+ * A4 (contract §4.1): the Host's Agent-only entry points and the session-event
+ * path take the acting Member from the live agent handle, never from a request
+ * or event payload. Covers: a message posted by seat A with seat B named in the
+ * request is recorded as seat A; an unregistered agent cannot post; a session
+ * event from seat B's live session that names seat A is attributed to seat B's
+ * handle only. Does not cover tool-argument parsing in packages/tool-agent-team:
+ * its `team_message` execute() reads no member or sender field and takes the
+ * actor from exec.agent, which is checked by reading it, not by this spec. A
+ * positive Turn record needs real harness usage events (deriveAgentTeamTurn),
+ * so the event path here asserts the recorder's attribution through the
+ * unprovable-usage counter, not through a recorded Turn.
+ */
+describe('AgentTeam host seat identity (A4, §4.1)', () => {
+  async function seatedHost() {
+    const test = await harness()
+    const host = test.ctx.agentTeam
+    const channel = await host.createChannel({ requestId: requestId('a4-channel'), workspaceId: alpha, name: 'a4', description: '' })
+    const seatA = (await host.addMember({ requestId: requestId('a4-seat-a'), workspaceId: alpha, handle: 'seat-a', description: 'Seat A', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
+    const seatB = (await host.addMember({ requestId: requestId('a4-seat-b'), workspaceId: alpha, handle: 'seat-b', description: 'Seat B', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
+    // Seat the two Members on live stub agent identities. The host matches by object identity (memberForAgent), so these stand in for live handles without an activation.
+    const seat = (member: AgentTeamAgentMember) => {
+      // A bare session stub: the projection registry folds history on first sight, so it needs an empty log, header and cursor.
+      const session = { id: member.sessionId, header: {}, inheritedEventCount: 0, seq: 0, snapshotEvents: () => [] }
+      const agent = { id: `agent-${member.handle}`, session, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+      const internals = host as unknown as { handles: Map<unknown, unknown>; memberBySessionId: Map<unknown, unknown> }
+      internals.handles.set(member.memberId, { agent })
+      internals.memberBySessionId.set(member.sessionId, member.memberId)
+      return agent
+    }
+    return { test, host, channelRef: channel.channel.channelRef, seatA, seatB, agentA: seat(seatA), agentB: seat(seatB), seat }
+  }
+
+  it('posts as the calling seat even when the request names another Member', async () => {
+    const { test, host, channelRef, seatA, seatB, agentA } = await seatedHost()
+    const spoof = { memberId: seatB.memberId, actor: { kind: 'member', memberId: seatB.memberId, handle: seatB.handle } }
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('a4-post'), workspaceId: alpha, channelRef, body: 'from seat A', asTask: false, ...spoof } as never)
+    expect(sent).toMatchObject({ kind: 'committed' })
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => JSON.stringify(operation))
+    const posted = records.filter(record => record.includes('"body":"from seat A"'))
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toContain(`"sender":"${seatA.memberId}"`)
+    expect(posted[0]).not.toContain(`"sender":"${seatB.memberId}"`)
+  })
+
+  it('rejects a post from an agent that is not a seated Member', async () => {
+    const { host, channelRef } = await seatedHost()
+    const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+    await expect(host.sendMessageForAgent(stranger, { requestId: requestId('a4-stranger'), workspaceId: alpha, channelRef, body: 'intrude', asTask: false } as never)).rejects.toThrow(/not an active Team Member/)
+  })
+
+  it('attributes a session event to the live handle of its own session, never to a Member named in the event', async () => {
+    const { test, host, seatA, seatB, agentB } = await seatedHost()
+    const turnCountBefore = host.unrecordedTurns().unprovable
+    const sessionB = (agentB as unknown as { session: never }).session
+    const spoofedData = { turn: 1, memberId: seatA.memberId, handle: seatA.handle, sessionId: seatA.sessionId }
+    test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: spoofedData } as never)
+    test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: spoofedData } as never)
+    // Usage is unprovable for these bare events, so the Turn is counted, not recorded. It is recorded against seat B's live handle, and never seat A.
+    await vi.waitFor(() => expect(host.unrecordedTurns().unprovable).toBe(turnCountBefore + 1))
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => JSON.stringify(operation))
+    expect(records.filter(record => record.includes('"kind":"team/session-turn-recorded"') && record.includes(seatA.memberId))).toHaveLength(0)
+  })
+})

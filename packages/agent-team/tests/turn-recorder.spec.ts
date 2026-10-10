@@ -82,6 +82,22 @@ describe('AgentTeamTurnRecorder', () => {
     expect(ledger.recordSessionTurn).not.toHaveBeenCalled()
   })
 
+  it('counts the Turns it did not record, split by reason, and reports the first write failure', async () => {
+    const ledger = fakeLedger(() => 0)
+    ledger.recordSessionTurn.mockRejectedValueOnce(new Error('backend down'))
+    const onError = vi.fn()
+    const recorder = new AgentTeamTurnRecorder(() => ledger as unknown as AgentTeamLedger, onError)
+    derived.current = { turn: 6, startedAt: 'a', endedAt: 'b', toolCalls: 0, runMs: 0, usage: {} }
+    recorder.onSessionEvent(memberId, sessionId, event('turn/start', 6))
+    recorder.onSessionEvent(memberId, sessionId, event('turn/end', 6))
+    derived.current = undefined
+    recorder.onSessionEvent(memberId, sessionId, event('turn/start', 7))
+    recorder.onSessionEvent(memberId, sessionId, event('turn/end', 7))
+    await vi.waitFor(() => expect(recorder.unrecordedTurns).toEqual({ failed: 1, unprovable: 1 }))
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]![0]).toContain('1 unrecorded so far')
+  })
+
   it('derives the same request id for the same Turn, so a host retry cannot fold it twice', () => {
     expect(sessionTurnRequestId(sessionId, 7)).toBe(sessionTurnRequestId(sessionId, 7))
     expect(sessionTurnRequestId(sessionId, 7)).not.toBe(sessionTurnRequestId(sessionId, 8))
