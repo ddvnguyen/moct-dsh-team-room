@@ -40,7 +40,7 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult, type AgentTeamThreadReplyStat } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult, type AgentTeamThreadReplyStat } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
@@ -153,6 +153,7 @@ import type {
   AgentTeamUpdateMemberResult,
   AgentTeamView,
   AgentTeamSessionRun,
+  AgentTeamThreadSessionBinding,
   AgentTeamViewRequest,
 } from './types.ts'
 
@@ -2066,6 +2067,13 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().threadHistory(agentTeamHumanActor(), request)
   }
 
+  /** Human's read of one seat's Session bindings in one Thread, oldest first; the last is active (§3.1). */
+  @Remote('threadSessions')
+  threadSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef; memberId: AgentTeamMemberId }): readonly AgentTeamThreadSessionBinding[] {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadSessionsOf(request.threadRef, request.memberId)
+  }
+
   /** Human's per-Member Session list, newest first, with each Session's folded stats row. */
   @Remote('memberSessions')
   memberSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId }): { current: SessionId | undefined; runs: readonly AgentTeamSessionRun[] } {
@@ -2104,6 +2112,17 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+  }
+
+  /**
+   * Agent-only: bind this seat's turns in one Thread to a Session (§3.1). The actor is the
+   * calling seat, never a request field, so a request naming another Member binds only the caller.
+   */
+  async bindThreadSessionForAgent(agent: Agent, request: Omit<AgentTeamBindThreadSessionRequest, 'actor'>): Promise<AgentTeamThreadSessionBinding> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().bindThreadSession({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value.binding
   }
 
   /** Agent-only personal Attention change. */

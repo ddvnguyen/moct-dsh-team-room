@@ -54,6 +54,7 @@ describe('Agent Team generated Typert boundary', () => {
       'threadHistory',
       'threadObservations',
       'threadReplyStats',
+      'threadSessions',
       'updateChannel',
       'updateMember',
       'view',

@@ -2924,4 +2924,26 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     expect(sessions.runs).toEqual([expect.objectContaining({ sessionId: seatB.sessionId, memberId: seatB.memberId, turns: 1, toolCalls: 0 })])
     expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId })).toMatchObject({ unrecorded: { failed: 0, unprovable: 0 } })
   })
+
+  it('binds a Thread for the calling seat only, and rejects a bind from an unseated agent (§3.1, §4)', async () => {
+    const { test, host, channelRef, seatA, seatB, agentA, agentB } = await seatedHost()
+    await host.sendMessageForAgent(agentA as never, { requestId: requestId('a4-bind-thread'), workspaceId: alpha, channelRef, body: 'bind this thread', asTask: false } as never)
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'bind this thread')!.data.message!.threadRef as never
+    const bound = await host.bindThreadSessionForAgent(agentB as never, {
+      requestId: requestId('a4-bind-b'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bound-b'), reason: 'start',
+    })
+    expect(bound).toMatchObject({ memberId: seatB.memberId, sessionId: 'session:bound-b', threadRef })
+    // A request that names seat A is spread under the calling seat's actor: it binds seat B, never A.
+    const spoof = { memberId: seatA.memberId, actor: { kind: 'member', memberId: seatA.memberId, handle: seatA.handle } }
+    const spoofed = await host.bindThreadSessionForAgent(agentB as never, {
+      requestId: requestId('a4-bind-spoof'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bound-spoof'), reason: 'resume', ...spoof,
+    } as never)
+    expect(spoofed).toMatchObject({ memberId: seatB.memberId })
+    expect(host.threadSessions({ workspaceId: alpha, threadRef, memberId: seatA.memberId })).toEqual([])
+    expect(host.threadSessions({ workspaceId: alpha, threadRef, memberId: seatB.memberId }).map(binding => binding.sessionId)).toEqual(['session:bound-b', 'session:bound-spoof'])
+    const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+    await expect(host.bindThreadSessionForAgent(stranger, { requestId: requestId('a4-bind-stranger'), workspaceId: alpha, threadRef, sessionId: SessionId('session:stranger'), reason: 'start' })).rejects.toThrow(/not an active Team Member/)
+  })
 })
