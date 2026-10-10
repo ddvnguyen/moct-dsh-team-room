@@ -22,13 +22,19 @@ export interface AgentTeamDerivedTurn {
   readonly usage: AgentTeamSessionTurnUsage
 }
 
-/** Returns `undefined` when the Turn is incomplete or its usage cannot be proven exact. */
+/**
+ * `events` must be exactly one Turn's events. Returns `undefined` when the Turn is
+ * incomplete, when the window holds more than one Turn, or when its usage cannot be
+ * proven exact. A wider window would fold other Turns' tool calls and ends into
+ * these numbers, so it is refused rather than summarized.
+ */
 export function deriveAgentTeamTurn(events: readonly SessionEvent[]): AgentTeamDerivedTurn | undefined {
   const starts = events.filter((event): event is SessionEvent<'turn/start'> => event.type === 'turn/start')
   const ends = events.filter((event): event is SessionEvent<'turn/end'> => event.type === 'turn/end')
   const start = starts[0]
-  const end = ends.at(-1)
-  if (start === undefined || end === undefined) return undefined
+  if (start === undefined || ends.length !== 1) return undefined
+  if (new Set(starts.map(event => event.data.turn)).size !== 1) return undefined
+  const end = ends[0]!
   const usage = deriveTurnTokenUsage(events)
   if (usage === undefined) return undefined
   const timing = foldTurnWallTime(events)

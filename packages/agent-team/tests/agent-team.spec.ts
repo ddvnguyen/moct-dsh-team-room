@@ -211,6 +211,39 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     replay.validate()
   })
 
+  it('a retry that changes any recorded field collides; a fresh requestId cannot fold the same Turn twice (§3.2)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('dup-channel'), workspaceId: alpha, name: 'dups', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('dup-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Dup', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const sessionId = SessionId('session:dup-a')
+    const base = {
+      requestId: requestId('dup-turn-1'), workspaceId: alpha, memberId: member.memberId, sessionId, threadRefs: [threadRef], turn: 1,
+      startedAt: '2026-10-11T01:01:00+08:00', endedAt: '2026-10-11T01:01:05+08:00', toolCalls: 1, runMs: 5000,
+      usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0, reasoningTokens: null }, actor,
+    }
+    expect((await ledger.recordSessionTurn(base)).committed).toBe(true)
+    // Same requestId, one field changed at a time: every recorded field is compared, so each change collides.
+    const changes: Array<Partial<typeof base>> = [
+      { startedAt: '2026-10-11T01:01:01+08:00' }, { endedAt: '2026-10-11T01:01:06+08:00' }, { toolCalls: 9 }, { runMs: 1 },
+      { threadRefs: [] }, { parentSessionId: SessionId('session:dup-parent') }, { sessionId: SessionId('session:dup-b') },
+      { usage: { ...base.usage, outputTokens: 21 } },
+    ]
+    for (const change of changes) await expect(ledger.recordSessionTurn({ ...base, ...change })).rejects.toThrow(/reused/)
+    // A fresh requestId for the same Turn with identical data resolves to the folded row: no second fold.
+    expect((await ledger.recordSessionTurn({ ...base, requestId: requestId('dup-turn-1-host-retry') })).committed).toBe(false)
+    // A fresh requestId for the same Turn with different data is refused, not silently dropped.
+    await expect(ledger.recordSessionTurn({ ...base, requestId: requestId('dup-turn-1-other'), toolCalls: 9 })).rejects.toThrow(/already recorded/)
+    expect(ledger.sessionRun(sessionId)).toMatchObject({ turns: 1, tokensIn: 100, toolCalls: 1 })
+    const replay = replayLedger(test)
+    expect(replay.sessionRun(sessionId)).toEqual(ledger.sessionRun(sessionId))
+    replay.validate()
+  })
+
   it('withdraws only the target Workspace and rejects subsequent work there', async () => {
     const test = await harness(new MemoryMediaPool(), [alpha, beta])
     const ledger = replayLedger(test)

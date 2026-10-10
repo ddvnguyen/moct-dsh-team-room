@@ -183,7 +183,10 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
   readonly actor: AgentTeamHumanActor
 }
 
-/** Host-authorized intent to move one enabled Member onto a fresh Session id. */
+/**
+ * One completed Turn of a Member's own Session. The Member is the only actor.
+ * runMs is model plus tool time (llm + tool wall time), not the Turn's wall-clock span.
+ */
 export interface AgentTeamRecordSessionTurnRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -213,6 +216,7 @@ export interface AgentTeamBindThreadSessionRequest {
   readonly actor: AgentTeamMemberActor
 }
 
+/** Host-authorized intent to move one enabled Member onto a fresh Session id. */
 export interface AgentTeamAuthorizedRenewMemberSessionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -424,6 +428,8 @@ interface Projection {
   readonly threadSessions: Map<AgentTeamThreadRef, Map<AgentTeamMemberId, AgentTeamThreadSessionBinding[]>>
   /** Session stats rows, folded from recorded Turns; keyed by sessionId. */
   readonly sessionRuns: Map<SessionId, AgentTeamSessionRun>
+  /** The recorded Turn per (sessionId, turn); a second record for the same key is a duplicate fold and is rejected. */
+  readonly sessionTurns: Map<string, AgentTeamSessionTurnRecordedOperation>
   /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
   readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
   /** Top-level anchor Message per Thread; the first topLevel Message wins, like the linear scan it replaces. */
@@ -451,6 +457,10 @@ interface AgentTeamAttentionObservation {
 }
 
 /** Combines a running cache bucket with one Turn's bucket: null is sticky, because one unreported attempt makes the session total unknown. */
+function sessionTurnKey(sessionId: SessionId, turn: number): string {
+  return `${sessionId}\u0000${turn}`
+}
+
 function sumBucket(prior: number | null | undefined, turn: number | null): number | null {
   if (turn === null || prior === null) return null
   return prior === undefined ? turn : prior + turn
@@ -485,7 +495,7 @@ function emptyProjection(): Projection {
     claims: new Map(), tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], claimsByTask: new Map(), factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     messagesByRef: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), sessionRuns: new Map(), rolloverSeeds: new Map(),
+    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), sessionRuns: new Map(), sessionTurns: new Map(), rolloverSeeds: new Map(),
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
@@ -1792,6 +1802,12 @@ export class AgentTeamLedger {
       }
       if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Session turn requires the Member\'s own authority')
       this.assertActorForWorkspace(request.actor, request.workspaceId)
+      // A host retry after a crash may arrive with a fresh requestId; the Turn itself is the dedupe key.
+      const recordedTurn = this.state.sessionTurns.get(sessionTurnKey(request.sessionId, request.turn))
+      if (recordedTurn !== undefined) {
+        if (!this.sameSessionTurnData(recordedTurn, request)) throw new Error(`agent-team Session '${request.sessionId}' turn ${request.turn} was already recorded with different data`)
+        return this.resolved(this.state.sessionRuns.get(request.sessionId)!)
+      }
       for (const threadRef of request.threadRefs) this.requireThread(threadRef)
       this.requireMember(request.memberId)
       const data: AgentTeamSessionTurnRecordedData = Object.freeze({
@@ -2590,6 +2606,7 @@ export class AgentTeamLedger {
       }
       if (operation.data.threadRefs.some(threadRef => !projection.threads.has(threadRef))) throw new Error('Session turn names an unknown Thread')
       if (!projection.members.has(operation.data.memberId)) throw new Error('Session turn names an unknown Member')
+      if (projection.sessionTurns.has(sessionTurnKey(operation.data.sessionId, operation.data.turn))) throw new Error('Session turn duplicates an already-recorded Turn')
       return
     }
     if (operation.kind === 'team/thread-session-bound') {
@@ -3160,6 +3177,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/session-turn-recorded') {
       target.sessionRuns.set(operation.data.sessionId, foldSessionTurn(target.sessionRuns.get(operation.data.sessionId), operation.data))
+      target.sessionTurns.set(sessionTurnKey(operation.data.sessionId, operation.data.turn), operation)
       return
     }
     if (operation.kind === 'team/thread-session-bound') {
@@ -4502,11 +4520,16 @@ export class AgentTeamLedger {
   }
 
   private assertSameSessionTurn(operation: AgentTeamOperation, request: AgentTeamRecordSessionTurnRequest): asserts operation is AgentTeamSessionTurnRecordedOperation {
-    const data = operation.kind === 'team/session-turn-recorded' ? operation.data : undefined
-    if (data === undefined || !this.sameActor(operation.actor, request.actor)
-      || data.workspaceId !== request.workspaceId || data.sessionId !== request.sessionId || data.turn !== request.turn || !isDeepStrictEqual(data.threadRefs, request.threadRefs)
-      || data.endedAt !== request.endedAt || data.toolCalls !== request.toolCalls || data.runMs !== request.runMs
-      || !isDeepStrictEqual(data.usage, request.usage)) this.throwRequestCollision(request.requestId)
+    if (operation.kind !== 'team/session-turn-recorded' || !this.sameActor(operation.actor, request.actor)
+      || !this.sameSessionTurnData(operation.data, request)) this.throwRequestCollision(request.requestId)
+  }
+
+  /** Every recorded field must match; a retry that differs in any one of them is a collision. */
+  private sameSessionTurnData(data: AgentTeamSessionTurnRecordedData, request: AgentTeamRecordSessionTurnRequest): boolean {
+    return data.workspaceId === request.workspaceId && data.memberId === request.memberId && data.sessionId === request.sessionId
+      && data.parentSessionId === request.parentSessionId && data.turn === request.turn && data.startedAt === request.startedAt
+      && data.endedAt === request.endedAt && data.toolCalls === request.toolCalls && data.runMs === request.runMs
+      && isDeepStrictEqual(data.threadRefs, request.threadRefs) && isDeepStrictEqual(data.usage, request.usage)
   }
 
   private assertSameThreadSessionBound(operation: AgentTeamOperation, request: AgentTeamBindThreadSessionRequest): asserts operation is AgentTeamThreadSessionBoundOperation {
