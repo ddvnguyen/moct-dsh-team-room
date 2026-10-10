@@ -202,7 +202,7 @@ export interface AgentTeamCommitThreadSummaryRequest {
   readonly coversThroughSequence: number
   readonly transcriptTokens: number
   readonly model: { readonly provider: string; readonly model: string }
-  readonly usage: { readonly inputTokens: number; readonly outputTokens: number }
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number } | null
 }
 
 export interface AgentTeamRecordSessionTurnRequest {
@@ -1890,7 +1890,7 @@ export class AgentTeamLedger {
       const data: AgentTeamThreadSummaryCommittedData = Object.freeze({
         workspaceId: request.workspaceId, threadRef: request.threadRef, generation: (prior?.generation ?? 0) + 1, trigger: request.trigger, text: request.text,
         coversThroughSequence: request.coversThroughSequence, transcriptTokens: request.transcriptTokens,
-        model: Object.freeze({ ...request.model }), usage: Object.freeze({ ...request.usage }), at: base.occurredAt,
+        model: Object.freeze({ ...request.model }), usage: request.usage === null ? null : Object.freeze({ ...request.usage }), at: base.occurredAt,
       })
       const operation: AgentTeamThreadSummaryCommittedOperation = Object.freeze({ ...base, kind: 'team/thread-summary-committed', data })
       await this.table.put(operation.operationId, operation)

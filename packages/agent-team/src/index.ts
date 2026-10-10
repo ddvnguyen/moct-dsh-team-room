@@ -13,7 +13,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
-import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, buildSummaryInput, estimateTokens, summaryDue, type ThreadSummaryPolicy } from './thread-summary.ts'
+import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, estimateTokens, selectSummaryWindow, summaryDue, type ThreadSummaryPolicy } from './thread-summary.ts'
 import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
@@ -649,17 +649,18 @@ export default class AgentTeam extends TypertRemoteService {
     const ledger = this.requireLedger()
     const latest = ledger.latestThreadSummary(threadRef)
     const messages = ledger.threadMessagesAfter(threadRef, latest?.coversThroughSequence ?? 0)
-    const last = messages.at(-1)
-    if (last === undefined) return undefined
+    if (messages.length === 0) return undefined
     const lines = messages.map(message => ({ messageRef: message.messageRef, sender: ledger.getMember(message.sender)?.handle ?? message.sender, body: message.body }))
-    const input = buildSummaryInput(latest?.text, lines)
-    if (!input.ok) {
-      this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped: ${input.tokens} estimated input tokens exceed the ${SUMMARY_INPUT_TOKEN_CAP} cap`)
+    // Prior summary plus as many oldest Messages as fit; coverage stops at the last one included.
+    const window = selectSummaryWindow(latest?.text, lines)
+    if (!window.ok) {
+      this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped: the next Message alone exceeds the ${SUMMARY_INPUT_TOKEN_CAP} estimated input token cap (${window.tokens})`)
       return undefined
     }
+    const last = messages[window.included - 1]!
     let output: ThreadSummaryModelResult
     try {
-      output = await this.threadSummaryModel({ model: this.threadSummaryPolicy.model, input, maxTokens: SUMMARY_OUTPUT_TOKEN_CAP })
+      output = await this.threadSummaryModel({ model: this.threadSummaryPolicy.model, input: window.input, maxTokens: SUMMARY_OUTPUT_TOKEN_CAP })
     } catch (error) {
       this.ctx.logger.warn(`agent-team: thread summary model call for '${threadRef}' failed, no retry: ${error instanceof Error ? error.message : String(error)}`)
       return undefined
@@ -671,7 +672,7 @@ export default class AgentTeam extends TypertRemoteService {
     const result = await ledger.commitThreadSummary({
       requestId: `thread-summary:${threadRef}:${last.sequence}` as AgentTeamRequestId,
       workspaceId, actor: agentTeamHumanActor(), threadRef, trigger, text: output.text,
-      coversThroughSequence: last.sequence, transcriptTokens: input.tokens, model: output.model, usage: output.usage,
+      coversThroughSequence: last.sequence, transcriptTokens: window.input.tokens, model: output.model, usage: output.usage,
     })
     return result.value.summary
   }

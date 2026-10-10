@@ -58,17 +58,51 @@ export type SummaryInput =
   | { readonly ok: true; readonly system: string; readonly transcript: string; readonly tokens: number }
   | { readonly ok: false; readonly tokens: number }
 
+/** The input of one call and how many of the supplied Messages it carries, oldest first. */
+export type SummaryWindow =
+  | { readonly ok: true; readonly included: number; readonly input: Extract<SummaryInput, { ok: true }> }
+  | { readonly ok: false; readonly tokens: number }
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length
+}
+
+function messageLine(line: SummaryMessageLine): string {
+  return `[${line.messageRef}] ${line.sender}: ${line.body}`
+}
+
+function transcriptHead(priorSummary: string | undefined): string {
+  return priorSummary === undefined ? 'Messages:' : `Prior summary:\n${priorSummary}\nMessages:`
+}
+
 /**
- * Frame the prior summary and the new Messages as one transcript. Over the input cap the
- * result is `ok: false` and nothing is truncated.
+ * Take the prior summary plus as many oldest Messages as fit under the input cap. Nothing is
+ * truncated: a Message either goes in whole or waits for the next call. Only when not even the
+ * first Message fits is the result `ok: false`.
+ */
+export function selectSummaryWindow(priorSummary: string | undefined, lines: readonly SummaryMessageLine[]): SummaryWindow {
+  const systemTokens = estimateTokens(THREAD_SUMMARY_SYSTEM_PROMPT)
+  // Byte counts add up incrementally so the window is found in one pass; the token figure
+  // matches estimateTokens over the joined transcript.
+  let bytes = byteLength(transcriptHead(priorSummary))
+  let included = 0
+  for (const line of lines) {
+    const next = bytes + 1 + byteLength(messageLine(line))
+    if (systemTokens + Math.ceil(next / 3) > SUMMARY_INPUT_TOKEN_CAP) break
+    bytes = next
+    included += 1
+  }
+  if (included === 0) return { ok: false, tokens: systemTokens + Math.ceil((bytes + (lines[0] === undefined ? 0 : 1 + byteLength(messageLine(lines[0])))) / 3) }
+  const transcript = [transcriptHead(priorSummary), ...lines.slice(0, included).map(messageLine)].join('\n')
+  return { ok: true, included, input: { ok: true, system: THREAD_SUMMARY_SYSTEM_PROMPT, transcript, tokens: systemTokens + estimateTokens(transcript) } }
+}
+
+/**
+ * Frame the prior summary and all the supplied Messages as one transcript. Over the cap the
+ * result is `ok: false`; use `selectSummaryWindow` to take only the part that fits.
  */
 export function buildSummaryInput(priorSummary: string | undefined, lines: readonly SummaryMessageLine[]): SummaryInput {
-  const parts: string[] = []
-  if (priorSummary !== undefined) parts.push(`Prior summary:\n${priorSummary}`)
-  parts.push('Messages:')
-  for (const line of lines) parts.push(`[${line.messageRef}] ${line.sender}: ${line.body}`)
-  const transcript = parts.join('\n')
-  const tokens = estimateTokens(THREAD_SUMMARY_SYSTEM_PROMPT) + estimateTokens(transcript)
-  if (tokens > SUMMARY_INPUT_TOKEN_CAP) return { ok: false, tokens }
-  return { ok: true, system: THREAD_SUMMARY_SYSTEM_PROMPT, transcript, tokens }
+  const window = selectSummaryWindow(priorSummary, lines)
+  if (window.ok && window.included === lines.length) return window.input
+  return { ok: false, tokens: window.ok ? window.input.tokens : window.tokens }
 }

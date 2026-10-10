@@ -517,7 +517,8 @@ export interface AgentTeamThreadSummaryCommittedData {
   /** Estimated input size of the call, the figure the input cap was checked against. */
   readonly transcriptTokens: number
   readonly model: { readonly provider: string; readonly model: string }
-  readonly usage: { readonly inputTokens: number; readonly outputTokens: number }
+  /** Null when the model reported no usage: unreported is not zero (contract §3). */
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number } | null
   readonly at: string
 }
 

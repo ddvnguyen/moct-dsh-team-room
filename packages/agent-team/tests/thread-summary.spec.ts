@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, buildSummaryInput, estimateTokens, summaryDue } from '../src/thread-summary.ts'
+import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, buildSummaryInput, estimateTokens, selectSummaryWindow, summaryDue } from '../src/thread-summary.ts'
 
 describe('thread summary policy and budget (§3.3)', () => {
   it('estimates one token per three UTF-8 bytes, rounding up', () => {
@@ -32,5 +32,20 @@ describe('thread summary policy and budget (§3.3)', () => {
     const input = buildSummaryInput(undefined, [{ messageRef: 'message:big', sender: 'seat-a', body }])
     expect(input.ok).toBe(false)
     expect(input.tokens).toBeGreaterThan(SUMMARY_INPUT_TOKEN_CAP)
+  })
+
+  it('takes the oldest Messages that fit whole, and stops before the one that would cross the cap', () => {
+    const big = (ref: string) => ({ messageRef: ref, sender: 'seat-a', body: 'z'.repeat(40_000) })
+    const window = selectSummaryWindow(undefined, [big('message:1'), big('message:2'), big('message:3')])
+    expect(window).toMatchObject({ ok: true, included: 2 })
+    if (!window.ok) throw new Error('expected a window')
+    expect(window.input.tokens).toBeLessThanOrEqual(SUMMARY_INPUT_TOKEN_CAP)
+    expect(window.input.transcript).toContain('[message:2]')
+    expect(window.input.transcript).not.toContain('[message:3]')
+  })
+
+  it('reports no window only when the first Message alone exceeds the cap', () => {
+    const huge = { messageRef: 'message:huge', sender: 'seat-a', body: 'z'.repeat(SUMMARY_INPUT_TOKEN_CAP * 3) }
+    expect(selectSummaryWindow(undefined, [huge])).toMatchObject({ ok: false })
   })
 })

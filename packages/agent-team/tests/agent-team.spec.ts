@@ -2984,12 +2984,12 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
 })
 
 describe('AgentTeam thread summary (§3.3)', () => {
-  // A stub model: zero tokens, and every call's input kept for inspection.
-  function stubModel(text: string) {
+  // A stub model: zero tokens, and every call's input kept for inspection. `text` may depend on the call index.
+  function stubModel(text: string | ((index: number) => string), usage: { inputTokens: number; outputTokens: number } | null = { inputTokens: 0, outputTokens: 0 }) {
     const calls: { system: string; transcript: string; maxTokens: number }[] = []
     const model = async (call: ThreadSummaryModelCall) => {
       calls.push({ system: call.input.system, transcript: call.input.transcript, maxTokens: call.maxTokens })
-      return { text, model: call.model, usage: { inputTokens: 0, outputTokens: 0 } }
+      return { text: typeof text === 'string' ? text : text(calls.length), model: call.model, usage }
     }
     return { calls, model }
   }
@@ -3026,6 +3026,43 @@ describe('AgentTeam thread summary (§3.3)', () => {
     expect(call!.transcript).toContain(`[${second.message.messageRef}]`)
     expect(call!.transcript).not.toContain(`[${first.message.messageRef}]`)
     expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 2, text: 'summary two' })
+  })
+
+  it('stores null usage when the model reports none, never a guessed zero', async () => {
+    const { test, host, channelRef, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-no-usage'), workspaceId: alpha, channelRef, body: 'no usage reported', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = sent.message.threadRef
+    host.configureThreadSummary({ model: stubModel('summary without usage', null).model })
+    await expect(host.runThreadSummary(alpha, threadRef, 'rolling')).resolves.toMatchObject({ generation: 1, usage: null })
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 1, usage: null })
+  })
+
+  it('summarizes an over-cap Thread in windows: several generations, coverage on Message boundaries', async () => {
+    const { test, host, channelRef, agentA } = await seatedHost()
+    // About 13.3k estimated tokens per Message: two fit under the 32k cap, three do not.
+    const body = 'y'.repeat(40_000)
+    const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-big-0'), workspaceId: alpha, channelRef, body, asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    const messages = [first.message]
+    let revision = first.thread.revision
+    for (let index = 1; index < 5; index++) {
+      const reply = await host.replyForAgent(agentA as never, { requestId: requestId(`ts-big-${index}`), workspaceId: alpha, threadRef, body, baseRevision: revision } as never) as AgentTeamReplyCommittedResult
+      messages.push(reply.message)
+      revision = reply.thread.revision
+    }
+    const stub = stubModel(index => `window summary ${index}`)
+    host.configureThreadSummary({ model: stub.model })
+    const generations = []
+    for (let round = 0; round < 3; round++) generations.push(await host.runThreadSummary(alpha, threadRef, 'rolling'))
+    expect(generations.map(summary => summary?.generation)).toEqual([1, 2, 3])
+    // Two Messages per window, then two, then the last one: coverage stops at the last Message each window carried.
+    expect(generations.map(summary => summary?.coversThroughSequence)).toEqual([messages[1]!.sequence, messages[3]!.sequence, messages[4]!.sequence])
+    expect(stub.calls[0]!.transcript).toContain(`[${messages[0]!.messageRef}]`)
+    expect(stub.calls[0]!.transcript).not.toContain(`[${messages[2]!.messageRef}]`)
+    expect(stub.calls[1]!.transcript).toContain('Prior summary:\nwindow summary 1')
+    expect(stub.calls[1]!.transcript).toContain(`[${messages[2]!.messageRef}]`)
+    expect(stub.calls[1]!.transcript).not.toContain(`[${messages[1]!.messageRef}]`)
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 3, coversThroughSequence: messages[4]!.sequence })
   })
 
   it('skips input over the cap, logs, and calls no model', async () => {

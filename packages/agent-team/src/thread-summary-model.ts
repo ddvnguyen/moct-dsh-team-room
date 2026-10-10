@@ -20,10 +20,11 @@ export interface ThreadSummaryModelCall {
 export interface ThreadSummaryModelResult {
   readonly text: string
   readonly model: { readonly provider: string; readonly model: string }
-  readonly usage: { readonly inputTokens: number; readonly outputTokens: number }
+  /** Null when the model reported no usage chunk: unreported is not zero. */
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number } | null
 }
 
-/** Run one summary call and return its text and usage. A missing usage chunk is recorded as zero, not guessed. */
+/** Run one summary call and return its text and usage. A missing usage chunk stays null, never a guessed zero. */
 export async function callThreadSummaryModel(llm: Pick<LlmRuntime, 'stream'>, call: ThreadSummaryModelCall): Promise<ThreadSummaryModelResult> {
   const options: GenerateOptions = {
     provider: call.model.provider,
@@ -39,5 +40,5 @@ export async function callThreadSummaryModel(llm: Pick<LlmRuntime, 'stream'>, ca
     .join(' ')
     .trim()
   const usage = assembler.usage
-  return { text, model: call.model, usage: { inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 } }
+  return { text, model: call.model, usage: usage === undefined ? null : { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } }
 }
