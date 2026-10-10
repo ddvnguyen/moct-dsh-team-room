@@ -209,6 +209,8 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(ledger.sessionRun(sessionId)?.turns).toBe(2)
     const replay = replayLedger(test)
     expect(replay.sessionRun(sessionId)).toEqual(ledger.sessionRun(sessionId))
+    // Turns recorded without a sequence window (the pre-per-reply shape) replay unchanged and attribute no reply.
+    expect(replay.turnForReply(member.memberId, 1)).toBeUndefined()
     replay.validate()
   })
 
@@ -2874,5 +2876,26 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     expect(row!.actor.memberId).toBe(seatB.memberId)
     expect(row!.data.sessionId).toBe(seatB.sessionId)
     expect(turnRows().some(operation => operation.data.memberId === seatA.memberId || operation.actor.memberId === seatA.memberId)).toBe(false)
+  })
+
+  it('joins a reply to the Turn whose sequence window holds it, and to no Turn when it falls outside (§3.2)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    const bodyOf = (body: string) => ({ requestId: requestId(`a4-${body}`), workspaceId: alpha, channelRef, body, asTask: false } as never)
+    await host.sendMessageForAgent(agentB as never, bodyOf('before the turn'))
+    const [start, ...rest] = completeTurnEvents({ turn: 1 })
+    test.ctx.emit('session/event', sessionB, start as never)
+    await host.sendMessageForAgent(agentB as never, bodyOf('during the turn'))
+    for (const event of rest) test.ctx.emit('session/event', sessionB, event as never)
+    const operations = () => [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => operation as unknown as {
+      kind: string; sequence: number; data: { memberId: string; message?: { body: string }; startSequence?: number; endSequence?: number } })
+    await vi.waitFor(() => expect(operations().some(operation => operation.kind === 'team/session-turn-recorded')).toBe(true))
+    const sequenceOf = (body: string) => operations().find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === body)!.sequence
+    const ledger = replayLedger(test)
+    const during = ledger.turnForReply(seatB.memberId, sequenceOf('during the turn'))
+    expect(during).toMatchObject({ memberId: seatB.memberId, turn: 1 })
+    expect(during!.startSequence).toBeLessThanOrEqual(sequenceOf('during the turn'))
+    expect(during!.endSequence).toBeGreaterThanOrEqual(sequenceOf('during the turn'))
+    expect(ledger.turnForReply(seatB.memberId, sequenceOf('before the turn'))).toBeUndefined()
   })
 })

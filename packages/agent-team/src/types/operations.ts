@@ -470,6 +470,13 @@ export interface AgentTeamSessionTurnRecordedData {
   readonly toolCalls: number
   readonly runMs: number
   readonly usage: AgentTeamSessionTurnUsage
+  /**
+   * The Turn's ledger sequence window, inclusive. A reply of this Member whose
+   * sequence falls inside it belongs to this Turn (per-reply stats, contract §3.2).
+   * Absent on Turns recorded before per-reply usage.
+   */
+  readonly startSequence?: number
+  readonly endSequence?: number
 }
 
 /** Session-level stats row, folded from its recorded Turns. Cache buckets are null once any Turn lacked them. */

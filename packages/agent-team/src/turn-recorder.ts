@@ -123,6 +123,8 @@ export class AgentTeamTurnRecorder {
       toolCalls: derived.toolCalls,
       runMs: derived.runMs,
       usage: derived.usage,
+      startSequence: window.startSequence,
+      endSequence: window.endSequence,
       actor: { kind: 'member', memberId, handle: member.handle },
     })
   }

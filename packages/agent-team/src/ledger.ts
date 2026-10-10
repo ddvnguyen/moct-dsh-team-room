@@ -201,6 +201,9 @@ export interface AgentTeamRecordSessionTurnRequest {
   readonly toolCalls: number
   readonly runMs: number
   readonly usage: AgentTeamSessionTurnUsage
+  /** The Turn's ledger sequence window, inclusive (see AgentTeamSessionTurnRecordedData). */
+  readonly startSequence?: number
+  readonly endSequence?: number
   /** The Member recording its own Turn. */
   readonly actor: AgentTeamMemberActor
 }
@@ -1827,6 +1830,7 @@ export class AgentTeamLedger {
         workspaceId: request.workspaceId, memberId: request.memberId, sessionId: request.sessionId, threadRefs: Object.freeze([...request.threadRefs]), turn: request.turn,
         startedAt: request.startedAt, endedAt: request.endedAt, toolCalls: request.toolCalls, runMs: request.runMs, usage: Object.freeze({ ...request.usage }),
         ...(request.parentSessionId === undefined ? {} : { parentSessionId: request.parentSessionId }),
+        ...(request.startSequence === undefined || request.endSequence === undefined ? {} : { startSequence: request.startSequence, endSequence: request.endSequence }),
       })
       const operation: AgentTeamSessionTurnRecordedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/session-turn-recorded', data,
@@ -1840,6 +1844,19 @@ export class AgentTeamLedger {
   /** The receipt of the recorded Turn, plus the Session's folded row when this projection holds it. */
   private sessionTurnResult(operation: AgentTeamSessionTurnRecordedOperation): AgentTeamSessionTurnResult {
     return Object.freeze({ receipt: this.receipt(operation), run: this.state.sessionRuns.get(operation.data.sessionId) })
+  }
+
+  /**
+   * The recorded Turn whose sequence window holds this Member's reply at `sequence`,
+   * or undefined when no recorded Turn covers it. A reply's per-reply usage is that
+   * Turn's usage (the SessionRun delta for the Turn, contract §3.2).
+   */
+  turnForReply(memberId: AgentTeamMemberId, sequence: number): AgentTeamSessionTurnRecordedData | undefined {
+    for (const operation of this.state.sessionTurns.values()) {
+      const { startSequence, endSequence } = operation.data
+      if (operation.data.memberId === memberId && startSequence !== undefined && endSequence !== undefined && startSequence <= sequence && sequence <= endSequence) return operation.data
+    }
+    return undefined
   }
 
   /** The folded stats row for one Session, or undefined before its first recorded Turn. */
@@ -4572,6 +4589,7 @@ export class AgentTeamLedger {
       && data.parentSessionId === request.parentSessionId && data.turn === request.turn && data.startedAt === request.startedAt
       && data.endedAt === request.endedAt && data.toolCalls === request.toolCalls && data.runMs === request.runMs
       && isDeepStrictEqual(data.threadRefs, request.threadRefs) && isDeepStrictEqual(data.usage, request.usage)
+      && data.startSequence === request.startSequence && data.endSequence === request.endSequence
   }
 
   private assertSameThreadSessionBound(operation: AgentTeamOperation, request: AgentTeamBindThreadSessionRequest): asserts operation is AgentTeamThreadSessionBoundOperation {

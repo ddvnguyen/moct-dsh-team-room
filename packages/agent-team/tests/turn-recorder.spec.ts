@@ -40,7 +40,7 @@ describe('AgentTeamTurnRecorder', () => {
     const request = ledger.recordSessionTurn.mock.calls[0]![0] as { requestId: string; threadRefs: AgentTeamThreadRef[]; turn: number; workspaceId: string }
     expect(request.requestId).toBe(sessionTurnRequestId(sessionId, 1))
     expect(request.threadRefs).toEqual([threadA, threadB])
-    expect(request).toMatchObject({ turn: 1, workspaceId: 'workspace:w' })
+    expect(request).toMatchObject({ turn: 1, workspaceId: 'workspace:w', startSequence: 6, endSequence: 8 })
     // The window is [head at start + 1, head at end] = [6, 8]: the reply at 9 is outside it.
     expect(ledger.repliedThreadsBetween).toHaveBeenCalledWith(memberId, 6, 8)
   })
