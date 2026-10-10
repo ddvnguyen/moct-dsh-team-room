@@ -185,6 +185,32 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     replay.validate()
   })
 
+  it('folds recorded Turns into one SessionRun, and an unreported cache bucket stays null, never 0 (§3.2)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('run-channel'), workspaceId: alpha, name: 'runs', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('run-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Run', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const sessionId = SessionId('session:run-a')
+    const turn = (number: number, usage: { cacheReadTokens: number | null }) => ({
+      requestId: requestId(`run-turn-${number}`), workspaceId: alpha, memberId: member.memberId, sessionId, threadRef, turn: number,
+      startedAt: `2026-10-11T01:0${number}:00+08:00`, endedAt: `2026-10-11T01:0${number}:05+08:00`, toolCalls: 1, runMs: 5000,
+      usage: { uncachedInputTokens: 100, outputTokens: 20, cacheWriteTokens: 0, ...usage }, actor,
+    })
+    await ledger.recordSessionTurn(turn(1, { cacheReadTokens: 50 }))
+    const second = await ledger.recordSessionTurn(turn(2, { cacheReadTokens: null }))
+    expect(second).toMatchObject({ committed: true, value: { turns: 2, tokensIn: 200, tokensOut: 40, cacheReadTokens: null, toolCalls: 2, runMs: 10000 } })
+    // An exact retry resolves to the recorded row and does not fold the Turn twice.
+    expect((await ledger.recordSessionTurn(turn(2, { cacheReadTokens: null }))).committed).toBe(false)
+    expect(ledger.sessionRun(sessionId)?.turns).toBe(2)
+    const replay = replayLedger(test)
+    expect(replay.sessionRun(sessionId)).toEqual(ledger.sessionRun(sessionId))
+    replay.validate()
+  })
+
   it('withdraws only the target Workspace and rejects subsequent work there', async () => {
     const test = await harness(new MemoryMediaPool(), [alpha, beta])
     const ledger = replayLedger(test)

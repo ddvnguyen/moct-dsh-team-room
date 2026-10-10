@@ -448,6 +448,18 @@ const threadSessionBound: Op<'team/thread-session-bound'> = {
   data: { workspaceId: threadRead.data.workspaceId, threadRef: memberThread, memberId, sessionId: SessionId('session:protocol-thread'), reason: 'start' },
 }
 
+/** One completed Turn of the Member's Session in its Thread; usage buckets are the reported counts. */
+const sessionTurnRecorded: Op<'team/session-turn-recorded'> = {
+  ...opBase('operation:protocol-28', 'request:protocol-session-turn', 28, memberActor),
+  previousOperationId,
+  kind: 'team/session-turn-recorded',
+  data: {
+    workspaceId: threadRead.data.workspaceId, memberId, sessionId: SessionId('session:protocol-thread'), threadRef: memberThread, turn: 1,
+    startedAt: '2026-10-11T01:00:00+08:00', endedAt: '2026-10-11T01:00:05+08:00', toolCalls: 2, runMs: 5000,
+    usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: null, route: { provider: 'opencode-go', model: 'mimo-v2.6-flash' } },
+  },
+}
+
 /**
  * The pre-receipt snapshot: the same protocol kind in its legacy stored shape,
  * with a bare anchor Message (no `occurredAt`) exactly as ledgers written
@@ -1110,6 +1122,46 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
     },
     legacy: { normalize: 'pre-receipt-stamp', repair: 'none' },
     intent: { scopes: 'no-op', inbox: 'delta' },
+  },
+  'team/session-turn-recorded': {
+    stored: sessionTurnRecorded,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.recordSessionTurn({
+          requestId: sessionTurnRecorded.requestId,
+          workspaceId: sessionTurnRecorded.data.workspaceId,
+          memberId,
+          sessionId: sessionTurnRecorded.data.sessionId,
+          threadRef: memberThread,
+          turn: 1,
+          startedAt: sessionTurnRecorded.data.startedAt,
+          endedAt: sessionTurnRecorded.data.endedAt,
+          toolCalls: 2,
+          runMs: 5000,
+          usage: sessionTurnRecorded.data.usage,
+          actor: memberActor,
+        })
+        expect(out.value.turns, 'the stats row answers with the recorded Turn').toBe(1)
+        return out
+      },
+      changed: () => ledger.recordSessionTurn({
+        requestId: sessionTurnRecorded.requestId,
+        workspaceId: sessionTurnRecorded.data.workspaceId,
+        memberId,
+        sessionId: sessionTurnRecorded.data.sessionId,
+        threadRef: memberThread,
+        turn: 1,
+        startedAt: sessionTurnRecorded.data.startedAt,
+        endedAt: sessionTurnRecorded.data.endedAt,
+        toolCalls: 9,
+        runMs: 5000,
+        usage: sessionTurnRecorded.data.usage,
+        actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
   },
   'team/thread-session-bound': {
     stored: threadSessionBound,

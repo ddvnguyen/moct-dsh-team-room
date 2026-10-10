@@ -442,6 +442,58 @@ export interface AgentTeamThreadSessionBoundOperation extends AgentTeamOperation
   readonly data: AgentTeamThreadSessionBoundData
 }
 
+/** One completed Turn's provider-reported usage, as the host derived it from session events. */
+export interface AgentTeamSessionTurnUsage {
+  /** Uncached prompt input across every attempt of the Turn. */
+  readonly uncachedInputTokens: number
+  readonly outputTokens: number
+  /** null when any attempt did not report the bucket. Never 0 for "unknown". */
+  readonly cacheReadTokens: number | null
+  readonly cacheWriteTokens: number | null
+  /** The last billed route of the Turn, when every attempt carried attribution. */
+  readonly route?: { readonly provider: string; readonly model: string }
+}
+
+/** Durable record of one completed Turn in a Session (contract §3.2 input). */
+export interface AgentTeamSessionTurnRecordedData {
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly parentSessionId?: SessionId
+  readonly threadRef: AgentTeamThreadRef
+  readonly turn: number
+  readonly startedAt: string
+  readonly endedAt: string
+  readonly toolCalls: number
+  readonly runMs: number
+  readonly usage: AgentTeamSessionTurnUsage
+}
+
+/** Session-level stats row, folded from its recorded Turns. Cache buckets are null once any Turn lacked them. */
+export interface AgentTeamSessionRun {
+  readonly sessionId: SessionId
+  readonly memberId: AgentTeamMemberId
+  readonly parentSessionId?: SessionId
+  readonly threadRefs: readonly AgentTeamThreadRef[]
+  readonly startedAt: string
+  readonly endedAt: string
+  readonly turns: number
+  readonly tokensIn: number
+  readonly tokensOut: number
+  readonly cacheReadTokens: number | null
+  readonly cacheWriteTokens: number | null
+  readonly toolCalls: number
+  readonly runMs: number
+  readonly model: { readonly provider: string; readonly model: string } | null
+  readonly lastAssistantAt: string
+}
+
+/** Append-only Turn record; the SessionRun row is the fold of these, so replay reproduces it exactly. */
+export interface AgentTeamSessionTurnRecordedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/session-turn-recorded'
+  readonly data: AgentTeamSessionTurnRecordedData
+}
+
 /** Durable irreversible Member removal and global inbox cleanup. */
 export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-removed'
@@ -486,6 +538,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberSessionRenewedOperation
   | AgentTeamMemberSessionRolledOverOperation
   | AgentTeamThreadSessionBoundOperation
+  | AgentTeamSessionTurnRecordedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation

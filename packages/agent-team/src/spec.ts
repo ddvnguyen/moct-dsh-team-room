@@ -524,6 +524,30 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/session-turn-recorded'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      memberId: memberIdSchema,
+      sessionId: sessionIdSchema,
+      parentSessionId: sessionIdSchema.optional(),
+      threadRef: threadRefSchema,
+      turn: z.number().int().nonnegative(),
+      startedAt: z.string().min(1),
+      endedAt: z.string().min(1),
+      toolCalls: z.number().int().nonnegative(),
+      runMs: z.number().nonnegative(),
+      usage: z.object({
+        uncachedInputTokens: z.number().int().nonnegative(),
+        outputTokens: z.number().int().nonnegative(),
+        cacheReadTokens: z.number().int().nonnegative().nullable(),
+        cacheWriteTokens: z.number().int().nonnegative().nullable(),
+        route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).strict().optional(),
+      }).strict(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/thread-session-bound'),
     data: z.object({
       workspaceId: workspaceIdSchema,

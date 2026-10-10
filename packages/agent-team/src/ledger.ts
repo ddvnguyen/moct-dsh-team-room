@@ -113,6 +113,10 @@ import type {
   AgentTeamThreadSessionBoundData,
   AgentTeamThreadSessionBoundOperation,
   AgentTeamThreadSessionReason,
+  AgentTeamSessionRun,
+  AgentTeamSessionTurnRecordedData,
+  AgentTeamSessionTurnRecordedOperation,
+  AgentTeamSessionTurnUsage,
   AgentTeamThreadReadReceipt,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
@@ -180,6 +184,23 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
 }
 
 /** Host-authorized intent to move one enabled Member onto a fresh Session id. */
+export interface AgentTeamRecordSessionTurnRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly parentSessionId?: SessionId
+  readonly threadRef: AgentTeamThreadRef
+  readonly turn: number
+  readonly startedAt: string
+  readonly endedAt: string
+  readonly toolCalls: number
+  readonly runMs: number
+  readonly usage: AgentTeamSessionTurnUsage
+  /** The Member recording its own Turn. */
+  readonly actor: AgentTeamMemberActor
+}
+
 export interface AgentTeamBindThreadSessionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -401,6 +422,8 @@ interface Projection {
   readonly previousSessions: Map<AgentTeamMemberId, SessionId>
   /** Session bindings per Thread and Member, in sequence order; the last entry is the active Session. */
   readonly threadSessions: Map<AgentTeamThreadRef, Map<AgentTeamMemberId, AgentTeamThreadSessionBinding[]>>
+  /** Session stats rows, folded from recorded Turns; keyed by sessionId. */
+  readonly sessionRuns: Map<SessionId, AgentTeamSessionRun>
   /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
   readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
   /** Top-level anchor Message per Thread; the first topLevel Message wins, like the linear scan it replaces. */
@@ -427,12 +450,41 @@ interface AgentTeamAttentionObservation {
   readonly action: 'follow' | 'unfollow'
 }
 
+/** Combines a running cache bucket with one Turn's bucket: null is sticky, because one unreported attempt makes the session total unknown. */
+function sumBucket(prior: number | null | undefined, turn: number | null): number | null {
+  if (turn === null || prior === null) return null
+  return prior === undefined ? turn : prior + turn
+}
+
+/** Folds one recorded Turn into its Session's stats row. Pure, so replay derives the same row. */
+function foldSessionTurn(prior: AgentTeamSessionRun | undefined, data: AgentTeamSessionTurnRecordedData): AgentTeamSessionRun {
+  const usage: AgentTeamSessionTurnUsage = data.usage
+  const threadRefs = prior?.threadRefs.includes(data.threadRef) ? prior.threadRefs : [...(prior?.threadRefs ?? []), data.threadRef]
+  return Object.freeze({
+    sessionId: data.sessionId,
+    memberId: data.memberId,
+    ...(data.parentSessionId === undefined ? {} : { parentSessionId: data.parentSessionId }),
+    threadRefs: Object.freeze([...threadRefs]),
+    startedAt: prior?.startedAt ?? data.startedAt,
+    endedAt: data.endedAt,
+    turns: (prior?.turns ?? 0) + 1,
+    tokensIn: (prior?.tokensIn ?? 0) + usage.uncachedInputTokens,
+    tokensOut: (prior?.tokensOut ?? 0) + usage.outputTokens,
+    cacheReadTokens: sumBucket(prior === undefined ? undefined : prior.cacheReadTokens, usage.cacheReadTokens),
+    cacheWriteTokens: sumBucket(prior === undefined ? undefined : prior.cacheWriteTokens, usage.cacheWriteTokens),
+    toolCalls: (prior?.toolCalls ?? 0) + data.toolCalls,
+    runMs: (prior?.runMs ?? 0) + data.runMs,
+    model: usage.route ?? prior?.model ?? null,
+    lastAssistantAt: data.endedAt,
+  })
+}
+
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), participations: new Map(), memberships: new Map(),
     claims: new Map(), tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], claimsByTask: new Map(), factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     messagesByRef: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), rolloverSeeds: new Map(),
+    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), sessionRuns: new Map(), rolloverSeeds: new Map(),
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
@@ -1726,6 +1778,41 @@ export class AgentTeamLedger {
   }
 
   /**
+   * Record one completed Turn of a Member's Session. The Member is the only
+   * actor; an exact retry (same requestId, same Turn) resolves to the recorded
+   * Turn; the same requestId with different data collides.
+   */
+  recordSessionTurn(request: AgentTeamRecordSessionTurnRequest): Promise<AgentTeamLedgerResult<AgentTeamSessionRun>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameSessionTurn(existing, request)
+        return this.resolved(this.state.sessionRuns.get(request.sessionId)!)
+      }
+      if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Session turn requires the Member\'s own authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      this.requireMember(request.memberId)
+      const data: AgentTeamSessionTurnRecordedData = Object.freeze({
+        workspaceId: request.workspaceId, memberId: request.memberId, sessionId: request.sessionId, threadRef: request.threadRef, turn: request.turn,
+        startedAt: request.startedAt, endedAt: request.endedAt, toolCalls: request.toolCalls, runMs: request.runMs, usage: Object.freeze({ ...request.usage }),
+        ...(request.parentSessionId === undefined ? {} : { parentSessionId: request.parentSessionId }),
+      })
+      const operation: AgentTeamSessionTurnRecordedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/session-turn-recorded', data,
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.state.sessionRuns.get(request.sessionId)!)
+    })
+  }
+
+  /** The folded stats row for one Session, or undefined before its first recorded Turn. */
+  sessionRun(sessionId: SessionId): AgentTeamSessionRun | undefined {
+    return this.state.sessionRuns.get(sessionId)
+  }
+
+  /**
    * Record that one Member's turns in one Thread run on a Session. Append-only:
    * a later binding supersedes an earlier one by sequence, never by overwrite.
    * An exact retry resolves to the recorded binding; the same requestId with
@@ -2179,6 +2266,7 @@ export class AgentTeamLedger {
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-session-bound':
+      case 'team/session-turn-recorded':
       case 'team/thread-read':
         // A read advances only the reader's private watermark; no projection
         // visible to other participants changes, so nobody is woken.
@@ -2245,6 +2333,7 @@ export class AgentTeamLedger {
       case 'team/member-updated':
       case 'team/channel-member-added':
       case 'team/thread-session-bound':
+      case 'team/session-turn-recorded':
       case 'team/thread-read':
       case 'team/dm-sent':
         return []
@@ -2491,6 +2580,15 @@ export class AgentTeamLedger {
         : this.inboxDelta([], [{ memberId: operation.data.memberId, threadRef: thread.threadRef }], [], this.directMarkersForFrom(projection, operation.data.memberId, thread.threadRef))
       if (!isDeepStrictEqual(operation.data.inbox, expected)) throw new Error('invalid Attention projection')
       this.validateInboxDelta(operation.data.inbox, projection, refs)
+      return
+    }
+    if (operation.kind === 'team/session-turn-recorded') {
+      // Self-scoped: the Member's own Turn is the only record of its Session stats.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the Member's own authority`)
+      }
+      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Session turn names an unknown Thread')
+      if (!projection.members.has(operation.data.memberId)) throw new Error('Session turn names an unknown Member')
       return
     }
     if (operation.kind === 'team/thread-session-bound') {
@@ -3057,6 +3155,10 @@ export class AgentTeamLedger {
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/session-turn-recorded') {
+      target.sessionRuns.set(operation.data.sessionId, foldSessionTurn(target.sessionRuns.get(operation.data.sessionId), operation.data))
       return
     }
     if (operation.kind === 'team/thread-session-bound') {
@@ -4396,6 +4498,14 @@ export class AgentTeamLedger {
       || (request.taskRef !== undefined && operation.data.task?.taskRef !== request.taskRef)
       || (request.threadRef === undefined && request.taskRef === undefined)
       || operation.data.action !== request.action) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameSessionTurn(operation: AgentTeamOperation, request: AgentTeamRecordSessionTurnRequest): asserts operation is AgentTeamSessionTurnRecordedOperation {
+    const data = operation.kind === 'team/session-turn-recorded' ? operation.data : undefined
+    if (data === undefined || !this.sameActor(operation.actor, request.actor)
+      || data.workspaceId !== request.workspaceId || data.sessionId !== request.sessionId || data.turn !== request.turn || data.threadRef !== request.threadRef
+      || data.endedAt !== request.endedAt || data.toolCalls !== request.toolCalls || data.runMs !== request.runMs
+      || !isDeepStrictEqual(data.usage, request.usage)) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameThreadSessionBound(operation: AgentTeamOperation, request: AgentTeamBindThreadSessionRequest): asserts operation is AgentTeamThreadSessionBoundOperation {
