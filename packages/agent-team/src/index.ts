@@ -40,6 +40,7 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
+import { cacheVerdict } from './cache-verdict.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult, type AgentTeamThreadReplyStat, type AgentTeamThreadSessionRuns } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
@@ -1212,6 +1213,51 @@ export default class AgentTeam extends TypertRemoteService {
    * still holding a live handle is an interrupted suspend/archive/remove,
    * not a stalled one; recovery finishes that cleanup instead of nudging it.
    */
+  /**
+   * Human resume of a Member's home Session (contract §4, TEST scope). Warm (the Session is
+   * still held by the provider and inside its cache TTL) resumes it in place. Cold starts a
+   * fresh home Session through the existing renewal, which carries the continuity handoff,
+   * and binds the named Thread to it (reason cold-restart). Any other Session is refused:
+   * per-Thread sessions are not supported yet.
+   */
+  @Remote('resumeMemberSession')
+  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: WorkspaceId; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<{ sessionId: SessionId; cache: 'warm' | 'cold'; action: 'resumed' | 'seeded-new' }> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    const member = ledger.getMember(request.memberId)
+    if (member === undefined || !ledger.participatesIn(request.memberId, request.workspaceId)) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
+    if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can resume`)
+    if (request.sessionId !== member.sessionId) throw new Error('per-Thread sessions are not supported yet: resumeMemberSession takes only the Member\'s home Session')
+    const run = ledger.sessionRun(member.sessionId)
+    const resumable = (await this.persistedSessionHeaders()).some(snapshot => snapshot.header.id === member.sessionId)
+    const verdict = cacheVerdict({ lastAssistantAt: run?.lastAssistantAt, provider: run?.model?.provider, nowMs: Date.now(), resumable })
+    if (verdict.cache === 'warm') {
+      await this.enqueueLifecycle(member.memberId, async () => {
+        if (this.handles.get(member.memberId)?.agent.session.id !== member.sessionId) await this.activateMember(member, undefined, new Set([member.sessionId]))
+      })
+      return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
+    }
+    if (!this.handles.has(member.memberId)) throw new Error(`Agent Member '${member.handle}' has no live Session to start a fresh context from; resume it before continuing`)
+    // The renewal takes the Member's lifecycle lock itself, so it runs outside any lock held here.
+    const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
+    const sessionId = cleared.status.member.sessionId
+    if (request.threadRef !== undefined) {
+      await ledger.bindThreadSession({
+        requestId: `${request.requestId}:bind` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef: request.threadRef, sessionId, reason: 'cold-restart',
+        actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
+      })
+    }
+    return { sessionId, cache: 'cold', action: 'seeded-new' }
+  }
+
+  /** Deferred past TEST (contract §4): a Session for one Thread needs a per-Session live handle, which is not built yet. */
+  @Remote('forkMemberSession')
+  forkMemberSession(request: { workspaceId: WorkspaceId; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef?: AgentTeamThreadRef; seed: 'summary' | 'full' }): never {
+    this.requireWorkspace(request.workspaceId)
+    throw new Error(`forkMemberSession is not supported yet (seed '${request.seed}'): per-Thread sessions are deferred past TEST`)
+  }
+
   @Remote('recoverMember')
   async recoverMember(request: AgentTeamRecoverMemberRequest): Promise<AgentTeamRecoverMemberResult> {
     this.requireAccepting()

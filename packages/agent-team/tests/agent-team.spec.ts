@@ -2949,4 +2949,33 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
     await expect(host.bindThreadSessionForAgent(stranger, { requestId: requestId('a4-bind-stranger'), workspaceId: alpha, threadRef, sessionId: SessionId('session:stranger'), reason: 'start' })).rejects.toThrow(/not an active Team Member/)
   })
+
+  it('resumes the home Session warm inside its cache TTL, and refuses fork and non-home Sessions (§4.2)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    // The provider still holds the home Session, so the verdict is decided by the clock alone.
+    ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('rpc-resume-start'), workspaceId: alpha, channelRef, body: 'resume me', asTask: false } as never)
+    // A Turn that ended just now: inside the 5-minute default TTL, so warm.
+    for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - 4000 })) test.ctx.emit('session/event', sessionB, event as never)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-warm'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
+      .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'warm', action: 'resumed' })
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-other'), workspaceId: alpha, memberId: seatB.memberId, sessionId: SessionId('session:not-home') }))
+      .rejects.toThrow(/per-Thread sessions are not supported yet/)
+    expect(() => host.forkMemberSession({ workspaceId: alpha, memberId: seatB.memberId, fromSessionId: seatB.sessionId, seed: 'full' })).toThrow(/not supported yet/)
+  })
+
+  it('refuses a cold restart when the Member has no live Session to start a fresh context from (§4.2)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('rpc-cold-start'), workspaceId: alpha, channelRef, body: 'cold me', asTask: false } as never)
+    // A Turn an hour old: past the TTL, so cold.
+    for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - 3_600_000 })) test.ctx.emit('session/event', sessionB, event as never)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    ;(host as unknown as { handles: Map<unknown, unknown> }).handles.delete(seatB.memberId)
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
+      .rejects.toThrow(/no live Session to start a fresh context from/)
+  })
 })
