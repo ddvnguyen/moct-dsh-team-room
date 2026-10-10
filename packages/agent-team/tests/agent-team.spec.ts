@@ -2898,4 +2898,30 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     expect(during!.endSequence).toBeGreaterThanOrEqual(sequenceOf('during the turn'))
     expect(ledger.turnForReply(seatB.memberId, sequenceOf('before the turn'))).toBeUndefined()
   })
+
+  it('serves per-reply stats, the Member session list and the Turn counters through the host read RPCs (§4)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    const start = (body: string) => host.sendMessageForAgent(agentB as never, { requestId: requestId(`rpc-${body}`), workspaceId: alpha, channelRef, body, asTask: false } as never)
+    await start('before the turn')
+    const [first, ...rest] = completeTurnEvents({ turn: 1 })
+    test.ctx.emit('session/event', sessionB, first as never)
+    await start('during the turn')
+    for (const event of rest) test.ctx.emit('session/event', sessionB, event as never)
+    const messages = () => [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => operation as unknown as {
+      kind: string; data: { message?: { body: string; threadRef: string; messageRef: string } } })
+      .filter(operation => operation.kind === 'team/message-sent')
+      .map(operation => operation.data.message!)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    const during = messages().find(message => message.body === 'during the turn')!
+    const before = messages().find(message => message.body === 'before the turn')!
+    expect(host.threadReplyStats({ workspaceId: alpha, threadRef: during.threadRef as never })).toEqual([
+      { messageRef: during.messageRef, memberId: seatB.memberId, turn: expect.objectContaining({ turn: 1, memberId: seatB.memberId }), isLastOfTurn: true },
+    ])
+    expect(host.threadReplyStats({ workspaceId: alpha, threadRef: before.threadRef as never })).toEqual([])
+    const sessions = host.memberSessions({ workspaceId: alpha, memberId: seatB.memberId })
+    expect(sessions.current).toBe(seatB.sessionId)
+    expect(sessions.runs).toEqual([expect.objectContaining({ sessionId: seatB.sessionId, memberId: seatB.memberId, turns: 1, toolCalls: 0 })])
+    expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId })).toMatchObject({ unrecorded: { failed: 0, unprovable: 0 } })
+  })
 })

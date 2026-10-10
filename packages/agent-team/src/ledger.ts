@@ -215,6 +215,14 @@ export interface AgentTeamSessionTurnResult {
 }
 
 /** A committed or resolved seat binding: its receipt, and the binding itself. */
+/** One reply's per-reply stats: the recorded Turn that holds it, and whether it is the Member's last reply in that Turn. */
+export interface AgentTeamThreadReplyStat {
+  readonly messageRef: AgentTeamMessageRef
+  readonly memberId: AgentTeamMemberId
+  readonly turn: AgentTeamSessionTurnRecordedData
+  readonly isLastOfTurn: boolean
+}
+
 export interface AgentTeamThreadSessionBindResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly binding: AgentTeamThreadSessionBinding
@@ -1862,6 +1870,35 @@ export class AgentTeamLedger {
   /** The folded stats row for one Session, or undefined before its first recorded Turn. */
   sessionRun(sessionId: SessionId): AgentTeamSessionRun | undefined {
     return this.state.sessionRuns.get(sessionId)
+  }
+
+  /** Every Session this Member has run that holds a recorded Turn, newest start first. */
+  memberSessionRuns(memberId: AgentTeamMemberId): readonly AgentTeamSessionRun[] {
+    return Object.freeze([...this.state.sessionRuns.values()]
+      .filter(run => run.memberId === memberId)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt)))
+  }
+
+  /**
+   * Per-reply stats for one Thread (contract §3.2, §4). Only replies that resolve to a
+   * recorded Turn window appear; a reply outside every window is absent, not zero.
+   * `isLastOfTurn` marks the Member's last reply in each Turn, the one the UI puts the
+   * stats row on, so a Turn's tokens are never shown twice. Read-only: no receipt, no lock.
+   */
+  threadReplyStats(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadReplyStat[] {
+    const replies: Array<{ readonly messageRef: AgentTeamMessageRef; readonly memberId: AgentTeamMemberId; readonly sequence: number; readonly turn: AgentTeamSessionTurnRecordedData }> = []
+    for (const message of [...this.state.messagesByRef.values()].filter(candidate => candidate.threadRef === threadRef).sort((left, right) => left.sequence - right.sequence)) {
+      const turn = this.turnForReply(message.sender, message.sequence)
+      if (turn !== undefined) replies.push({ messageRef: message.messageRef, memberId: message.sender, sequence: message.sequence, turn })
+    }
+    const lastSequenceByTurn = new Map<string, number>()
+    for (const reply of replies) lastSequenceByTurn.set(`${reply.turn.sessionId}\0${reply.turn.turn}`, reply.sequence)
+    return Object.freeze(replies.map(reply => Object.freeze({
+      messageRef: reply.messageRef,
+      memberId: reply.memberId,
+      turn: reply.turn,
+      isLastOfTurn: lastSequenceByTurn.get(`${reply.turn.sessionId}\0${reply.turn.turn}`) === reply.sequence,
+    })))
   }
 
   /**

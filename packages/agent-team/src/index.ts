@@ -40,7 +40,7 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult, type AgentTeamThreadReplyStat } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
@@ -152,6 +152,7 @@ import type {
   AgentTeamUpdateMemberRequest,
   AgentTeamUpdateMemberResult,
   AgentTeamView,
+  AgentTeamSessionRun,
   AgentTeamViewRequest,
 } from './types.ts'
 
@@ -2063,6 +2064,29 @@ export default class AgentTeam extends TypertRemoteService {
   threadHistory(request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().threadHistory(agentTeamHumanActor(), request)
+  }
+
+  /** Human's per-Member Session list, newest first, with each Session's folded stats row. */
+  @Remote('memberSessions')
+  memberSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId }): { current: SessionId | undefined; runs: readonly AgentTeamSessionRun[] } {
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    if (ledger.getMember(request.memberId) === undefined) throw new Error(`Member '${request.memberId}' is not known to this Team`)
+    return { current: ledger.getMember(request.memberId)?.sessionId, runs: ledger.memberSessionRuns(request.memberId) }
+  }
+
+  /** One Session's folded stats row, plus this host's count of Turns it did not record (the sessionStats contract). */
+  @Remote('sessionStats')
+  sessionStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; sessionId: SessionId }): { run: AgentTeamSessionRun | undefined; unrecorded: { failed: number; unprovable: number } } {
+    this.requireWorkspace(request.workspaceId)
+    return { run: this.requireLedger().sessionRun(request.sessionId), unrecorded: this.unrecordedTurns() }
+  }
+
+  /** Per-reply stats for one Thread: only replies inside a recorded Turn window; read-only. */
+  @Remote('threadReplyStats')
+  threadReplyStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadReplyStat[] {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadReplyStats(request.threadRef)
   }
 
   /** Return the existing bounded public Workspace discovery projection. */
