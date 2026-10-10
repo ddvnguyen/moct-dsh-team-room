@@ -111,6 +111,9 @@ export class AgentTeamTurnRecorder {
     // One Workspace per Member today; a multi-Workspace Member needs the Turn's Workspace named explicitly.
     const workspaceId = ledger.workspacesOf(memberId)[0]
     if (member === undefined || workspaceId === undefined) return
+    // The window is the ledger sequence span the Turn covers. endSequence is the projection
+    // sequence now; when no ledger op landed during the Turn it is startSequence - 1, the
+    // empty-window encoding, which the ledger accepts and nothing else should produce.
     const endSequence = ledger.projectionSequence()
     const window = { startSequence: turn.startSequence, endSequence }
     const threadRefs = threadRefsForTurn([...turn.delivered], ledger.repliedThreadsBetween(memberId, window.startSequence, window.endSequence), window)
