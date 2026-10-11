@@ -49,6 +49,7 @@ import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
 import { AgentTeamTurnRecorder } from './turn-recorder.ts'
+import { AgentTeamActivityFeed } from './activity-feed.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { MoctOperationsTable } from './moct-table.ts'
 import { formatTeamTimestamp } from './time-format.ts'
@@ -65,6 +66,8 @@ import type {
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
   AgentTeamActivity,
+  AgentTeamMemberActivityRequest,
+  AgentTeamMemberActivityResult,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
@@ -247,6 +250,7 @@ function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope
   if (left.kind === 'channel' && right.kind === 'channel') return left.channelRef === right.channelRef
   if (left.kind === 'thread' && right.kind === 'thread') return left.threadRef === right.threadRef
   if (left.kind === 'presence' && right.kind === 'presence') return left.workspaceId === right.workspaceId
+  if (left.kind === 'activity' && right.kind === 'activity') return left.workspaceId === right.workspaceId
   return false
 }
 
@@ -600,6 +604,16 @@ export default class AgentTeam extends TypertRemoteService {
   }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt), message => {
     this.ctx.logger.warn(message)
   })
+
+  /** Host activity feed (A13 v2): in-memory only, folded from session events. */
+  private readonly activityFeed = new AgentTeamActivityFeed({
+    identify: memberId => this.activityIdentity(memberId),
+    invalidate: memberId => this.invalidateActivity(memberId),
+  })
+  /** Each seat's Thread for its running Turn, from the Turn's delivery notices. */
+  private readonly activityThreads = new Map<AgentTeamMemberId, AgentTeamThreadRef>()
+  /** Activity wake epoch: a process-local counter that never takes part in a projection comparison. */
+  private activityEpoch = 0
 
   /** Thread summary policy and model call (contract §3.3). Plugin settings are not wired yet; `configureThreadSummary` is the seam. */
   private threadSummaryPolicy: ThreadSummaryPolicy = DEFAULT_THREAD_SUMMARY_POLICY
@@ -964,6 +978,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (member === undefined) return
       const message = error instanceof Error ? error.message : String(error)
       this.setMemberFailure(member.memberId, 'runtime', message)
+      this.activityFeed.onAgentError(member.memberId)
       // Every occurrence is classified here, including the two verdicts the
       // coordinator then reports no state change for (a terminal error with no
       // episode to cancel, and a repeat after standing down). Those belong at
@@ -994,6 +1009,7 @@ export default class AgentTeam extends TypertRemoteService {
       // above; without this wake, cached Client member rows keep showing the
       // Member as working after every turn until an unrelated change arrives.
       if (status === 'idle' && member !== undefined) {
+        this.activityFeed.onAgentIdle(member.memberId)
         if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
           this.recovery.onCleanTurnEnd(member.memberId)
         }
@@ -1013,6 +1029,7 @@ export default class AgentTeam extends TypertRemoteService {
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
       this.turnRecorder.onSessionEvent(memberId, session.id, event)
+      this.activityFeed.onSessionEvent(memberId, event)
       // A successful assistant response ends any open provider-overflow
       // recovery sequence for this Member.
       if (event.type === 'assistant/message') this.pressurePolicy.onAssistantMessage(memberId)
@@ -1029,6 +1046,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.shutdown.resolve()
       this.memberRuntime.releaseTurnWaits()
       this.recovery.dispose()
+      this.activityFeed.dispose()
       this.contextManagement.dispose()
       this.pressurePolicy.dispose()
       if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
@@ -1146,6 +1164,16 @@ export default class AgentTeam extends TypertRemoteService {
   /** Return every durable Member with current process availability. */
   members(): readonly AgentTeamAgentMemberStatus[] {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
+  }
+
+  /** Running Turns of this Workspace's seats (A13 v2), read from the in-memory feed; never persisted. */
+  @Remote('memberActivity')
+  memberActivity(request: AgentTeamMemberActivityRequest): AgentTeamMemberActivityResult {
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    const activities = this.activityFeed.snapshot(request.threadRef)
+      .filter(activity => ledger.participatesIn(activity.memberId, request.workspaceId))
+    return { revision: this.activityEpoch, activities }
   }
 
   /** Read-only navigation lookup for branded Task refs found in message bodies. */
@@ -1771,6 +1799,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (handle === undefined) throw new Error(`member '${member.handle}' has no active session`)
     const notifications = this.requireLedger().notificationFacts(member.memberId)
     this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
+    this.noteActivityThread(member.memberId, notifications)
     const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
     const hint = createUserMessage({
       content: [{ type: 'text', text: body }],
@@ -3577,6 +3606,29 @@ export default class AgentTeam extends TypertRemoteService {
     return workspace
   }
 
+  /** A seat's '@handle' and the Thread its running Turn was delivered for; undefined for an unknown seat. */
+  private activityIdentity(memberId: AgentTeamMemberId): { readonly handle: string; readonly threadRef?: AgentTeamThreadRef } | undefined {
+    const member = this.ledger?.getMember(memberId)
+    if (member === undefined) return undefined
+    const handle = member.handle.startsWith('@') ? member.handle : `@${member.handle}`
+    const threadRef = this.activityThreads.get(memberId)
+    return threadRef === undefined ? { handle } : { handle, threadRef }
+  }
+
+  /** Bumps the activity epoch for the seat's Workspaces; wakes only activity waiters. */
+  private invalidateActivity(memberId: AgentTeamMemberId): void {
+    const workspaces = this.ledger?.workspacesOf(memberId) ?? []
+    if (workspaces.length === 0) return
+    this.emitChanged(workspaces.map(workspaceId => ({ kind: 'activity' as const, workspaceId })))
+  }
+
+  /** Remember the Thread a seat's Turn was delivered for; an empty delivery leaves no Thread to show. */
+  private noteActivityThread(memberId: AgentTeamMemberId, notifications: readonly { readonly item: { readonly thread: { readonly threadRef: AgentTeamThreadRef } } }[]): void {
+    const threadRef = notifications[0]?.item.thread.threadRef
+    if (threadRef === undefined) this.activityThreads.delete(memberId)
+    else this.activityThreads.set(memberId, threadRef)
+  }
+
   private requireLedger(): AgentTeamLedger {
     if (this.ledger === undefined || this.domain === undefined) throw new Error('agent-team service is not initialized')
     return this.ledger
@@ -3764,6 +3816,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
     const notifications = this.requireLedger().notificationFacts(member.memberId)
     this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
+    this.noteActivityThread(member.memberId, notifications)
     const scope = this.memberScope(member.memberId, agent.id)
     const causeText = this.notificationCauseText(cause)
     if (notifications.length === 0) {
@@ -3996,10 +4049,12 @@ export default class AgentTeam extends TypertRemoteService {
    * around. Nothing here advances the projection version.
    */
   private emitChanged(scopes?: readonly AgentTeamChangeScope[]): void {
-    const touchesProjection = scopes === undefined || scopes.some(scope => scope.kind !== 'presence')
+    const touchesProjection = scopes === undefined || scopes.some(scope => scope.kind !== 'presence' && scope.kind !== 'activity')
     const touchesPresence = scopes !== undefined && scopes.some(scope => scope.kind === 'presence')
-    if (!touchesProjection && !touchesPresence) return
+    const touchesActivity = scopes !== undefined && scopes.some(scope => scope.kind === 'activity')
+    if (!touchesProjection && !touchesPresence && !touchesActivity) return
     if (touchesPresence) this.presenceEpoch += 1
+    if (touchesActivity) this.activityEpoch += 1
     for (const waiter of this.changeWaiters) {
       const waiterScope = waiter.scope
       if (scopes !== undefined && (waiterScope === undefined ? !touchesProjection : !scopes.some(scope => sameChangeScope(scope, waiterScope)))) continue
@@ -4016,12 +4071,13 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private changeVersionOf(scope: AgentTeamChangeScope | undefined): number {
     if (scope?.kind === 'presence') return this.presenceEpoch
+    if (scope?.kind === 'activity') return this.activityEpoch
     return this.ledger?.projectionSequence() ?? 0
   }
 
   private validateChangeScope(scope: AgentTeamChangeScope | undefined): AgentTeamChangeScope | undefined {
     if (scope === undefined) return undefined
-    const ref = scope.kind === 'workspace' || scope.kind === 'presence' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
+    const ref = scope.kind === 'workspace' || scope.kind === 'presence' || scope.kind === 'activity' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
     if (typeof ref !== 'string' || ref.length === 0) throw new Error(`change scope of kind '${scope.kind}' requires a non-empty ref`)
     return scope
   }
