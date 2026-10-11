@@ -1,0 +1,26 @@
+bundle: /home/ddv/dsh-test/profiles/web/node_modules/@michengai/dsh-automation/lib/client.js
+md5:    32b639211d7e8e3b8c6a08195cd64b22
+version: 0.1.61  (/home/ddv/.dsh/profiles/web)
+version: 0.1.61  (/home/ddv/.dsh/profiles/web-trial)
+version: 0.1.61  (/home/ddv/dsh-test/profiles/web)
+
+OK   registry key literal __dshNativeTabs
+OK   registry factory shape version:1 + insert
+OK   feature-detect requires typeof insert function
+OK   two-step discovery KS(entry) ?? KS(component)
+OK   attach slot sidebar.workspaces
+OK   entry reader entriesOfSlot ?? entries
+OK   subscribes to sidebar.workspaces
+OK   subscribes to sidebar (parent)
+OK   window re-probe event name
+OK   owner retry budget 20 x 250 ms
+OK   tab sort order ?? 0
+OK   insert requires non-empty id
+OK   strip renders tasks, registry tabs, channels, schedule
+OK   selected body container class
+OK   persistence key literal
+OK   persistence whitelist collapses to tasks
+
+expected for D2 (from evidence/D2-initial.md section 1):
+  registryKey __dshNativeTabs / registrySlot sidebar.workspaces / siblingSlot sidebar
+  tabId team / tabOrder 3 / retry 250 ms x 20
