@@ -1037,6 +1037,42 @@ export type AgentTeamChangeScope =
    * durable projection changed.
    */
   | { readonly kind: 'presence'; readonly workspaceId: WorkspaceId }
+  /**
+   * Host activity wake (a running Turn's step/tool progress): its own epoch,
+   * shaped like presence. It never wakes a projection waiter.
+   */
+  | { readonly kind: 'activity'; readonly workspaceId: WorkspaceId }
+
+/** One running Member Turn, as the host folds it from session events. Never persisted. */
+export interface AgentTeamMemberActivity {
+  readonly memberId: AgentTeamMemberId
+  /** '@name' */
+  readonly handle: string
+  /** Thread the current Turn was delivered for; absent when unknown. */
+  readonly threadRef?: AgentTeamThreadRef
+  /** ISO-8601 */
+  readonly turnStartedAt: string
+  /** Model steps started in the current Turn. */
+  readonly stepCount: number
+  /** Tool calls started in the current Turn. */
+  readonly toolCount: number
+  /** label <= 80 chars; never arguments, command text, output, env or credentials. */
+  readonly current?: { readonly tool: string; readonly label: string }
+  /** ISO-8601, time of the last event folded in. */
+  readonly updatedAt: string
+}
+
+/** Running Member Turns in one Workspace; `threadRef` narrows to the Turns delivered for that Thread. */
+export interface AgentTeamMemberActivityRequest {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+}
+
+/** `revision` is the process-local activity epoch; it never advances the projection. */
+export interface AgentTeamMemberActivityResult {
+  readonly revision: number
+  readonly activities: readonly AgentTeamMemberActivity[]
+}
 
 /** Subscribe to lightweight invalidations; each connection starts with a current baseline. */
 export interface AgentTeamChangesRequest {
