@@ -1074,3 +1074,17 @@ export interface AgentTeamThreadReplyStat {
   readonly turn: AgentTeamSessionTurnRecordedData
   readonly isLastOfTurn: boolean
 }
+
+/** One errored Turn of a Thread's seat, shown to the human; the ledger op's sequence orders it with Messages. */
+export interface AgentTeamThreadTurnFailure {
+  readonly sequence: number
+  readonly occurredAt: string
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  /** The Member's handle, or its memberId when the Member has no projection entry (removed or archived). */
+  readonly handle: string
+  readonly sessionId: AgentTeamMemberSessionId
+  readonly turn: number
+  /** The stored redacted reason: first line, at most 200 characters. */
+  readonly reason: string
+}

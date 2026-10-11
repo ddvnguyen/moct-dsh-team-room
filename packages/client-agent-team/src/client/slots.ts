@@ -45,6 +45,7 @@ import type {
   AgentTeamThreadReadResult,
   AgentTeamThreadReplyStat,
   AgentTeamThreadRef,
+  AgentTeamThreadTurnFailure,
   AgentTeamPromoteThreadRequest,
   AgentTeamPromoteThreadResult,
   AgentTeamTaskRequest,
@@ -163,6 +164,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   threadObservations: (request: AgentTeamThreadObservationsRequest) => Promise<RemoteResult<AgentTeamThreadObservations>>
   /** Per-reply usage of one Thread's agent replies; the page keys the rows by message ref. */
   threadReplyStats: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadReplyStat[]>>
+  /** Errored-Turn notices of the Thread, every notice kept; the page merges them into the timeline by ledger sequence. */
+  threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
   /** Agent-card session jump, shared by every slot; message member chips reuse it. */
   openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
 }

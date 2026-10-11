@@ -3194,3 +3194,69 @@ describe('AgentTeam thread summary (§3.3)', () => {
     expect(stub.calls).toHaveLength(1)
   })
 })
+
+// TEST-2 only (contract §6.0, option B): errored-Turn notices reach the Thread through a human read, and nothing else.
+describe('AgentTeam turn failure notices (§6.0, threadTurnFailures read)', () => {
+  it('returns every errored Turn of a Thread in ledger order, kept across replays, with the read itself changing nothing', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('tf-thread'), workspaceId: alpha, channelRef, body: 'fail this thread', asTask: false } as never)
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'fail this thread')!.data.message!.threadRef as never
+    // The seat was notified of this Thread at delivery, so its errored Turns are noted against it (stands in for notifyMember).
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    const failTurn = (turn: number, message: string) => {
+      test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: { turn } } as never)
+      test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: { turn, reason: { kind: 'error', error: { message } } } } as never)
+    }
+    failTurn(1, 'provider returned 503')
+    await vi.waitFor(() => expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1))
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    failTurn(2, 'Connection error.')
+    await vi.waitFor(() => expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(2))
+
+    const readState = () => ({
+      head: replayLedger(test).projectionSequence(),
+      facts: replayLedger(test).notificationFacts(seatB.memberId),
+      attention: host.attentionStatusForAgent(agentB as never, { workspaceId: alpha, threadRef }),
+    })
+    const before = readState()
+    const failures = host.threadTurnFailures({ workspaceId: alpha, threadRef })
+    expect(failures.map(failure => [failure.turn, failure.reason, failure.handle, failure.memberId])).toEqual([
+      [1, 'provider returned 503', seatB.handle, seatB.memberId],
+      [2, 'Connection error.', seatB.handle, seatB.memberId],
+    ])
+    expect(failures[0]!.sequence).toBeLessThan(failures[1]!.sequence)
+    // The read has no side effects: ledger head, unread facts and attention state are identical before and after.
+    expect(readState()).toEqual(before)
+    // The notices never enter the thread's facts, history or read path: they are shown only by threadTurnFailures.
+    const history = JSON.stringify(host.threadHistory({ workspaceId: alpha, threadRef }))
+    expect(history).not.toContain('provider returned 503')
+    expect(history).not.toContain('Connection error.')
+    expect(JSON.stringify(replayLedger(test).notificationFacts(seatB.memberId))).not.toContain('Connection error.')
+    // Replay of the stored log keeps every notice, in ledger order, with no de-duplication.
+    expect(replayLedger(test).threadTurnFailures(threadRef).map(failure => failure.turn)).toEqual([1, 2])
+  })
+
+  it('answers a retry of the same requestId with the stored notice, and never writes a second row', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('tf-retry'), workspaceId: alpha, channelRef, body: 'retry thread', asTask: false } as never)
+    // The host's own ledger instance: a second replay would not see the host's cached writes.
+    const ledger = (host as unknown as { requireLedger(): AgentTeamLedger }).requireLedger()
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'retry thread')!.data.message!.threadRef as never
+    const notice = {
+      requestId: turnFailureNoticeRequestId(SessionId('session:retry'), 1, threadRef), workspaceId: alpha, threadRef, memberId: seatB.memberId,
+      sessionId: SessionId('session:retry'), turn: 1, reason: 'Connection error.', actor: { kind: 'member' as const, memberId: seatB.memberId, handle: seatB.handle },
+    }
+    const first = await ledger.recordTurnFailureNotice(notice)
+    const again = await ledger.recordTurnFailureNotice(notice)
+    // The retry resolves to the stored receipt (committed:false: nothing new was written).
+    expect(again.value).toEqual(first.value)
+    expect(again.committed).toBe(false)
+    expect(ledger.threadTurnFailures(threadRef)).toHaveLength(1)
+    expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+  })
+})

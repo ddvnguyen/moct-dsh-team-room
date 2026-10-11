@@ -159,6 +159,7 @@ import type {
   AgentTeamThreadSessionBinding,
   AgentTeamViewRequest,
   AgentTeamThreadReplyStat,
+  AgentTeamThreadTurnFailure,
   AgentTeamThreadSessionRuns,
   AgentTeamThreadSummaryCommittedData,
 } from './types.ts'
@@ -2252,6 +2253,13 @@ export default class AgentTeam extends TypertRemoteService {
   threadReplyStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadReplyStat[] {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().threadReplyStats(request.threadRef)
+  }
+
+  /** Errored-Turn notices of one Thread for the human view, every notice kept; read-only (no receipt, no unread change, no wake). */
+  @Remote('threadTurnFailures')
+  threadTurnFailures(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadTurnFailure[] {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadTurnFailures(request.threadRef)
   }
 
   /** Return the existing bounded public Workspace discovery projection. */

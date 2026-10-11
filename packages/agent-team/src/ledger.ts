@@ -117,6 +117,7 @@ import type {
   AgentTeamSessionTurnRecordedData,
   AgentTeamThreadReplyStat,
   AgentTeamThreadSessionRuns,
+  AgentTeamThreadTurnFailure,
   AgentTeamSessionTurnRecordedOperation,
   AgentTeamTurnFailureNoticeData,
   AgentTeamTurnFailureNoticeOperation,
@@ -1917,6 +1918,23 @@ export class AgentTeamLedger {
   turnFailureNotices(threadRef: AgentTeamThreadRef): readonly AgentTeamTurnFailureNoticeOperation[] {
     return Object.freeze(this.state.ordered.filter((operation): operation is AgentTeamTurnFailureNoticeOperation =>
       operation.kind === 'team/turn-failure-notice' && operation.data.threadRef === threadRef))
+  }
+
+  /**
+   * The human-facing view of a Thread's failure notices, in ledger order, every notice kept (no de-duplication).
+   * Read-only: no receipt, no unread change, no wake. Never feeds facts, notifications or prompts.
+   */
+  threadTurnFailures(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadTurnFailure[] {
+    return Object.freeze(this.turnFailureNotices(threadRef).map(operation => Object.freeze({
+      sequence: operation.sequence,
+      occurredAt: operation.occurredAt,
+      threadRef: operation.data.threadRef,
+      memberId: operation.data.memberId,
+      handle: this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId,
+      sessionId: operation.data.sessionId,
+      turn: operation.data.turn,
+      reason: operation.data.reason,
+    })))
   }
 
   /** The receipt of the recorded Turn, plus the Session's folded row when this projection holds it. */

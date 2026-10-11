@@ -137,3 +137,18 @@ describe('turnFailureReason and turnFailureNoticeRequestId', () => {
     expect(turnFailureNoticeRequestId(sessionId, 3, threadA)).toBe(`turn-failed:${sessionId}:3:${threadA}`)
   })
 })
+
+describe('AgentTeamLedger.threadTurnFailures (§6.0 read view)', () => {
+  it('falls back to the memberId as the handle when the Member has no projection entry', async () => {
+    const { AgentTeamLedger: Ledger } = await import('../src/ledger.ts')
+    const operation = (sequence: number, turn: number) => ({
+      kind: 'team/turn-failure-notice', sequence, occurredAt: `2026-10-11T00:00:0${sequence}.000Z`,
+      data: { threadRef: threadA, memberId, sessionId, turn, reason: `reason ${turn}` },
+    })
+    const view = { turnFailureNotices: () => [operation(3, 1), operation(5, 2)], state: { members: new Map() } }
+    const failures = Ledger.prototype.threadTurnFailures.call(view as never, threadA)
+    expect(failures.map(failure => [failure.sequence, failure.turn, failure.handle])).toEqual([[3, 1, memberId], [5, 2, memberId]])
+    const known = { turnFailureNotices: () => [operation(3, 1)], state: { members: new Map([[memberId, { handle: 'notice-a' }]]) } }
+    expect(Ledger.prototype.threadTurnFailures.call(known as never, threadA)[0]!.handle).toBe('notice-a')
+  })
+})

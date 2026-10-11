@@ -291,6 +291,7 @@ function teamSeatInject(
       loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
       threadObservations: (request: AgentTeamThreadObservationsRequest) => ctx.remote.agentTeam.threadObservations(request),
       threadReplyStats: (request: Parameters<typeof ctx.remote.agentTeam.threadReplyStats>[0]) => ctx.remote.agentTeam.threadReplyStats(request),
+      threadTurnFailures: (request: Parameters<typeof ctx.remote.agentTeam.threadTurnFailures>[0]) => ctx.remote.agentTeam.threadTurnFailures(request),
       sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
       putAttachment: (request: AgentTeamPutAttachmentRequest) => ctx.remote.agentTeam.putAttachment(request),
       getAttachment: (request: AgentTeamGetAttachmentRequest) => ctx.remote.agentTeam.getAttachment(request),

@@ -9,6 +9,7 @@ import type {
   AgentTeamThreadFact,
   AgentTeamThreadReadFact,
   AgentTeamThreadRef,
+  AgentTeamThreadTurnFailure,
   AgentTeamView,
 } from '@contexera/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -46,6 +47,7 @@ interface TeamThreadPageProps {
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   readonly threadObservations: TeamConversationProps['threadObservations']
   readonly threadReplyStats: TeamConversationProps['threadReplyStats']
+  readonly threadTurnFailures: TeamConversationProps['threadTurnFailures']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly drafts: TeamDraftStore
@@ -110,7 +112,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, openMemberSession, putAttachment,
-    loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats,
+    loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
     subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, promoteThread, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
@@ -334,6 +336,18 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     }
   }
 
+  // Failure notices keep every notice a boot re-issues (no de-duplication); the timeline merges them by ledger sequence.
+  const [turnFailures, setTurnFailures] = useState<readonly AgentTeamThreadTurnFailure[]>([])
+  const refreshTurnFailures = async (): Promise<void> => {
+    try {
+      const result = await threadTurnFailures({ workspaceId, threadRef })
+      if (!mountedRef.current || !result.ok) return
+      setTurnFailures(result.value)
+    } catch {
+      // The next thread-scope wake retries; the notices stay as they were until then.
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true
     // The previous mount's supplemental round must not answer for this one.
@@ -398,6 +412,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     })()
     void refreshSupplemental()
     void refreshReplyStats()
+    void refreshTurnFailures()
     const disposers = [
       subscribeChanges({ kind: 'thread', threadRef }, update => {
         if (!mountedRef.current) return
@@ -407,6 +422,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         void refreshFollowers()
         // A new reply or a finished Turn changes the usage lines.
         void refreshReplyStats()
+        // A failed Turn adds its notice; the same wake covers it.
+        void refreshTurnFailures()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
         if (!mountedRef.current) return
@@ -570,10 +587,11 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   }
 
   /** One run = one same-sender reply turn; activities, the unread boundary, and day changes break runs. */
-  const renderFactBlocks = (facts: readonly AgentTeamThreadFact[], boundaryIndex: number | undefined): ReactNode[] => {
+  const renderFactBlocks = (facts: readonly AgentTeamThreadFact[], boundaryIndex: number | undefined, failures: readonly AgentTeamThreadTurnFailure[] = []): ReactNode[] => {
     const nodes: ReactNode[] = []
     let run: AgentTeamThreadFact[] = []
     let lastDay: string | undefined
+    let nextFailure = 0
     const flushRun = () => {
       if (run.length > 0) {
         nodes.push(
@@ -591,7 +609,16 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       }
       run = []
     }
+    // A notice sits between the facts whose ledger sequence brackets it; it breaks a run like an activity does.
+    const emitFailuresBefore = (sequence: number | undefined): void => {
+      while (nextFailure < failures.length && (sequence === undefined || failures[nextFailure]!.sequence < sequence)) {
+        const failure = failures[nextFailure++]!
+        flushRun()
+        nodes.push(<p className={threadCss.activityRow} key={`failure-${failure.sequence}`}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{t('turnFailure', { handle: failure.handle, turn: failure.turn, reason: failure.reason })}</span></p>)
+      }
+    }
     facts.forEach((fact, index) => {
+      emitFailuresBefore(fact.sequence)
       const occurredAt = fact.kind === 'message' ? fact.message.occurredAt : undefined
       if (occurredAt !== undefined) {
         const day = timelineDayKey(occurredAt)
@@ -611,6 +638,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       if (sender !== undefined) run.push(fact)
       else nodes.push(<Fragment key={factKey(fact)}>{renderFact(fact)}</Fragment>)
     })
+    emitFailuresBefore(undefined)
     flushRun()
     return nodes
   }
@@ -779,6 +807,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   }
 
   const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor, activeProjection.anchorMentions)], currentFacts)
+  // Notices older than the first current fact belong to the history block when there is one; otherwise they lead the current block.
+  const firstCurrentSequence = currentFacts[0]?.sequence ?? Number.POSITIVE_INFINITY
+  const historyFailures = olderFacts.length > 0 ? turnFailures.filter(failure => failure.sequence < firstCurrentSequence) : []
+  const currentFailures = olderFacts.length > 0 ? turnFailures.filter(failure => failure.sequence >= firstCurrentSequence) : turnFailures
   const unreadBoundary = unreadIndex >= 0 ? unreadIndex : undefined
   // One row per erroring Member holding a live Claim. The row shows the
   // diagnostic's structured class — the localizable axis — beside the first
@@ -887,10 +919,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <div className={css.timelineContent}>
         {loading && projection === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p></div>}
         {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
-        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{renderFactBlocks(olderFacts, undefined)}</section>}
+        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{renderFactBlocks(olderFacts, undefined, historyFailures)}</section>}
         {historyHasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
         {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection}>
-          {renderFactBlocks(currentFactsWithAnchor, unreadBoundary)}
+          {renderFactBlocks(currentFactsWithAnchor, unreadBoundary, currentFailures)}
         </section>}
         {autoReadExhausted && <div className={css.timelineAction} role="alert">
           <span>{t('autoReadIncomplete')}</span>
