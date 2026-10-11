@@ -17,7 +17,7 @@ import { deriveAgentTeamTurn } from './session-turn-usage.ts'
 import { threadRefsForTurn } from './turn-threads.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import type { AgentTeamMemberId, AgentTeamRequestId, AgentTeamThreadRef } from './types.ts'
+import type { AgentTeamMemberId, AgentTeamOperationReceipt, AgentTeamRequestId, AgentTeamThreadRef } from './types.ts'
 
 interface OpenTurn {
   readonly sessionId: SessionId
@@ -81,6 +81,12 @@ export class AgentTeamTurnRecorder {
     private readonly onError: (message: string, error: unknown) => void,
     /** Runs after a Turn is committed; it must not throw, since a throw here would count as a failed write. */
     private readonly onRecorded: (workspaceId: WorkspaceId, threadRefs: readonly AgentTeamThreadRef[]) => void = () => undefined,
+    /**
+     * Runs after a notice or Turn record is newly committed, so the change waiters of its Thread scopes wake.
+     * UI-only: this is not the Remote commit path, so no `agent-team/committed` listener, participation notice or agent wake.
+     * A write that was already committed (same requestId) is not reported again. It must not throw.
+     */
+    private readonly onCommitted: (receipt: AgentTeamOperationReceipt) => void = () => undefined,
   ) {}
 
   /** Threads of Team facts just delivered to a Member: into its open Turn, or held for the next one. */
@@ -151,6 +157,8 @@ export class AgentTeamTurnRecorder {
         requestId: turnFailureNoticeRequestId(turn.sessionId, start.data.turn, threadRef),
         workspaceId, threadRef, memberId, sessionId: turn.sessionId, turn: start.data.turn, reason,
         actor: { kind: 'member', memberId, handle: member.handle },
+      }).then(result => {
+        if (result.committed) this.onCommitted(result.value)
       }).catch(error => {
         this.onError(`agent-team: turn failure notice for '${memberId}' on '${threadRef}' failed`, error)
       })
@@ -175,7 +183,7 @@ export class AgentTeamTurnRecorder {
     const endSequence = ledger.attributionSequence()
     const window = { startSequence: turn.startSequence, endSequence }
     const threadRefs = threadRefsForTurn([...turn.delivered], ledger.repliedThreadsBetween(memberId, window.startSequence, window.endSequence), window)
-    await ledger.recordSessionTurn({
+    const result = await ledger.recordSessionTurn({
       requestId: sessionTurnRequestId(turn.sessionId, derived.turn),
       workspaceId,
       memberId,
@@ -191,6 +199,7 @@ export class AgentTeamTurnRecorder {
       endSequence: window.endSequence,
       actor: { kind: 'member', memberId, handle: member.handle },
     })
+    if (result.committed) this.onCommitted(result.value.receipt)
     this.onRecorded(workspaceId, threadRefs)
   }
 }

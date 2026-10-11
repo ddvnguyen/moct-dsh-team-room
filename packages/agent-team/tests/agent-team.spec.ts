@@ -21,6 +21,7 @@ import { snapshotReadData, receiptReadData } from './helpers/legacy-thread-read.
 import AgentTeam, { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor, isThreadReadSnapshot } from '../src/ledger.ts'
 import { turnFailureNoticeRequestId } from '../src/turn-recorder.ts'
+import { nextChange } from './helpers/change-stream.ts'
 import { agentTeamDomainSpec } from '../src/spec.ts'
 import { SUMMARY_OUTPUT_TOKEN_CAP } from '../src/thread-summary.ts'
 import type { ThreadSummaryModelCall } from '../src/thread-summary-model.ts'
@@ -3266,5 +3267,75 @@ describe('AgentTeam turn failure notices (§6.0, threadTurnFailures read)', () =
     expect(again.committed).toBe(false)
     expect(ledger.threadTurnFailures(threadRef)).toHaveLength(1)
     expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+  })
+})
+
+describe('AgentTeam recorder commits wake Thread scopes on the change path only (§6.0, UI-only)', () => {
+  const threadRefOf = (test: { facility: { get(name: string): { table(name: string): { entries(): IterableIterator<[unknown, unknown]> } } | undefined } }, body: string) =>
+    [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === body)!.data.message!.threadRef as never
+  /** Commit-path wakes of Members: `notifyMember` also runs for running-state cues, which are not commits. */
+  const commitWakes = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.filter(([, cause]) => (cause as { kind: string }).kind === 'commit').length
+
+  it('wakes a waiter on the Thread when an errored Turn writes its notice, with no committed listener and no Member wake', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('wake-notice'), workspaceId: alpha, channelRef, body: 'wake notice thread', asTask: false } as never)
+    const threadRef = threadRefOf(test, 'wake notice thread')
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    const committed = vi.fn()
+    test.ctx.on('agent-team/committed', committed)
+    const notify = vi.spyOn(host as unknown as { notifyMember(...args: unknown[]): void }, 'notifyMember')
+    const waiter = nextChange(host, { kind: 'thread', threadRef })
+    test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: { turn: 1 } } as never)
+    test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: { turn: 1, reason: { kind: 'error', error: { message: 'Connection error.' } } } } as never)
+    await expect(waiter).resolves.toBeDefined()
+    expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+    expect(committed).not.toHaveBeenCalled()
+    expect(commitWakes(notify)).toBe(0)
+  })
+
+  it('wakes a waiter on the Thread when a provable Turn is recorded, with no committed listener and no Member wake', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('wake-turn'), workspaceId: alpha, channelRef, body: 'wake turn thread', asTask: false } as never)
+    const threadRef = threadRefOf(test, 'wake turn thread')
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    const committed = vi.fn()
+    test.ctx.on('agent-team/committed', committed)
+    const notify = vi.spyOn(host as unknown as { notifyMember(...args: unknown[]): void }, 'notifyMember')
+    const waiter = nextChange(host, { kind: 'thread', threadRef })
+    for (const event of completeTurnEvents({ turn: 1 })) test.ctx.emit('session/event', sessionB, event as never)
+    await expect(waiter).resolves.toBeDefined()
+    const recorded = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { threadRefs: string[] } })
+      .filter(operation => operation.kind === 'team/session-turn-recorded')
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]!.data.threadRefs).toContain(threadRef)
+    expect(committed).not.toHaveBeenCalled()
+    expect(commitWakes(notify)).toBe(0)
+  })
+
+  it('emits nothing for a same-requestId rewrite of a notice that is already committed', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('wake-rewrite'), workspaceId: alpha, channelRef, body: 'rewrite thread', asTask: false } as never)
+    const threadRef = threadRefOf(test, 'rewrite thread')
+    const fail = () => {
+      ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+      test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: { turn: 1 } } as never)
+      test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: { turn: 1, reason: { kind: 'error', error: { message: 'Connection error.' } } } } as never)
+    }
+    fail()
+    await vi.waitFor(() => expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1))
+    const ledger = (host as unknown as { requireLedger(): AgentTeamLedger }).requireLedger()
+    const write = vi.spyOn(ledger, 'recordTurnFailureNotice')
+    const changed = vi.spyOn(host as unknown as { emitChanged(scopes?: unknown): void }, 'emitChanged')
+    fail()
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+    await write.mock.results[0]!.value
+    expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+    expect(changed).not.toHaveBeenCalled()
   })
 })

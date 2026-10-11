@@ -597,7 +597,7 @@ export default class AgentTeam extends TypertRemoteService {
   /** Records each completed Turn with its Threads (contract §3.2). Reads the ledger lazily, so it can exist before the ledger does. */
   private readonly turnRecorder = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
     this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
-  }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs))
+  }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt))
 
   /** Thread summary policy and model call (contract §3.3). Plugin settings are not wired yet; `configureThreadSummary` is the seam. */
   private threadSummaryPolicy: ThreadSummaryPolicy = DEFAULT_THREAD_SUMMARY_POLICY
@@ -3582,6 +3582,20 @@ export default class AgentTeam extends TypertRemoteService {
 
   private requireAccepting(): void {
     if (!this.accepting) throw new Error('agent-team service is shutting down')
+  }
+
+  /**
+   * Change invalidation for a Turn notice or Turn record written by the recorder. It runs the same change
+   * step as `emitCommitted` and nothing else: no `agent-team/committed` listener, participation notice or wake.
+   */
+  private emitRecorded(receipt: AgentTeamOperationReceipt): void {
+    const ledger = this.requireLedger()
+    const operation = ledger.getOperation(receipt.operationId)
+    if (operation === undefined) {
+      this.afterCommit('change invalidation', () => this.emitChanged())
+      return
+    }
+    this.afterCommit('change invalidation', () => this.emitChanged(ledger.changeScopesOf(operation)))
   }
 
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
