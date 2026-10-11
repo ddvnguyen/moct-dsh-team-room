@@ -6,7 +6,7 @@ import type { AgentTeamMemberId, AgentTeamThreadRef } from '../src/types.ts'
 
 // Usage derivation needs real harness events; the recorder's own behavior does not, so it is stubbed.
 const derived = { current: undefined as undefined | Record<string, unknown> }
-vi.mock('../src/session-turn-usage.ts', () => ({ deriveAgentTeamTurn: () => derived.current }))
+vi.mock('../src/session-turn-usage.ts', () => ({ deriveAgentTeamTurn: () => derived.current, unprovableUsageReason: () => 'stub reason' }))
 
 const memberId = 'member:turn-a' as AgentTeamMemberId
 const sessionId = 'session:turn-a' as SessionId
@@ -71,6 +71,19 @@ describe('AgentTeamTurnRecorder', () => {
     recorder.onSessionEvent(memberId, sessionId, event('turn/end', 4))
     await Promise.resolve()
     expect(ledger.recordSessionTurn).not.toHaveBeenCalled()
+  })
+
+  it('reports an unrecorded Turn with its reason through the host log, not silently', async () => {
+    const ledger = fakeLedger(() => 0)
+    const onUnrecorded = vi.fn()
+    const recorder = new AgentTeamTurnRecorder(() => ledger as unknown as AgentTeamLedger, () => undefined, () => undefined, () => undefined, onUnrecorded)
+    derived.current = undefined
+    recorder.onSessionEvent(memberId, sessionId, event('turn/start', 8))
+    recorder.onSessionEvent(memberId, sessionId, event('turn/end', 8))
+    await vi.waitFor(() => expect(onUnrecorded).toHaveBeenCalledTimes(1))
+    expect(onUnrecorded.mock.calls[0]![0]).toContain("Turn 8 for 'member:turn-a' not recorded")
+    expect(onUnrecorded.mock.calls[0]![0]).toContain('stub reason')
+    expect(recorder.unrecordedTurns).toEqual({ failed: 0, unprovable: 1 })
   })
 
   it('ignores events from a Session other than the open Turn\'s', async () => {

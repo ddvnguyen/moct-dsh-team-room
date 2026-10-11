@@ -597,7 +597,9 @@ export default class AgentTeam extends TypertRemoteService {
   /** Records each completed Turn with its Threads (contract §3.2). Reads the ledger lazily, so it can exist before the ledger does. */
   private readonly turnRecorder = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
     this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
-  }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt))
+  }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt), message => {
+    this.ctx.logger.warn(message)
+  })
 
   /** Thread summary policy and model call (contract §3.3). Plugin settings are not wired yet; `configureThreadSummary` is the seam. */
   private threadSummaryPolicy: ThreadSummaryPolicy = DEFAULT_THREAD_SUMMARY_POLICY

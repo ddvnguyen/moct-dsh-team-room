@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveAgentTeamTurn } from '../src/session-turn-usage.ts'
+import { deriveAgentTeamTurn, unprovableUsageReason } from '../src/session-turn-usage.ts'
 import { completeTurnEvents } from './helpers/turn-events.ts'
 
 describe('deriveAgentTeamTurn (§3.2)', () => {
@@ -32,6 +32,15 @@ describe('deriveAgentTeamTurn (§3.2)', () => {
       ? { ...event, data: { ...(event.data as object), usage: undefined, stream: [] } } as never
       : event)
     expect(deriveAgentTeamTurn(events)).toBeUndefined()
+  })
+
+  it('names why a completed Turn was refused, counting the samples that lack the proof fields', () => {
+    // The shape of session aeca99c0 turn 5: no totalTokens and no cache fields on the step samples.
+    const events = completeTurnEvents().map(event => event.type === 'assistant/message'
+      ? { ...event, data: { ...(event.data as object), usage: { inputTokens: 34491, outputTokens: 127 }, stream: [] } } as never
+      : event)
+    expect(deriveAgentTeamTurn(events)).toBeUndefined()
+    expect(unprovableUsageReason(events)).toBe('1 assistant messages, 0 without usage, 1 without both cache fields, 1 without totalTokens, 0 retries')
   })
 
   it('refuses a Turn that ended in an error, even when its failed attempt reported zero usage', () => {

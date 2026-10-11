@@ -58,3 +58,22 @@ export function deriveAgentTeamTurn(events: readonly SessionEvent[]): AgentTeamD
     }),
   })
 }
+
+/**
+ * Why a completed Turn's usage was refused, for the host log. It counts the samples that
+ * lack each field the proof needs; it never carries a token value or provider text.
+ */
+export function unprovableUsageReason(events: readonly SessionEvent[]): string {
+  const end = events.find((event): event is SessionEvent<'turn/end'> => event.type === 'turn/end')
+  if (end === undefined) return 'the Turn has no turn/end'
+  if (end.data.reason.kind !== 'completed') return `the Turn ended ${end.data.reason.kind}`
+  const samples = events.filter((event): event is SessionEvent<'assistant/message'> => event.type === 'assistant/message')
+  // llm/retry is not in the dsh-session event union, but the session file carries it (token-meter reads it the same way).
+  const retries = events.filter(event => (event.type as string) === 'llm/retry').length
+  const noUsage = samples.filter(event => event.data.usage === undefined).length
+  const noCacheFields = samples.filter(event => event.data.usage !== undefined
+    && (event.data.usage.cacheReadTokens === undefined || event.data.usage.cacheWriteTokens === undefined)).length
+  const noTotal = samples.filter(event => event.data.usage?.totalTokens === undefined).length
+  return `${samples.length} assistant messages, ${noUsage} without usage, ${noCacheFields} without both cache fields, `
+    + `${noTotal} without totalTokens, ${retries} retries`
+}

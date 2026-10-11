@@ -13,7 +13,7 @@
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { AgentTeamLedger } from './ledger.ts'
-import { deriveAgentTeamTurn } from './session-turn-usage.ts'
+import { deriveAgentTeamTurn, unprovableUsageReason } from './session-turn-usage.ts'
 import { threadRefsForTurn } from './turn-threads.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -87,6 +87,8 @@ export class AgentTeamTurnRecorder {
      * A write that was already committed (same requestId) is not reported again. It must not throw.
      */
     private readonly onCommitted: (receipt: AgentTeamOperationReceipt) => void = () => undefined,
+    /** Reports a completed Turn that was not recorded, with the reason. Logs only; the count is `unrecordedTurns`. */
+    private readonly onUnrecorded: (message: string) => void = () => undefined,
   ) {}
 
   /** Threads of Team facts just delivered to a Member: into its open Turn, or held for the next one. */
@@ -170,6 +172,9 @@ export class AgentTeamTurnRecorder {
     // A Turn whose usage cannot be proven exact is not recorded (contract §3.2).
     if (derived === undefined) {
       this.unprovableTurns += 1
+      // Surfaced, never silent: the Turn is missing from the stats row, so the log names it and why.
+      const turnNumber = turn.events.find((event): event is SessionEvent<'turn/start'> => event.type === 'turn/start')?.data.turn
+      this.onUnrecorded(`agent-team: Turn ${turnNumber ?? '?'} for '${memberId}' not recorded: usage not provable (${unprovableUsageReason(turn.events)})`)
       return
     }
     const ledger = this.ledger()
