@@ -13,6 +13,8 @@ import { TeamMessage } from './TeamMessage.tsx'
 import { namedAvatarOwners, TeamAvatarStack, type TeamAvatarHuman, type TeamAvatarOwner } from './TeamAvatarStack.tsx'
 import { TeamCountBadge } from './TeamCountBadge.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
+import { presenceDotState, presenceLabel } from './TeamPresenceDot.tsx'
+import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { claimersLabel, formatAbsoluteTime, formatInboxTime, formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { useChannelMembership } from './team-membership.ts'
@@ -93,6 +95,11 @@ function printedActivityAt(item: AgentTeamViewItem): string | undefined {
   const status = item.task?.status
   return status === 'done' || status === 'closed' ? undefined : followUpAt(item)
 }
+
+/** Seat chips on the slim header: the first five Channel seats, then `+N`.
+   The D1b lane adds the Archive entry to the overflow menu once the
+   `archiveChannel` remote is plumbed; the menu is built for that one item. */
+const MAX_SEAT_CHIPS = 5
 
 /** Host unread per Thread, keyed for the feed's rows: zero unread is the absence of a badge, not a row. */
 function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, number> {
@@ -193,7 +200,10 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
   const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive' && status.member.state !== 'archived')
   // Presence counts ride the header meta line; error and unavailable do not count as online.
-  const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
+  const workingCount = channelMembers.filter(status => status.presence === 'working').length
+  // The header's unread number is the same Host projection the entry badges
+  // read, summed: it answers "how much" for the Channel, never per Thread.
+  const unreadTotal = [...unreadByThread.values()].reduce((sum, count) => sum + count, 0)
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
   const handleByMember = new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')]))
 
@@ -376,17 +386,31 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
 
   return <main className={css.surface} data-team-channel={channelRef}>
     <div className={css.surfaceHeader}>
-      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} onClick={backToChannels}>{t('backToChannels')}</Button></div>
-      <header className={css.headerRow}>
-        <div className={css.headerCopy}>
-          <h1>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
-          {channel !== undefined && <p>{channel.description}</p>}
-          {channel !== undefined && <div className={channelCss.headerMeta}>
-            <span>{t('memberCount', { count: channelMembers.length })}</span>
-            <span>{t('onlineCount', { count: onlineCount })}</span>
-          </div>}
-        </div>
-        {channel !== undefined && <span ref={manageTriggerRef}><Button size="sm" variant="outline" aria-haspopup="dialog" onClick={() => { setManagingMembers(true) }}>{t('manageMembers')}</Button></span>}
+      <header className={channelCss.slimHeader} data-team-slim-header="channel">
+        <span className={channelCss.slimBack}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} aria-label={t('backToChannels')} onClick={backToChannels} /></span>
+        <h1 className={channelCss.slimTitle}>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
+        {channel !== undefined && channel.description !== '' && <p className={channelCss.slimDesc} title={channel.description}>{channel.description}</p>}
+        {channel !== undefined && channelMembers.length > 0 && <span className={channelCss.slimChips} role="img" aria-label={t('headerSeatsLabel', { names: channelMembers.map(status => `@${status.member.handle}`).join(', ') })}>
+          {channelMembers.slice(0, MAX_SEAT_CHIPS).map(status => (
+            <span key={status.member.memberId} className={channelCss.slimChip} title={`@${status.member.handle} · ${presenceLabel(status, t)}`}>
+              <TeamStateDot size={8} state={presenceDotState(status.presence)} />
+              <span className={channelCss.slimChipName}>{status.member.handle}</span>
+            </span>
+          ))}
+          {channelMembers.length > MAX_SEAT_CHIPS && <span className={channelCss.slimOverflowCount}>+{channelMembers.length - MAX_SEAT_CHIPS}</span>}
+        </span>}
+        {channel !== undefined && <div className={channelCss.slimMeta}>
+          <span>{t('headerWorking', { count: workingCount })}</span>
+          <span>{t('headerOpenThreads', { count: view?.items.length ?? 0 })}</span>
+          <span>{t('headerUnread', { count: unreadTotal })}</span>
+        </div>}
+        {channel !== undefined && <span ref={manageTriggerRef} className={channelCss.slimActions}>
+          <TeamRowMenu
+            label={t('headerMenuLabel')}
+            items={[{ id: 'manage-members', label: t('manageMembers') }]}
+            onSelect={id => { if (id === 'manage-members') setManagingMembers(true) }}
+          />
+        </span>}
       </header>
     </div>
 
