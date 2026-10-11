@@ -286,7 +286,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       facts: ledger.notificationFacts(member.memberId),
       replied: ledger.repliedThreadsBetween(member.memberId, 0, ledger.projectionSequence()),
       stats: ledger.threadReplyStats(threadRef),
-      projection: ledger.projectionSequence(),
+      attribution: ledger.attributionSequence(),
     }
     const notice = {
       requestId: turnFailureNoticeRequestId(SessionId('session:notice'), 1, threadRef), workspaceId: alpha, threadRef, memberId: member.memberId,
@@ -299,13 +299,15 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(ledger.notificationFacts(member.memberId)).toEqual(before.facts)
     expect(ledger.repliedThreadsBetween(member.memberId, 0, ledger.projectionSequence())).toEqual(before.replied)
     expect(ledger.threadReplyStats(threadRef)).toEqual(before.stats)
-    expect(ledger.projectionSequence()).toBe(before.projection)
+    // The notice moves the UI invalidation position only; the attribution position stays where it was.
+    expect(ledger.projectionSequence()).toBeGreaterThan(before.attribution)
+    expect(ledger.attributionSequence()).toBe(before.attribution)
     // Replay the stored log through this branch's schema and fold: the notice parses, and every projection a reader folds is unchanged.
     const replayed = replayLedger(test)
     expect(replayed.turnFailureNotices(threadRef)).toHaveLength(1)
     expect(replayed.notificationFacts(member.memberId)).toEqual(before.facts)
     expect(replayed.threadReplyStats(threadRef)).toEqual(before.stats)
-    expect(replayed.projectionSequence()).toBe(before.projection)
+    expect(replayed.attributionSequence()).toBe(before.attribution)
   })
 
   it('a re-delivered turn failure notice resolves to the committed one, and a changed reason collides', async () => {
@@ -3221,6 +3223,12 @@ describe('AgentTeam turn failure notices (§6.0, threadTurnFailures read)', () =
       facts: replayLedger(test).notificationFacts(seatB.memberId),
       attention: host.attentionStatusForAgent(agentB as never, { workspaceId: alpha, threadRef }),
     })
+    // The notice moves the UI invalidation position to its own sequence, and never the position Turn windows are attributed against.
+    const failuresLedger = replayLedger(test)
+    const latestFailure = failuresLedger.turnFailureNotices(threadRef).at(-1)!
+    expect(failuresLedger.changeScopesOf(latestFailure)).toEqual([{ kind: 'thread', threadRef }])
+    expect(failuresLedger.projectionSequence()).toBe(latestFailure.sequence)
+    expect(failuresLedger.attributionSequence()).toBeLessThan(latestFailure.sequence)
     const before = readState()
     const failures = host.threadTurnFailures({ workspaceId: alpha, threadRef })
     expect(failures.map(failure => [failure.turn, failure.reason, failure.handle, failure.memberId])).toEqual([

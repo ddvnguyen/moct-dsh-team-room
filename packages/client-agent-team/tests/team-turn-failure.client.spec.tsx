@@ -50,4 +50,16 @@ describe('Turn failure notices in the Thread (§6.0, human read path)', () => {
     expect(text.indexOf('first question')).toBeLessThan(text.indexOf('second question'))
     expect(text.indexOf('second question')).toBeLessThan(text.indexOf('builder 的第 1 轮失败'))
   })
+
+  it('refetches the notices on a thread-scope wake and shows the new row without a remount', async () => {
+    const { b, page } = await openThread([])
+    expect(within(page).queryByText(/第 1 轮失败/)).toBeNull()
+    const fetchesBefore = b.threadTurnFailures.mock.calls.length
+    // The failure happens while the Thread is open: the Host wakes the thread scope, and no Message is written.
+    b.addTurnFailure(failure(3, 1, 'Connection error.'))
+    await waitFor(() => { expect(within(page).getByText('builder 的第 1 轮失败：Connection error.')).toBeTruthy() })
+    expect(b.threadTurnFailures.mock.calls.length).toBeGreaterThan(fetchesBefore)
+    // Same node: the page was updated in place, not remounted.
+    expect(b.view.container.querySelector('[data-team-thread]')).toBe(page)
+  })
 })

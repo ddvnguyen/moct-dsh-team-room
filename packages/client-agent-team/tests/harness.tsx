@@ -347,6 +347,15 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   }
   // One projection wake whose narrow scopes match nothing this app subscribed
   // to — a commit in another Workspace: only the scope-less waiters wake.
+  // One thread-scope wake: the Host's change for a Turn notice or a Turn attributed to this Thread.
+  const publishThreadUpdate = (threadRef: string): void => {
+    changeVersion += 1
+    for (const waiter of changeWaiters) if (waiter.request.scope === undefined || (waiter.request.scope.kind === 'thread' && waiter.request.scope.threadRef === threadRef)) waiter.wake()
+  }
+  const addTurnFailure = (failure: AgentTeamThreadTurnFailure): void => {
+    turnFailureRows = [...turnFailureRows, failure]
+    publishThreadUpdate(failure.threadRef)
+  }
   const publishGlobalUpdate = (): void => {
     changeVersion += 1
     for (const waiter of changeWaiters) if (waiter.request.scope === undefined) waiter.wake()
@@ -425,7 +434,9 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   // Per-reply usage of the Thread; a test seeds the rows it wants to see.
   const threadReplyStats = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: options?.seedReplyStats ?? [] }))
   // Failure notices of the Thread; a test seeds the notices it wants to see.
-  const threadTurnFailures = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: options?.seedTurnFailures ?? [] }))
+  // Mutable, so a test can add a notice and wake the open Thread the way the Host's thread-scope change would.
+  let turnFailureRows: AgentTeamThreadTurnFailure[] = [...(options?.seedTurnFailures ?? [])]
+  const threadTurnFailures = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: turnFailureRows }))
   const resolveTaskRefs = vi.fn(async (request: { workspaceId: string; taskRefs: readonly string[] }) => {
     const numbers = new Map(viewItems.flatMap((item, index) => {
       const taskRef = (item.task as { taskRef?: string } | undefined)?.taskRef
@@ -649,5 +660,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

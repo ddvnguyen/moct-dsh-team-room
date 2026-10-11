@@ -659,13 +659,20 @@ export class AgentTeamLedger {
    * projection — the durable position the Client's change cursors compare
    * against, rebuilt by replay like every other index.
    *
-   * Records whose commit is private read progress or audit-only
-   * (`changeScopesOf` derives no scope for them) never move it, so one
-   * Member's Thread read cannot make a parked Client believe that something it
-   * watches changed. Being a ledger position rather than a process counter, it
-   * also stays monotone across a restart.
+   * Records whose commit is private read progress (`changeScopesOf` derives no
+   * scope for them) never move it, so one Member's Thread read cannot make a
+   * parked Client believe that something it watches changed. Being a ledger
+   * position rather than a process counter, it also stays monotone across a
+   * restart.
    */
   private projectionVersion = 0
+  /**
+   * The same position as before Turn notices were shown in the Thread: Turn
+   * records and failure notices move `projectionVersion` for the open Thread's
+   * refresh, but never this one. Turn windows are attributed against it, so
+   * agent-side attribution does not change with UI invalidation.
+   */
+  private attributionVersion = 0
 
   constructor(
     private readonly table: KvTable<AgentTeamOperationId, AgentTeamOperation>,
@@ -2465,10 +2472,16 @@ export class AgentTeamLedger {
    * Durable position of the newest shared-projection commit: the version every
    * change waiter outside the presence scope observes. It only moves when a
    * commit has scopes somebody could refetch (`changeScopesOf`), never for
-   * private read progress or an audit-only record.
+   * private read progress. UI invalidation only: agent Turn windows read
+   * `attributionSequence()` instead.
    */
   projectionSequence(): number {
     return this.projectionVersion
+  }
+
+  /** The position Turn windows are attributed against; excludes Turn records and failure notices (see `attributionVersion`). */
+  attributionSequence(): number {
+    return this.attributionVersion
   }
 
   /** Scopes whose projections one committed operation invalidates; undefined wakes every waiter. */
@@ -2536,9 +2549,14 @@ export class AgentTeamLedger {
         return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
-      case 'team/thread-session-bound':
-      case 'team/session-turn-recorded':
       case 'team/turn-failure-notice':
+        // UI invalidation only: an open Thread refetches its notices. Agents are not woken from here:
+        // `affectedMembersOf` derives members from attention deltas and touched threads, never from these scopes.
+        return [{ kind: 'thread', threadRef: operation.data.threadRef }]
+      case 'team/session-turn-recorded':
+        // UI invalidation only, as above: each Thread the Turn was attributed to refreshes its stats row.
+        return operation.data.threadRefs.map(threadRef => ({ kind: 'thread' as const, threadRef }))
+      case 'team/thread-session-bound':
       case 'team/thread-summary-committed':
       case 'team/thread-read':
         // A read advances only the reader's private watermark; no projection
@@ -3292,7 +3310,9 @@ export class AgentTeamLedger {
     // against its own scratch projection, so a scope derivation there would be
     // discarded.
     const scopes = this.changeScopesOf(operation)
-    if (scopes === undefined || scopes.length !== 0) this.projectionVersion = operation.sequence
+    const invalidates = scopes === undefined || scopes.length !== 0
+    if (invalidates) this.projectionVersion = operation.sequence
+    if (invalidates && operation.kind !== 'team/session-turn-recorded' && operation.kind !== 'team/turn-failure-notice') this.attributionVersion = operation.sequence
   }
 
   private applyTo(target: Projection, operation: AgentTeamOperation): void {

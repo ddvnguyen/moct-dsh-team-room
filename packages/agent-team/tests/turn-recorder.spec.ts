@@ -17,6 +17,7 @@ const threadC = 'thread:c' as AgentTeamThreadRef
 function fakeLedger(head: () => number, replied: { sequence: number; threadRef: AgentTeamThreadRef }[] = []) {
   return {
     projectionSequence: vi.fn(head),
+    attributionSequence: vi.fn(head),
     getMember: vi.fn(() => ({ memberId, handle: 'turn-a' })),
     workspacesOf: vi.fn(() => ['workspace:w']),
     repliedThreadsBetween: vi.fn(() => replied),

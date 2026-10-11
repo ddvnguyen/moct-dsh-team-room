@@ -15,6 +15,7 @@ const threadB = 'thread:notice-b' as AgentTeamThreadRef
 function fakeLedger() {
   return {
     projectionSequence: vi.fn(() => 4),
+    attributionSequence: vi.fn(() => 4),
     getMember: vi.fn(() => ({ memberId, handle: 'notice-a' })),
     workspacesOf: vi.fn(() => ['workspace:w']),
     repliedThreadsBetween: vi.fn(() => []),
@@ -150,5 +151,17 @@ describe('AgentTeamLedger.threadTurnFailures (§6.0 read view)', () => {
     expect(failures.map(failure => [failure.sequence, failure.turn, failure.handle])).toEqual([[3, 1, memberId], [5, 2, memberId]])
     const known = { turnFailureNotices: () => [operation(3, 1)], state: { members: new Map([[memberId, { handle: 'notice-a' }]]) } }
     expect(Ledger.prototype.threadTurnFailures.call(known as never, threadA)[0]!.handle).toBe('notice-a')
+  })
+})
+
+describe('AgentTeamLedger.changeScopesOf for Turn records (UI invalidation only)', () => {
+  it('invalidates the thread of a failure notice and each Thread a Turn was attributed to, and nothing else', async () => {
+    const { AgentTeamLedger: Ledger } = await import('../src/ledger.ts')
+    const notice = { kind: 'team/turn-failure-notice', sequence: 9, data: { threadRef: threadA, memberId, sessionId, turn: 1, reason: 'x' } }
+    expect(Ledger.prototype.changeScopesOf.call({} as never, notice as never)).toEqual([{ kind: 'thread', threadRef: threadA }])
+    const turn = { kind: 'team/session-turn-recorded', sequence: 10, data: { threadRefs: [threadA, threadB] } }
+    expect(Ledger.prototype.changeScopesOf.call({} as never, turn as never)).toEqual([{ kind: 'thread', threadRef: threadA }, { kind: 'thread', threadRef: threadB }])
+    const quiet = { kind: 'team/session-turn-recorded', sequence: 11, data: { threadRefs: [] } }
+    expect(Ledger.prototype.changeScopesOf.call({} as never, quiet as never)).toEqual([])
   })
 })

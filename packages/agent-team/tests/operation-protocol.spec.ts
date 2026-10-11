@@ -1183,7 +1183,7 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
       }),
     },
     legacy: { normalize: 'none', repair: 'none' },
-    intent: { scopes: 'no-op', inbox: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
   },
   'team/turn-failure-notice': {
     stored: turnFailureNotice,
@@ -1203,7 +1203,7 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
       }),
     },
     legacy: { normalize: 'none', repair: 'none' },
-    intent: { scopes: 'no-op', inbox: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
   },
   'team/thread-summary-committed': {
     stored: threadSummaryCommitted,

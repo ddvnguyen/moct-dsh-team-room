@@ -98,7 +98,7 @@ export class AgentTeamTurnRecorder {
       this.pending.delete(memberId)
       this.open.set(memberId, {
         sessionId,
-        startSequence: this.ledger().projectionSequence() + 1,
+        startSequence: this.ledger().attributionSequence() + 1,
         events: [event],
         delivered: new Set(held ?? []),
       })
@@ -172,7 +172,7 @@ export class AgentTeamTurnRecorder {
     // The window is the ledger sequence span the Turn covers. endSequence is the projection
     // sequence now; when no ledger op landed during the Turn it is startSequence - 1, the
     // empty-window encoding, which the ledger accepts and nothing else should produce.
-    const endSequence = ledger.projectionSequence()
+    const endSequence = ledger.attributionSequence()
     const window = { startSequence: turn.startSequence, endSequence }
     const threadRefs = threadRefsForTurn([...turn.delivered], ledger.repliedThreadsBetween(memberId, window.startSequence, window.endSequence), window)
     await ledger.recordSessionTurn({
