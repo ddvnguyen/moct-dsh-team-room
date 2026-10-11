@@ -1,0 +1,23 @@
+The plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option. You can remove the plugin and set resolve.tsconfigPaths: true in your Vite config instead.
+
+ RUN  v4.1.8 /home/ddv/workplace/d1-geometry/harness
+
+GEOMETRY-TRUTH {"working":0,"channelSeats":7,"openThreads":2,"unread":2,"overflow":"+2"}
+GEOMETRY-ROW PASS channel-height<=40@1280 :: box=40px scrollHeight=40px (fit=true)
+GEOMETRY-ROW PASS channel-no-second-row@1280 :: scrollHeight=40px
+GEOMETRY-ROW PASS channel-7-seats :: chips=5 overflow='+2' expected '+2' seats=7
+GEOMETRY-ROW PASS channel-counts :: meta=[0,2,2] projection=[0,2,2]
+GEOMETRY-ROW PASS thread-height<=40@1280 :: box=40px scrollHeight=40px (fit=true)
+GEOMETRY-ROW PASS thread-no-second-row@1280 :: scrollHeight=40px
+GEOMETRY-ROW PASS thread-no-hscroll@390 :: scrollWidth=390 innerWidth=390
+GEOMETRY-ROW PASS channel-no-hscroll@390 :: scrollWidth=390 innerWidth=390
+GEOMETRY-PAGEERRORS []
+D1-GEOMETRY-RESULT {"truth":{"working":0,"channelSeats":7,"openThreads":2,"unread":2,"overflow":"+2"},"channelHeader":{"height":40,"scrollHeight":40,"chips":5,"overflow":"+2","meta":[0,2,2]},"threadHeader":{"height":40,"scrollHeight":40,"chips":0,"overflow":"","meta":[]},"rows":[{"name":"channel-height<=40@1280","pass":true,"detail":"box=40px scrollHeight=40px (fit=true)"},{"name":"channel-no-second-row@1280","pass":true,"detail":"scrollHeight=40px"},{"name":"channel-7-seats","pass":true,"detail":"chips=5 overflow='+2' expected '+2' seats=7"},{"name":"channel-counts","pass":true,"detail":"meta=[0,2,2] projection=[0,2,2]"},{"name":"thread-height<=40@1280","pass":true,"detail":"box=40px scrollHeight=40px (fit=true)"},{"name":"thread-no-second-row@1280","pass":true,"detail":"scrollHeight=40px"},{"name":"thread-no-hscroll@390","pass":true,"detail":"scrollWidth=390 innerWidth=390"},{"name":"channel-no-hscroll@390","pass":true,"detail":"scrollWidth=390 innerWidth=390"}]}
+ ✓ apps/web/tests/__d1-geometry.e2e.ts > D1 slim-header geometry on a 7-seat fixture 4212ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  17:07:02
+   Duration  5.56s (transform 788ms, setup 0ms, import 1.15s, tests 4.34s, environment 0ms)
+
+exit=0
