@@ -136,6 +136,30 @@ describe('AgentTeamActivityFeed (D3 metrics)', () => {
     expect(serialized).toContain('read .env')
   })
 
+  it('metric 7: a non-delivery Turn after an idle shows no Thread; the host clears its per-seat Thread map on idle (index.ts mirror)', () => {
+    // Mirrors index.ts: activityThreads is set on delivery, read by identify at a Turn's start,
+    // and must be cleared on agent/status idle and agent/error before the feed sees the idle.
+    const activityThreads = new Map<AgentTeamMemberId, AgentTeamThreadRef>([[memberId, thread]])
+    const feed = new AgentTeamActivityFeed({
+      identify: id => {
+        const threadRef = activityThreads.get(id)
+        return threadRef === undefined ? { handle: '@dev' } : { handle: '@dev', threadRef }
+      },
+      invalidate: () => {},
+      now: () => 0,
+    })
+    const hostIdle = (id: AgentTeamMemberId) => {
+      activityThreads.delete(id)
+      feed.onAgentIdle(id)
+    }
+    feed.onSessionEvent(memberId, step(0, 1))
+    expect(feed.snapshot()[0]?.threadRef).toBe(thread)
+    hostIdle(memberId)
+    feed.onSessionEvent(memberId, step(1, 2))
+    expect(feed.snapshot()[0]).toBeDefined()
+    expect(feed.snapshot()[0]).not.toHaveProperty('threadRef')
+  })
+
   it('metric 6: folding events writes nothing to the ledger, and the module imports no ledger, fs or op code', () => {
     const put = vi.fn()
     const ledgerOperations = { put }

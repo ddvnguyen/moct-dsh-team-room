@@ -978,6 +978,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (member === undefined) return
       const message = error instanceof Error ? error.message : String(error)
       this.setMemberFailure(member.memberId, 'runtime', message)
+      this.activityThreads.delete(member.memberId)
       this.activityFeed.onAgentError(member.memberId)
       // Every occurrence is classified here, including the two verdicts the
       // coordinator then reports no state change for (a terminal error with no
@@ -1009,6 +1010,7 @@ export default class AgentTeam extends TypertRemoteService {
       // above; without this wake, cached Client member rows keep showing the
       // Member as working after every turn until an unrelated change arrives.
       if (status === 'idle' && member !== undefined) {
+        this.activityThreads.delete(member.memberId)
         this.activityFeed.onAgentIdle(member.memberId)
         if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
           this.recovery.onCleanTurnEnd(member.memberId)
