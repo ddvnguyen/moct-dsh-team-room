@@ -45,38 +45,69 @@ function sumCounts(values: readonly unknown[]): number | undefined {
 }
 
 /**
+ * Usage a failed attempt reported in its own stream (the last usage chunk
+ * wins), or undefined when the attempt reported no usage. Attempt streams
+ * carry usage and finish chunks only, never model attribution, so attempts
+ * feed the summed output but never buckets or route.
+ */
+function attemptReportedUsage(event: SessionEvent<'assistant/attempt'>): { readonly outputTokens: unknown; readonly cacheReadTokens: unknown; readonly cacheWriteTokens: unknown; readonly reasoningTokens: unknown } | undefined {
+  let reported: { readonly outputTokens: unknown; readonly cacheReadTokens: unknown; readonly cacheWriteTokens: unknown; readonly reasoningTokens: unknown } | undefined
+  for (const record of event.data.stream) {
+    if (record.type === 'chunk' && record.chunk.type === 'usage') {
+      const usage = record.chunk.usage
+      reported = { outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens, reasoningTokens: usage.reasoningTokens }
+    }
+  }
+  return reported
+}
+
+/**
  * Usage fields that are provable when the Turn as a whole is not. Output is the sum of every
  * step's reported output, which needs one sample per step and no retry (a retry can hide an
  * attempt's output). Every other field is summed only when every step reported it; uncached
  * input is never split out here, since that needs the exact derivation. Returns undefined when
  * the output count is not provable, which is the one refusal left for a completed Turn.
+ *
+ * Item 9 (retry-aware): a completed Turn that carries llm/retry is recorded only
+ * when every attempt reported output; an attempt silent on output refuses the
+ * Turn (as today). Reported attempt outputs sum in; any bucket an attempt did
+ * not report stays null (partial marker, never a guess), and the route stays
+ * unnamed because attempts carry no model attribution. With no attempts the
+ * computation is exactly today's.
  */
 function fieldwiseTurnUsage(events: readonly SessionEvent[]): TurnUsageFields | undefined {
-  // llm/retry is not in the dsh-session event union, but the session file carries it (token-meter reads it the same way).
-  if (events.some(event => (event.type as string) === 'llm/retry')) return undefined
   const steps = events.filter(event => event.type === 'step/start').length
   const messages = events.filter((event): event is SessionEvent<'assistant/message'> => event.type === 'assistant/message')
   if (messages.length === 0 || messages.length !== steps) return undefined
   const samples = messages.map(event => event.data.usage)
   if (samples.some(usage => usage === undefined)) return undefined
   const usages = samples as NonNullable<(typeof samples)[number]>[]
-  const outputTokens = sumCounts(usages.map(usage => usage.outputTokens))
+  const attempts = events.filter((event): event is SessionEvent<'assistant/attempt'> => event.type === 'assistant/attempt')
+  const reported = attempts.map(attemptReportedUsage)
+  // Refusal (Architect ruling): an attempt that reported no output hides an
+  // unknown spend — the Turn stays unrecorded rather than flooring its total.
+  // Buckets an attempt was silent on still null out (partial marker) below.
+  if (reported.some(usage => usage === undefined || !isCount(usage.outputTokens))) return undefined
+  const outputTokens = sumCounts([...usages.map(usage => usage.outputTokens), ...reported.map(usage => usage?.outputTokens).filter(output => output !== undefined)])
   if (outputTokens === undefined) return undefined
-  const optional = (pick: (usage: NonNullable<(typeof samples)[number]>) => unknown): number | null => sumCounts(usages.map(pick)) ?? null
+  const bucket = (pick: (usage: { readonly cacheReadTokens?: unknown; readonly cacheWriteTokens?: unknown; readonly reasoningTokens?: unknown }) => unknown): number | null =>
+    sumCounts([...usages.map(pick), ...reported.map(usage => (usage === undefined ? undefined : pick(usage)))]) ?? null
   const reasoned = usages.every(usage => isCount(usage.reasoningTokens) && usage.reasoningTokens <= usage.outputTokens)
+    && reported.every(usage => usage !== undefined && isCount(usage.outputTokens) && isCount(usage.reasoningTokens) && usage.reasoningTokens <= usage.outputTokens)
   const routes = messages.map(event => event.data.message.source)
-  // The route is named only when every step ran on the same provider and model.
+  // The route is named only when every step ran on the same provider and model,
+  // and only when no attempt exists: attempts carry no attribution to compare.
   const last = routes.at(-1)
-  const route = last !== undefined && last.provider.length > 0 && last.model.length > 0
+  const route = attempts.length === 0 && last !== undefined && last.provider.length > 0 && last.model.length > 0
     && routes.every(source => source.provider === last.provider && source.model === last.model)
     ? { provider: last.provider, model: last.model }
     : undefined
   return {
     uncachedInputTokens: null,
     outputTokens,
-    cacheReadTokens: optional(usage => usage.cacheReadTokens),
-    cacheWriteTokens: optional(usage => usage.cacheWriteTokens),
-    reasoningTokens: reasoned ? optional(usage => usage.reasoningTokens) : null,
+    cacheReadTokens: bucket(usage => usage.cacheReadTokens),
+    cacheWriteTokens: bucket(usage => usage.cacheWriteTokens),
+    reasoningTokens: reasoned ? bucket(usage => usage.reasoningTokens) : null,
     ...(route === undefined ? {} : { route }),
   }
 }
