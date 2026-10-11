@@ -1,0 +1,558 @@
+
+ RUN  v4.1.10 /home/ddv/workplace/lane-d2-team-tab
+
+······························file:///home/ddv/workplace/lane-d2-team-tab/scripts/harness-dir.mjs:47
+  throw new Error(
+        ^
+
+Error: DSH_HARNESS_DIR points the harness resolution at 'deepseek-harness-does-not-exist', but ../deepseek-harness-does-not-exist does not exist. DSH_HARNESS_DIR is only for certification runs against an isolated tag checkout; the daily default is the sibling 'deepseek-harness' directory (checkout the latest certified release tag, then run pnpm install && pnpm build:lib inside it). Harness checkouts that DO exist as siblings: deepseek-harness. Fix the checkout (docs/dsh-release-compatibility.md §3.2), rerun node scripts/sync-paths.mjs against the checkout you want, or unset DSH_HARNESS_DIR / remove .generated-harness to fall back to the daily sibling.
+    at file:///home/ddv/workplace/lane-d2-team-tab/scripts/harness-dir.mjs:47:9
+    at ModuleJob.run (node:internal/modules/esm/module_job:437:25)
+    at async node:internal/modules/esm/loader:639:26
+    at async importModuleDynamicallyWrapper (node:internal/vm/module:525:15)
+
+Node.js v24.15.0
+file:///home/ddv/work/tmp-d2/harness-dir-s0yzB9/repo/scripts/harness-dir.mjs:47
+  throw new Error(
+        ^
+
+Error: DSH_HARNESS_DIR points the harness resolution at 'checkout-from-env-missing', but ../checkout-from-env-missing does not exist. DSH_HARNESS_DIR is only for certification runs against an isolated tag checkout; the daily default is the sibling 'deepseek-harness' directory (checkout the latest certified release tag, then run pnpm install && pnpm build:lib inside it). Harness checkouts that DO exist as siblings: (none). Fix the checkout (docs/dsh-release-compatibility.md §3.2), rerun node scripts/sync-paths.mjs against the checkout you want, or unset DSH_HARNESS_DIR / remove .generated-harness to fall back to the daily sibling.
+    at file:///home/ddv/work/tmp-d2/harness-dir-s0yzB9/repo/scripts/harness-dir.mjs:47:9
+    at ModuleJob.run (node:internal/modules/esm/module_job:437:25)
+    at async node:internal/modules/esm/loader:639:26
+    at async importModuleDynamicallyWrapper (node:internal/vm/module:525:15)
+
+Node.js v24.15.0
+···file:///home/ddv/work/tmp-d2/harness-dir-GrGfH8/repo/scripts/harness-dir.mjs:47
+  throw new Error(
+        ^
+
+Error: The tsconfig facades were generated against 'checkout-from-marker-missing' (see .generated-harness), but ../checkout-from-marker-missing no longer exists. DSH_HARNESS_DIR is only for certification runs against an isolated tag checkout; the daily default is the sibling 'deepseek-harness' directory (checkout the latest certified release tag, then run pnpm install && pnpm build:lib inside it). Harness checkouts that DO exist as siblings: (none). Fix the checkout (docs/dsh-release-compatibility.md §3.2), rerun node scripts/sync-paths.mjs against the checkout you want, or unset DSH_HARNESS_DIR / remove .generated-harness to fall back to the daily sibling.
+    at file:///home/ddv/work/tmp-d2/harness-dir-GrGfH8/repo/scripts/harness-dir.mjs:47:9
+    at ModuleJob.run (node:internal/modules/esm/module_job:437:25)
+    at async node:internal/modules/esm/loader:639:26
+    at async importModuleDynamicallyWrapper (node:internal/vm/module:525:15)
+
+Node.js v24.15.0
+························································································································································································································stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > supersedes an in-flight read on invalidation so the next consumer issues a fresh one
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 1, landed: 0, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > always invalidates on a stream-opening baseline, even at the same version
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 1, landed: 2, reason: 'stale' }
+
+stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > drops a stale failure too: an old error never masks the newer result
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 1, landed: 2, reason: 'stale' }
+
+stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > newGeneration resets watermarks and stops joining the old generation's reads
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 1, landed: 2, reason: 'stale' }
+
+stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > reissues the read itself when an invalidation supersedes it and nothing replaced it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 2, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > does not reissue after dispose; waiters get the last landed result
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 2, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-queries.spec.ts > TeamQueries > newGeneration blocks the old generation's response from reaching any reader
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 2, landed: 1, reason: 'superseded' }
+
+·············································································································································································································································--······························stdout | packages/client-agent-team/tests/team-presence-scope.client.spec.tsx > presence-scope wake wiring (issue #21) > refreshes member rows on a presence wake without catalog or Inbox refetches
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/agent-row-open-failure.client.spec.tsx > Team agent session open failures > reports a rejected open instead of leaving the sidebar ahead of the seat
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > imports a global Member without copying it, retries the same join, and withdraws only here
+[agent-team] stale read response dropped { query: 'members:w2', issuance: 4, landed: 1, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-turn-failure.client.spec.tsx > Turn failure notices in the Thread (§6.0, human read path) > renders each errored Turn as a row with the handle, the turn and the stored reason
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > marks the cross-Workspace unread on the wide card with a dot and hides it at zero
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > marks the cross-Workspace unread on the wide card with a dot and hides it at zero
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > opens a selected Channel in the Team center and sends only after Host commit
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/main-panel.client.spec.tsx > Team mode and the shell main panel > takes the column back from a global panel when the rail row selects the Team
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/main-panel.client.spec.tsx > Team mode and the shell main panel > keeps the Team panel selected while the mode navigates inside itself
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/agent-row-open-failure.client.spec.tsx > Team agent session open failures > marks the row current when the open succeeds
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/human-profile-seats.client.spec.tsx > Human identity in the Team surfaces > names the Human by the profile name the Host reports
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-shared-reads.client.spec.tsx > shared client reads (issue 03) > shares one in-flight roster read across the consumers of one wake
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·····stdout | packages/client-agent-team/tests/team-shared-reads.client.spec.tsx > shared client reads (issue 03) > a wake from outside this Workspace never re-reads the roster
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > opens the Inbox page from the card with rows and marks the card as the current page
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > opens the Inbox page from the card with rows and marks the card as the current page
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 13, landed: 10, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-turn-failure.client.spec.tsx > Turn failure notices in the Thread (§6.0, human read path) > keeps existing Message order unchanged when a notice is present
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > shows import loading, read failure with retry, and a truthful empty state
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/human-profile-seats.client.spec.tsx > Human identity in the Team surfaces > keeps the localized name when the profile cannot be read
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 15, landed: 14, reason: 'superseded' }
+
+··············stdout | packages/client-agent-team/tests/human-profile-seats.client.spec.tsx > Human identity in the Team surfaces > draws the uploaded avatar in the message identity seat
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > warns about other participations before global archive and preserves the dialog on failure
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-turn-failure.client.spec.tsx > Turn failure notices in the Thread (§6.0, human read path) > refetches the notices on a thread-scope wake and shows the new row without a remount
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > opens a selected Channel in the Team center and sends only after Host commit
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 15, landed: 13, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > renders agent rows draggable with the saved personal order folded in
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/human-profile-seats.client.spec.tsx > Human identity in the Team surfaces > keeps the initial in the message seat when those bytes do not decode
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+····stdout | packages/client-agent-team/tests/team-shared-reads.client.spec.tsx > shared client reads (issue 03) > D5: a late-arriving stale view response never replaces the newer channels rows
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-presence-scope.client.spec.tsx > presence-scope wake wiring (issue #21) > refreshes member rows on a presence wake without catalog or Inbox refetches
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 9, landed: 8, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > enters Team with existing Workspaces and restores the shipped seats
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/human-profile-seats.client.spec.tsx > Human identity in the Team surfaces > keeps the uploaded avatar off Agent rows in the channel feed
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > draws each Task's own standing behind its number, and nothing on a Thread that is only a discussion
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > draws each Task's own standing behind its number, and nothing on a Thread that is only a discussion
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-shared-reads.client.spec.tsx > shared client reads (issue 03) > D6: a failed members read never blocks the landed view rows
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/human-profile-seats.client.spec.tsx > Human identity in the Team surfaces > chips an agent message that wrote the historic human handle as the renamed Human
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-presence-scope.client.spec.tsx > presence-scope wake wiring (issue #21) > presence wake on an open Thread refreshes only the roster, never the view
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+····stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > loads Workspace Agents and creates a durable Member without optimistic rows
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 11, landed: 10, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > shows the Host's own unread on the Channel feed's Thread entries and drops it with the slice
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > shows the Host's own unread on the Channel feed's Thread entries and drops it with the slice
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > creates an Agent with empty description, no Channels, and an optional model
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > drops the header count line while the queue is empty
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 15, landed: 12, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > shows the Host's own unread on the Channel feed's Thread entries and drops it with the slice
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 12, landed: 10, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > draws the reader's own picture and name where a row names the Human
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > draws the reader's own picture and name where a row names the Human
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps the last successful unread counts when the inbox read fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps the last successful unread counts when the inbox read fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > creates a Channel atomically with selected available Members and manages committed membership
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps the last successful unread counts when the inbox read fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 12, landed: 10, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > reports the work one keystroke, one change burst, and one arrival cause
+P0_CLIENT_RENDER3 {"10":{"keystrokes":[{"stroke":"h","rows":0,"composers":0,"readThread":0,"pageRounds":0,"view":0,"members":0,"history":0,"observations":0,"changes":0},{"stroke":"he","rows":0,"composers":0,"readThread":0,"pageRounds":0,"view":0,"members":0,"history":0,"observations":0,"changes":0},{"stroke":"hel","rows":0,"composers":0,"readThread":0,"pageRounds":0,"view":0,"members":0,"history":0,"observations":0,"changes":0}],"burst":{"rows":0,"composers":2,"readThread":0,"pageRounds":1,"view":2,"members":2,"history":1,"observations":1,"changes":0},"arrival":{"rows":1,"composers":4,"readThread":0,"pageRounds":1,"view":1,"members":1,"history":0,"observations":0,"changes":0},"draftAfterSend":"","focusPreserved":true,"textHasFirst":true,"textHasLast":true},"30":{"keystrokes":[{"stroke":"h","rows":0,"composers":0,"readThread":0,"pageRounds":0,"view":0,"members":0,"history":0,"observations":0,"changes":0},{"stroke":"he","rows":0,"composers":0,"readThread":0,"pageRounds":0,"view":0,"members":0,"history":0,"observations":0,"changes":0},{"stroke":"hel","rows":0,"composers":0,"readThread":0,"pageRounds":0,"view":0,"members":0,"history":0,"observations":0,"changes":0}],"burst":{"rows":0,"composers":2,"readThread":0,"pageRounds":1,"view":2,"members":2,"history":1,"observations":1,"changes":0},"arrival":{"rows":1,"composers":4,"readThread":0,"pageRounds":1,"view":1,"members":1,"history":0,"observations":0,"changes":0},"draftAfterSend":"","focusPreserved":true,"textHasFirst":true,"textHasLast":true}}
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > stops printing activity on a resolved Task door
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > re-renders no row for a keystroke or a change burst, and exactly one for an arrival
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > stops printing activity on a resolved Task door
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 10, landed: 8, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > marks the Thread that named the reader with the shared capsule, and one that merely moved with a hairline
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > marks the Thread that named the reader with the shared capsule, and one that merely moved with a hairline
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps printing activity on a taskless discussion, which never resolves
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > re-renders no row for a keystroke or a change burst, and exactly one for an arrival
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 11, landed: 10, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > edits Channel membership from the sidebar row menu with idempotent retries
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps printing activity on a taskless discussion, which never resolves
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 12, landed: 10, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > re-renders no row for a keystroke or a change burst, and exactly one for an arrival
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 15, landed: 12, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > linkifies branded refs in agent plain-prose bodies that skip the mention path
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > renames Channel display facts from the editor and refreshes the row
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+····stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > copies the seat Session id from the row menu and shows a refusal instead of throwing
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > resolves unknown task refs to task numbers and navigates on click
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > leads a row with the Task's live owners in the Channel feed's own words, and with its newest actor when there are none
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > leads a row with the Task's live owners in the Channel feed's own words, and with its newest actor when there are none
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > offers 恢复 and 重启 in the row menu only where they apply and routes both through the Host remote
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > re-renders no row for a keystroke or a change burst, and exactly one for an arrival
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > resolves abbreviated task refs in agent bodies and navigates with the full ref
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > retires the manual clear-context action and follows a Member rollover exactly once
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > re-renders no row for a keystroke or a change burst, and exactly one for an arrival
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 11, landed: 10, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > confirms early acceptance and lists the Claims completed with it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > retires the manual clear-context action and follows a Member rollover exactly once
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > drops the mention segment from the header when no row names the reader
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > drops the mention segment from the header when no row names the reader
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > confirms early acceptance and lists the Claims completed with it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 10, landed: 8, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > retires the manual clear-context action and follows a Member rollover exactly once
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 8, landed: 7, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/render-isolation.client.spec.tsx > Thread page render isolation > re-renders no row for a keystroke or a change burst, and exactly one for an arrival
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 15, landed: 12, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > retires the manual clear-context action and follows a Member rollover exactly once
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 10, landed: 9, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > expands @all into every eligible channel member at pick time
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > retires the manual clear-context action and follows a Member rollover exactly once
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 18, landed: 16, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > renders the unread queue and the recently-active tail as two sections, and a read row carries no count
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > renders the unread queue and the recently-active tail as two sections, and a read row carries no count
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > edits Agent identity and pins a Member model through the editor
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > previews a hand-typed mention without turning it into an explicit recipient
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > opens the Member Session inside Team mode from the Agent card
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > lends the Agent card the marker while the Inbox page stands under it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps the tail at five rows across Workspaces
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps the tail at five rows across Workspaces
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 8, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > accepts an unclaimed todo Task directly without a confirm dialog
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > rebinds the underlying session when leaving an embedded Member view, so an off-seat rollover never blanks the seat
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > names the Workspace on a row only while the rows on screen span more than one
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > names the Workspace on a row only while the rows on screen span more than one
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > renders resolved Task refs inline in rich Agent Markdown, styled code spans included
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > keeps the departed Member retention when the return target is gone, without reopening the dead id
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team agent surfaces > edits Agent facts without a Channel membership section
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > names the Workspace on a row only while the rows on screen span more than one
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 12, landed: 7, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > renders a Lead-style dispatch: doubled-colon ref resolves and the spelled mention chipifies inline
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > shows the empty state while nothing needs the Human
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > archives an Agent from the row menu behind a destructive confirm
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > says the unread queue continues past a capped page, and stays quiet on a complete one
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > says the unread queue continues past a capped page, and stays quiet on a complete one
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 8, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > uploads composer attachments as chips, sends their ids, and renders the strip
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > opens the row Thread through selectWorkspace + selectThread, drops the unread dot, and lands Back on its Channel
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > opens the row Thread through selectWorkspace + selectThread, drops the unread dot, and lands Back on its Channel
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > archives an Agent from the row menu behind a destructive confirm
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 7, landed: 6, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > replaces the rail empty claims with one error line when the connection drops
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > replaces the rail empty claims with one error line when the connection drops
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > replaces the rail empty claims with one error line when the connection drops
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 8, landed: 7, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > archives a Channel from the row menu behind a destructive confirm
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > uploads thread reply attachments and passes their ids to reply
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team archival surfaces > archives a Channel from the row menu behind a destructive confirm
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 7, landed: 6, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > opens the row Thread through selectWorkspace + selectThread, drops the unread dot, and lands Back on its Channel
+[agent-team] stale read response dropped { query: 'members:w2', issuance: 13, landed: 12, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-agents.client.spec.tsx > Team member editor partial update payload > states the model explicitly and leaves capabilities alone
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > turns pasted clipboard files into composer chips and sends their ids
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > caches composer drafts across view switches and clears them on committed sends
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > orders the narrow rail Inbox → Channels → Agents with the unread dot on the Inbox icon
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > rehydrates drafts from localStorage and prunes stale recipients on restore
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > reads the whole unread slice — no mention-only flag — for the dot and the Inbox page
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > reads the whole unread slice — no mention-only flag — for the dot and the Inbox page
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > opens a Thread and performs one baseline catch-up without repeated reads
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > merges the Workspace slices in the Host order, mentions before merely newer rows
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > merges the Workspace slices in the Host order, mentions before merely newer rows
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps the older-facts affordance when the history read fails, and recovers through it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > names today and yesterday on a row and dates older mentions
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > names today and yesterday on a row and dates older mentions
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > ranks Thread followers first among mention candidates and scrolls the highlighted row into view
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps the last successful unread total when a background refresh fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps the last successful unread total when a background refresh fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > states the current Workspace on one line and switches through its menu
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > states the current Workspace on one line and switches through its menu
+[agent-team] stale read response dropped { query: 'members:w2', issuance: 7, landed: 6, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > acknowledges off-screen arrivals automatically and keeps only a pure jump hint
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > acknowledges off-screen arrivals automatically and keeps only a pure jump hint
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 14, landed: 13, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > acknowledges off-screen arrivals automatically and keeps only a pure jump hint
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 18, landed: 15, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > drops the jump hint the moment the reader returns to the tail
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps the last successful unread total when a background refresh fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 13, landed: 10, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > drops the jump hint the moment the reader returns to the tail
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 13, landed: 12, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > drops the jump hint the moment the reader returns to the tail
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 15, landed: 14, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > acknowledges arrivals a bottom-pinned reader is watching instead of prompting a manual read
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps a failed Workspace slice on the Inbox page instead of dropping it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-inbox.client.spec.tsx > Team Inbox surfaces > keeps a failed Workspace slice on the Inbox page instead of dropping it
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > acknowledges arrivals a bottom-pinned reader is watching instead of prompting a manual read
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 16, landed: 13, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > drains a multi-round unread backlog automatically with fresh request ids
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps the jump hint when the automatic acknowledgment read fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+···stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > keeps the jump hint when the automatic acknowledgment read fails
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 13, landed: 12, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > refreshes the sidebar Channel list from one workspace change
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > refreshes the sidebar Channel list from one workspace change
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 6, landed: 5, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > anchors timeline days when messages span dates
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > separates wide same-sender gaps with a turn divider on both timelines
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > linkifies branded refs in plain bodies and navigates on click
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > sends a Channel message as a taskless Thread unless As task is pressed
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+·stdout | packages/client-agent-team/tests/team-mode-conversation.client.spec.tsx > Team conversation surfaces > resets As task after a committed Task send and keeps it after a failed send
+[agent-team] stale read response dropped { query: 'members:w1', issuance: 4, landed: 1, reason: 'superseded' }
+
+··
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 20 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/agent-team/tests/agent-team.spec.ts [ packages/agent-team/tests/agent-team.spec.ts ]
+ FAIL  packages/agent-team/tests/attachments.spec.ts [ packages/agent-team/tests/attachments.spec.ts ]
+ FAIL  packages/agent-team/tests/change-scopes.spec.ts [ packages/agent-team/tests/change-scopes.spec.ts ]
+ FAIL  packages/agent-team/tests/context-continuity-host.spec.ts [ packages/agent-team/tests/context-continuity-host.spec.ts ]
+ FAIL  packages/agent-team/tests/context-projection.spec.ts [ packages/agent-team/tests/context-projection.spec.ts ]
+ FAIL  packages/agent-team/tests/context-source-migration.spec.ts [ packages/agent-team/tests/context-source-migration.spec.ts ]
+ FAIL  packages/agent-team/tests/human-profile.spec.ts [ packages/agent-team/tests/human-profile.spec.ts ]
+ FAIL  packages/agent-team/tests/loader-composition.spec.ts [ packages/agent-team/tests/loader-composition.spec.ts ]
+ FAIL  packages/agent-team/tests/member-lifecycle.spec.ts [ packages/agent-team/tests/member-lifecycle.spec.ts ]
+ FAIL  packages/agent-team/tests/member-skills.spec.ts [ packages/agent-team/tests/member-skills.spec.ts ]
+ FAIL  packages/agent-team/tests/member-time.spec.ts [ packages/agent-team/tests/member-time.spec.ts ]
+ FAIL  packages/agent-team/tests/member-tool-policy.spec.ts [ packages/agent-team/tests/member-tool-policy.spec.ts ]
+ FAIL  packages/agent-team/tests/post-commit-delivery.spec.ts [ packages/agent-team/tests/post-commit-delivery.spec.ts ]
+ FAIL  packages/agent-team/tests/shipping.spec.ts [ packages/agent-team/tests/shipping.spec.ts ]
+ FAIL  packages/agent-team/tests/update-operations.spec.ts [ packages/agent-team/tests/update-operations.spec.ts ]
+ FAIL  packages/tool-agent-team/tests/context-tools-render.spec.ts [ packages/tool-agent-team/tests/context-tools-render.spec.ts ]
+ FAIL  packages/tool-agent-team/tests/team-thread-render.spec.ts [ packages/tool-agent-team/tests/team-thread-render.spec.ts ]
+ FAIL  packages/tool-agent-team/tests/team-tools-render.spec.ts [ packages/tool-agent-team/tests/team-tools-render.spec.ts ]
+ FAIL  packages/client-agent-team/tests/team-formatters.spec.ts [ packages/client-agent-team/tests/team-formatters.spec.ts ]
+Error: Cannot find package '@deepseek-ai/dsh-tools' imported from /home/ddv/workplace/lane-d2-team-tab/node_modules/.pnpm/@contexera+dsh-context-continuity@0.4.0_@contexera+dsh-jev@0.1.2_@deepseek-ai+schemastery@3.18.2_/node_modules/@contexera/dsh-context-continuity/lib/tools.js
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/20]⎯
+
+ FAIL  packages/agent-team/tests/context-judge.spec.ts [ packages/agent-team/tests/context-judge.spec.ts ]
+Error: Cannot find package '@deepseek-ai/cordis' imported from /home/ddv/workplace/lane-d2-team-tab/node_modules/.pnpm/@contexera+dsh-jev@0.1.2_@deepseek-ai+schemastery@3.18.2/node_modules/@contexera/dsh-jev/lib/service.js
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/20]⎯
+
+
+ Test Files  20 failed | 59 passed | 2 skipped (81)
+      Tests  633 passed | 2 skipped (635)
+   Start at  16:19:17
+   Duration  12.38s (transform 47.66s, setup 1.15s, import 54.40s, tests 26.15s, environment 11.14s)
+

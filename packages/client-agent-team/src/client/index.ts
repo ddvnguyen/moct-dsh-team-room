@@ -54,6 +54,9 @@ import { TeamPanelIcon } from './TeamPanelIcon.tsx'
 import { TeamMembersAction } from './TeamMembersAction.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
+import type { TeamConversationProps } from './slots.ts'
+import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
+import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
 
 export type { TeamMode, TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
@@ -517,6 +520,32 @@ function applyUi(ctx: ClientContext): void {
       if (typeof document !== 'undefined') delete document.documentElement.dataset.agentTeamMode
     }
   }, 'agent-team: mode marker')
+
+  // The interim native tab (A10, ruling v0.6.1, TEST-3 only). The Team's home
+  // stays the panel rail above; this adds the third tab to the host's own strip
+  // while the automation plugin owns it. It is feature-detected inside the
+  // module — no registry means no tab and no throw — and it writes no
+  // persistence of its own, because the strip owns that key. Registered as an
+  // effect so the insert is disposed with the client rather than leaking a tab
+  // into a later generation.
+  //
+  // The tab body is a closure over this client's own state rather than a module
+  // function, because the strip renders it inside the host's tree: the seat
+  // share is built here once, from the same stable sources the registered
+  // `main` seat's inject reads, and every seat callback identity is therefore
+  // the one the rail seat already uses. The one field the seat does not carry
+  // across is `t` — the strip is not a locale-scoped slot — so it is bound per
+  // render from the dictionary rather than captured, and a language switch
+  // reaches the tab body too.
+  const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity), 'main')
+  const teamTabRender = (props: NativeTabRenderProps): unknown => {
+    const bound = ctx.locale.bind(NS) as TeamConversationProps['t']
+    return renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamConversationProps, props)
+  }
+  ctx.effect(() => insertTeamTab(ctx, {
+    label: ctx.locale.bind(NS)('team'),
+    render: teamTabRender,
+  }), 'agent-team: interim native tab')
 
   // The Team's settings page: one settings section, ordered between General (0)
   // and Models (10) so it sits near the top. It holds two groups that write
