@@ -19,6 +19,7 @@ import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { diagnosticText, TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
+import { namedAvatarOwners, TeamAvatarStack, type TeamAvatarHuman } from './TeamAvatarStack.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { replyStatsView, type ReplyStatsView } from './reply-stats.ts'
 import { firstSentence, formatActivity, formatClaimState, formatRiskClass, formatTaskStatus, formatTaskTitle, mentionNameOf, mentionNamesOf, mentionedMemberIds, taskStatusDot, type MentionHandle } from './team-formatters.ts'
@@ -30,6 +31,7 @@ import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
 import css from './conversation.module.css'
+import channelCss from './channel.module.css'
 import threadCss from './thread.module.css'
 
 interface TeamThreadPageProps {
@@ -830,24 +832,50 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // Threads are always entered through a Channel page, so a Channel origin
   // returns to its timeline; a Thread restored without one returns further.
   const backLabel = channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
+  // Slim header participants: every actor holding a Message in the loaded
+  // window, in first-appearance order, drawn as the shared identity stack.
+  // The stack caps itself at three plus `+N`; the label names them all.
+  const participantIds = (() => {
+    const seen = new Set<AgentTeamMemberId>()
+    const ids: AgentTeamMemberId[] = []
+    for (const fact of currentFactsWithAnchor) {
+      if (fact.kind !== 'message' || seen.has(fact.message.sender)) continue
+      seen.add(fact.message.sender)
+      ids.push(fact.message.sender)
+    }
+    return ids
+  })()
+  const threadHuman: TeamAvatarHuman | undefined = channelView?.humanMemberId === undefined
+    ? undefined
+    : { memberId: channelView.humanMemberId, name: humanName, ...(humanAvatarUrl === undefined ? {} : { avatarUrl: humanAvatarUrl }) }
+  const participantOwners = namedAvatarOwners(participantIds.map(memberId => ({ memberId, name: memberName(memberId) })), threadHuman)
+  const channelName = channelView?.channels.find(entry => entry.channelRef === effectiveChannelRef)?.name
+  // The crumb keeps the old h1 content verbatim (Task number, never the
+  // free-text title): the number is what every entry row cross-references.
+  // A titled Task carries its title in the tooltip, the way the Channel row
+  // carries its description.
+  const crumbTitle = task === undefined ? t('threadLabel') : t('taskLabel', { number: resolvedTaskNumber ?? '…' })
+  const crumbText = t('threadCrumbLabel', { channel: channelName ?? '…', title: crumbTitle })
+  const crumbHint = taskTitle === undefined || taskTitle === '' ? crumbText : `${crumbText} — ${taskTitle}`
 
   return <main className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>
-      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} onClick={backToWorkspace}>{backLabel}</Button></div>
-      <header className={css.headerRow}>
-        <div className={css.headerCopy}>
-          <div className={threadCss.titleLine}>
-            <h1>{task === undefined ? t('threadLabel') : t('taskLabel', { number: resolvedTaskNumber ?? '…' })}</h1>
-            {task !== undefined && <Pill><TeamStateDot size={8} state={taskStatusDot(task.status)} />{formatTaskStatus(task.status, t)}</Pill>}
-          </div>
-          {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle} title={taskTitle}>{taskTitle}</p>}
-        </div>
-        {task === undefined && thread !== undefined && <div className={css.headerActions}>
+      <header className={channelCss.slimHeader} data-team-slim-header="thread">
+        <h1 className={channelCss.slimHidden}>{crumbTitle}</h1>
+        <button type="button" className={channelCss.slimCrumb} aria-label={backLabel} title={crumbHint} onClick={backToWorkspace}>
+          <IconChevronLeftOutlineRegular size={14} />
+          <span className={channelCss.slimCrumbText}>{crumbText}</span>
+        </button>
+        {participantOwners.length > 0 && <span className={channelCss.slimParticipants}>
+          <TeamAvatarStack owners={participantOwners} label={t('participantsLabel', { names: participantIds.map(memberId => memberName(memberId)).join(', ') })} human={threadHuman} />
+        </span>}
+        {task !== undefined && <Pill><TeamStateDot size={8} state={taskStatusDot(task.status)} />{formatTaskStatus(task.status, t)}</Pill>}
+        {task === undefined && thread !== undefined && <span className={channelCss.slimActions}>
           <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
-        </div>}
+        </span>}
         {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
             closed Thread lives only in the composer-slot closed notice. */}
-        {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <div className={css.headerActions}>
+        {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <span className={channelCss.slimActions}>
           {(() => {
             const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
             const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
@@ -860,7 +888,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           {task.resolution === 'open'
             ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
             : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
-        </div>}
+        </span>}
       </header>
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>

@@ -236,7 +236,9 @@ describe('Team agent surfaces', () => {
     }))
     expect(b.createChannel.mock.calls[0]![0].requestId).toBe(b.createChannel.mock.calls[1]![0].requestId)
     fireEvent.click(b.view.getByRole('button', { name: '# backend' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '管理成员' }))
+    // D1: Manage members lives in the slim header's overflow menu now.
+    fireEvent.click(await b.view.findByRole('button', { name: '频道操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '管理成员' }))
     const manager = b.view.getByRole('dialog', { name: '频道成员' })
     expect(within(manager).getByText('@builder')).toBeTruthy()
     fireEvent.click(within(manager).getByRole('button', { name: '移除' }))
