@@ -68,10 +68,12 @@ function attemptReportedUsage(event: SessionEvent<'assistant/attempt'>): { reado
  * input is never split out here, since that needs the exact derivation. Returns undefined when
  * the output count is not provable, which is the one refusal left for a completed Turn.
  *
- * Item 9 (retry-aware): a completed Turn that carries llm/retry is recorded instead of
- * refused. Every attempt's reported output sums in; any bucket an attempt did not report
- * stays null (partial marker, never a guess), and the route stays unnamed because attempts
- * carry no model attribution. With no attempts the computation is exactly today's.
+ * Item 9 (retry-aware): a completed Turn that carries llm/retry is recorded only
+ * when every attempt reported output; an attempt silent on output refuses the
+ * Turn (as today). Reported attempt outputs sum in; any bucket an attempt did
+ * not report stays null (partial marker, never a guess), and the route stays
+ * unnamed because attempts carry no model attribution. With no attempts the
+ * computation is exactly today's.
  */
 function fieldwiseTurnUsage(events: readonly SessionEvent[]): TurnUsageFields | undefined {
   const steps = events.filter(event => event.type === 'step/start').length
@@ -82,6 +84,10 @@ function fieldwiseTurnUsage(events: readonly SessionEvent[]): TurnUsageFields | 
   const usages = samples as NonNullable<(typeof samples)[number]>[]
   const attempts = events.filter((event): event is SessionEvent<'assistant/attempt'> => event.type === 'assistant/attempt')
   const reported = attempts.map(attemptReportedUsage)
+  // Refusal (Architect ruling): an attempt that reported no output hides an
+  // unknown spend — the Turn stays unrecorded rather than flooring its total.
+  // Buckets an attempt was silent on still null out (partial marker) below.
+  if (reported.some(usage => usage === undefined || !isCount(usage.outputTokens))) return undefined
   const outputTokens = sumCounts([...usages.map(usage => usage.outputTokens), ...reported.map(usage => usage?.outputTokens).filter(output => output !== undefined)])
   if (outputTokens === undefined) return undefined
   const bucket = (pick: (usage: { readonly cacheReadTokens?: unknown; readonly cacheWriteTokens?: unknown; readonly reasoningTokens?: unknown }) => unknown): number | null =>

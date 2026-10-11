@@ -51,6 +51,15 @@ describe('D7 item 9 retry-aware usage (partial marker, never a guess)', () => {
     expect(derived!.usage).not.toHaveProperty('route')
   })
 
+  it('refuses a retried Turn when any attempt reported no output (Architect ruling)', () => {
+    type TurnEvent = Parameters<typeof deriveAgentTeamTurn>[0][number]
+    const silent = structuredClone(events)
+    const attempt = silent.find((event): event is Extract<TurnEvent, { type: 'assistant/attempt' }> => event.type === 'assistant/attempt')
+    expect(attempt, 'fixture must carry an attempt to silence').toBeDefined()
+    attempt!.data.stream = []
+    expect(deriveAgentTeamTurn(silent)).toBeUndefined()
+  })
+
   it('still names the refusal reason with the retry count for a Turn that cannot prove output', () => {
     const noOutput = events.filter(event => event.type !== 'assistant/message')
     expect(deriveAgentTeamTurn(noOutput)).toBeUndefined()
