@@ -3,7 +3,7 @@ import type { AgentTeamMemberId, AgentTeamMessageRef, AgentTeamThreadReplyStat }
 import { formatSeconds, formatTokens, replyStatsView, UNKNOWN } from '../src/client/reply-stats.ts'
 
 /** A reply stat with the Turn's usage; unset fields take the 1.2k / 340 / 12s / 7 tools fixture. */
-function stat(options: { isLastOfTurn?: boolean; uncached?: number; read?: number | null; write?: number | null; output?: number; runMs?: number; tools?: number } = {}): AgentTeamThreadReplyStat {
+function stat(options: { isLastOfTurn?: boolean; uncached?: number | null; read?: number | null; write?: number | null; output?: number; runMs?: number; tools?: number } = {}): AgentTeamThreadReplyStat {
   return {
     messageRef: 'message:1' as AgentTeamMessageRef,
     memberId: 'member:builder' as AgentTeamMemberId,
@@ -12,7 +12,7 @@ function stat(options: { isLastOfTurn?: boolean; uncached?: number; read?: numbe
       toolCalls: options.tools ?? 7,
       runMs: options.runMs ?? 12_000,
       usage: {
-        uncachedInputTokens: options.uncached ?? 200,
+        uncachedInputTokens: options.uncached === undefined ? 200 : options.uncached,
         cacheReadTokens: options.read === undefined ? 1_000 : options.read,
         cacheWriteTokens: options.write === undefined ? 0 : options.write,
         outputTokens: options.output ?? 340,
@@ -31,6 +31,11 @@ describe('reply stats row', () => {
   it('shows the unknown dash for input and cache when any input bucket is null, never 0', () => {
     expect(replyStatsView(stat({ write: null }))).toEqual({ input: UNKNOWN, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
     expect(replyStatsView(stat({ read: null }))).toEqual({ input: UNKNOWN, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
+  })
+
+  it('shows the unknown dash for input when the uncached split is null, while output and time stay exact', () => {
+    // Turn 5 of session aeca99c0: output is provable (297), the uncached split is not.
+    expect(replyStatsView(stat({ uncached: null, read: null, write: null, output: 297 }))).toEqual({ input: UNKNOWN, output: '297', seconds: '12s', cache: UNKNOWN, tools: 7 })
   })
 
   it('shows no row on a reply that is not the last of its Turn, so the Turn totals are not repeated', () => {

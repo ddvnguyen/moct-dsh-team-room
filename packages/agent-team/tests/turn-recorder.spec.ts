@@ -63,7 +63,7 @@ describe('AgentTeamTurnRecorder', () => {
     expect((ledger.recordSessionTurn.mock.calls[1]![0] as { threadRefs: AgentTeamThreadRef[] }).threadRefs).toEqual([])
   })
 
-  it('records nothing when the Turn usage cannot be proven exact', async () => {
+  it('records nothing when no output count can be proven for the Turn', async () => {
     const ledger = fakeLedger(() => 0)
     const recorder = new AgentTeamTurnRecorder(() => ledger as unknown as AgentTeamLedger, () => undefined)
     derived.current = undefined

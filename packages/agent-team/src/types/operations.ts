@@ -445,8 +445,8 @@ export interface AgentTeamThreadSessionBoundOperation extends AgentTeamOperation
 
 /** One completed Turn's provider-reported usage, as the host derived it from session events. */
 export interface AgentTeamSessionTurnUsage {
-  /** Uncached prompt input across every attempt of the Turn. */
-  readonly uncachedInputTokens: number
+  /** Uncached prompt input across every attempt of the Turn. null when the split is not provable; never 0 for "unknown". */
+  readonly uncachedInputTokens: number | null
   readonly outputTokens: number
   /** null when any attempt did not report the bucket. Never 0 for "unknown". */
   readonly cacheReadTokens: number | null
@@ -489,7 +489,10 @@ export interface AgentTeamSessionRun {
   readonly startedAt: string
   readonly endedAt: string
   readonly turns: number
+  /** Sum of the Turns' known uncached input. A Turn whose split is null adds nothing here; see unknownInputTurns. */
   readonly tokensIn: number
+  /** Recorded Turns whose uncached input was null, so tokensIn is a partial total when this is above 0. */
+  readonly unknownInputTurns: number
   readonly tokensOut: number
   readonly cacheReadTokens: number | null
   readonly cacheWriteTokens: number | null

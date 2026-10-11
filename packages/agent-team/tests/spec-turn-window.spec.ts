@@ -24,3 +24,24 @@ describe('session-turn-recorded schema (§3.2)', () => {
     expect(parsed.kind === 'team/session-turn-recorded' && parsed.data).not.toHaveProperty('startSequence')
   })
 })
+
+// The uncached input is nullable (an unprovable split), but never a string or a negative count: the schema stays strict.
+describe('session-turn-recorded usage shape (§3.2)', () => {
+  const withUncached = (uncachedInputTokens: unknown) => ({ ...turn, data: { ...turn.data, usage: { ...turn.data.usage, uncachedInputTokens } } })
+
+  it('parses the old numeric shape unchanged', () => {
+    const parsed = agentTeamOperationSchema.parse(withUncached(100))
+    expect(parsed.kind === 'team/session-turn-recorded' && parsed.data.usage.uncachedInputTokens).toBe(100)
+  })
+
+  it('parses a null uncached input, which is unknown and not zero', () => {
+    const parsed = agentTeamOperationSchema.parse(withUncached(null))
+    expect(parsed.kind === 'team/session-turn-recorded' && parsed.data.usage.uncachedInputTokens).toBeNull()
+  })
+
+  it('rejects a string, a negative count and a fractional count', () => {
+    expect(() => agentTeamOperationSchema.parse(withUncached('100'))).toThrow()
+    expect(() => agentTeamOperationSchema.parse(withUncached(-1))).toThrow()
+    expect(() => agentTeamOperationSchema.parse(withUncached(1.5))).toThrow()
+  })
+})

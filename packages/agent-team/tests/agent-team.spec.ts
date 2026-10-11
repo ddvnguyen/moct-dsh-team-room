@@ -3339,3 +3339,35 @@ describe('AgentTeam recorder commits wake Thread scopes on the change path only 
     expect(changed).not.toHaveBeenCalled()
   })
 })
+
+describe('AgentTeam records a completed Turn with a null uncached input (§3.2, TEST-2b)', () => {
+  it('records session aeca99c0 turn 5 through the real recorder: output provable, uncached input null, stats row marked partial', async () => {
+    const { test, host, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    // The real route's turn 5: three steps, the first with no cache fields, the others with cacheReadTokens only, no totalTokens.
+    const at = (offset: number) => Date.UTC(2026, 9, 11, 2, 38, 40) + offset * 1000
+    const model = { role: 'assistant', content: [], source: { kind: 'model', provider: 'opencode2dsh', model: 'mimo-v2.6-flash-free' } }
+    const turn5 = [
+      { type: 'turn/start', seq: 1, time: at(0), data: { turn: 5 } },
+      { type: 'step/start', seq: 2, time: at(1), data: { turn: 5, step: 1 } },
+      { type: 'assistant/message', seq: 3, time: at(2), data: { turn: 5, step: 1, message: model, usage: { inputTokens: 34491, outputTokens: 127 } } },
+      { type: 'step/end', seq: 4, time: at(3), data: { turn: 5, step: 1 } },
+      { type: 'step/start', seq: 5, time: at(4), data: { turn: 5, step: 2 } },
+      { type: 'assistant/message', seq: 6, time: at(5), data: { turn: 5, step: 2, message: model, usage: { inputTokens: 436, outputTokens: 126, cacheReadTokens: 34432 } } },
+      { type: 'step/end', seq: 7, time: at(6), data: { turn: 5, step: 2 } },
+      { type: 'step/start', seq: 8, time: at(7), data: { turn: 5, step: 3 } },
+      { type: 'assistant/message', seq: 9, time: at(8), data: { turn: 5, step: 3, message: model, usage: { inputTokens: 307, outputTokens: 44, cacheReadTokens: 34816 } } },
+      { type: 'step/end', seq: 10, time: at(9), data: { turn: 5, step: 3 } },
+      { type: 'turn/end', seq: 11, time: at(32), data: { turn: 5, reason: { kind: 'completed' } } },
+    ]
+    for (const event of turn5) test.ctx.emit('session/event', sessionB, event as never)
+    const turnRows = () => [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { memberId: string; turn: number; usage: Record<string, unknown> } })
+      .filter(operation => operation.kind === 'team/session-turn-recorded')
+    await vi.waitFor(() => expect(turnRows()).toHaveLength(1))
+    expect(turnRows()[0]!.data).toMatchObject({ memberId: seatB.memberId, turn: 5 })
+    expect(turnRows()[0]!.data.usage).toMatchObject({ uncachedInputTokens: null, outputTokens: 297, cacheReadTokens: null, cacheWriteTokens: null, reasoningTokens: null })
+    const run = host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run
+    expect(run).toMatchObject({ turns: 1, tokensIn: 0, tokensOut: 297, unknownInputTurns: 1 })
+  })
+})

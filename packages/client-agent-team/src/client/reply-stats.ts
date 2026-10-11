@@ -4,7 +4,7 @@ import type { AgentTeamThreadReplyStat } from '@contexera/dsh-agent-team/types'
 export const UNKNOWN = '—'
 
 export interface ReplyStatsView {
-  /** All prompt input of the Turn, or UNKNOWN when any input bucket is null. */
+  /** All prompt input of the Turn, or UNKNOWN when any input bucket, uncached input included, is null. */
   readonly input: string
   readonly output: string
   readonly seconds: string
@@ -40,7 +40,7 @@ export function replyStatsView(stat: AgentTeamThreadReplyStat): ReplyStatsView |
   const uncached = usage.uncachedInputTokens
   const read = usage.cacheReadTokens
   const write = usage.cacheWriteTokens
-  const total = read !== null && write !== null ? uncached + read + write : undefined
+  const total = uncached !== null && read !== null && write !== null ? uncached + read + write : undefined
   return {
     input: total === undefined ? UNKNOWN : formatTokens(total),
     output: formatTokens(usage.outputTokens),

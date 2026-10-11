@@ -537,7 +537,8 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       toolCalls: z.number().int().nonnegative(),
       runMs: z.number().nonnegative(),
       usage: z.object({
-        uncachedInputTokens: z.number().int().nonnegative(),
+        // null when the uncached split is not provable (a step reported no cache fields); never 0 for unknown.
+        uncachedInputTokens: z.number().int().nonnegative().nullable(),
         outputTokens: z.number().int().nonnegative(),
         cacheReadTokens: z.number().int().nonnegative().nullable(),
         cacheWriteTokens: z.number().int().nonnegative().nullable(),

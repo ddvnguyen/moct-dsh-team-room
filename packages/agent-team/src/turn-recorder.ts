@@ -5,7 +5,8 @@
  * `turn/end`, then on `turn/end` derives the Turn and records it. Threads come from two
  * host-supplied lists (turn-threads.ts): the Threads of Team facts delivered to the Member
  * while the Turn was open, and the Threads of the Member's own committed operations inside
- * the Turn's sequence window. A Turn whose usage cannot be proven is not recorded.
+ * the Turn's sequence window. A completed Turn is always recorded; its usage is exact per field, and
+ * null where a field is not provable. A Turn with no provable output count is not recorded.
  *
  * The request id is derived from (sessionId, turn), so a host retry after a crash resolves
  * to the recorded Turn instead of folding it twice. Recording never throws into the session
@@ -68,7 +69,7 @@ export class AgentTeamTurnRecorder {
 
   /**
    * Turns this host did not record: `failed` when the ledger write threw (a
-   * backend outage, say), `unprovable` when usage could not be proven exact or the Turn ended in error (its
+   * backend outage, say), `unprovable` when no output count could be proven or the Turn ended in error (its
    * failure notice is extra visibility, never a replacement for this count). The
    * SessionRun stats under-count by exactly these, so they are surfaced, never silent.
    */
@@ -169,12 +170,12 @@ export class AgentTeamTurnRecorder {
 
   private async record(memberId: AgentTeamMemberId, turn: OpenTurn): Promise<void> {
     const derived = deriveAgentTeamTurn(turn.events)
-    // A Turn whose usage cannot be proven exact is not recorded (contract §3.2).
+    // A completed Turn is recorded even when some usage fields are unprovable (null); only a missing output count refuses it (contract §3.2).
     if (derived === undefined) {
       this.unprovableTurns += 1
       // Surfaced, never silent: the Turn is missing from the stats row, so the log names it and why.
       const turnNumber = turn.events.find((event): event is SessionEvent<'turn/start'> => event.type === 'turn/start')?.data.turn
-      this.onUnrecorded(`agent-team: Turn ${turnNumber ?? '?'} for '${memberId}' not recorded: usage not provable (${unprovableUsageReason(turn.events)})`)
+      this.onUnrecorded(`agent-team: Turn ${turnNumber ?? '?'} for '${memberId}' not recorded: output not provable (${unprovableUsageReason(turn.events)})`)
       return
     }
     const ledger = this.ledger()

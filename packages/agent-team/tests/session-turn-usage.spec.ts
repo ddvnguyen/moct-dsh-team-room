@@ -35,12 +35,46 @@ describe('deriveAgentTeamTurn (§3.2)', () => {
   })
 
   it('names why a completed Turn was refused, counting the samples that lack the proof fields', () => {
-    // The shape of session aeca99c0 turn 5: no totalTokens and no cache fields on the step samples.
+    // A step without totalTokens or cache fields cannot be exact, so the whole Turn is not exact.
     const events = completeTurnEvents().map(event => event.type === 'assistant/message'
       ? { ...event, data: { ...(event.data as object), usage: { inputTokens: 34491, outputTokens: 127 }, stream: [] } } as never
       : event)
-    expect(deriveAgentTeamTurn(events)).toBeUndefined()
     expect(unprovableUsageReason(events)).toBe('1 assistant messages, 0 without usage, 1 without both cache fields, 1 without totalTokens, 0 retries')
+  })
+
+  it('keeps each provable field of a Turn whose exact usage is not provable, and nulls the rest', () => {
+    // The shape of session aeca99c0 turn 5: three steps, the first with no cache fields, the others with cacheReadTokens only.
+    const turn5 = [
+      { type: 'turn/start', seq: 1, time: Date.UTC(2026, 9, 11, 2, 38, 40), data: { turn: 5 } },
+      { type: 'step/start', seq: 2, time: Date.UTC(2026, 9, 11, 2, 38, 41), data: { turn: 5, step: 1 } },
+      { type: 'assistant/message', seq: 3, time: Date.UTC(2026, 9, 11, 2, 38, 42), data: { turn: 5, step: 1, message: { role: 'assistant', content: [], source: { kind: 'model', provider: 'opencode2dsh', model: 'mimo-v2.6-flash-free' } }, usage: { inputTokens: 34491, outputTokens: 127 } } },
+      { type: 'step/end', seq: 4, time: Date.UTC(2026, 9, 11, 2, 38, 43), data: { turn: 5, step: 1 } },
+      { type: 'step/start', seq: 5, time: Date.UTC(2026, 9, 11, 2, 38, 44), data: { turn: 5, step: 2 } },
+      { type: 'assistant/message', seq: 6, time: Date.UTC(2026, 9, 11, 2, 38, 45), data: { turn: 5, step: 2, message: { role: 'assistant', content: [], source: { kind: 'model', provider: 'opencode2dsh', model: 'mimo-v2.6-flash-free' } }, usage: { inputTokens: 436, outputTokens: 126, cacheReadTokens: 34432 } } },
+      { type: 'step/end', seq: 7, time: Date.UTC(2026, 9, 11, 2, 38, 46), data: { turn: 5, step: 2 } },
+      { type: 'step/start', seq: 8, time: Date.UTC(2026, 9, 11, 2, 38, 47), data: { turn: 5, step: 3 } },
+      { type: 'assistant/message', seq: 9, time: Date.UTC(2026, 9, 11, 2, 38, 48), data: { turn: 5, step: 3, message: { role: 'assistant', content: [], source: { kind: 'model', provider: 'opencode2dsh', model: 'mimo-v2.6-flash-free' } }, usage: { inputTokens: 307, outputTokens: 44, cacheReadTokens: 34816 } } },
+      { type: 'step/end', seq: 10, time: Date.UTC(2026, 9, 11, 2, 38, 49), data: { turn: 5, step: 3 } },
+      { type: 'turn/end', seq: 11, time: Date.UTC(2026, 9, 11, 2, 39, 12), data: { turn: 5, reason: { kind: 'completed' } } },
+    ] as never
+    expect(deriveAgentTeamTurn(turn5)).toMatchObject({
+      turn: 5,
+      usage: {
+        uncachedInputTokens: null,
+        outputTokens: 297,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        reasoningTokens: null,
+        route: { provider: 'opencode2dsh', model: 'mimo-v2.6-flash-free' },
+      },
+    })
+  })
+
+  it('refuses a completed Turn with a step that reported no usage, since its output is not provable', () => {
+    const events = completeTurnEvents().map(event => event.type === 'assistant/message'
+      ? { ...event, data: { ...(event.data as object), usage: undefined, stream: [] } } as never
+      : event)
+    expect(deriveAgentTeamTurn(events)).toBeUndefined()
   })
 
   it('refuses a Turn that ended in an error, even when its failed attempt reported zero usage', () => {
