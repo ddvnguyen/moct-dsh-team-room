@@ -36,11 +36,11 @@ interface ActivityEntry {
   readonly turnStartedAt: string
   stepCount: number
   toolCount: number
-  current?: { readonly tool: string; readonly label: string }
+  current: { readonly tool: string; readonly label: string } | undefined
   readonly pendingCalls: Map<string, string>
   updatedAt: number
   lastEmit: number
-  timer?: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | undefined
 }
 
 export interface AgentTeamActivityFeedOptions {
@@ -183,6 +183,8 @@ export class AgentTeamActivityFeed {
       turnStartedAt: new Date(time).toISOString(),
       stepCount: 0,
       toolCount: 0,
+      current: undefined,
+      timer: undefined,
       pendingCalls: new Map(),
       updatedAt: time,
       lastEmit: Number.NEGATIVE_INFINITY,
