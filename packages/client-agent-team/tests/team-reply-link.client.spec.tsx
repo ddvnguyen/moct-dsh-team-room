@@ -110,6 +110,21 @@ describe('reply-link in the Thread page', () => {
     await waitFor(() => expect(page.querySelector('[data-reply-banner]')).toBeNull())
   })
 
+  it('the will-notify row names a quoted Agent but never the Human quoting their own Message', async () => {
+    const { page } = await openThread()
+    const rowOf = (ref: string) => waitFor(() => {
+      const node = page.querySelector(`[data-message-ref="${ref}"]`) as HTMLElement | null
+      if (node === null) throw new Error('row missing')
+      return node
+    })
+    fireEvent.click(within(await rowOf('message:seed-1')).getByRole('button', { name: '引用这条消息' }))
+    await waitFor(() => expect(page.querySelector('[data-team-notify]')?.textContent).toContain('@builder'))
+    // seed-0 is the Human's own Message: its author is the reader, so nobody is notified.
+    fireEvent.click(within(await rowOf('message:seed-0')).getByRole('button', { name: '引用这条消息' }))
+    await waitFor(() => expect(page.querySelector('[data-reply-banner]')?.textContent).toContain('first question'))
+    expect(page.querySelector('[data-team-notify]')).toBeNull()
+  })
+
   it('cancelling the quote sends a plain reply', async () => {
     const { b, page } = await openThread()
     const parentRow = await waitFor(() => {
