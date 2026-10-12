@@ -15,6 +15,7 @@ import type {
   AgentTeamJoinWorkspaceRequest,
   AgentTeamLeaveWorkspaceRequest,
   AgentTeamJoinChannelRequest,
+  AgentTeamMemberActivityRequest,
   AgentTeamMembersRequest,
   AgentTeamPromoteThreadRequest,
   AgentTeamPutAttachmentRequest,
@@ -207,6 +208,19 @@ function membersQuery(request: AgentTeamMembersRequest): TeamQueryIdentity {
 }
 
 /**
+ * The running-Turn activity query (A13 v2): one key per Workspace and Thread.
+ * Only the Host's activity epoch moves it; presence covers the idle edge too,
+ * because a Turn's end clears its activity row and flips presence together.
+ */
+function activityQuery(request: AgentTeamMemberActivityRequest): TeamQueryIdentity {
+  return {
+    key: `activity:${request.workspaceId}:${request.threadRef ?? '*'}`,
+    covers: scope => scope !== undefined
+      && (scope.kind === 'activity' || scope.kind === 'presence') && scope.workspaceId === request.workspaceId,
+  }
+}
+
+/**
  * The Inbox query's identity: one key per Workspace and page size. Its data
  * moves with any shared-projection commit — a mention can land in any Thread —
  * so the scope-less stream is this query's home surface, not an exception to
@@ -242,6 +256,7 @@ function teamSharedRemotes(
     drafts,
     humanIdentity,
     loadMembers: (request: AgentTeamMembersRequest) => queries.read(membersQuery(request), () => ctx.remote.agentTeam.members(request)),
+    loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
     updateChannel: (request: AgentTeamUpdateChannelRequest) => ctx.remote.agentTeam.updateChannel(request),

@@ -29,12 +29,13 @@ export interface TeamQueryCounters {
 }
 
 /**
- * The Host keeps two version domains: presence scopes carry the process-local
- * presence epoch, every other scope carries the ledger's projection position.
+ * The Host keeps three version domains: presence and activity scopes each carry
+ * their own process-local epoch, every other scope carries the ledger's
+ * projection position.
  * Watermarks are tracked per domain because the two counters are unrelated —
  * comparing them across domains would both miss and invent invalidations.
  */
-type VersionDomain = 'presence' | 'projection'
+type VersionDomain = 'presence' | 'activity' | 'projection'
 
 interface QueryState {
   identity: TeamQueryIdentity
@@ -170,6 +171,7 @@ export class TeamQueries {
   newGeneration(): void {
     for (const state of this.states.values()) {
       delete state.invalidated.presence
+      delete state.invalidated.activity
       delete state.invalidated.projection
     }
     for (const entry of this.inFlight.values()) {
@@ -211,7 +213,7 @@ export class TeamQueries {
   private invalidate(scope: TeamChangeScope, update: TeamChangeUpdate & { readonly type: 'changed' }): void {
     if (this.folded.has(update)) return
     this.folded.add(update)
-    const domain: VersionDomain = scope?.kind === 'presence' ? 'presence' : 'projection'
+    const domain: VersionDomain = scope?.kind === 'presence' || scope?.kind === 'activity' ? scope.kind : 'projection'
     for (const state of this.states.values()) {
       if (!state.identity.covers(scope)) continue
       if (update.baseline !== true && state.invalidated[domain] === update.version) continue
