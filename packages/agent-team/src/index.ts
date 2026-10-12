@@ -111,8 +111,6 @@ import type {
   AgentTeamRemoveHumanAvatarResult,
   AgentTeamInbox,
   AgentTeamInboxRequest,
-  AgentTeamJoinChannelRequest,
-  AgentTeamJoinChannelResult,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamJoinWorkspaceResult,
   AgentTeamLeaveWorkspaceRequest,
@@ -166,8 +164,6 @@ import type {
   AgentTeamWriteDocSectionRequest,
   AgentTeamWriteDocSectionResult,
   AgentTeamOperationId,
-  AgentTeamRemoveChannelMemberRequest,
-  AgentTeamRemoveChannelMemberResult,
   AgentTeamRequestId,
   AgentTeamRemoveMemberRequest,
   AgentTeamRemoveMemberResult,
@@ -2303,26 +2299,6 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().promoteThread({ ...request, actor: agentTeamHumanActor() })
     this.emitCommittedOutcome(result)
-    return result.value
-  }
-
-  /** Human-only Channel membership grant; it never injects historical Thread bodies. */
-  @Remote('joinChannel')
-  async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
-    const actor = this.humanCall(request.workspaceId)
-    const ledger = this.requireLedger()
-    if (!ledger.hasCommitted(request.requestId)) this.assertChannelMembersAvailable([request.memberId])
-    const result = await ledger.joinChannel({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
-  }
-
-  /** Human-only Channel membership removal and Channel-scoped cleanup. */
-  @Remote('removeChannelMember')
-  async removeChannelMember(request: AgentTeamRemoveChannelMemberRequest): Promise<AgentTeamRemoveChannelMemberResult> {
-    const actor = this.humanCall(request.workspaceId)
-    const result = await this.requireLedger().removeChannelMember({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
 

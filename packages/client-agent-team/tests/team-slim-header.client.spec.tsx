@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // One slim row replaces the old back-row + header stack on both conversation
 // pages; the suite keeps headroom like the conversation suite does.
 vi.setConfig({ testTimeout: 30_000 })
-import { cleanup, fireEvent, waitFor, within, type RenderResult } from '@testing-library/react'
+import { cleanup, fireEvent, within, type RenderResult } from '@testing-library/react'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'
 
@@ -55,14 +55,12 @@ describe('D1 slim conversation header', () => {
     expect(within(header).getByText('1 位工作中')).toBeTruthy()
     expect(within(header).getByText('0 个 Thread')).toBeTruthy()
     expect(within(header).getByText('0 条未读')).toBeTruthy()
-    // Manage members moved into the overflow menu; the old inline button is gone.
-    expect(within(channelPage).queryByRole('button', { name: '管理成员' })).toBeNull()
+    // Channel membership is derived from Thread participation, so the
+    // overflow menu offers Archive and no Manage members entry.
     const menuButton = within(header).getByRole('button', { name: '频道操作' })
     fireEvent.click(menuButton)
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '管理成员' }))
-    expect(b.view.getByRole('dialog', { name: '频道成员' })).toBeTruthy()
-    fireEvent.click(b.view.getByRole('button', { name: '关闭' }))
-    await waitFor(() => expect(document.activeElement).toBe(menuButton))
+    const menuItems = await within(document.body).findAllByRole('menuitem')
+    expect(menuItems.map(item => item.textContent?.trim())).toEqual(['归档频道'])
   })
 
   it('renders the Thread header as one slim row: crumb, participants, status, actions', async () => {
