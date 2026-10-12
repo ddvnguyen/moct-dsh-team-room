@@ -56,7 +56,7 @@ function draftPreviewUrl(file: File): string | undefined {
   return url
 }
 
-export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, asTask, onAsTaskChange, activity, t }: {
+export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
@@ -86,6 +86,8 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
    */
   readonly replyTo?: { readonly memberId?: AgentTeamMemberId; readonly senderName: string; readonly excerpt: string } | undefined
   readonly onCancelReply?: (() => void) | undefined
+  /** The writing Human's Member id, from the page's Team view: a quote of their own Message notifies no one. */
+  readonly humanMemberId?: AgentTeamMemberId | undefined
   /** Channel-only: create a real Task with the top-level Message. Default off. */
   readonly asTask?: boolean
   readonly onAsTaskChange?: (asTask: boolean) => void
@@ -191,7 +193,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
   const notifiedIds = [...new Set<AgentTeamMemberId>([
     ...recipients,
     ...mentionedMemberIds(draft, members),
-    ...(replyTo?.memberId === undefined || replyTo.memberId === ('member:human' as AgentTeamMemberId) ? [] : [replyTo.memberId]),
+    ...(replyTo?.memberId === undefined || replyTo.memberId === humanMemberId ? [] : [replyTo.memberId]),
   ])].sort()
 
   const updateMention = (nextDraft: string, caret: number): void => {

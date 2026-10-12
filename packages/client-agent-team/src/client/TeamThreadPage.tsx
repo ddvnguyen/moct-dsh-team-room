@@ -1057,6 +1057,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         })(),
         onCancelReply: () => { changeReplyTarget(undefined) },
       })}
+      {...(channelView?.humanMemberId === undefined ? {} : { humanMemberId: channelView.humanMemberId })}
       activity={<TeamActivityLine workspaceId={workspaceId} threadRef={threadRef} members={channelMembers} loadMemberActivity={loadMemberActivity} subscribeChanges={subscribeChanges} t={t} />}
       t={t}
     />
