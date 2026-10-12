@@ -146,6 +146,7 @@ import { formatTeamTimestamp } from './time-format.ts'
 import { resolveBodyMentions } from './mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
 import type { AgentTeamRepliedThread } from './turn-threads.ts'
+import { assertInstances } from './member-instances.ts'
 
 /** Stable Human Member identity shared by every replay of one dshHome Team. */
 export const AGENT_TEAM_HUMAN_MEMBER_ID = 'member:human' as AgentTeamMemberId
@@ -803,6 +804,7 @@ export class AgentTeamLedger {
       this.assertHandleAvailable(request.workspaceId, handle)
       this.assertModelSelection(request.member.model)
       this.assertCapabilities(request.member.capabilities)
+      assertInstances(request.member.instances)
       const member = Object.freeze({
         ...request.member, handle, description, presetId, state: 'enabled' as const,
         ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
@@ -836,6 +838,7 @@ export class AgentTeamLedger {
       if (handle !== prior.handle) for (const workspaceId of this.workspacesOf(prior.memberId)) this.assertHandleAvailable(workspaceId, handle, prior.memberId)
       this.assertModelSelection(request.model)
       this.assertCapabilities(request.capabilities)
+      assertInstances(request.instances)
       // Partial update: an absent field keeps what the Member already has, and
       // an explicit null clears the override. Spreading `prior` verbatim
       // handles the first case; the second must drop the resolved field so the
@@ -846,10 +849,13 @@ export class AgentTeamLedger {
         : request.capabilities === null ? undefined : request.capabilities
       // Both overlays come off `prior` before being re-added, or a cleared field
       // would survive in the spread and the null branch would do nothing.
-      const { model: _priorModel, capabilities: _priorCapabilities, ...priorWithoutOverlays } = prior
+      const nextInstances = request.instances === undefined ? prior.instances
+        : request.instances === null ? undefined : request.instances
+      const { model: _priorModel, capabilities: _priorCapabilities, instances: _priorInstances, ...priorWithoutOverlays } = prior
       const member = Object.freeze({
         ...priorWithoutOverlays, handle, description,
         ...(nextModel === undefined ? {} : { model: nextModel }),
+        ...(nextInstances === undefined ? {} : { instances: nextInstances }),
         ...freezeCapabilities(nextCapabilities),
       })
       const operation: AgentTeamMemberUpdatedOperation = Object.freeze({
@@ -4684,6 +4690,7 @@ export class AgentTeamLedger {
       || operation.data.member.description !== request.description.trim() || operation.data.member.presetId !== request.presetId.trim()
       || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.member.model ?? undefined)
       || !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.member.capabilities ?? undefined)
+      || (operation.data.member.instances ?? undefined) !== (request.member.instances ?? undefined)
       || !this.sameList(operation.data.channelRefs, this.normalizeUnique(request.channelRefs, 'initial Member Channels'))) this.throwRequestCollision(request.requestId)
   }
 
@@ -4721,7 +4728,8 @@ export class AgentTeamLedger {
       // means "keep the stored value", which the record cannot distinguish from
       // a request that stated the same value.
       || (request.model !== undefined && !isDeepStrictEqual(operation.data.member.model ?? undefined, request.model ?? undefined))
-      || (request.capabilities !== undefined && !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.capabilities ?? undefined))) this.throwRequestCollision(request.requestId)
+      || (request.capabilities !== undefined && !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.capabilities ?? undefined))
+      || (request.instances !== undefined && (operation.data.member.instances ?? undefined) !== (request.instances ?? undefined))) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameChannelJoin(operation: AgentTeamOperation, request: AgentTeamAuthorizedJoinChannelRequest): asserts operation is AgentTeamChannelMemberAddedOperation {

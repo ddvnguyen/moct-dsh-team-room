@@ -71,6 +71,8 @@ export interface AgentTeamAddMemberRequest {
   readonly model?: AgentTeamModelSelection
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities
+  /** Concurrent instances, an integer from 1 to 5; absent takes the default (2). */
+  readonly instances?: number
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
 }
@@ -125,6 +127,8 @@ export interface AgentTeamUpdateMemberRequest {
   readonly model?: AgentTeamModelSelection | null
   /** Absent keeps the current override; `null` clears it back to the full surface. */
   readonly capabilities?: AgentTeamMemberCapabilities | null
+  /** Absent keeps the current count; `null` clears it back to the default (2). */
+  readonly instances?: number | null
 }
 
 /** Human intent to suspend or resume one Agent Member. */
