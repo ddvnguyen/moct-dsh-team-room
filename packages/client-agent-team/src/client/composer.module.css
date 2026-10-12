@@ -406,3 +406,43 @@
     transition: none;
   }
 }
+
+/* Quote target of the next send: what is being answered, and the way out. */
+.replyBanner {
+  align-items: center;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  border-left: 2px solid var(--dsw-alias-state-business-primary);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  line-height: 18px;
+  padding: 4px 8px;
+}
+.replyBannerBody {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+}
+.replyBannerAuthor {
+  color: var(--dsw-alias-label-secondary);
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.replyBannerText {
+  color: var(--dsw-alias-label-tertiary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.replyBannerCancel {
+  background: none;
+  border: 0;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 18px;
+  padding: 0 4px;
+}
+.replyBannerCancel:hover { color: var(--dsw-alias-label-primary); }

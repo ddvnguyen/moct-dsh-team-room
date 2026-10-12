@@ -2,7 +2,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { MarkdownText, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamMessageRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamConversationProps } from './slots.ts'
 import type { ResolvedMemberRef } from './refs.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
@@ -49,6 +49,24 @@ export interface TeamMessageProps {
   readonly onOpenMemberSession?: ((sessionId: SessionId) => void) | undefined
   /** Per-reply usage row under an agent reply; absent when the reply carries no row. */
   readonly replyStats?: ReplyStatsView | undefined
+  /**
+   * Resolved context of the Message this one quotes; absent when it quotes
+   * nothing. The author and the excerpt come from the Host, never from the body,
+   * so a quote cannot drift from the Message it points at.
+   */
+  readonly replyTo?: { readonly senderName: string; readonly excerpt: string; readonly messageRef: AgentTeamMessageRef } | undefined
+  /** Jumps to the Message this one quotes, which travels as the argument; absent keeps the quote inert. */
+  readonly onOpenReplyTo?: ((messageRef: AgentTeamMessageRef) => void) | undefined
+  /** Makes this Message the composer's quote target. Its own ref travels as the
+      argument so the page passes one identity-stable callback for every row —
+      a fresh closure per row would defeat this component's memo. */
+  readonly onReply?: ((messageRef: AgentTeamMessageRef) => void) | undefined
+  /** Stable identity of this Message: the anchor a quote line jumps to. */
+  readonly messageRef?: AgentTeamMessageRef
+  /** This row is the composer's current quote target. */
+  readonly replyTarget?: boolean
+  /** This row is the one a reader just jumped to. */
+  readonly replyFlash?: boolean
   readonly children?: ReactNode
 }
 
@@ -60,7 +78,7 @@ export interface TeamMessageProps {
  * skipping a render here never detaches it. Callers must therefore keep the
  * props they derive per render (mention names, ref callbacks) identity-stable.
  */
-export const TeamMessage = memo(function TeamMessage({ senderName, memberId, human, avatarUrl, body, occurredAt, mentionNames, senderTitle, grouped, showGroupedTime, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, onResolveThreadRefs, channelNameOf, memberOf, onOpenMemberSession, replyStats, children }: TeamMessageProps) {
+export const TeamMessage = memo(function TeamMessage({ senderName, memberId, human, avatarUrl, body, occurredAt, mentionNames, senderTitle, grouped, showGroupedTime, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, onResolveThreadRefs, channelNameOf, memberOf, onOpenMemberSession, replyStats, replyTo, onOpenReplyTo, onReply, messageRef, replyTarget, replyFlash, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
   // Only the Human's own row may draw a picture: the profile owns those bytes,
   // and one seat painting the reader's face for another author would name two
@@ -176,7 +194,8 @@ export const TeamMessage = memo(function TeamMessage({ senderName, memberId, hum
       ? <div className={css.messageText}>{onOpenRef === undefined ? displayBody : renderRefs(displayBody, onOpenRef, onOpenMemberSession, taskLabel, threadChipLabel, channelChipLabel, memberChipLabel, channelNameOf, memberOf)}</div>
       : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} labels={markdownLabels} /></div>
   return (
-    <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
+    <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}
+      data-message-ref={messageRef} data-replying-to={replyTarget || undefined} data-reply-flash={replyFlash || undefined}>
       {identityImage.src === undefined
         ? <div className={css.messageIdentity} data-avatar="initial" style={avatarStyle} aria-hidden="true">{senderName.replace('@', '').slice(0, 1).toUpperCase()}</div>
         : <img className={css.messageIdentityImage} data-avatar="image" src={identityImage.src} alt="" aria-hidden="true" onError={identityImage.failed} />}
@@ -187,6 +206,19 @@ export const TeamMessage = memo(function TeamMessage({ senderName, memberId, hum
             {occurredAt !== undefined && <span className={css.messageTime}>{formatMessageTime(occurredAt)}</span>}
           </div>
         )}
+        {/* What this Message answers leads it: one muted line behind a rule, the
+            whole of it a jump to the original, so a long parent is never pasted
+            a second time and the quote can never disagree with what it cites. */}
+        {replyTo !== undefined && (onOpenReplyTo === undefined
+          ? <span className={css.quoteLine} data-quote-line="">
+              <span className={css.quoteLineAuthor}>{replyTo.senderName}</span>
+              <span className={css.quoteLineText}>{replyTo.excerpt}</span>
+            </span>
+          : <button type="button" className={css.quoteLine} data-quote-line="" onClick={() => { onOpenReplyTo(replyTo.messageRef) }}
+              title={t?.('openRepliedMessage') ?? 'Go to the quoted message'}>
+              <span className={css.quoteLineAuthor}>{replyTo.senderName}</span>
+              <span className={css.quoteLineText}>{replyTo.excerpt}</span>
+            </button>)}
         {/* The wrapper stays mounted for every clampable body and only swaps
             its class: appearing/disappearing around bodyNode would remount the
             Markdown subtree and wipe the post-render ref/mention chips that the
@@ -217,6 +249,14 @@ export const TeamMessage = memo(function TeamMessage({ senderName, memberId, hum
         {replyStats !== undefined && <TeamReplyStatsRow view={replyStats} {...(t === undefined ? {} : { t })} />}
         {children}
       </div>
+      {/* The quote action floats beside the row rather than living in it: it is
+          about the row, and the reader asks for it only on hover or focus. */}
+      {onReply !== undefined && messageRef !== undefined && (
+        <button type="button" className={css.quoteAction} data-quote-message="" onClick={() => { onReply(messageRef) }}
+          aria-label={t?.('replyToMessage') ?? 'Quote this message'}>
+          {t?.('replyMessage') ?? 'Quote'}
+        </button>
+      )}
     </article>
   )
 })

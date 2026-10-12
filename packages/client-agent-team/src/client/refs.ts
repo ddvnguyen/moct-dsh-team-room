@@ -2,10 +2,25 @@ import { useSyncExternalStore } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  AgentTeamChannel, AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamMemberId,
+  AgentTeamChannel, AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamMemberId, AgentTeamMessageRef,
+  AgentTeamResolveMessageRefsRequest, AgentTeamResolveMessageRefsResult,
   AgentTeamResolveTaskRefsRequest, AgentTeamResolveTaskRefsResult, AgentTeamResolveThreadRefsRequest, AgentTeamResolveThreadRefsResult,
   AgentTeamTaskRef, AgentTeamThreadRef,
 } from '@ddvnguyen/moct-dsh-team-room/types'
+
+/**
+ * The resolved context of the Message one reply answers. A reply stores only
+ * its parent's ref, so the author and the excerpt a quote block renders come
+ * from the Host, which holds the whole ledger — a parent outside the reader's
+ * loaded history window therefore still resolves.
+ */
+export interface ResolvedMessageRef {
+  readonly messageRef: AgentTeamMessageRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly sender: AgentTeamMemberId
+  /** Body gist for the quote block, already bounded by the Host. */
+  readonly excerpt: string
+}
 
 /** Navigation facts for one branded Task ref, resolved once per session. */
 export interface ResolvedTaskRef {
@@ -124,6 +139,7 @@ function createRefStore<TEntry, TRef extends string>(refOf: (entry: TEntry) => T
 
 const taskStore = createRefStore((entry: ResolvedTaskRef) => entry.taskRef)
 const threadStore = createRefStore((entry: ResolvedThreadRef) => entry.threadRef)
+const messageStore = createRefStore((entry: ResolvedMessageRef) => entry.messageRef)
 
 /** React binding: re-renders the caller when any Task ref resolution lands. */
 export const useResolvedTaskRefVersion = taskStore.useVersion
@@ -138,6 +154,13 @@ export const cachedResolvedThreadRef = threadStore.cached
 /** Store one Thread resolution (click path) and wake every rendered link. */
 export const rememberResolvedThreadRef = threadStore.remember
 export const resolveUnknownThreadRefs = threadStore.resolveUnknown
+
+/** React binding: re-renders the caller when any reply parent resolution lands. */
+export const useResolvedMessageRefVersion = messageStore.useVersion
+export const cachedResolvedMessageRef = messageStore.cached
+/** Store one reply-parent resolution and wake every rendered quote. */
+const rememberResolvedMessageRef = messageStore.remember
+export const resolveUnknownMessageRefs = messageStore.resolveUnknown
 
 /**
  * Click-path Host lookup shared by both ref kinds: remember every resolved
@@ -207,6 +230,22 @@ export const hostThreadRefLookup = (
     },
     threadRefs,
   )
+
+/**
+ * Resolve the Messages that rendered replies answer. Reply parents are read-only
+ * context, so this never navigates: it fills the quotes in place and leaves the
+ * unknown ones unresolved rather than rendering a quote of nothing.
+ */
+export const hostMessageRefLookup = (
+  resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => Promise<RemoteResult<AgentTeamResolveMessageRefsResult>>,
+  workspaceId: AgentTeamResolveMessageRefsRequest['workspaceId'],
+): ((messageRefs: readonly AgentTeamMessageRef[]) => Promise<readonly ResolvedMessageRef[]>) =>
+  async messageRefs => {
+    const result = await resolveMessageRefs({ workspaceId, messageRefs })
+    if (!result.ok) throw new Error(result.error.message)
+    for (const entry of result.value.resolved) rememberResolvedMessageRef(entry)
+    return result.value.resolved
+  }
 
 /** Resolve one Task ref through the Host and jump to its home Channel Thread. */
 export const jumpToTaskThread = (
