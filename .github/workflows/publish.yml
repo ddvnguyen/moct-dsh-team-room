@@ -1,0 +1,91 @@
+# Manual publish of @ddvnguyen/moct-dsh-team-room to GitHub Packages.
+#
+# Never runs on push or PR: only a person pressing "Run workflow" starts it, and
+# the run must type the exact package.json version as `confirm`. It uses the
+# built-in GITHUB_TOKEN with `packages: write`; no personal token is stored or
+# handled anywhere. The build recipe mirrors ci.yml (certified Harness tag as the
+# sibling deepseek-harness), and the test gate runs before the publish step.
+#
+# Consumers need, in their .npmrc (token from their environment, never committed):
+#   @ddvnguyen:registry=https://npm.pkg.github.com
+#   //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type the exact version from package.json to publish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Keep in step with ci.yml.
+  DSH_HARNESS_TAG: dsh-v0.2.0-rc.2
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+
+      - name: Confirm the typed version matches package.json
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$CONFIRM" ]; then
+            echo "confirm does not match package.json version '$version'" >&2
+            exit 1
+          fi
+
+      - name: Enable the corepack shims
+        run: |
+          corepack enable pnpm
+          pnpm --version
+
+      - name: Check out the pinned Harness release as the default sibling
+        run: |
+          git clone --depth 1 --branch "$DSH_HARNESS_TAG" \
+            https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+
+      - name: Install and build the Harness workspace
+        run: |
+          cd ../deepseek-harness
+          corepack pnpm install
+          corepack pnpm build:lib
+          corepack pnpm build:native-system
+
+      - name: Install this repository
+        run: corepack pnpm install
+
+      - name: Link harness packages and build the bundle
+        run: |
+          node scripts/link-harness-packages.mjs
+          npm run build
+
+      - name: Regenerate TypeScript path facades
+        run: node scripts/sync-paths.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Publish to GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@ddvnguyen'
+
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
