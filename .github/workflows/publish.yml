@@ -78,7 +78,7 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Publish to GitHub Packages
+      - name: Configure GitHub Packages registry
         uses: actions/setup-node@v4
         with:
           node-version: 22
