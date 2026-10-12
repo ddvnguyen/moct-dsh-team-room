@@ -141,8 +141,21 @@ export interface AgentTeamCapabilityWarning {
  * helps (restart heals, restart is useless, transient), `detail` is the
  * human-readable reason, and a refused session carries its artifact location.
  */
+/** One instance slot of a seat (multi-instance contract v2). Slot 0 is the seat's home Session. */
+export interface AgentTeamMemberInstanceStatus {
+  readonly slot: number
+  /** The live Session behind the slot. Absent when nothing runs there: never spawned yet, or ended while idle. */
+  readonly sessionId?: SessionId
+  /** Slot 0 mirrors the seat's own presence. Extra slots never report 'error'. */
+  readonly presence: 'available' | 'working' | 'error' | 'unavailable'
+  /** Threads whose live binding (slot < N) points at this slot, in binding order. */
+  readonly threadRefs: readonly AgentTeamThreadRef[]
+}
+
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
+  /** Always present: length = the seat's instances (N), in slot order. N=1 gives [slot 0]. */
+  readonly instances: readonly AgentTeamMemberInstanceStatus[]
   readonly availability: 'active' | 'suspended' | 'inactive' | 'archived' | 'unavailable'
   readonly presence: 'available' | 'working' | 'error' | 'unavailable'
   readonly diagnostic?: AgentTeamMemberDiagnostic

@@ -174,6 +174,19 @@ export class MemberRuntime {
     this.enforcedToolAllow.set(member.memberId, Object.freeze([...allow]))
   }
 
+  /**
+   * The same allow-list restriction on an extra instance slot (contract v2), without the
+   * per-Member bookkeeping that tracks slot 0's live surface: the restriction lives and dies
+   * with the slot's Agent scope, and a later capability edit reaches a slot on its next spawn.
+   */
+  applySlotToolPolicy(agentCtx: Context, member: AgentTeamAgentMember): void {
+    const configured = member.capabilities?.tools?.allow
+    if (configured === undefined) return
+    const knownSet = new Set(this.deps.ctx.tools.schemas(scopeOf(agentCtx)).map(tool => tool.name))
+    const allow = [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])]
+    if (allow.length > 0) agentCtx.tools.restrict({ allow })
+  }
+
   /** Whether the live surface is known to reflect exactly this capability intent; an absent record never matches. */
   appliedCapabilitiesMatch(memberId: AgentTeamMemberId, capabilities: AgentTeamMemberCapabilities | undefined): boolean {
     if (!this.appliedCapabilities.has(memberId)) return false
