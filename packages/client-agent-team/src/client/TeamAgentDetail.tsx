@@ -24,6 +24,12 @@ export function formatRunTime(runMs: number): string {
 /** A null bucket is unknown, never 0. */
 export const tokensOrUnknown = (count: number | null): string => count === null ? UNKNOWN : formatTokens(count)
 
+/** A slot's presence under the seat's identity; the seat's diagnostic belongs to slot 0 only, so it is dropped. */
+function slotPresence(status: AgentTeamClientMemberStatus, presence: AgentTeamClientMemberStatus['presence']): AgentTeamClientMemberStatus {
+  const { diagnostic: _seatDiagnostic, ...rest } = status
+  return { ...rest, presence }
+}
+
 type Loaded =
   | { readonly state: 'loading' }
   | { readonly state: 'failed'; readonly message: string }
@@ -79,6 +85,16 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, openM
     if (!failed) onClose()
   }
 
+  const instances = status.instances
+  const openSlot = (sessionId: AgentTeamSessionRun['sessionId']): void => {
+    let failed = false
+    openMemberSession(sessionId, message => {
+      failed = true
+      setAlert(t('openAgentSessionFailed', { name, message }))
+    })
+    if (!failed) onClose()
+  }
+
   const latestModel = loaded.state === 'ready' ? loaded.runs.find(run => run.model !== null)?.model ?? null : null
 
   return (
@@ -95,6 +111,23 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, openM
         <span>{presenceLabel(status, t)}</span>
         <span className={css.muted}>{latestModel === null ? UNKNOWN : `${latestModel.provider}/${latestModel.model}`}</span>
       </div>
+      {instances.length > 1 && (
+        <section className={css.slots} data-team-agent-slots aria-label={t('agentDetailsSlots')}>
+          <h3 className={css.slotsTitle}>{t('agentDetailsSlots')}</h3>
+          <ul className={css.list}>
+            {instances.map(instance => (
+              <li key={instance.slot} className={css.slot} data-slot={instance.slot} data-presence={instance.presence}>
+                <span>{t(instance.slot === 0 ? 'agentDetailsSlotMain' : 'agentDetailsSlot', { slot: String(instance.slot) })}</span>
+                <span>{presenceLabel(slotPresence(status, instance.presence), t)}</span>
+                {instance.sessionId === undefined
+                  ? <span className={css.muted}>{t('agentDetailsSlotIdle')}</span>
+                  : <button type="button" className={css.open} aria-label={t('agentDetailsOpen', { id: instance.sessionId })} onClick={() => { openSlot(instance.sessionId!) }}><code>{shortSessionId(instance.sessionId)}</code></button>}
+                <span className={css.muted}>{t('agentDetailsThreads', { count: String(instance.threadRefs.length) })}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {alert !== undefined && <p className={createCss.error} role="alert">{alert}</p>}
       {loaded.state === 'loading' && <p className={css.muted}>{t('agentDetailsLoading')}</p>}
       {loaded.state === 'failed' && <p className={createCss.error} role="alert">{t('agentDetailsLoadFailed', { message: loaded.message })}</p>}
