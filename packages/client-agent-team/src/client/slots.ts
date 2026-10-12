@@ -54,6 +54,7 @@ import type {
   AgentTeamTaskResult,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
+  AgentTeamSessionRun,
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateChannelResult,
   AgentTeamUpdateMemberRequest,
@@ -134,6 +135,8 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
+    /** A14: the Member's Session runs, newest first, plus the seat's current Session. */
+    loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => Promise<RemoteResult<{ readonly current: AgentTeamClientMemberStatus['member']['sessionId'] | null; readonly runs: readonly AgentTeamSessionRun[] }>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
     selectedChannelRef?: AgentTeamChannelRef
