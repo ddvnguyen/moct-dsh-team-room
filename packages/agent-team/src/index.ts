@@ -3776,7 +3776,10 @@ export default class AgentTeam extends TypertRemoteService {
    * count, and the @Lead/@Architect mentions (unresolvable handles stay prose —
    * the ledger resolves mentions only against live Channel Members). The
    * deterministic requestId makes a crash-time re-send resolve to the message
-   * already committed instead of a second card.
+   * already committed instead of a second card. The `[agent-team host]`
+   * prefix carries provenance: the ledger has no host actor kind, so the card
+   * posts under the Human actor like every other host-authored message, and
+   * the prefix keeps it from reading as the operator's own words.
    */
   private async sendPoisonNotice(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict): Promise<void> {
     const ledger = this.ledger
@@ -3789,7 +3792,7 @@ export default class AgentTeam extends TypertRemoteService {
       requestId: `poisoned:${verdict.sessionId}:${verdict.turn}` as AgentTeamRequestId,
       workspaceId,
       channelRef,
-      body: `Provider-poisoned seat: @${member.handle} failed ${verdict.failedTurns} consecutive Turns (provider ${verdict.signature}, zero usage) — re-queueing cannot recover it; switch its model or start it from a new context. @Lead @Architect`,
+      body: `[agent-team host] Provider-poisoned seat: @${member.handle} failed ${verdict.failedTurns} consecutive Turns (provider ${verdict.signature}, zero usage) — re-queueing cannot recover it; switch its model or start it from a new context. @Lead @Architect`,
     })
   }
 

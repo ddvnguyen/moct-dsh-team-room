@@ -74,7 +74,23 @@ export function zeroReportedUsage(events: readonly SessionEvent[]): boolean {
 }
 
 /** The tool-call markup a poisoned generation emits as plain text, e.g. the incident's `<atem:function_calls>…`. */
-const TOOL_CALL_MARKUP = /<\/?[A-Za-z0-9_-]+:function_calls>/
+const TOOL_CALL_MARKUP = /<\/?[A-Za-z0-9_-]+:function_calls>/g
+
+/**
+ * Character ranges the malformed check must not read as a generation: fenced
+ * code blocks, inline code spans, and blockquote lines. An agent discussing
+ * this incident quotes the markup there on purpose; only prose that emits it
+ * means a call was made and never executed. The fence-first alternation
+ * mirrors mentions.ts `codeRanges` (a block is never a run of inline spans).
+ */
+function quotedMarkupRanges(text: string): readonly (readonly [number, number])[] {
+  const ranges: [number, number][] = []
+  for (const match of text.matchAll(/```[\s\S]*?```|`[^`\n]*`|^[>][^\n]*/gm)) {
+    const start = match.index ?? 0
+    ranges.push([start, start + match[0].length])
+  }
+  return ranges
+}
 
 /**
  * The first committed assistant message whose visible text carries a tool-call
@@ -91,8 +107,12 @@ export function malformedToolCallGeneration(events: readonly SessionEvent[]): st
     if (content.some(block => block.type === 'tool-call')) continue
     for (const block of content) {
       if (block.type !== 'text') continue
-      const match = TOOL_CALL_MARKUP.exec(block.text)
-      if (match !== null) return `tool-call markup '${match[0]}' in its text with no tool-call part`
+      const quoted = quotedMarkupRanges(block.text)
+      for (const match of block.text.matchAll(TOOL_CALL_MARKUP)) {
+        const at = match.index ?? 0
+        if (quoted.some(([start, end]) => at >= start && at < end)) continue
+        return `tool-call markup '${match[0]}' in its text with no tool-call part`
+      }
     }
   }
   return undefined
