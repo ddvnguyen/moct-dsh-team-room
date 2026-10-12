@@ -1,4 +1,6 @@
 .root {
+  /* Containing block for the activity line overlay above the card. */
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;

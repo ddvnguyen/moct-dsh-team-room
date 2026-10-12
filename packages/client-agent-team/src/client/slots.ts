@@ -27,6 +27,8 @@ import type {
   AgentTeamAddMemberResult,
   AgentTeamRecoverMemberRequest,
   AgentTeamRecoverMemberResult,
+  AgentTeamMemberActivityRequest,
+  AgentTeamMemberActivityResult,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -158,6 +160,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>
   resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+  /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
+  loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
   /** Human direct-only Inbox slice; the Inbox page merges one call per visible Workspace. */
   loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   /** Human-only Thread Attention observations; the Thread composer ranks the returned followers first. */

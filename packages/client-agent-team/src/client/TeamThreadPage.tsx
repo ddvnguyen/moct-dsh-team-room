@@ -27,6 +27,7 @@ import { TeamStateDot } from './TeamStateDot.tsx'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
+import { TeamActivityLine } from './TeamActivityLine.tsx'
 import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
@@ -52,6 +53,7 @@ interface TeamThreadPageProps {
   readonly threadTurnFailures: TeamConversationProps['threadTurnFailures']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
+  readonly loadMemberActivity: TeamConversationProps['loadMemberActivity']
   readonly drafts: TeamDraftStore
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
@@ -115,7 +117,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
-    subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, promoteThread, t,
+    subscribeChanges, loadMembers, loadMemberActivity, drafts, getAttachment, reply, changeTask, promoteThread, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
@@ -985,6 +987,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       placeholder={t('replyPlaceholder')}
       pendingFiles={pendingFiles}
       onFilesChange={setPendingFiles}
+      activity={<TeamActivityLine workspaceId={workspaceId} threadRef={threadRef} members={channelMembers} loadMemberActivity={loadMemberActivity} subscribeChanges={subscribeChanges} t={t} />}
       t={t}
     />
     ) : <div />}
