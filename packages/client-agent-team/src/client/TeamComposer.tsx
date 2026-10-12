@@ -56,7 +56,7 @@ function draftPreviewUrl(file: File): string | undefined {
   return url
 }
 
-export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, asTask, onAsTaskChange, activity, t }: {
+export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, asTask, onAsTaskChange, activity, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
@@ -78,6 +78,14 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
   /** Upload-capable surfaces pass this to enable the "+" file picker; the reply path omits it. */
   readonly pendingFiles?: readonly File[]
   readonly onFilesChange?: (files: readonly File[]) => void
+  /**
+   * The Message this send answers. Present, the composer states what is being
+   * answered and offers a way out: a quote the reader cannot cancel would ride
+   * the next Enter after they had moved past it. `memberId` lets the author join
+   * the ordinary "will notify" row; it is absent when the parent did not resolve.
+   */
+  readonly replyTo?: { readonly memberId?: AgentTeamMemberId; readonly senderName: string; readonly excerpt: string } | undefined
+  readonly onCancelReply?: (() => void) | undefined
   /** Channel-only: create a real Task with the top-level Message. Default off. */
   readonly asTask?: boolean
   readonly onAsTaskChange?: (asTask: boolean) => void
@@ -178,7 +186,13 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
   // The notify row reports what the Host will resolve from this draft, not just
   // what the mention menu picked: an authored `@Handle` delivers exactly like a
   // pick, and `@all` stands for the menu's expansion.
-  const notifiedIds = [...new Set([...recipients, ...mentionedMemberIds(draft, members)])].sort()
+  // A quote's author belongs here too — the Host merges them into the
+  // recipients — except the Human, who is the one writing through this composer.
+  const notifiedIds = [...new Set<AgentTeamMemberId>([
+    ...recipients,
+    ...mentionedMemberIds(draft, members),
+    ...(replyTo?.memberId === undefined || replyTo.memberId === ('member:human' as AgentTeamMemberId) ? [] : [replyTo.memberId]),
+  ])].sort()
 
   const updateMention = (nextDraft: string, caret: number): void => {
     const match = findMention(nextDraft, caret)
@@ -282,6 +296,14 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
   }}>
     {activity}
     <div className={css.card} data-team-composer>
+      {replyTo !== undefined && <div className={css.replyBanner} data-reply-banner="">
+        <span className={css.replyBannerBody}>
+          <span className={css.replyBannerAuthor}>{t('replyingTo', { name: replyTo.senderName })}</span>
+          <span className={css.replyBannerText}>{replyTo.excerpt}</span>
+        </span>
+        {onCancelReply !== undefined && <button type="button" className={css.replyBannerCancel} onClick={onCancelReply}
+          aria-label={t('cancelReply')} title={t('cancelReply')}>×</button>}
+      </div>}
       {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
       <div className={css.inputArea}>
         {menuOpen && <div id={listId} ref={menuRef} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')} style={{ maxHeight: menuMaxHeight }}>

@@ -4,6 +4,7 @@ import type {
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
   AgentTeamMemberId,
+  AgentTeamMessageRef,
   AgentTeamRequestId,
   AgentTeamTaskRef,
   AgentTeamThreadFact,
@@ -30,6 +31,7 @@ import { useTimelineScroll } from './timeline-scroll.ts'
 import { TeamActivityLine } from './TeamActivityLine.tsx'
 import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
+import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
 import css from './conversation.module.css'
 import channelCss from './channel.module.css'
@@ -64,6 +66,7 @@ interface TeamThreadPageProps {
   readonly selectThread: TeamConversationProps['selectThread']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
+  readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   readonly t: TeamConversationProps['t']
 }
@@ -115,7 +118,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, openMemberSession, putAttachment,
+    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
     subscribeChanges, loadMembers, loadMemberActivity, drafts, getAttachment, reply, changeTask, promoteThread, t,
   } = props
@@ -152,6 +155,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     if (confirmingAccept && projection?.task?.resolution === 'accepted') setConfirmingAccept(false)
   }, [confirmingAccept, projection?.task?.resolution])
   const [replyRequestId, setReplyRequestId] = useState<AgentTeamRequestId>()
+  // The Message the next send answers; it rides the reply as replyToMessageRef.
+  const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef>()
+  const [flashedMessage, setFlashedMessage] = useState<AgentTeamMessageRef>()
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
   const [pending, setPending] = useState(false)
@@ -539,6 +545,40 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const lookupTaskRefs = useMemo(() => hostTaskRefLookup(resolveTaskRefs, workspaceId), [resolveTaskRefs, workspaceId])
   const lookupThreadRefs = useMemo(() => hostThreadRefLookup(resolveThreadRefs, workspaceId), [resolveThreadRefs, workspaceId])
+  // Reply parents resolve through the Host: a quote must fill in even when the
+  // Message it answers sits far outside the facts this page has loaded.
+  const lookupMessageRefs = useMemo(() => hostMessageRefLookup(resolveMessageRefs, workspaceId), [resolveMessageRefs, workspaceId])
+  const messageRefVersion = useResolvedMessageRefVersion()
+  useEffect(() => {
+    // Every rendered reply's parent (for its quote) and the composer's target
+    // (for its banner): the target is usually not itself a reply.
+    const refs = [...olderFacts, ...currentFacts].flatMap(fact => fact.kind === 'message' && fact.message.replyToMessageRef !== undefined ? [fact.message.replyToMessageRef] : [])
+    if (replyTarget !== undefined && !refs.includes(replyTarget)) refs.push(replyTarget)
+    if (refs.length > 0) void resolveUnknownMessageRefs(refs, lookupMessageRefs)
+  }, [olderFacts, currentFacts, replyTarget, lookupMessageRefs, messageRefVersion])
+  useEffect(() => {
+    if (flashedMessage === undefined) return
+    const timer = setTimeout(() => { setFlashedMessage(undefined) }, 1200)
+    return () => { clearTimeout(timer) }
+  }, [flashedMessage])
+  // One stable callback per action for every row: TeamMessage is memoized, so a
+  // fresh closure per row would re-render the whole timeline on any page render.
+  // A new target is a different request: the parent is part of the Host's
+  // retry identity, so a pending request id or confirmation must not carry over.
+  const changeReplyTarget = useCallback((messageRef: AgentTeamMessageRef | undefined): void => {
+    setReplyTarget(messageRef)
+    setReplyRequestId(undefined)
+    setConfirmation(undefined)
+    setStatusMessage(undefined)
+  }, [])
+  const handleReply = useCallback((messageRef: AgentTeamMessageRef): void => { changeReplyTarget(messageRef) }, [changeReplyTarget])
+  /** Take the reader to the Message a reply answers, when it is on screen. */
+  const handleOpenReplyTo = useCallback((messageRef: AgentTeamMessageRef): void => {
+    const node = document.querySelector(`[data-message-ref="${messageRef}"]`)
+    if (node === null) return
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setFlashedMessage(messageRef)
+  }, [])
   // Roster chips resolve synchronously from loaded data: channel names from
   // the Channel view, member facts from the member list. Anything outside the
   // loaded window stays plain text — the same rule unresolvable Task/Thread
@@ -558,6 +598,21 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     const humanMemberId = channelView?.humanMemberId
     return (ref: AgentTeamMemberId) => rosterMember(members, humanMemberId, humanName, ref)
   }, [rosterKey, humanName])
+
+  // The quote line names the parent's author and excerpt from the Host's
+  // resolution; until it lands (or if it never does) the ref itself still
+  // travels, so the line can always say where it goes.
+  const replyContexts = useMemo(() => {
+    const contexts = new Map<AgentTeamMessageRef, { readonly senderName: string; readonly excerpt: string; readonly messageRef: AgentTeamMessageRef }>()
+    for (const fact of [...olderFacts, ...currentFacts]) {
+      if (fact.kind !== 'message' || fact.message.replyToMessageRef === undefined) continue
+      const parent = cachedResolvedMessageRef(fact.message.replyToMessageRef)
+      contexts.set(fact.message.messageRef, parent === undefined
+        ? { senderName: t('memberUnknown'), excerpt: '', messageRef: fact.message.replyToMessageRef }
+        : { senderName: memberName(parent.sender), excerpt: parent.excerpt, messageRef: parent.messageRef })
+    }
+    return contexts
+  }, [olderFacts, currentFacts, messageRefVersion, rosterKey, humanName, t])
 
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
@@ -585,6 +640,11 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         onOpenMemberSession={openMemberSession}
         grouped={grouped}
         {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
+        messageRef={fact.message.messageRef}
+        onReply={handleReply}
+        {...(replyContexts.has(fact.message.messageRef) ? { replyTo: replyContexts.get(fact.message.messageRef)!, onOpenReplyTo: handleOpenReplyTo } : {})}
+        replyTarget={replyTarget === fact.message.messageRef}
+        replyFlash={flashedMessage === fact.message.messageRef}
       />
     }
     return <p className={threadCss.activityRow} key={factKey(fact)}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(fact.activity, { t, actorName: memberName, claims: taskClaims })}</span></p>
@@ -761,7 +821,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         return
       }
       const attachmentIds = upload.attachmentIds
-      const result = await reply({ requestId: id, workspaceId, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }), body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
+      const result = await reply({ requestId: id, workspaceId, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }), ...(replyTarget === undefined ? {} : { replyToMessageRef: replyTarget }), body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
       if (!result.ok) {
         setError(result.error.message)
         return
@@ -780,6 +840,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setProjection(current => current === undefined ? current : { ...current, ...(committed.task === undefined ? {} : { task: committed.task }), thread: committed.thread })
         drafts.clear(draftKey)
         setPendingFiles([])
+        setReplyTarget(undefined)
         setReplyRequestId(undefined)
         setConfirmation(undefined)
         setStatusMessage(undefined)
@@ -987,6 +1048,15 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       placeholder={t('replyPlaceholder')}
       pendingFiles={pendingFiles}
       onFilesChange={setPendingFiles}
+      {...(replyTarget === undefined ? {} : {
+        replyTo: (() => {
+          const target = cachedResolvedMessageRef(replyTarget)
+          return target === undefined
+            ? { senderName: t('memberUnknown'), excerpt: '' }
+            : { memberId: target.sender, senderName: memberName(target.sender), excerpt: target.excerpt }
+        })(),
+        onCancelReply: () => { changeReplyTarget(undefined) },
+      })}
       activity={<TeamActivityLine workspaceId={workspaceId} threadRef={threadRef} members={channelMembers} loadMemberActivity={loadMemberActivity} subscribeChanges={subscribeChanges} t={t} />}
       t={t}
     />
