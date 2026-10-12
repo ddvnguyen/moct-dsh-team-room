@@ -1,12 +1,12 @@
 {
-  "name": "@contexera/dsh-agent-team",
+  "name": "moct-dsh-team-room",
   "version": "0.2.2",
   "license": "MIT",
   "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
   "icon": "assets/icon.svg",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Contexera/dsh-agent-team.git"
+    "url": "https://github.com/ddvnguyen/moct-dsh-team-room.git"
   },
   "private": false,
   "type": "module",

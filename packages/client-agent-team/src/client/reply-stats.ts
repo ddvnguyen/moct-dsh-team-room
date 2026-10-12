@@ -1,4 +1,4 @@
-import type { AgentTeamThreadReplyStat } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamThreadReplyStat } from 'moct-dsh-team-room/types'
 
 /** An unknown value: a null bucket or an unrecorded Turn. Never shown as 0. */
 export const UNKNOWN = '—'

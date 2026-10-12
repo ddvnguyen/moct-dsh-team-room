@@ -1,4 +1,4 @@
-# @contexera/dsh-agent-team/client
+# moct-dsh-team-room/client
 
 [English](README.md) | 中文
 

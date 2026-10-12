@@ -20,46 +20,46 @@
     ],
     "noEmit": true,
     "paths": {
-      "@contexera/dsh-agent-team/host": [
+      "moct-dsh-team-room/host": [
         "./packages/agent-team/src/index.ts"
       ],
-      "@contexera/dsh-agent-team/invariant": [
+      "moct-dsh-team-room/invariant": [
         "./packages/agent-team/src/invariant.ts"
       ],
-      "@contexera/dsh-agent-team/types": [
+      "moct-dsh-team-room/types": [
         "./packages/agent-team/src/types.ts"
       ],
-      "@contexera/dsh-agent-team/typert": [
+      "moct-dsh-team-room/typert": [
         "./packages/agent-team/lib/typert.host.d.ts"
       ],
-      "@contexera/dsh-agent-team/remote": [
+      "moct-dsh-team-room/remote": [
         "./packages/agent-team/lib/typert.remote-client.js"
       ],
-      "@contexera/dsh-agent-team/sqlite-backend": [
+      "moct-dsh-team-room/sqlite-backend": [
         "./packages/agent-team/src/vendor/storage-sqlite/index.ts"
       ],
-      "@contexera/dsh-agent-team/compaction-engine": [
+      "moct-dsh-team-room/compaction-engine": [
         "./packages/agent-team/src/compaction-engine.ts"
       ],
-      "@contexera/dsh-agent-team/member-context": [
+      "moct-dsh-team-room/member-context": [
         "./packages/agent-team/src/member-context.ts"
       ],
-      "@contexera/dsh-agent-team/member-time-context": [
+      "moct-dsh-team-room/member-time-context": [
         "./packages/agent-team/src/member-time-context.ts"
       ],
-      "@contexera/dsh-agent-team/time-format": [
+      "moct-dsh-team-room/time-format": [
         "./packages/agent-team/src/time-format.ts"
       ],
-      "@contexera/dsh-agent-team/mentions": [
+      "moct-dsh-team-room/mentions": [
         "./packages/agent-team/src/mentions.ts"
       ],
-      "@contexera/dsh-agent-team/member-skills": [
+      "moct-dsh-team-room/member-skills": [
         "./packages/agent-team/src/member-skills.ts"
       ],
-      "@contexera/dsh-agent-team/tools": [
+      "moct-dsh-team-room/tools": [
         "./packages/tool-agent-team/src/index.ts"
       ],
-      "@contexera/dsh-agent-team/client": [
+      "moct-dsh-team-room/client": [
         "./packages/client-agent-team/src/client/index.ts"
       ],
       "@deepseek-ai/dsh-storage-sqlite": [
