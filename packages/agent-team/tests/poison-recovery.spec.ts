@@ -21,6 +21,15 @@ interface TeamHarness {
   readonly facility: DomainFacility
 }
 
+/** The Host row's `poisonRecovery` section, as a deployment's patch layer passes it. */
+interface PoisonRecoveryConfig {
+  readonly poisonRecovery: {
+    readonly enabled: boolean
+    readonly provider?: string
+    readonly model?: string
+  }
+}
+
 const cleanups: Array<() => Promise<void>> = []
 const alpha = WorkspaceId('workspace:alpha')
 const requestId = (value: string): AgentTeamRequestId => value as AgentTeamRequestId
@@ -29,7 +38,7 @@ afterEach(async () => {
   await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
 })
 
-async function harness(): Promise<TeamHarness> {
+async function harness(config?: PoisonRecoveryConfig): Promise<TeamHarness> {
   const ctx = new Context()
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend(new MemoryMediaPool()))
@@ -47,7 +56,7 @@ async function harness(): Promise<TeamHarness> {
   ctx.provide('tools', { schemas: () => [] })
   ctx.provide('sessionPersistence', { list: async () => [] })
   await ctx.plugin(SessionProjectionRegistry)
-  const fiber = await ctx.plugin(AgentTeam)
+  const fiber = config === undefined ? await ctx.plugin(AgentTeam) : await ctx.plugin(AgentTeam, config)
   cleanups.push(async () => { await fiber.dispose(); await facility.closeAll() })
   return { ctx, fiber, facility }
 }
@@ -59,8 +68,8 @@ async function harness(): Promise<TeamHarness> {
  * composed-preset answer (the stub has no agent ctx). `steer` records the
  * resume an unpoisoned recovery would queue.
  */
-async function poisonHost() {
-  const test = await harness()
+async function poisonHost(config?: PoisonRecoveryConfig) {
+  const test = await harness(config)
   const host = test.ctx.agentTeam
   const presets = test.ctx.agentPresets as { mount: () => Promise<never>; composedPreset?: (agentCtx: unknown) => string }
   presets.composedPreset = () => 'team-member'
@@ -74,7 +83,7 @@ async function poisonHost() {
     id: member.sessionId, session, status: 'idle', steer,
     inbox: { nextStep: [], nextTurn: [], remove: () => undefined },
   }
-  const internals = host as unknown as { handles: Map<unknown, unknown>; memberBySessionId: Map<unknown, unknown>; clearMemberFailure: (id: AgentTeamMemberId, slot: 'activation') => boolean }
+  const internals = host as unknown as { handles: Map<unknown, unknown>; memberBySessionId: Map<unknown, unknown>; modelSelections: Map<AgentTeamMemberId, { current: unknown; assembled: unknown }>; clearMemberFailure: (id: AgentTeamMemberId, slot: 'activation') => boolean }
   // addMember ran activateMember, which failed against the throwaway `agents`
   // stub and left an activation diagnostic; a seat seated on a live stub agent
   // stands for one whose activation succeeded, so drop the slot — memberStatus
@@ -82,6 +91,10 @@ async function poisonHost() {
   internals.clearMemberFailure(member.memberId, 'activation')
   internals.handles.set(member.memberId, { agent })
   internals.memberBySessionId.set(member.sessionId, member.memberId)
+  // Mirrors the modelSelections entry a successful activation writes
+  // (src/index.ts:3427); updateMember rejects a model edit on a live handle
+  // that lacks one.
+  internals.modelSelections.set(member.memberId, { current: { provider: 'mock', model: 'mock' }, assembled: undefined })
   return { test, host, member, session, agent, steer }
 }
 
@@ -320,3 +333,58 @@ describe('provider-poison surfacing and recovery (task-11 items 1 and 4)', () =>
 function recorderOf(host: unknown): { unrecordedTurns: { failed: number; unprovable: number } } {
   return (host as { turnRecorder: { unrecordedTurns: { failed: number; unprovable: number } } }).turnRecorder
 }
+
+// ---------------------------------------------------------------------------
+// Host-level: poisoned-seat auto-recovery (task-11 item 2, default OFF).
+// ---------------------------------------------------------------------------
+
+describe('poisoned-seat auto-recovery (task-11 item 2)', () => {
+  it('default OFF: the crossing stays a flag — no renewal, no model swap, diagnosis intact', async () => {
+    const { test, host, member, session } = await poisonHost()
+    for (const turn of [1, 2, 3]) emitPoisonTurn(test, session, turn)
+    await vi.waitFor(() => expect(poisonCards(test)).toHaveLength(1))
+    // The OFF path returns before its first await, so the card is the whole crossing:
+    // give any stray recovery a moment and nothing may follow it.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(operationRows(test).filter(operation => operation.kind === 'team/member-session-renewed')).toHaveLength(0)
+    expect(operationRows(test).filter(operation => operation.kind === 'team/member-updated')).toHaveLength(0)
+    expect(rowFor(host, member.memberId)?.diagnostic?.detail).toContain('provider-poisoned')
+    expect(rowFor(host, member.memberId)?.presence).toBe('error')
+  })
+
+  it('opted in: the crossing renews the session from a fresh context and clears the diagnosis', async () => {
+    const { test, host, member, session, steer } = await poisonHost({ poisonRecovery: { enabled: true } })
+    for (const turn of [1, 2, 3]) emitPoisonTurn(test, session, turn)
+    await vi.waitFor(() => expect(
+      operationRows(test).filter(operation => operation.kind === 'team/member-session-renewed'),
+    ).toHaveLength(1))
+    // The card still fires: auto-recovery is additive, not a replacement for the operator's notice.
+    await vi.waitFor(() => expect(poisonCards(test)).toHaveLength(1))
+    // No route configured → the seat keeps its model; only the context is fresh.
+    expect(operationRows(test).filter(operation => operation.kind === 'team/member-updated')).toHaveLength(0)
+    await vi.waitFor(() => expect(rowFor(host, member.memberId)?.diagnostic?.detail ?? '').not.toContain('provider-poisoned'))
+    expect(rowFor(host, member.memberId)?.presence).not.toBe('error')
+    // The seat restarts by renewal, never by a steered resume. Any steer the
+    // card's own delivery performs is the ordinary Inbox wake (summary
+    // 'Team Inbox has unread work.'); only the recovery resume carries
+    // RECOVERY_NOTICE_SUMMARY (src/index.ts:189).
+    const recoverySteers = steer.mock.calls
+      .filter(([message]) => (message as { source?: { summary?: string } }).source?.summary === 'Recovery: continue your interrupted work.')
+    expect(recoverySteers).toHaveLength(0)
+  })
+
+  it('opted in with a route: the model swap lands before the fresh context', async () => {
+    const { test, host, member, session } = await poisonHost({ poisonRecovery: { enabled: true, provider: 'mock2', model: 'mock-backup' } })
+    for (const turn of [1, 2, 3]) emitPoisonTurn(test, session, turn)
+    await vi.waitFor(() => expect(
+      operationRows(test).filter(operation => operation.kind === 'team/member-session-renewed'),
+    ).toHaveLength(1))
+    const rows = operationRows(test)
+    const swap = rows.findIndex(operation => operation.kind === 'team/member-updated')
+    const renew = rows.findIndex(operation => operation.kind === 'team/member-session-renewed')
+    expect(swap).toBeGreaterThanOrEqual(0)
+    expect(swap).toBeLessThan(renew)
+    expect((rows[swap]!.data as { member: { model?: unknown } }).member.model).toEqual({ provider: 'mock2', model: 'mock-backup' })
+    await vi.waitFor(() => expect(rowFor(host as never, member.memberId)?.diagnostic?.detail ?? '').not.toContain('provider-poisoned'))
+  })
+})

@@ -424,6 +424,18 @@ export interface Config {
   readonly gate: TeamGateSettings
   /** The relatedness judge's own settings; a key here is what mounts it. */
   readonly jev: TeamJudgeSettings
+  /** Poisoned-seat auto-recovery: default OFF (flag + card) until a deployment opts in. */
+  readonly poisonRecovery: TeamPoisonRecoverySettings
+}
+
+/** The Host row's `poisonRecovery` fields, as the settings service reads and writes them. */
+export interface TeamPoisonRecoverySettings {
+  /** Whether the threshold crossing auto-recovers the seat; default false. */
+  readonly enabled: Volatile<boolean>
+  /** Provider of the optional model swap before the fresh context; absent keeps the current route. */
+  readonly provider: Volatile<string | undefined>
+  /** Model id of the optional model swap before the fresh context; absent keeps the current route. */
+  readonly model: Volatile<string | undefined>
 }
 
 /** The Host row's `gate` fields, as the settings service reads and writes them. */
@@ -477,6 +489,26 @@ const TEAM_JUDGE_SETTINGS_SCHEMA = z.object({
   apiBase: z.string().volatile().description('Endpoint base the judgements go to. Default: the jev plugin\'s own default.'),
 })
 
+/** How long a poisoned-seat auto-recovery waits for the errored generation to leave `running`. */
+const POISON_AUTO_RECOVERY_IDLE_WAIT_MS = 60_000
+
+/**
+ * Task-11 item 2: poisoned-seat auto-recovery, default OFF. The threshold
+ * crossing is the operator's decision by default — the diagnosis and the
+ * Team-room card are the whole of it — which is why `enabled` reads false
+ * until a deployment opts in. An opted-in deployment recovers at the crossing:
+ * an optional swap to the configured route (the K model) followed by a fresh
+ * context, whose renewal archives the poisoned Session's log untouched — no
+ * log mutation, and no replay state travels into the new Session. Every field
+ * is volatile, so the settings surface reaches the running Host without a
+ * restart, like gate and jev.
+ */
+const TEAM_POISON_RECOVERY_SETTINGS_SCHEMA = z.object({
+  enabled: z.boolean().default(false).volatile().description('Recover a provider-poisoned seat automatically at the threshold crossing: swap the configured model (when both route fields are set) and start the Member from a new context. Default: false — diagnosis and Team-room card only.'),
+  provider: z.string().volatile().description('Provider of the model swap run before a poisoned seat\'s fresh context. Absent keeps the Member\'s current model.'),
+  model: z.string().volatile().description('Model id of the model swap run before a poisoned seat\'s fresh context. Absent keeps the Member\'s current model.'),
+})
+
 /**
  * The Host row's whole schema: the profile fields verbatim, so their volatility
  * and defaults stay owned by {@link HUMAN_PROFILE_SETTINGS_SCHEMA}, plus the
@@ -487,6 +519,7 @@ export const TEAM_HOST_ROW_SETTINGS_SCHEMA = z.object({
   ...HUMAN_PROFILE_SETTINGS_SCHEMA.dict,
   gate: TEAM_PRESSURE_GATE_SCHEMA,
   jev: TEAM_JUDGE_SETTINGS_SCHEMA,
+  poisonRecovery: TEAM_POISON_RECOVERY_SETTINGS_SCHEMA,
 })
 
 /** The default thread-summary model has no LLM service to call; the caller logs this once per Thread. */
@@ -3635,7 +3668,9 @@ export default class AgentTeam extends TypertRemoteService {
    * `runtime` slot would be cleared by every `running` status poll) and
    * refresh presence so the sidebar shows the failing-Turn count. On the one
    * threshold crossing, also fire the Team-room notice — never awaited into
-   * the session event path that reached us; a notice failure is logged only.
+   * the session event path that reached us; a notice failure is logged only —
+   * and hand the seat to the auto-recovery that returns immediately while
+   * the default-OFF setting keeps it a flag (task-11 item 2).
    */
   private onMemberPoisoned(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict, crossed: boolean): void {
     const detail = `provider-poisoned session: ${verdict.failedTurns} consecutive identical provider failures (${verdict.signature}, zero usage); re-queueing cannot recover this seat — switch its model or start it from a new context`
@@ -3645,9 +3680,14 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} ${detail}`)
     const member = this.ledger?.getMember(memberId)
     if (member !== undefined) this.emitMemberPresenceChanged(member)
-    if (crossed) this.sendPoisonNotice(memberId, verdict).catch(error => {
-      this.ctx.logger.warn(`agent-team: poisoned-seat notice for '${memberId}' failed: ${error instanceof Error ? error.message : String(error)}`)
-    })
+    if (crossed) {
+      this.sendPoisonNotice(memberId, verdict).catch(error => {
+        this.ctx.logger.warn(`agent-team: poisoned-seat notice for '${memberId}' failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+      this.autoRecoverPoisonedMember(memberId, verdict).catch(error => {
+        this.ctx.logger.warn(`agent-team: poisoned-seat auto-recovery for '${memberId}' failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }
   }
 
   /** The streak ended (a clean recorded Turn, or a non-matching failure): drop the diagnosis so presence recovers. */
@@ -3679,6 +3719,67 @@ export default class AgentTeam extends TypertRemoteService {
       channelRef,
       body: `Provider-poisoned seat: @${member.handle} failed ${verdict.failedTurns} consecutive Turns (provider ${verdict.signature}, zero usage) — re-queueing cannot recover it; switch its model or start it from a new context. @Lead @Architect`,
     })
+  }
+
+  /**
+   * Task-11 item 2 (default OFF): when the `poisonRecovery` row is enabled,
+   * recover the poisoned seat at its threshold crossing without touching any
+   * log — first an optional swap of the Member's model to the configured route
+   * (the operator's K), then a fresh context: the renewal archives the
+   * poisoned Session's log untouched and the new Session starts with no replay
+   * state, so queued Turns stop replaying the identical rejection. Off by
+   * default this returns before anything runs (diagnosis + card are the whole
+   * crossing), and every refusal — host paused, seat still running past the
+   * deadline, an activation that failed on the fresh Session — is reported to
+   * the log alone: the Team-room card already put an operator on the case.
+   */
+  private async autoRecoverPoisonedMember(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict): Promise<void> {
+    // A row patched before this schema can arrive with no section at all —
+    // which must read as the default, not as a crash at the crossing.
+    const settings = this.config.poisonRecovery
+    if (settings?.enabled?.get() !== true) return
+    const ledger = this.ledger
+    const member = ledger?.getMember(memberId)
+    const workspaceId = ledger?.workspacesOf(memberId)[0]
+    if (ledger === undefined || member === undefined || workspaceId === undefined) return
+    // The crossing arrives the moment `turn/end` errors, while that errored
+    // generation may still count as running — and a renewal refuses until the
+    // seat's agent is idle. Wait it out; the check after the wait lets an
+    // operator who recovered the seat by hand win instead of racing them.
+    const agentId = this.handles.get(memberId)?.agent.id
+    const deadline = Date.now() + POISON_AUTO_RECOVERY_IDLE_WAIT_MS
+    while (agentId !== undefined && this.runningAgents.has(agentId) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    const latest = this.ledger?.getMember(memberId)
+    if (latest === undefined || latest.sessionId !== verdict.sessionId) return
+    const provider = settings.provider?.get()
+    const model = settings.model?.get()
+    if (provider !== undefined && model !== undefined) {
+      try {
+        await this.updateMember({
+          requestId: `poison-recovery-model-${verdict.sessionId}-${verdict.turn}` as AgentTeamRequestId,
+          memberId,
+          handle: latest.handle,
+          description: latest.description,
+          model: { provider, model },
+        })
+      } catch (error) {
+        // The fresh context is the promise this setting makes; a rejected
+        // route edit must not silently disable it. The swap's own failure
+        // stays loud in the log either way.
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} poisoned-seat model swap to ${provider}/${model} failed: ${error instanceof Error ? error.message : String(error)}; continuing with the Member's current route`)
+      }
+    }
+    await this.clearMemberContext({
+      requestId: `poison-recovery-${verdict.sessionId}-${verdict.turn}` as AgentTeamRequestId,
+      workspaceId,
+      memberId,
+    })
+    // The renewal already moved the Session past the diagnosis; dropping the
+    // slot is what lets presence recover instead of staying flagged.
+    this.onMemberPoisonCleared(memberId)
+    this.ctx.logger.info(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} provider-poison auto-recovered with a new context${provider !== undefined && model !== undefined ? ` on ${provider}/${model}` : ''}`)
   }
 
   private requireWorkspace(workspaceId: AgentTeamViewRequest['workspaceId']) {
