@@ -85,6 +85,14 @@ describe('malformedToolCallGeneration (task-11 item 3)', () => {
       { type: 'tool-call', id: 'call-1', name: 'default.bash', arguments: '{}' },
     ]))).toBeUndefined()
   })
+
+  it('skips markup an author quoted in a fence, inline span, or blockquote — but still flags raw prose', () => {
+    expect(malformedToolCallGeneration(messageWith('As in the incident:\n```\n<atem:function_calls>\n</atem:function_calls>\n```', []))).toBeUndefined()
+    expect(malformedToolCallGeneration(messageWith('The shape `<atem:function_calls>` is the tell', []))).toBeUndefined()
+    expect(malformedToolCallGeneration(messageWith('> <atem:function_calls>\n> </atem:function_calls>', []))).toBeUndefined()
+    // A quoted copy plus a live emission in the same message still flags.
+    expect(malformedToolCallGeneration(messageWith('Quoted:\n```\n<atem:function_calls>\n```\nLive:\n<atem:function_calls>', []))).toBeDefined()
+  })
 })
 
 describe('PoisonedSessionTracker (task-11 item 1)', () => {
