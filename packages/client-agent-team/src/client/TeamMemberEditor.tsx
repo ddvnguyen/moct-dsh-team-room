@@ -247,7 +247,12 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
   const [description, setDescription] = useState(status.member.description)
   const [model, setModel] = useState<AgentTeamModelSelection | undefined>(status.member.model)
   const storedInstances = status.member.instances ?? DEFAULT_INSTANCES
-  const [instances, setInstances] = useState(storedInstances)
+  // Raw text so the field can be cleared and retyped; the clamp applies to the value used and on blur.
+  const [instancesText, setInstancesText] = useState(String(storedInstances))
+  const parsedInstances = Number(instancesText)
+  const instances = instancesText.trim() === '' || !Number.isInteger(parsedInstances)
+    ? storedInstances
+    : Math.min(MAX_INSTANCES, Math.max(MIN_INSTANCES, parsedInstances))
   const { saving, error, pendingRequest, save } = useEditDialogSave({
     save: updateMember,
     onCommitted,
@@ -304,12 +309,10 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
         <ModelPickerField model={model} onModelChange={choice => { pendingRequest.current = undefined; setModel(choice) }} loadModels={loadModels} disabled={saving} t={t} />
         <label className={createCss.field}>
           <span>{t('agentInstances')}</span>
-          <Input className={createCss.input!} type="number" inputMode="numeric" min={MIN_INSTANCES} max={MAX_INSTANCES} step={1} value={String(instances)} onChange={event => {
-            const next = Number(event.target.value)
-            if (!Number.isInteger(next)) return
+          <Input className={createCss.input!} type="number" inputMode="numeric" min={MIN_INSTANCES} max={MAX_INSTANCES} step={1} value={instancesText} onChange={event => {
             pendingRequest.current = undefined
-            setInstances(Math.min(MAX_INSTANCES, Math.max(MIN_INSTANCES, next)))
-          }} disabled={saving} />
+            setInstancesText(event.target.value)
+          }} onBlur={() => { setInstancesText(String(instances)) }} disabled={saving} />
           <span className={createCss.hint!}>{t('agentInstancesHint')}</span>
         </label>
         {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
