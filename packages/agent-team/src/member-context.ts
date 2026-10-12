@@ -34,7 +34,8 @@ export function apply(ctx: Context): void {
     // until the Host service is active, failing every startup restore.
     const host = ctx.get('agentTeam')
     if (host === undefined) return decision
-    const member = host.memberForAgent(agent)
+    // Every instance of a seat sees the seat's memory and context (multi-instance contract v2 §1.3).
+    const member = typeof host.seatMemberForAgent === 'function' ? host.seatMemberForAgent(agent) : host.memberForAgent(agent)
     if (member === undefined) return decision
     // The sanitized path is authoritative: activation migrated any legacy
     // colon directory onto it before this member could run a step.

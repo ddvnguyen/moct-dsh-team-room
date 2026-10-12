@@ -46,7 +46,9 @@ import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
 import { cacheVerdict } from './cache-verdict.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
+import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime } from './member-runtime.ts'
+import { memberInstances } from './member-instances.ts'
+import { memoryWriteRefusal, routeThreads } from './instance-router.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
@@ -61,6 +63,7 @@ import type {
   AgentTeamAddMemberResult,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
+  AgentTeamMemberInstanceStatus,
   AgentTeamArchiveChannelRequest,
   AgentTeamArchiveChannelResult,
   AgentTeamArchiveMemberRequest,
@@ -188,6 +191,12 @@ export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.pre
 
 
 const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
+/** Multi-instance (contract v2): what slot 0 is told when other slots took part of the seat's Inbox. */
+const SLOT_ZERO_NOTE = 'You are the main instance (slot 0) of a multi-instance seat. Other unread Threads in your Inbox are being handled by your seat\'s other instances; work only on the Threads listed above.'
+/** An extra slot that stays idle this long ends; its Thread bindings stay, and it respawns on the next message. */
+const SLOT_IDLE_END_MS = 15 * 60 * 1000
+const slotKey = (memberId: AgentTeamMemberId, slot: number): string => `${memberId}#${slot}`
+const routeKey = (memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): string => `${memberId}|${threadRef}`
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
 const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
 
@@ -587,6 +596,20 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly memberBySessionId = new Map<SessionId, AgentTeamMemberId>()
   /** Live selection refs let model edits take effect without disposing the Session. */
   private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
+  /** Extra instance slots 1..N-1 per seat (multi-instance contract v2); slot 0 is `handles`. */
+  private readonly slotHandles = new Map<AgentTeamMemberId, Map<number, AgentHandle>>()
+  /** Seat and slot per live extra-instance Session. */
+  private readonly slotBySessionId = new Map<SessionId, { readonly memberId: AgentTeamMemberId; readonly slot: number }>()
+  /** In-flight slot spawns, so one slot never starts twice. */
+  private readonly slotSpawns = new Map<string, Promise<AgentHandle | undefined>>()
+  /** Live selection refs of extra slots; a seat model edit reaches them like slot 0's. */
+  private readonly slotSelections = new Map<string, ModelSelectionRef>()
+  /** Routes taken in this process, ahead of their durable `thread-instance-bound` commit. */
+  private readonly routedSlots = new Map<string, number>()
+  /** Last delivered Inbox signature per extra slot (slot 0 keeps `notifiedInbox`). */
+  private readonly notifiedSlotInbox = new Map<string, string>()
+  /** Idle-end timers of extra slots; an ended slot keeps its bindings and respawns on demand. */
+  private readonly slotIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
   /** Per-Member runtime state: tool restrictions, skill mounts, warnings, private memory. */
@@ -1078,6 +1101,7 @@ export default class AgentTeam extends TypertRemoteService {
       const member = this.memberForAgent(agent)
       if (status === 'running') this.runningAgents.add(agent.id)
       else this.runningAgents.delete(agent.id)
+      if (member === undefined) this.onSlotStatus(agent, status)
       if (status === 'running' && member !== undefined) {
         const recovered = this.clearMemberFailure(member.memberId, 'runtime')
         if (recovered) this.notifiedInbox.delete(member.memberId)
@@ -1146,6 +1170,7 @@ export default class AgentTeam extends TypertRemoteService {
       await Promise.all([...this.memberLifecycleTails.values(), ...this.additionLifecycleTails.values()])
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
+      await Promise.all([...this.slotHandles.keys()].map(memberId => this.disposeSlots(memberId)))
       this.modelSelections.clear()
       this.memberRuntime.disposeAll()
       this.runningAgents.clear()
@@ -1247,6 +1272,24 @@ export default class AgentTeam extends TypertRemoteService {
       if (handle.agent === agent) return this.requireLedger().getMember(memberId)
     }
     return undefined
+  }
+
+  /**
+   * Resolve any live instance of a seat, slot 0 or an extra slot, to the seat and its slot.
+   * Instances share the seat's identity (contract v2 §1.3): Team tools act as @seat from any slot.
+   */
+  seatForAgent(agent: Agent): { readonly member: AgentTeamAgentMember; readonly slot: number } | undefined {
+    const member = this.memberForAgent(agent)
+    if (member !== undefined) return { member, slot: 0 }
+    const entry = this.slotBySessionId.get(agent.id)
+    if (entry === undefined || this.slotHandles.get(entry.memberId)?.get(entry.slot)?.agent !== agent) return undefined
+    const seat = this.requireLedger().getMember(entry.memberId)
+    return seat === undefined ? undefined : { member: seat, slot: entry.slot }
+  }
+
+  /** The seat behind any live instance; the member-context row injects the seat's memory into every slot. */
+  seatMemberForAgent(agent: Agent): AgentTeamAgentMember | undefined {
+    return this.seatForAgent(agent)?.member
   }
 
   /** Return every durable Member with current process availability. */
@@ -1898,7 +1941,7 @@ export default class AgentTeam extends TypertRemoteService {
   private steerResume(member: AgentTeamAgentMember, text: string, trigger: 'automatic recovery' | 'operator recovery'): void {
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) throw new Error(`member '${member.handle}' has no active session`)
-    const notifications = this.requireLedger().notificationFacts(member.memberId)
+    const notifications = this.routeToInstances(member, this.requireLedger().notificationFacts(member.memberId))
     this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
     this.noteActivityThread(member.memberId, notifications)
     const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
@@ -1950,6 +1993,7 @@ export default class AgentTeam extends TypertRemoteService {
           const selection = this.modelSelections.get(request.memberId)
           if (selection === undefined) throw new Error(`Agent Member '${current.handle}' has no live model selection`)
           selection.current = current.model ?? this.ctx.agentDefaultModel.currentSelection()
+          for (const [key, ref] of this.slotSelections) if (key.startsWith(`${request.memberId}#`)) ref.current = selection.current
           this.assertSeatModel(request.memberId, active.agent, 'model change')
           effect = 'applied'
         }
@@ -2553,7 +2597,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Relay body: the DM itself plus one bounded line of adjacent context. */
   private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string, occurredAt: string, excluding: AgentTeamOperationId, workspaceId: WorkspaceId): string {
-    const sender = this.memberForAgent(senderAgent)
+    const sender = this.seatMemberForAgent(senderAgent)
     const prior = this.requireLedger().dmHistoryBetween(senderAgent.id, recipient.memberId, excluding)
     const header = `Direct message from @${sender?.handle ?? 'a Team Member'} at ${formatTeamTimestamp(occurredAt)}:`
     const context = prior === undefined ? '' : `\n\n[most recent prior DM between you: ${prior}]`
@@ -2577,7 +2621,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only bounded discovery projection; participation list carries registry titles when known. */
   viewForAgent(agent: Agent, request: AgentTeamViewRequest): AgentTeamView {
-    const member = this.memberForAgent(agent)
+    const member = this.seatMemberForAgent(agent)
     if (member === undefined) throw new Error('Agent is not an active Team Member')
     if (!this.requireLedger().participatesIn(member.memberId, request.workspaceId)) throw new Error('Member cannot view another Workspace')
     const view = this.requireLedger().view(request, member.memberId)
@@ -3251,7 +3295,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   private memberActor(agent: Agent): AgentTeamMemberActor {
-    const member = this.memberForAgent(agent)
+    const member = this.seatMemberForAgent(agent)
     if (member === undefined) throw new Error('Agent is not an active Team Member')
     return Object.freeze({ kind: 'member', memberId: member.memberId, handle: member.handle })
   }
@@ -3615,6 +3659,14 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
+    const seat = this.seatStatus(member)
+    const instances = this.instanceStatuses(member, seat.presence)
+    // The seat works while any instance works; only slot 0 can put it in error.
+    const presence = seat.presence === 'available' && instances.some(instance => instance.presence === 'working') ? 'working' : seat.presence
+    return Object.freeze({ ...seat, presence, instances })
+  }
+
+  private seatStatus(member: AgentTeamAgentMember): Omit<AgentTeamAgentMemberStatus, 'instances'> {
     // The five states with no live surface report 'pending' literally: no
     // apply can be in force there, and a literal cannot inherit a stale
     // applied-record left behind by a torn-down surface.
@@ -4020,7 +4072,7 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private memberScope(memberId: AgentTeamMemberId, sessionId?: SessionId): string {
     const handle = this.ledger?.getMember(memberId)?.handle
-    const session = sessionId ?? this.handles.get(memberId)?.agent.session.id ?? this.ledger?.getMember(memberId)?.sessionId
+    const session = sessionId ?? this.handles.get(memberId)?.agent.session?.id ?? this.ledger?.getMember(memberId)?.sessionId
     return `member '${handle ?? memberId}' memberId '${memberId}'${session === undefined ? '' : ` session '${session}'`}`
   }
 
@@ -4071,7 +4123,10 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.debug(`agent-team: Team Inbox notice not attempted for ${this.memberScope(member.memberId, agent.id)} cause ${this.notificationCauseText(cause)}: the Member is ${member.state}`)
       return
     }
-    const notifications = this.requireLedger().notificationFacts(member.memberId)
+    const seatInbox = this.requireLedger().notificationFacts(member.memberId)
+    // Multi-instance seats: Threads routed to an extra slot are delivered there; slot 0 keeps the rest.
+    const notifications = this.routeToInstances(member, seatInbox)
+    const delegated = notifications.length !== seatInbox.length
     this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
     this.noteActivityThread(member.memberId, notifications)
     const scope = this.memberScope(member.memberId, agent.id)
@@ -4109,7 +4164,9 @@ export default class AgentTeam extends TypertRemoteService {
     const existingInboxHint = pending.find(message => this.isInboxNotice(message))
     if (existingInboxHint !== undefined) agent.inbox.remove(existingInboxHint.id)
     const hint = createUserMessage({
-      content: [{ type: 'text', text: this.notificationText(notifications, member.memberId) }],
+      content: [{ type: 'text', text: delegated
+        ? `${this.notificationText(notifications, member.memberId)}\n\n${SLOT_ZERO_NOTE}`
+        : this.notificationText(notifications, member.memberId) }],
       source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
     })
     this.notifiedInbox.set(member.memberId, signature)
@@ -4133,6 +4190,232 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${scope} cause ${causeText} attempt ${attempt} lane '${sequenced ? 'follow-up turn' : 'next step'}' (${facts}): queued for the Member's next step, not yet read by the model`)
+  }
+
+  /**
+   * Multi-instance routing (contract v2 §2/§2a): split a seat's unread Threads across its slots.
+   * Threads routed to an extra slot are delivered there (spawning it on demand); the subset for
+   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. N=1 is
+   * today's behavior: everything stays on slot 0 and nothing is bound.
+   */
+  private routeToInstances(member: AgentTeamAgentMember, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): ReturnType<AgentTeamLedger['notificationFacts']> {
+    const instances = memberInstances(member)
+    if (instances <= 1 || notifications.length === 0) return notifications
+    const ledger = this.requireLedger()
+    const routes = routeThreads(
+      notifications.map(entry => entry.item.thread.threadRef),
+      instances,
+      threadRef => this.routedSlots.get(routeKey(member.memberId, threadRef)) ?? ledger.threadInstanceOf(threadRef, member.memberId),
+      slot => this.slotBusy(member.memberId, slot),
+    )
+    const bySlot = new Map<number, ReturnType<AgentTeamLedger['notificationFacts']>[number][]>()
+    routes.forEach((route, index) => {
+      const entry = notifications[index]!
+      bySlot.set(route.slot, [...(bySlot.get(route.slot) ?? []), entry])
+      if (route.bind) this.bindInstance(member, entry.item.workspaceId, route.threadRef, route.slot)
+    })
+    for (const [slot, entries] of bySlot) if (slot !== 0) this.deliverToSlot(member, slot, entries)
+    return bySlot.get(0) ?? []
+  }
+
+  /** A slot is busy while its turn runs or while it is starting; an absent slot is idle (it spawns on demand). */
+  private slotBusy(memberId: AgentTeamMemberId, slot: number): boolean {
+    if (slot === 0) {
+      const handle = this.handles.get(memberId)
+      return handle === undefined || handle.agent.status !== 'idle'
+    }
+    if (this.slotSpawns.has(slotKey(memberId, slot))) return true
+    const handle = this.slotHandles.get(memberId)?.get(slot)
+    return handle !== undefined && handle.agent.status !== 'idle'
+  }
+
+  /** Record a new route at once in memory, then durably; a failed commit drops the in-memory route so the next wake re-routes. */
+  private bindInstance(member: AgentTeamAgentMember, workspaceId: WorkspaceId, threadRef: AgentTeamThreadRef, slot: number): void {
+    const key = routeKey(member.memberId, threadRef)
+    this.routedSlots.set(key, slot)
+    void this.requireLedger().bindThreadInstance({
+      requestId: `instance-bound:${member.memberId}:${threadRef}:${randomUUID()}` as AgentTeamRequestId,
+      workspaceId, threadRef, slot, boundAt: new Date().toISOString(),
+      actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
+    }).then(() => {
+      this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId)} Thread '${threadRef}' bound to instance slot ${slot}`)
+    }, (error: unknown) => {
+      if (this.routedSlots.get(key) === slot) this.routedSlots.delete(key)
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} could not bind Thread '${threadRef}' to instance slot ${slot}: ${failureDetail(error)}; the next wake routes it again`)
+    })
+  }
+
+  /** Wake one extra slot with only its Threads; an idle slot gets a follow-up turn, a busy one a steer. */
+  private deliverToSlot(member: AgentTeamAgentMember, slot: number, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): void {
+    const key = slotKey(member.memberId, slot)
+    const signature = JSON.stringify(notifications.map(({ item }) => [
+      item.thread.threadRef, item.thread.revision, item.unreadCount, item.directCount, item.newestSequence,
+    ]))
+    if (this.notifiedSlotInbox.get(key) === signature) return
+    this.notifiedSlotInbox.set(key, signature)
+    const text = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
+    const facts = this.notificationIdentity(notifications)
+    void this.ensureSlot(member, slot).then(handle => {
+      if (handle === undefined) throw new Error('the slot did not start')
+      const agent = handle.agent
+      const existing = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message => this.isInboxNotice(message))
+      if (existing !== undefined) agent.inbox.remove(existing.id)
+      const hint = createUserMessage({
+        content: [{ type: 'text', text }],
+        source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
+      })
+      if (agent.status === 'idle') agent.followup(hint)
+      else agent.steer(hint)
+      this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} (${facts}): not yet read by the model`)
+    }).catch((error: unknown) => {
+      this.notifiedSlotInbox.delete(key)
+      this.ctx.logger.warn(`agent-team: Team Inbox notice delivery failed for ${this.memberScope(member.memberId)} instance slot ${slot} (${facts}): ${failureDetail(error)}; the binding stands and the next fact touching this Thread retries it`)
+    })
+  }
+
+  /** The live Agent behind one extra slot, spawned once on demand (contract v2 §2a: lazy, respawned after an idle end). */
+  private ensureSlot(member: AgentTeamAgentMember, slot: number): Promise<AgentHandle | undefined> {
+    const live = this.slotHandles.get(member.memberId)?.get(slot)
+    if (live !== undefined) return Promise.resolve(live)
+    const key = slotKey(member.memberId, slot)
+    const inFlight = this.slotSpawns.get(key)
+    if (inFlight !== undefined) return inFlight
+    const spawn = (async () => {
+      const created = await this.spawnSlotAgent(member, slot)
+      const current = this.requireLedger().getMember(member.memberId)
+      // The seat was suspended, removed, shrunk or shut down while the slot started: never publish it.
+      if (!this.accepting || current === undefined || current.state !== 'enabled' || slot >= memberInstances(current) || !this.handles.has(member.memberId)) {
+        await created.handle.dispose()
+        return undefined
+      }
+      const slots = this.slotHandles.get(member.memberId) ?? new Map<number, AgentHandle>()
+      slots.set(slot, created.handle)
+      this.slotHandles.set(member.memberId, slots)
+      this.slotBySessionId.set(created.handle.agent.id, { memberId: member.memberId, slot })
+      this.slotSelections.set(key, created.selection)
+      this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, created.handle.agent.id)} instance slot ${slot} started`)
+      this.emitMemberPresenceChanged(current)
+      return created.handle
+    })().finally(() => { this.slotSpawns.delete(key) })
+    this.slotSpawns.set(key, spawn)
+    return spawn
+  }
+
+  /**
+   * Create one extra-slot Agent with a fresh Session: the seat's preset, tool policy and model,
+   * and a host-side refusal of every non-read-only tool call naming the seat-memory directory
+   * (contract v2 §2b). Extra slots carry no context rollover or pressure management: they are
+   * short Thread sessions, and slot 0 keeps the seat's full lifecycle.
+   */
+  private async spawnSlotAgent(member: AgentTeamAgentMember, slot: number): Promise<{ readonly handle: AgentHandle; readonly selection: ModelSelectionRef }> {
+    const workspace = this.requireWorkspace(member.workspaceId)
+    const current = member.model ?? this.ctx.agentDefaultModel.currentSelection()
+    const selection: ModelSelectionRef = { current, assembled: undefined }
+    const memoryDirectory = memberMemoryDirectoryPath(member)
+    const sessionId = SessionId(`agent-team-${randomUUID()}`)
+    const setup = async (agentCtx: Context, agent: Agent) => {
+      try {
+        await this.ctx.agentPresets.mount(agentCtx, member.presetId)
+        this.memberRuntime.applySlotToolPolicy(agentCtx, member)
+        this.validateMemberPreset(agentCtx)
+      } catch (error) {
+        throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
+      }
+      installModelSelection(agentCtx, selection)
+      agentCtx.on('tools/pre-execute', async (exec, next) => {
+        const reason = memoryWriteRefusal(exec.name, exec.arguments, memoryDirectory)
+        return reason === undefined ? next() : { kind: 'deny' as const, reason }
+      })
+      return { commit: () => { setSandboxMode(agent.session, 'danger-full-access') } }
+    }
+    const handle = await this.ctx.agents.create({
+      sessionId,
+      meta: { cwd: workspace.path, agentPreset: member.presetId },
+      agentOptions: { provider: current.provider, model: current.model },
+      setup,
+    })
+    await workspace.attachSession(sessionId)
+    try {
+      this.ctx.get('sessionTitle')?.rename(handle.agent.session, `${member.handle} #${slot}`)
+    } catch {
+      // A composition without the title service runs the slot identically.
+    }
+    return { handle, selection }
+  }
+
+  /** Extra-slot status changes: presence follows them, and an idle slot ends after SLOT_IDLE_END_MS. */
+  private onSlotStatus(agent: Agent, status: string): void {
+    const entry = this.slotBySessionId.get(agent.id)
+    if (entry === undefined || this.slotHandles.get(entry.memberId)?.get(entry.slot)?.agent !== agent) return
+    const key = slotKey(entry.memberId, entry.slot)
+    const timer = this.slotIdleTimers.get(key)
+    if (timer !== undefined) clearTimeout(timer)
+    this.slotIdleTimers.delete(key)
+    if (status === 'idle') {
+      const next = setTimeout(() => { void this.endSlot(entry.memberId, entry.slot) }, SLOT_IDLE_END_MS)
+      next.unref?.()
+      this.slotIdleTimers.set(key, next)
+    }
+    const member = this.requireLedger().getMember(entry.memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+  }
+
+  /**
+   * End one idle extra slot (contract v2 §2a). Its Thread bindings stay: the next message in a
+   * bound Thread respawns the slot with a fresh Session. A running slot is never ended.
+   */
+  private async endSlot(memberId: AgentTeamMemberId, slot: number): Promise<boolean> {
+    const key = slotKey(memberId, slot)
+    const handle = this.slotHandles.get(memberId)?.get(slot)
+    if (handle === undefined || handle.agent.status !== 'idle') return false
+    const timer = this.slotIdleTimers.get(key)
+    if (timer !== undefined) clearTimeout(timer)
+    this.slotIdleTimers.delete(key)
+    this.slotHandles.get(memberId)?.delete(slot)
+    this.slotBySessionId.delete(handle.agent.id)
+    this.slotSelections.delete(key)
+    this.notifiedSlotInbox.delete(key)
+    await handle.dispose()
+    this.ctx.logger.info(`agent-team: ${this.memberScope(memberId, handle.agent.id)} instance slot ${slot} ended while idle; its Thread bindings stay`)
+    const member = this.requireLedger().getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+    return true
+  }
+
+  /** Dispose every extra slot of one seat (suspend, removal, shutdown). */
+  private async disposeSlots(memberId: AgentTeamMemberId): Promise<void> {
+    const slots = this.slotHandles.get(memberId)
+    this.slotHandles.delete(memberId)
+    if (slots === undefined) return
+    for (const [slot, handle] of slots) {
+      const key = slotKey(memberId, slot)
+      const timer = this.slotIdleTimers.get(key)
+      if (timer !== undefined) clearTimeout(timer)
+      this.slotIdleTimers.delete(key)
+      this.slotBySessionId.delete(handle.agent.id)
+      this.slotSelections.delete(key)
+      this.notifiedSlotInbox.delete(key)
+    }
+    await Promise.all([...slots.values()].map(handle => handle.dispose()))
+  }
+
+  /** Per-slot status (contract v2 §3): length N, slot order; slot 0 mirrors the seat's own presence. */
+  private instanceStatuses(member: AgentTeamAgentMember, seatPresence: AgentTeamAgentMemberStatus['presence']): readonly AgentTeamMemberInstanceStatus[] {
+    const instances = memberInstances(member)
+    const threadsBySlot = new Map<number, AgentTeamThreadRef[]>()
+    if (this.ledger !== undefined) {
+      for (const [threadRef, slot] of this.ledger.threadInstancesOf(member.memberId)) threadsBySlot.set(slot, [...(threadsBySlot.get(slot) ?? []), threadRef])
+    }
+    return Object.freeze(Array.from({ length: instances }, (_, slot): AgentTeamMemberInstanceStatus => {
+      const threadRefs = Object.freeze(threadsBySlot.get(slot) ?? [])
+      if (slot === 0) {
+        const live = seatPresence !== 'unavailable' && this.handles.has(member.memberId)
+        return Object.freeze({ slot, ...(live ? { sessionId: member.sessionId } : {}), presence: seatPresence, threadRefs })
+      }
+      const handle = member.state === 'enabled' ? this.slotHandles.get(member.memberId)?.get(slot) : undefined
+      if (handle === undefined) return Object.freeze({ slot, presence: 'unavailable' as const, threadRefs })
+      return Object.freeze({ slot, sessionId: handle.agent.id, presence: handle.agent.status === 'running' ? 'working' as const : 'available' as const, threadRefs })
+    }))
   }
 
   /**
@@ -4266,6 +4549,7 @@ export default class AgentTeam extends TypertRemoteService {
   /** Dispose one live Member Session and drop its per-Member runtime state. */
   private async disposeMemberSession(memberId: AgentTeamMemberId, member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): Promise<void> {
     this.clearMemberRecoveryState(member)
+    await this.disposeSlots(memberId)
     const handle = this.handles.get(memberId)
     if (handle !== undefined) {
       // Disposal cancels the Member's turn and then waits for the Agent to
