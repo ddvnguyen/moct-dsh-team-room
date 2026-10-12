@@ -9,6 +9,11 @@ import { useEditDialogSave } from './team-dialog-save.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
+/** Concurrent instances per seat (multi-instance contract v2 §1): 1..5, default 2. The client can't import the agent-team constants across the package boundary. */
+const MIN_INSTANCES = 1
+const MAX_INSTANCES = 5
+const DEFAULT_INSTANCES = 2
+
 /** Model option key inside one editor; opaque and resolved against the loaded groups. */
 function modelKey(provider: string, model: string): string {
   return `${provider}\u0000${model}`
@@ -241,13 +246,15 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
   const [handle, setHandle] = useState(status.member.handle)
   const [description, setDescription] = useState(status.member.description)
   const [model, setModel] = useState<AgentTeamModelSelection | undefined>(status.member.model)
+  const storedInstances = status.member.instances ?? DEFAULT_INSTANCES
+  const [instances, setInstances] = useState(storedInstances)
   const { saving, error, pendingRequest, save } = useEditDialogSave({
     save: updateMember,
     onCommitted,
     onClose,
   })
   const dirty = handle.trim() !== status.member.handle || description.trim() !== status.member.description
-    || !sameModel(model, status.member.model)
+    || !sameModel(model, status.member.model) || instances !== storedInstances
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const normalizedHandle = handle.trim()
@@ -262,10 +269,12 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
       // Capabilities stay out of the payload — the editor owns no UI for them,
       // and an absent field now leaves any Remote-written override alone.
       model: model ?? null,
+      // Stated only when it changed: an absent field keeps the stored count.
+      ...(instances === storedInstances ? {} : { instances }),
     }
     const samePending = pendingRequest.current !== undefined && pendingRequest.current.memberId === payload.memberId
       && pendingRequest.current.handle === payload.handle && pendingRequest.current.description === payload.description
-      && sameModel(pendingRequest.current.model, model)
+      && sameModel(pendingRequest.current.model, model) && pendingRequest.current.instances === payload.instances
     const request: AgentTeamUpdateMemberRequest = samePending ? pendingRequest.current! : {
       requestId: mintRequestId(),
       ...payload,
@@ -293,6 +302,16 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
           <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
         </label>
         <ModelPickerField model={model} onModelChange={choice => { pendingRequest.current = undefined; setModel(choice) }} loadModels={loadModels} disabled={saving} t={t} />
+        <label className={createCss.field}>
+          <span>{t('agentInstances')}</span>
+          <Input className={createCss.input!} type="number" inputMode="numeric" min={MIN_INSTANCES} max={MAX_INSTANCES} step={1} value={String(instances)} onChange={event => {
+            const next = Number(event.target.value)
+            if (!Number.isInteger(next)) return
+            pendingRequest.current = undefined
+            setInstances(Math.min(MAX_INSTANCES, Math.max(MIN_INSTANCES, next)))
+          }} disabled={saving} />
+          <span className={createCss.hint!}>{t('agentInstancesHint')}</span>
+        </label>
         {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
       </form>
     </Modal>
