@@ -118,6 +118,8 @@ const messageSchema = z.object({
   sender: memberIdSchema,
   body: z.string().min(1),
   attachments: z.array(attachmentSchema).optional(),
+  // Optional and forward-only: a pre-reply-link Message omits it and replays as is.
+  replyToMessageRef: messageRefSchema.optional(),
   topLevel: z.boolean(),
   sequence: z.number().int().positive(),
   occurredAt: z.string().datetime().optional(),

@@ -49,6 +49,7 @@ describe('Agent Team generated Typert boundary', () => {
       'removeChannelMember',
       'removeHumanAvatar',
       'reply',
+      'resolveMessageRefs',
       'resolveTaskRefs',
       'resolveThreadRefs',
       'resumeMemberSession',

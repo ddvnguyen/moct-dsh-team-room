@@ -82,6 +82,7 @@ import type {
   AgentTeamRequestId,
   AgentTeamResolvedTaskRef,
   AgentTeamResolvedThreadRef,
+  AgentTeamResolvedMessageRef,
   AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
@@ -603,6 +604,12 @@ function boundedInboxPreview(body: string): string {
 function boundedThreadTitle(body: string): string {
   const firstLine = body.split('\n', 1)[0]?.trim() ?? ''
   return firstLine.length > 40 ? `${firstLine.slice(0, 39)}…` : firstLine
+}
+
+/** Quote-block gist of a replied-to Message: first line, trimmed, capped at 120 characters. */
+function boundedReplyExcerpt(body: string): string {
+  const firstLine = body.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine
 }
 
 /**
@@ -1286,10 +1293,14 @@ export class AgentTeamLedger {
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       const channel = this.requireChannel(request.workspaceId, channelRef)
-      const recipients = this.mergeBodyMentions(actor.memberId, channelRef, body, this.normalizeRecipients(actor, request.recipients))
+      // The parent resolves before recipients so its author is part of the
+      // merged set a retry re-derives for the collision check.
+      const parent = request.replyToMessageRef === undefined ? undefined : this.requireReplyParent(thread.threadRef, request.replyToMessageRef)
+      const recipients = this.withReplyAuthor(actor.memberId, channelRef, parent,
+        this.mergeBodyMentions(actor.memberId, channelRef, body, this.normalizeRecipients(actor, request.recipients)))
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameReply(existing, request, recipients)
+        this.assertSameReply(existing, request, recipients, parent?.messageRef)
         return this.resolved(this.replyResult(existing, this.undeliverableRecipients(actor, thread.threadRef, recipients)))
       }
       this.assertMentionTargets(channel, recipients)
@@ -1318,6 +1329,7 @@ export class AgentTeamLedger {
         messageRef: this.ref('message'), channelRef, threadRef: thread.threadRef,
         ...(task === undefined ? {} : { taskRef: task.taskRef }), sender: request.actor.memberId, body,
         ...(request.resolvedAttachments === undefined ? {} : { attachments: request.resolvedAttachments }),
+        ...(parent === undefined ? {} : { replyToMessageRef: parent.messageRef }),
         topLevel: false, sequence, occurredAt: base.occurredAt,
       })
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
@@ -2325,6 +2337,30 @@ export class AgentTeamLedger {
         channelRef,
         ...(task === undefined ? {} : { taskRef: task.taskRef, taskNumber: numbers.get(task.taskRef) ?? 0 }),
         title: boundedThreadTitle(this.threadAnchor(thread.threadRef).body),
+      }))
+    }
+    return resolved
+  }
+
+  /**
+   * Context for Messages cited by `replyToMessageRef`; unknown refs are omitted.
+   *
+   * A reply stores only its parent's identity, so the author and the excerpt a
+   * quote block renders are derived here from the recorded Message. Resolving
+   * through the ledger rather than the reader's loaded window is what lets a
+   * quote survive history paging — the parent may be far outside the facts the
+   * reader currently holds.
+   */
+  resolveMessageRefs(workspaceId: WorkspaceId, messageRefs: readonly AgentTeamMessageRef[]): AgentTeamResolvedMessageRef[] {
+    const resolved: AgentTeamResolvedMessageRef[] = []
+    for (const messageRef of messageRefs) {
+      const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
+      const message = key === undefined ? undefined : this.state.messagesByRef.get(key)
+      const channel = message === undefined ? undefined : this.state.channels.get(message.channelRef)
+      // Same archival rule as Thread refs: an archived Channel's Messages stop resolving.
+      if (message === undefined || channel?.workspaceId !== workspaceId || channel.state === 'archived') continue
+      resolved.push(Object.freeze({
+        messageRef: message.messageRef, threadRef: message.threadRef, sender: message.sender, excerpt: boundedReplyExcerpt(message.body),
       }))
     }
     return resolved
@@ -4698,6 +4734,35 @@ export class AgentTeamLedger {
    * result, because inviting a Member into an existing Thread stays a Human
    * decision.
    */
+  /**
+   * The Message a reply answers. It must already be recorded in the same
+   * Thread: a quote that pointed elsewhere would announce a context the reader
+   * of this Thread cannot follow. Abbreviated refs resolve like other refs.
+   */
+  private requireReplyParent(threadRef: AgentTeamThreadRef, messageRef: AgentTeamMessageRef): AgentTeamMessage {
+    const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
+    const parent = key === undefined ? undefined : this.state.messagesByRef.get(key)
+    if (parent === undefined) throw new Error(`unknown Message '${messageRef}' for replyToMessageRef`)
+    if (parent.threadRef !== threadRef) throw new Error(`Message '${parent.messageRef}' belongs to another Thread; replyToMessageRef must name a Message in Thread '${threadRef}'`)
+    return parent
+  }
+
+  /**
+   * Answering a Message reaches its author the way a mention does. Only an
+   * author the Channel can still address joins — a departed Member stays out
+   * rather than failing the reply — and a reply to one's own Message adds no one.
+   */
+  private withReplyAuthor(
+    sender: AgentTeamMemberId,
+    channelRef: AgentTeamChannelRef,
+    parent: AgentTeamMessage | undefined,
+    recipients: readonly AgentTeamMemberId[],
+  ): readonly AgentTeamMemberId[] {
+    if (parent === undefined || parent.sender === sender || recipients.includes(parent.sender)) return recipients
+    if (!this.mentionCandidatesFor(channelRef).some(candidate => candidate.memberId === parent.sender)) return recipients
+    return Object.freeze([...recipients, parent.sender].sort())
+  }
+
   private undeliverableRecipients(
     actor: AgentTeamHumanActor | AgentTeamMemberActor,
     threadRef: AgentTeamThreadRef,
@@ -4875,8 +4940,14 @@ export class AgentTeamLedger {
       || (request.asTask === true) !== (operation.data.task !== undefined)) this.throwRequestCollision(request.requestId)
   }
 
-  private assertSameReply(operation: AgentTeamOperation, request: AgentTeamAuthorizedReplyRequest, recipients: readonly AgentTeamMemberId[]): asserts operation is AgentTeamThreadRepliedOperation {
+  private assertSameReply(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedReplyRequest,
+    recipients: readonly AgentTeamMemberId[],
+    replyToMessageRef: AgentTeamMessageRef | undefined,
+  ): asserts operation is AgentTeamThreadRepliedOperation {
     if (operation.kind !== 'team/thread-replied' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.message.replyToMessageRef !== replyToMessageRef
       || operation.data.workspaceId !== request.workspaceId
       || (request.threadRef !== undefined && operation.data.thread.threadRef !== request.threadRef)
       || (request.taskRef !== undefined && operation.data.task?.taskRef !== request.taskRef)
