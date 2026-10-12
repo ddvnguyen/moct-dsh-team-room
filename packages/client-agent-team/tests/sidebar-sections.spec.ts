@@ -53,4 +53,14 @@ describe('sidebar section collapse persistence', () => {
     act(() => { setSidebarSectionOpen('w1' as never, 'channels', false) })
     expect(renderHook(() => useSidebarSectionOpen('w1' as never, 'channels')).result.current).toBe(false)
   })
+
+  it('starts the Team Settings group collapsed and remembers an expand per workspace', () => {
+    expect(renderHook(() => useSidebarSectionOpen('w1' as never, 'settings')).result.current).toBe(false)
+    act(() => { setSidebarSectionOpen('w1' as never, 'settings', true) })
+    expect(renderHook(() => useSidebarSectionOpen('w1' as never, 'settings')).result.current).toBe(true)
+    expect(renderHook(() => useSidebarSectionOpen('w2' as never, 'settings')).result.current).toBe(false)
+    expect(renderHook(() => useSidebarSectionOpen('w1' as never, 'channels')).result.current).toBe(true)
+    act(() => { setSidebarSectionOpen('w1' as never, 'settings', false) })
+    expect(renderHook(() => useSidebarSectionOpen('w1' as never, 'settings')).result.current).toBe(false)
+  })
 })

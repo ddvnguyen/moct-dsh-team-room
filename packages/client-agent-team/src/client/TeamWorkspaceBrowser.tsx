@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { IconAgentPresetOutlineRegular, IconListPenOutlineRegular, IconQueueOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { AgentTeamAddMemberRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceSelector } from './TeamWorkspaceSelector.tsx'
 import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
 import { TeamChannelsPanel } from './TeamChannelsPanel.tsx'
+import { TeamSidebarSection } from './TeamSidebarSection.tsx'
+import { setSidebarSectionOpen, useSidebarSectionOpen } from './sidebar-sections.ts'
 import css from './sidebar.module.css'
 
 type SidebarSection = 'channels' | 'agents'
@@ -24,7 +27,24 @@ function InboxMark({ unread }: { readonly unread: number }) {
   </span>
 }
 
-export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, loadMemberSessions, openMemberSession }: TeamSidebarProps) {
+/**
+ * The Team tab's collapsible "Team Settings" group: closed until the Human opens
+ * it, remembered per Workspace in this browser, and the one home of the Agents
+ * config in the tab.
+ */
+function TeamSettingsGroup({ workspaceId, title, children }: {
+  readonly workspaceId: WorkspaceId
+  readonly title: string
+  readonly children: ReactNode
+}) {
+  const open = useSidebarSectionOpen(workspaceId, 'settings')
+  return <TeamSidebarSection title={title} open={open} onToggle={next => { setSidebarSectionOpen(workspaceId, 'settings', next) }}>{children}</TeamSidebarSection>
+}
+
+export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, loadMemberSessions, openMemberSession, agentsInSettings }: TeamSidebarProps & {
+  /** The Team tab hosts the Agents config inside a collapsed Team Settings group; the rail keeps its own Agents group. */
+  readonly agentsInSettings?: boolean
+}) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -136,6 +156,12 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
     </nav>
   }
 
+  const agents = selectedId === undefined ? null : (
+    <div ref={agentsRef}>
+      <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} addMember={addMember} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} joinWorkspace={joinWorkspace} leaveWorkspace={leaveWorkspace} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} loadMemberSessions={loadMemberSessions} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
+    </div>
+  )
+
   return <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
     {/* The Inbox is the one destination that crosses Workspaces — its total sums
         every one of them — so it stands above the selector rather than inside
@@ -149,9 +175,9 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
       <div ref={channelsRef}>
         <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} subscribeChanges={subscribeChanges} createChannel={createChannel} updateChannel={updateChannel} archiveChannel={archiveChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.memberSessionId !== undefined || navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />
       </div>
-      <div ref={agentsRef}>
-        <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} addMember={addMember} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} joinWorkspace={joinWorkspace} leaveWorkspace={leaveWorkspace} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} loadMemberSessions={loadMemberSessions} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
-      </div>
+      {agentsInSettings === true
+        ? <TeamSettingsGroup workspaceId={selectedId} title={t('teamSettingsGroup')}>{agents}</TeamSettingsGroup>
+        : agents}
     </div>}
   </section>
 }

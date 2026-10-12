@@ -11,7 +11,14 @@ import { useCallback, useSyncExternalStore } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
 /** Which sidebar section a collapse state belongs to. */
-export type TeamSidebarSectionKind = 'channels' | 'agents'
+export type TeamSidebarSectionKind = 'channels' | 'agents' | 'settings'
+
+/**
+ * Kinds that start collapsed. The persisted set is named `collapsed`, so for
+ * these the entry records the opposite fact: this browser expanded it. The key
+ * carries a `+` marker so an old payload can never be misread either way.
+ */
+const DEFAULT_CLOSED: ReadonlySet<TeamSidebarSectionKind> = new Set(['settings'])
 
 const STORAGE_KEY = 'dsh.agent-team.sidebar-sections'
 
@@ -19,7 +26,7 @@ function sectionKey(workspaceId: WorkspaceId | undefined, kind: TeamSidebarSecti
   // Both panels are per-workspace: the Team shell remounts them on workspace
   // switch, and the Workspace selector above them is a field rather than a
   // collapsible section, so it keeps no preference of its own.
-  return workspaceId === undefined ? undefined : `${workspaceId}|${kind}`
+  return workspaceId === undefined ? undefined : DEFAULT_CLOSED.has(kind) ? `${workspaceId}|${kind}+` : `${workspaceId}|${kind}`
 }
 
 const MEMORY_ONLY = Symbol('sidebar-sections.memory')
@@ -74,9 +81,14 @@ function writeCollapsed(collapsed: ReadonlySet<string>): void {
 
 const listeners = new Set<() => void>()
 
+function effectiveOpen(key: string | undefined, kind: TeamSidebarSectionKind): boolean {
+  if (DEFAULT_CLOSED.has(kind)) return key !== undefined && storedCollapsed().has(key)
+  return key === undefined ? true : !storedCollapsed().has(key)
+}
+
 /**
  * Effective expanded state for one sidebar section: `false` only when this
- * browser explicitly collapsed it. Booleans are primitives, so the snapshot
+ * browser explicitly collapsed it (default-closed kinds: `true` only when expanded). Booleans are primitives, so the snapshot
  * is naturally identity-stable for `useSyncExternalStore`.
  */
 export function useSidebarSectionOpen(workspaceId: WorkspaceId | undefined, kind: TeamSidebarSectionKind): boolean {
@@ -86,8 +98,8 @@ export function useSidebarSectionOpen(workspaceId: WorkspaceId | undefined, kind
     return () => { listeners.delete(listener) }
   }, [])
   return useSyncExternalStore(subscribe,
-    () => key === undefined ? true : !storedCollapsed().has(key),
-    () => key === undefined ? true : !storedCollapsed().has(key))
+    () => effectiveOpen(key, kind),
+    () => effectiveOpen(key, kind))
 }
 
 /**
@@ -99,8 +111,9 @@ export function setSidebarSectionOpen(workspaceId: WorkspaceId | undefined, kind
   const key = sectionKey(workspaceId, kind)
   if (key === undefined) return
   const next = new Set(storedCollapsed())
-  if (open) next.delete(key)
-  else next.add(key)
+  // A default-closed kind records the expanded fact; the others record the collapsed one.
+  if (open === DEFAULT_CLOSED.has(kind)) next.add(key)
+  else next.delete(key)
   writeCollapsed(next)
   for (const listener of listeners) listener()
 }
