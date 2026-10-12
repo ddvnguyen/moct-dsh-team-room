@@ -1,5 +1,6 @@
 export const zh = {
   replyStatsRow: '{input} 输入 / {output} 输出 · {seconds} · 缓存 {cache} · {tools}',
+  replyStatsPartialInput: '{input}+',
   replyStatsTools: '{count} 个工具',
   team: '团队',
   backToConversations: '对话',
@@ -267,6 +268,7 @@ export const zh = {
 
 export const en = {
   replyStatsRow: '{input} in / {output} out · {seconds} · cache {cache} · {tools}',
+  replyStatsPartialInput: '{input}+',
   replyStatsTools: '{count} tools',
   team: 'Team',
   backToConversations: 'Conversations',
