@@ -36,6 +36,7 @@ function status(memberId: string, handle: string, availability: AgentTeamClientM
     availability,
     capabilityState: availability === 'active' ? 'applied' : 'pending',
     presence: 'available',
+    instances: [{ slot: 0, presence: 'available', threadRefs: [] }],
     workspaceIds: [workspaceId],
   }
 }

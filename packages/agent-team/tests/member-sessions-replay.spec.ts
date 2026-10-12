@@ -29,7 +29,8 @@ import AgentTeam from '../src/index.ts'
 import { AgentTeamLedger } from '../src/ledger.ts'
 import { agentTeamDomainSpec } from '../src/spec.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
-import type { AgentTeamOperation, AgentTeamOperationId, AgentTeamSessionTurnRecordedData } from '../src/types.ts'
+import type { AgentTeamMemberId, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamSessionTurnRecordedData, AgentTeamThreadRef } from '../src/types.ts'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 
 interface Fixture {
   readonly workspaceId: string
@@ -99,16 +100,16 @@ function nullInputTurn(): Extract<AgentTeamOperation, { kind: 'team/session-turn
   return {
     sequence: tail.sequence + 1,
     operationId: 'operation:d5-null-input-turn' as AgentTeamOperationId,
-    requestId: `turn:${sessionFirst}:3`,
+    requestId: `turn:${sessionFirst}:3` as AgentTeamRequestId,
     occurredAt: '2026-10-11T01:05:00.000Z',
-    actor: { kind: 'member', memberId: seat, handle: seatHandle },
+    actor: { kind: 'member', memberId: seat as AgentTeamMemberId, handle: seatHandle },
     previousOperationId: tail.operationId,
     kind: 'team/session-turn-recorded',
     data: {
-      workspaceId: fixture.workspaceId,
-      memberId: seat,
-      sessionId: sessionFirst,
-      threadRefs: [seatThread],
+      workspaceId: workspace,
+      memberId: seat as AgentTeamMemberId,
+      sessionId: sessionFirst as SessionId,
+      threadRefs: [seatThread as AgentTeamThreadRef],
       turn: 3,
       startedAt: '2026-10-11T01:05:00.000Z',
       endedAt: '2026-10-11T01:05:00.064Z',
