@@ -17,6 +17,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { completeTurnEvents } from './helpers/turn-events.ts'
 import AgentTeam from '../src/index.ts'
 import { agentTeamHumanActor } from '../src/ledger.ts'
 import { memoryWriteRefusal, routeThreads } from '../src/instance-router.ts'
@@ -188,6 +189,56 @@ describe('multi-instance slot router (contract v2)', () => {
     expect(await ctx.agentTeam['endSlot'](memberId, 1)).toBe(true)
     ctx.emit('session/event', sessionOf(slotAgent), event('step/start', { turn: 3, step: 1 }))
     expect(ctx.agentTeam.memberActivity({ workspaceId: alpha }).activities.some(activity => activity.slot === 1)).toBe(false)
+  })
+
+  it('records a slot\'s Turns under the seat, and a slot failure notes its Thread without failing the seat (2d)', async () => {
+    const { ctx } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('mi-turn-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const { memberId, spawned } = await seat(ctx, channel.channel.channelRef, { slotZero: 'running' })
+    const ledger = ctx.agentTeam['ledger']!
+    const sent = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId('mi-turn-send'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Task E for @worker', recipients: [memberId] })
+    if (sent.kind !== 'committed') throw new Error('send must commit')
+    const thread = sent.thread.threadRef as AgentTeamThreadRef
+    await vi.waitFor(() => { expect(spawned[0]?.fake.calls).toHaveLength(1) })
+    const slot = spawned[0]!.fake
+    const session = { id: slot.agent.id, header: {}, inheritedEventCount: 0, seq: 0, snapshotEvents: () => [] } as never
+
+    // A completed slot Turn is a recorded Turn of the seat, on the slot's own Session and the delivered Thread.
+    for (const event of completeTurnEvents({ turn: 1, firstSeq: 1 })) ctx.emit('session/event', session, event as never)
+    await vi.waitFor(() => { expect(ledger.memberSessionRuns(memberId).map(run => run.sessionId)).toEqual([slot.agent.id]) })
+    expect(ctx.agentTeam.memberSessions({ workspaceId: alpha, memberId }).runs[0]?.sessionId).toBe(slot.agent.id)
+    expect(ctx.agentTeam.sessionStats({ workspaceId: alpha, sessionId: slot.agent.id }).run).toMatchObject({ memberId, sessionId: slot.agent.id })
+
+    // A new fact on the Thread, then an errored slot Turn: the existing turn-failure notice lands on the Thread.
+    const replied = await ctx.agentTeam.reply({ requestId: requestId('mi-turn-reply'), workspaceId: alpha,
+      threadRef: thread, body: 'Again, @worker', recipients: [memberId], baseRevision: sent.thread.revision })
+    if (replied.kind !== 'committed') throw new Error('reply must commit')
+    await vi.waitFor(() => { expect(slot.calls).toHaveLength(2) })
+    ctx.emit('session/event', session, { type: 'turn/start', seq: 5, time: Date.now(), data: { turn: 2 } } as never)
+    ctx.emit('session/event', session, { type: 'turn/end', seq: 6, time: Date.now(),
+      data: { turn: 2, reason: { kind: 'error', error: { message: '429 rate limited', status: 429, code: 'RATE_LIMITED' } } } } as never)
+    ctx.emit('agent/error', { agent: slot.agent, error: new Error('429 rate limited') } as never)
+    await vi.waitFor(() => {
+      expect(ctx.agentTeam.threadTurnFailures({ workspaceId: alpha, threadRef: thread }).map(failure => failure.sessionId)).toEqual([slot.agent.id])
+    })
+    // §2: only the slot reads error; the seat and slot 0 do not.
+    const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)!
+    expect(status.presence).not.toBe('error')
+    expect(status.instances.map(instance => instance.presence)).toEqual(['working', 'error'])
+    expect(ctx.agentTeam['memberFailures'].get(memberId)).toBeUndefined()
+
+    // The failed slot forgot its last notice: the next fact on the Thread delivers again rather than deduping away.
+    const again = await ctx.agentTeam.reply({ requestId: requestId('mi-turn-retry'), workspaceId: alpha,
+      threadRef: thread, body: 'Retry, @worker', recipients: [memberId], baseRevision: replied.thread.revision })
+    expect(again.kind).toBe('committed')
+    await vi.waitFor(() => { expect(slot.calls).toHaveLength(3) })
+    // Running again clears the slot's error.
+    slot.setStatus('running')
+    ctx.emit('agent/status', { agent: slot.agent, status: 'running' } as never)
+    slot.setStatus('idle')
+    ctx.emit('agent/status', { agent: slot.agent, status: 'idle' } as never)
+    expect(ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)!.instances[1]!.presence).toBe('available')
   })
 
   it('takes an unbound Thread on an idle slot 0 and binds it there', async () => {

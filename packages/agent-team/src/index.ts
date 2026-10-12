@@ -712,6 +712,16 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.logger.warn(message)
   }, (memberId, verdict, crossed) => this.onMemberPoisoned(memberId, verdict, crossed), memberId => this.onMemberPoisonCleared(memberId))
 
+  /**
+   * One Turn recorder per extra instance slot (multi-instance contract v2): a slot's Turns are recorded
+   * and its errored Turns noted on their Threads under the seat's member id, while its open Turn, held
+   * deliveries and provider-rejection streak stay its own. A slot never poisons the seat (§2), so its
+   * recorder reports no poison. Kept across an idle end, so a respawned slot keeps its counts.
+   */
+  private readonly slotRecorders = new Map<string, AgentTeamTurnRecorder>()
+  /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
+  private readonly slotErrors = new Set<string>()
+
   /** Host activity feed (A13 v2): in-memory only, folded from session events. */
   private readonly activityFeed = new AgentTeamActivityFeed({
     identify: (memberId, slot) => this.activityIdentity(memberId, slot),
@@ -829,7 +839,26 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Turns this host did not record since start; `sessionStats` reports them so SessionRun under-counts are visible. */
   unrecordedTurns(): { readonly failed: number; readonly unprovable: number } {
-    return this.turnRecorder.unrecordedTurns
+    let { failed, unprovable } = this.turnRecorder.unrecordedTurns
+    for (const recorder of this.slotRecorders.values()) {
+      failed += recorder.unrecordedTurns.failed
+      unprovable += recorder.unrecordedTurns.unprovable
+    }
+    return { failed, unprovable }
+  }
+
+  /** The Turn recorder of one extra slot, created on first use. */
+  private slotRecorder(memberId: AgentTeamMemberId, slot: number): AgentTeamTurnRecorder {
+    const key = slotKey(memberId, slot)
+    const existing = this.slotRecorders.get(key)
+    if (existing !== undefined) return existing
+    const created = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
+      this.ctx.logger.warn(`${message} (instance slot ${slot}): ${error instanceof Error ? error.message : String(error)}`)
+    }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt), message => {
+      this.ctx.logger.warn(`${message} (instance slot ${slot})`)
+    })
+    this.slotRecorders.set(key, created)
+    return created
   }
 
   private readonly contextManagement = createTeamContextManagement({
@@ -4277,6 +4306,7 @@ export default class AgentTeam extends TypertRemoteService {
       })
       if (agent.status === 'idle') agent.followup(hint)
       else agent.steer(hint)
+      this.slotRecorder(member.memberId, slot).noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
       this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} (${facts}): not yet read by the model`)
     }).catch((error: unknown) => {
       this.notifiedSlotInbox.delete(key)
@@ -4363,17 +4393,30 @@ export default class AgentTeam extends TypertRemoteService {
     return { ...entry, handle }
   }
 
-  /** Extra-slot session events feed the activity line of that slot (contract v2 §3, D6). */
+  /**
+   * Extra-slot session events: the slot's Turns are recorded under the seat (D6 session history and
+   * reply stats include slot work), an errored Turn posts the turn-failure notice on its Threads, and
+   * the slot's activity line follows them (contract v2 §3, D6).
+   */
   private onSlotSessionEvent(sessionId: SessionId, event: SessionEvent): void {
     const live = this.liveSlotOf(sessionId)
     if (live === undefined) return
+    this.slotRecorder(live.memberId, live.slot).onSessionEvent(live.memberId, sessionId, event)
     this.activityFeed.onSessionEvent(live.memberId, event, live.slot)
   }
 
-  /** A failed extra slot ends its running Turn's activity; presence reads the error from the Agent itself. */
+  /**
+   * A failed extra slot ends its running Turn's activity, and forgets its last notice so the next fact on
+   * its Threads delivers again instead of deduping into silence. The Turn's failure notice comes from the
+   * slot's recorder on its errored `turn/end`. The seat itself is never marked failed (§2): presence reads
+   * the slot's error from its own Agent.
+   */
   private onSlotError(agent: Agent): void {
     const live = this.liveSlotOf(agent.id)
     if (live === undefined) return
+    this.notifiedSlotInbox.delete(slotKey(live.memberId, live.slot))
+    this.slotErrors.add(slotKey(live.memberId, live.slot))
+    this.ctx.logger.warn(`agent-team: ${this.memberScope(live.memberId, agent.id)} instance slot ${live.slot} reported an error; the seat stays available and the slot's Threads redeliver on their next fact`)
     this.slotActivityThreads.delete(slotKey(live.memberId, live.slot))
     this.activityFeed.onAgentError(live.memberId, live.slot)
     const member = this.requireLedger().getMember(live.memberId)
@@ -4388,6 +4431,7 @@ export default class AgentTeam extends TypertRemoteService {
     const timer = this.slotIdleTimers.get(key)
     if (timer !== undefined) clearTimeout(timer)
     this.slotIdleTimers.delete(key)
+    if (status === 'running') this.slotErrors.delete(key)
     if (status === 'idle') {
       this.slotActivityThreads.delete(key)
       this.activityFeed.onAgentIdle(entry.memberId, entry.slot)
@@ -4415,6 +4459,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.slotSelections.delete(key)
     this.notifiedSlotInbox.delete(key)
     this.slotActivityThreads.delete(key)
+    this.slotErrors.delete(key)
     this.activityFeed.onAgentIdle(memberId, slot)
     await handle.dispose()
     this.ctx.logger.info(`agent-team: ${this.memberScope(memberId, handle.agent.id)} instance slot ${slot} ended while idle; its Thread bindings stay`)
@@ -4437,6 +4482,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.slotSelections.delete(key)
       this.notifiedSlotInbox.delete(key)
       this.slotActivityThreads.delete(key)
+      this.slotErrors.delete(key)
       this.activityFeed.onAgentIdle(memberId, slot)
     }
     await Promise.all([...slots.values()].map(handle => handle.dispose()))
@@ -4457,7 +4503,8 @@ export default class AgentTeam extends TypertRemoteService {
       }
       const handle = member.state === 'enabled' ? this.slotHandles.get(member.memberId)?.get(slot) : undefined
       if (handle === undefined) return Object.freeze({ slot, presence: 'unavailable' as const, threadRefs })
-      return Object.freeze({ slot, sessionId: handle.agent.id, presence: handle.agent.status === 'running' ? 'working' as const : 'available' as const, threadRefs })
+      const presence = handle.agent.status === 'running' ? 'working' as const : this.slotErrors.has(slotKey(member.memberId, slot)) ? 'error' as const : 'available' as const
+      return Object.freeze({ slot, sessionId: handle.agent.id, presence, threadRefs })
     }))
   }
 
