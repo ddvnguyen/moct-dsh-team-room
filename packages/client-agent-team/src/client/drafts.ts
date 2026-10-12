@@ -1,4 +1,4 @@
-import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamThreadRef } from 'moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 
 /**
  * Keyed draft cache for the Channel/Thread composers. Drafts are local UI

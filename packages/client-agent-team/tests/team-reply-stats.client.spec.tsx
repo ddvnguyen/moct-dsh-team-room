@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import type { AgentTeamMemberId } from 'moct-dsh-team-room/types'
+import type { AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
 import { TeamMessage } from '../src/client/TeamMessage.tsx'
 import type { TeamConversationProps } from '../src/client/slots.ts'
 import { replyStatsView, type ReplyStatsView } from '../src/client/reply-stats.ts'

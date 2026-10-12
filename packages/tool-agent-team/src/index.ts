@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
-import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from 'moct-dsh-team-room/host'
-import { formatTeamTimestamp } from 'moct-dsh-team-room/time-format'
+import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@ddvnguyen/moct-dsh-team-room/host'
+import { formatTeamTimestamp } from '@ddvnguyen/moct-dsh-team-room/time-format'
 import { registerContextTools } from './context-tools.ts'
 import { service, workspaceOf, workspaceParam } from './host-access.ts'
 import type {
@@ -9,9 +9,9 @@ import type {
   AgentTeamRequestId,
   AgentTeamTaskRef,
   AgentTeamThreadRef,
-} from 'moct-dsh-team-room/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { AgentTeamContextAdvice } from 'moct-dsh-team-room/types'
+import type { AgentTeamContextAdvice } from '@ddvnguyen/moct-dsh-team-room/types'
 
 export const name = 'wowyuarm-agent-team-tools'
 export const inject = ['tools']

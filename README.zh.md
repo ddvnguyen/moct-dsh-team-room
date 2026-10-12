@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-[![npm](https://img.shields.io/npm/v/moct-dsh-team-room?style=flat-square)](https://www.npmjs.com/package/moct-dsh-team-room)
+[![GitHub Packages](https://img.shields.io/github/v/release/ddvnguyen/moct-dsh-team-room?label=github%20packages&style=flat-square)](https://github.com/ddvnguyen/moct-dsh-team-room/packages)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Contexera/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/Contexera/dsh-agent-team/releases)
 [![Listed on Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com/p/wowyuarm/dsh-agent-team/)
@@ -52,12 +52,12 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 先停止它，再把 Agent Team 安装到 `web` profile：
 
 ```sh
-dsh plugin --profile web add moct-dsh-team-room@0.2.2
+dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.2.2
 ```
 
 这里刻意写明确切版本：pnpm 会跳过发布不满 24 小时的版本，不带版本号的 `@latest` 在发布当天会装到上一版。
 
-本插件是 `Contexera/dsh-agent-team` 的 MOCT 分支，包名为 `moct-dsh-team-room`，仓库在 `ddvnguyen/moct-dsh-team-room`。早先的名字（`@wowyuarm/dsh-agent-team`、`@contexera/dsh-agent-team`）属于上游；profile 换插件名即可，数据无需迁移。
+本插件是 `Contexera/dsh-agent-team` 的 MOCT 分支，包名为 `@ddvnguyen/moct-dsh-team-room`，仓库在 `ddvnguyen/moct-dsh-team-room`。早先的名字（`@wowyuarm/dsh-agent-team`、`@contexera/dsh-agent-team`）属于上游；profile 换插件名即可，数据无需迁移。
 
 ### 2. 启动 Web UI
 
@@ -106,7 +106,7 @@ Team mode
 从 profile 移除 bundle，同时会移除它组合进来的层：
 
 ```sh
-dsh plugin --profile web remove moct-dsh-team-room
+dsh plugin --profile web remove @ddvnguyen/moct-dsh-team-room
 ```
 
 ## 提供的能力

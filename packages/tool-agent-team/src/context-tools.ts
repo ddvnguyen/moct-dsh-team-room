@@ -16,7 +16,7 @@
  * copies into `checkpointRef`. The adapter therefore answers such a row with a
  * short digest instead of its ref — the same digest that keeps two rows sharing
  * a label and a price apart — so no non-selectable row carries a citable string.
- * @module moct-dsh-team-room/context-tools
+ * @module @ddvnguyen/moct-dsh-team-room/context-tools
  */
 
 import { createHash } from 'node:crypto'
@@ -30,8 +30,8 @@ import {
   type ContinuityToolText,
   type RolloverToolRequest,
 } from '@contexera/dsh-context-continuity'
-import type { AgentTeamContextCheckpointRef } from 'moct-dsh-team-room/types'
-import { MAX_TIMELINE_LIMIT, type AgentTeamTimelineItem } from 'moct-dsh-team-room/host'
+import type { AgentTeamContextCheckpointRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import { MAX_TIMELINE_LIMIT, type AgentTeamTimelineItem } from '@ddvnguyen/moct-dsh-team-room/host'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { member, service } from './host-access.ts'

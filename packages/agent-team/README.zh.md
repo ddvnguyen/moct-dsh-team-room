@@ -1,4 +1,4 @@
-# moct-dsh-team-room
+# @ddvnguyen/moct-dsh-team-room
 
 [English](README.md) | 中文
 

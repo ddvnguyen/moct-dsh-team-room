@@ -17,7 +17,7 @@
  * blocking rather than silently skipping). Typed refusals are also matched
  * through `error.cause` chains because the Harness agent layer wraps
  * persistence failures during resume.
- * @module moct-dsh-team-room/stored-session-reader
+ * @module @ddvnguyen/moct-dsh-team-room/stored-session-reader
  */
 
 import type { Context } from '@deepseek-ai/cordis'

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { AgentTeamHumanProfileResult } from 'moct-dsh-team-room/types'
+import type { AgentTeamHumanProfileResult } from '@ddvnguyen/moct-dsh-team-room/types'
 import { TeamHumanIdentity } from '../src/client/human-identity.ts'
 
 /** A read failure in the shape the carrier produces (code/details belong to it, not to the test). */

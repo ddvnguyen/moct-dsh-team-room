@@ -1,8 +1,8 @@
-/** Package-owned invariant companion for `moct-dsh-team-room`. */
+/** Package-owned invariant companion for `@ddvnguyen/moct-dsh-team-room`. */
 
 import type { Context } from '@deepseek-ai/cordis'
 
-const PACKAGE_NAME = 'moct-dsh-team-room'
+const PACKAGE_NAME = '@ddvnguyen/moct-dsh-team-room'
 
 /** Cordis companion plugin name. */
 export const name = 'agent-team-invariant'

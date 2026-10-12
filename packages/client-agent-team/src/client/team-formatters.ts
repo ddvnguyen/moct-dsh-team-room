@@ -1,5 +1,5 @@
-import type { AgentTeamActivity, AgentTeamClaim, AgentTeamClientMemberStatus, AgentTeamMemberDiagnosticClass, AgentTeamMemberId, AgentTeamTask, AgentTeamTaskRef, AgentTeamThreadRef } from 'moct-dsh-team-room/types'
-import { hasAllMarker, resolveBodyMentions, scanBodyHandles } from 'moct-dsh-team-room/mentions'
+import type { AgentTeamActivity, AgentTeamClaim, AgentTeamClientMemberStatus, AgentTeamMemberDiagnosticClass, AgentTeamMemberId, AgentTeamTask, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import { hasAllMarker, resolveBodyMentions, scanBodyHandles } from '@ddvnguyen/moct-dsh-team-room/mentions'
 import type { TeamKey } from './locales.ts'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamStateDotState } from './TeamStateDot.tsx'

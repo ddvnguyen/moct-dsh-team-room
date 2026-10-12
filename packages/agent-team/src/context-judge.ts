@@ -12,7 +12,7 @@
  * call budget is derived from the gate's deadline, so a judge can never be
  * configured to outlive the time the gate gives it — the mismatch that would
  * otherwise leave every long-gap step ungated without a word.
- * @module moct-dsh-team-room/context-judge
+ * @module @ddvnguyen/moct-dsh-team-room/context-judge
  */
 
 import type { Context, Fiber } from '@deepseek-ai/cordis'

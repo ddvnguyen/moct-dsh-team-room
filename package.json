@@ -1,5 +1,5 @@
 {
-  "name": "moct-dsh-team-room",
+  "name": "@ddvnguyen/moct-dsh-team-room",
   "version": "0.2.2",
   "license": "MIT",
   "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
@@ -208,5 +208,8 @@
     "ai-agents",
     "deepseek",
     "multi-agent-systems"
-  ]
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
 }

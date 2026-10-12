@@ -5,7 +5,7 @@ import type {
   AgentTeamChannel, AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamMemberId,
   AgentTeamResolveTaskRefsRequest, AgentTeamResolveTaskRefsResult, AgentTeamResolveThreadRefsRequest, AgentTeamResolveThreadRefsResult,
   AgentTeamTaskRef, AgentTeamThreadRef,
-} from 'moct-dsh-team-room/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 
 /** Navigation facts for one branded Task ref, resolved once per session. */
 export interface ResolvedTaskRef {
