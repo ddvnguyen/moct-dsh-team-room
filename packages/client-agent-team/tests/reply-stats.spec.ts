@@ -25,17 +25,19 @@ function stat(options: { isLastOfTurn?: boolean; uncached?: number | null; read?
 describe('reply stats row', () => {
   it('shows input, output, time, cache share and tools when every bucket is recorded', () => {
     // 200 uncached + 1000 read + 0 written = 1200 input; cache % = 1000 / 1200.
-    expect(replyStatsView(stat())).toEqual({ input: '1.2k', output: '340', seconds: '12s', cache: '83%', tools: 7 })
+    expect(replyStatsView(stat())).toEqual({ input: '1.2k', partialInput: false, output: '340', seconds: '12s', cache: '83%', tools: 7 })
   })
 
-  it('shows the unknown dash for input and cache when any input bucket is null, never 0', () => {
-    expect(replyStatsView(stat({ write: null }))).toEqual({ input: UNKNOWN, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
-    expect(replyStatsView(stat({ read: null }))).toEqual({ input: UNKNOWN, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
+  it('shows the recorded uncached figure as a lower bound when a cache bucket is null, never 0', () => {
+    // TEST Turn 1 shape: uncached 37866 recorded, cache buckets null.
+    expect(replyStatsView(stat({ write: null }))).toEqual({ input: '200', partialInput: true, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
+    expect(replyStatsView(stat({ read: null }))).toEqual({ input: '200', partialInput: true, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
+    expect(replyStatsView(stat({ uncached: 37866, read: null, write: null }))).toEqual({ input: '37.9k', partialInput: true, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
   })
 
   it('shows the unknown dash for input when the uncached split is null, while output and time stay exact', () => {
     // Turn 5 of session aeca99c0: output is provable (297), the uncached split is not.
-    expect(replyStatsView(stat({ uncached: null, read: null, write: null, output: 297 }))).toEqual({ input: UNKNOWN, output: '297', seconds: '12s', cache: UNKNOWN, tools: 7 })
+    expect(replyStatsView(stat({ uncached: null, read: null, write: null, output: 297 }))).toEqual({ input: UNKNOWN, partialInput: false, output: '297', seconds: '12s', cache: UNKNOWN, tools: 7 })
   })
 
   it('shows no row on a reply that is not the last of its Turn, so the Turn totals are not repeated', () => {
@@ -43,7 +45,7 @@ describe('reply stats row', () => {
   })
 
   it('shows the unknown dash for cache when the Turn had no prompt input at all', () => {
-    expect(replyStatsView(stat({ uncached: 0, read: 0, write: 0 }))).toEqual({ input: '0', output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
+    expect(replyStatsView(stat({ uncached: 0, read: 0, write: 0 }))).toEqual({ input: '0', partialInput: false, output: '340', seconds: '12s', cache: UNKNOWN, tools: 7 })
   })
 })
 

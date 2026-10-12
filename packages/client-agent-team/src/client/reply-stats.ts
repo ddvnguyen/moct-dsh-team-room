@@ -4,8 +4,14 @@ import type { AgentTeamThreadReplyStat } from '@contexera/dsh-agent-team/types'
 export const UNKNOWN = '—'
 
 export interface ReplyStatsView {
-  /** All prompt input of the Turn, or UNKNOWN when any input bucket, uncached input included, is null. */
+  /**
+   * All prompt input of the Turn, or a lower bound with a plus marker (see
+   * partialInput) when a cache bucket is null, or UNKNOWN when even the
+   * uncached split is null.
+   */
   readonly input: string
+  /** True when input is a lower bound: uncached present, some cache bucket null. */
+  readonly partialInput: boolean
   readonly output: string
   readonly seconds: string
   /** Cache share of all prompt input, or UNKNOWN when the buckets are incomplete. */
@@ -32,7 +38,9 @@ export function formatSeconds(runMs: number): string {
  * closes its Turn carries the row; earlier replies of that Turn would repeat
  * the same numbers. cache % divides the cache read by all prompt input
  * (uncached + cache read + cache write), so it is the share of the input served
- * from cache. Any null bucket makes the input and cache figures UNKNOWN.
+ * from cache. Any null bucket makes the input and cache figures UNKNOWN —
+ * except a recorded uncached split with null cache buckets, which reads as a
+ * lower bound (partialInput) rather than hiding the known figure.
  */
 export function replyStatsView(stat: AgentTeamThreadReplyStat): ReplyStatsView | undefined {
   if (!stat.isLastOfTurn) return undefined
@@ -41,8 +49,10 @@ export function replyStatsView(stat: AgentTeamThreadReplyStat): ReplyStatsView |
   const read = usage.cacheReadTokens
   const write = usage.cacheWriteTokens
   const total = uncached !== null && read !== null && write !== null ? uncached + read + write : undefined
+  const partialInput = total === undefined && uncached !== null
   return {
-    input: total === undefined ? UNKNOWN : formatTokens(total),
+    input: total === undefined ? (uncached === null ? UNKNOWN : formatTokens(uncached)) : formatTokens(total),
+    partialInput,
     output: formatTokens(usage.outputTokens),
     seconds: formatSeconds(runMs),
     cache: read !== null && total !== undefined && total > 0 ? `${Math.round((read / total) * 100)}%` : UNKNOWN,

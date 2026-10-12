@@ -223,8 +223,9 @@ export const TeamMessage = memo(function TeamMessage({ senderName, memberId, hum
 
 /** The usage line under an agent reply: `1.2k in / 340 out · 12s · cache 94% · 7 tools`. */
 function TeamReplyStatsRow({ view, t }: { readonly view: ReplyStatsView; readonly t?: TeamConversationProps['t'] | undefined }) {
-  const text = t?.('replyStatsRow', { input: view.input, output: view.output, seconds: view.seconds, cache: view.cache, tools: t?.('replyStatsTools', { count: view.tools }) ?? `${view.tools} tools` })
-    ?? `${view.input} in / ${view.output} out · ${view.seconds} · cache ${view.cache} · ${view.tools} tools`
+  const input = view.partialInput ? (t?.('replyStatsPartialInput', { input: view.input }) ?? `${view.input}+`) : view.input
+  const text = t?.('replyStatsRow', { input, output: view.output, seconds: view.seconds, cache: view.cache, tools: t?.('replyStatsTools', { count: view.tools }) ?? `${view.tools} tools` })
+    ?? `${input} in / ${view.output} out · ${view.seconds} · cache ${view.cache} · ${view.tools} tools`
   return <div className={css.replyStats} data-testid="reply-stats">{text}</div>
 }
 
