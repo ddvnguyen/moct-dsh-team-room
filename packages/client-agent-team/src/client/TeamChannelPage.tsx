@@ -3,7 +3,7 @@ import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamInbox, 
   AgentTeamTaskRef, AgentTeamThreadRef,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
@@ -46,6 +46,7 @@ interface TeamChannelPageProps {
   readonly sendMessage: TeamConversationProps['sendMessage']
   readonly joinChannel: TeamConversationProps['joinChannel']
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
+  readonly archiveChannel: TeamConversationProps['archiveChannel']
   readonly selectThread: TeamConversationProps['selectThread']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
@@ -99,8 +100,8 @@ function printedActivityAt(item: AgentTeamViewItem): string | undefined {
 }
 
 /** Seat chips on the slim header: the first five Channel seats, then `+N`.
-   The D1b lane adds the Archive entry to the overflow menu once the
-   `archiveChannel` remote is plumbed; the menu is built for that one item. */
+   The overflow menu carries Manage members and (D1b) Archive, both routed
+   through remotes the seat already receives. */
 const MAX_SEAT_CHIPS = 5
 
 /** Host unread per Thread, keyed for the feed's rows: zero unread is the absence of a badge, not a row. */
@@ -108,7 +109,7 @@ function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, nu
   return new Map(inbox.items.filter(item => item.unreadCount > 0).map(item => [item.thread.threadRef, item.unreadCount]))
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
@@ -122,6 +123,21 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
   const [asTask, setAsTask] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [managingMembers, setManagingMembers] = useState(false)
+  const [archiving, setArchiving] = useState(false)
+  // Archive hands the seat back to the Channels list on success: the Channel
+  // leaves every list, so this page's key no longer resolves to anything.
+  const archive = async (): Promise<void> => {
+    try {
+      const result = await archiveChannel({ requestId: mintRequestId(), workspaceId, channelRef })
+      if (!result.ok) {
+        setError(t('archiveChannelFailed', { message: result.error.message }))
+        return
+      }
+      backToChannels()
+    } catch (cause) {
+      setError(t('archiveChannelFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
+  }
   // The composer draft lives in the keyed draft cache: view switches unmount
   // this page, and a refresh must not cost the half-written message either.
   // The composer owns the subscription — this page only reads a snapshot when
@@ -409,13 +425,34 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
         {channel !== undefined && <span ref={manageTriggerRef} className={channelCss.slimActions}>
           <TeamRowMenu
             label={t('headerMenuLabel')}
-            items={[{ id: 'manage-members', label: t('manageMembers') }]}
-            onSelect={id => { if (id === 'manage-members') setManagingMembers(true) }}
+            items={[
+              { id: 'manage-members', label: t('manageMembers') },
+              { id: 'archive', label: t('archiveChannel'), icon: <IconArchiveOutlineRegular size={16} />, danger: true },
+            ]}
+            onSelect={id => {
+              if (id === 'manage-members') setManagingMembers(true)
+              if (id === 'archive') setArchiving(true)
+            }}
           />
         </span>}
       </header>
     </div>
 
+    {archiving && channel !== undefined && (
+      <Modal
+        open
+        onClose={() => { setArchiving(false) }}
+        title={t('archiveChannelTitle', { name: channel.name })}
+        closeLabel={t('close')}
+        contentClassName={channelCss.modalBody!}
+        footer={<>
+          <Button variant="outline" onClick={() => { setArchiving(false) }}>{t('cancel')}</Button>
+          <Button variant="primary" onClick={() => { setArchiving(false); void archive() }}>{t('archiveChannelConfirm')}</Button>
+        </>}
+      >
+        <p>{t('archiveChannelNotice', { name: channel.name })}</p>
+      </Modal>
+    )}
     <Modal open={managingMembers} onClose={closeMembers} title={t('channelMembers')} {...(channel === undefined ? {} : { description: `# ${channel.name} · ${t('memberCount', { count: channelMembers.length })}` })} closeLabel={t('close')} contentClassName={channelCss.modalBody!}>
       <div ref={memberListRef} className={channelCss.memberList}>
         {members.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived').map(status => {
