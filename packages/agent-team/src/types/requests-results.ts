@@ -1061,6 +1061,8 @@ export type AgentTeamChangeScope =
 /** One running Member Turn, as the host folds it from session events. Never persisted. */
 export interface AgentTeamMemberActivity {
   readonly memberId: AgentTeamMemberId
+  /** Instance slot running this Turn (multi-instance contract v2); absent for the seat's main Session (slot 0). */
+  readonly slot?: number
   /** '@name' */
   readonly handle: string
   /** Thread the current Turn was delivered for; absent when unknown. */

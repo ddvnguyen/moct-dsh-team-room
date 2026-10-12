@@ -5,7 +5,8 @@
  * credential-shaped strings.
  *
  * Rules (contract §10 A13):
- * - only seats with a running Turn are returned;
+ * - only seats with a running Turn are returned, one entry per instance slot
+ *   (multi-instance contract v2 §3: slot 0 is the seat's main Session);
  * - an entry is removed on `agent/status` idle and on `agent/error`;
  * - an entry whose `updatedAt` is older than STALE_MS is dropped on read;
  * - at most one invalidation per seat per THROTTLE_MS window.
@@ -28,8 +29,13 @@ export interface AgentTeamActivityIdentity {
   readonly threadRef?: AgentTeamThreadRef
 }
 
+/** One running Turn per (seat, instance slot). */
+type ActivityKey = `${AgentTeamMemberId}#${number}`
+const activityKey = (memberId: AgentTeamMemberId, slot: number): ActivityKey => `${memberId}#${slot}`
+
 interface ActivityEntry {
   readonly memberId: AgentTeamMemberId
+  readonly slot: number
   readonly handle: string
   readonly threadRef?: AgentTeamThreadRef
   readonly turn: number
@@ -44,8 +50,8 @@ interface ActivityEntry {
 }
 
 export interface AgentTeamActivityFeedOptions {
-  /** Resolves a seat's '@handle' and Thread for the event being folded; undefined skips the seat. */
-  readonly identify: (memberId: AgentTeamMemberId) => AgentTeamActivityIdentity | undefined
+  /** Resolves a seat's '@handle' and the slot's Thread for the event being folded; undefined skips it. */
+  readonly identify: (memberId: AgentTeamMemberId, slot: number) => AgentTeamActivityIdentity | undefined
   /** Called at most once per seat per THROTTLE_MS: the host bumps its activity epoch here. */
   readonly invalidate: (memberId: AgentTeamMemberId) => void
   readonly now?: () => number
@@ -85,7 +91,7 @@ export function activityLabel(name: unknown, rawArguments: unknown): { readonly 
 }
 
 export class AgentTeamActivityFeed {
-  private readonly entries = new Map<AgentTeamMemberId, ActivityEntry>()
+  private readonly entries = new Map<ActivityKey, ActivityEntry>()
   private readonly now: () => number
   private readonly schedule: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
 
@@ -94,19 +100,19 @@ export class AgentTeamActivityFeed {
     this.schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms))
   }
 
-  /** Fold one session event into the seat's running Turn. */
-  onSessionEvent(memberId: AgentTeamMemberId, event: SessionEvent): void {
+  /** Fold one session event into the running Turn of a seat's instance slot (0 = main Session). */
+  onSessionEvent(memberId: AgentTeamMemberId, event: SessionEvent, slot = 0): void {
     const time = Number.isFinite(event.time) ? event.time : this.now()
     switch (event.type) {
       case 'step/start': {
-        const entry = this.entryFor(memberId, event.data.turn, time)
+        const entry = this.entryFor(memberId, slot, event.data.turn, time)
         if (entry === undefined) return
         entry.stepCount += 1
         this.touch(entry, time)
         return
       }
       case 'tool/call': {
-        const entry = this.entryFor(memberId, event.data.turn, time)
+        const entry = this.entryFor(memberId, slot, event.data.turn, time)
         if (entry === undefined) return
         entry.toolCount += 1
         entry.pendingCalls.set(event.data.callId, event.data.name)
@@ -115,7 +121,7 @@ export class AgentTeamActivityFeed {
         return
       }
       case 'tool/result': {
-        const entry = this.entries.get(memberId)
+        const entry = this.entries.get(activityKey(memberId, slot))
         if (entry === undefined) return
         const callId = event.data.message.source.callId
         if (entry.pendingCalls.delete(callId) && entry.current !== undefined) entry.current = undefined
@@ -127,28 +133,29 @@ export class AgentTeamActivityFeed {
     }
   }
 
-  /** Agent went idle: the seat's running Turn is over. */
-  onAgentIdle(memberId: AgentTeamMemberId): void {
-    this.remove(memberId)
+  /** Agent went idle: the slot's running Turn is over. */
+  onAgentIdle(memberId: AgentTeamMemberId, slot = 0): void {
+    this.remove(activityKey(memberId, slot))
   }
 
-  /** Agent failed: the running Turn is over. */
-  onAgentError(memberId: AgentTeamMemberId): void {
-    this.remove(memberId)
+  /** Agent failed: the slot's running Turn is over. */
+  onAgentError(memberId: AgentTeamMemberId, slot = 0): void {
+    this.remove(activityKey(memberId, slot))
   }
 
   /** Running Turns, optionally for one Thread; stale entries are dropped here. */
   snapshot(threadRef?: AgentTeamThreadRef): readonly AgentTeamMemberActivity[] {
     const cutoff = this.now() - ACTIVITY_STALE_MS
     const out: AgentTeamMemberActivity[] = []
-    for (const [memberId, entry] of this.entries) {
+    for (const [key, entry] of this.entries) {
       if (entry.updatedAt < cutoff) {
-        this.remove(memberId)
+        this.remove(key)
         continue
       }
       if (threadRef !== undefined && entry.threadRef !== threadRef) continue
       out.push(Object.freeze({
-        memberId,
+        memberId: entry.memberId,
+        ...(entry.slot !== 0 ? { slot: entry.slot } : {}),
         handle: entry.handle,
         ...(entry.threadRef !== undefined ? { threadRef: entry.threadRef } : {}),
         turnStartedAt: entry.turnStartedAt,
@@ -169,14 +176,16 @@ export class AgentTeamActivityFeed {
     this.entries.clear()
   }
 
-  private entryFor(memberId: AgentTeamMemberId, turn: number, time: number): ActivityEntry | undefined {
-    const existing = this.entries.get(memberId)
+  private entryFor(memberId: AgentTeamMemberId, slot: number, turn: number, time: number): ActivityEntry | undefined {
+    const key = activityKey(memberId, slot)
+    const existing = this.entries.get(key)
     if (existing !== undefined && existing.turn === turn) return existing
-    const identity = this.options.identify(memberId)
+    const identity = this.options.identify(memberId, slot)
     if (identity === undefined) return undefined
-    if (existing !== undefined) this.remove(memberId)
+    if (existing !== undefined) this.remove(key)
     const entry: ActivityEntry = {
       memberId,
+      slot,
       handle: identity.handle,
       ...(identity.threadRef !== undefined ? { threadRef: identity.threadRef } : {}),
       turn,
@@ -189,7 +198,7 @@ export class AgentTeamActivityFeed {
       updatedAt: time,
       lastEmit: Number.NEGATIVE_INFINITY,
     }
-    this.entries.set(memberId, entry)
+    this.entries.set(key, entry)
     return entry
   }
 
@@ -205,17 +214,17 @@ export class AgentTeamActivityFeed {
     if (entry.timer !== undefined) return
     entry.timer = this.schedule(() => {
       entry.timer = undefined
-      if (this.entries.get(entry.memberId) !== entry) return
+      if (this.entries.get(activityKey(entry.memberId, entry.slot)) !== entry) return
       entry.lastEmit = this.now()
       this.options.invalidate(entry.memberId)
     }, wait)
   }
 
-  private remove(memberId: AgentTeamMemberId): void {
-    const entry = this.entries.get(memberId)
+  private remove(key: ActivityKey): void {
+    const entry = this.entries.get(key)
     if (entry === undefined) return
     if (entry.timer !== undefined) clearTimeout(entry.timer)
-    this.entries.delete(memberId)
-    this.options.invalidate(memberId)
+    this.entries.delete(key)
+    this.options.invalidate(entry.memberId)
   }
 }

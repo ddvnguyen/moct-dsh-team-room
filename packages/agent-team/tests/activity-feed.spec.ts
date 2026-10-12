@@ -160,6 +160,26 @@ describe('AgentTeamActivityFeed (D3 metrics)', () => {
     expect(feed.snapshot()[0]).not.toHaveProperty('threadRef')
   })
 
+  it('multi-instance: two slots of one seat run side by side, each with its own Turn and end', () => {
+    const { feed } = harness()
+    feed.onSessionEvent(memberId, step(0))
+    feed.onSessionEvent(memberId, step(1), 1)
+    feed.onSessionEvent(memberId, call(2, 'c1', 'read', { path: '/a/b.ts' }), 1)
+    const both = feed.snapshot()
+    expect(both).toHaveLength(2)
+    expect(both[0]).not.toHaveProperty('slot')
+    expect(both[0]).toMatchObject({ memberId, stepCount: 1, toolCount: 0 })
+    expect(both[1]).toMatchObject({ memberId, slot: 1, stepCount: 1, toolCount: 1, current: { tool: 'read', label: 'read b.ts' } })
+    // A result on slot 0 never clears slot 1's open call.
+    feed.onSessionEvent(memberId, result(3, 'c1'))
+    expect(feed.snapshot()[1]?.current).toEqual({ tool: 'read', label: 'read b.ts' })
+    feed.onAgentIdle(memberId, 1)
+    expect(feed.snapshot()).toHaveLength(1)
+    expect(feed.snapshot()[0]).not.toHaveProperty('slot')
+    feed.onAgentError(memberId)
+    expect(feed.snapshot()).toHaveLength(0)
+  })
+
   it('metric 6: folding events writes nothing to the ledger, and the module imports no ledger, fs or op code', () => {
     const put = vi.fn()
     const ledgerOperations = { put }
