@@ -90,3 +90,25 @@
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+
+.slots {
+  margin-bottom: 12px;
+}
+
+.slotsTitle {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.slot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-primary, rgba(127, 127, 127, 0.25));
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 0;
+  font-size: 13px;
+}
