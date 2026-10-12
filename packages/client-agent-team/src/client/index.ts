@@ -55,7 +55,7 @@ import { TeamPanelIcon } from './TeamPanelIcon.tsx'
 import { TeamMembersAction } from './TeamMembersAction.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
-import type { TeamConversationProps } from './slots.ts'
+import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
 import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
@@ -553,10 +553,10 @@ function applyUi(ctx: ClientContext): void {
   // across is `t` — the strip is not a locale-scoped slot — so it is bound per
   // render from the dictionary rather than captured, and a language switch
   // reaches the tab body too.
-  const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity), 'main')
+  const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity), 'sidebar.workspaces')
   const teamTabRender = (props: NativeTabRenderProps): unknown => {
-    const bound = ctx.locale.bind(NS) as TeamConversationProps['t']
-    return renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamConversationProps, props)
+    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
+    return renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props)
   }
   ctx.effect(() => insertTeamTab(ctx, {
     label: ctx.locale.bind(NS)('team'),
