@@ -269,6 +269,7 @@ function teamSharedRemotes(
     leaveWorkspace: (request: AgentTeamLeaveWorkspaceRequest) => ctx.remote.agentTeam.leaveWorkspace(request),
     // The Host-scoped catalog needs no live Member, so suspended ones stay editable too.
     loadModels: () => ctx.remote.session.modelCatalog(),
+    loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => ctx.remote.agentTeam.memberSessions(request),
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => {
       openMemberSessionImpl(ctx, navigation, sessionId, reportFailure)
     },
