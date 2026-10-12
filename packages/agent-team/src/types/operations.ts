@@ -443,6 +443,26 @@ export interface AgentTeamThreadSessionBoundOperation extends AgentTeamOperation
   readonly data: AgentTeamThreadSessionBoundData
 }
 
+/**
+ * A seat's sticky affinity for one Thread to one instance slot (multi-instance
+ * contract v2 §2a/§2c). Slot 0 is the main instance. The binding names a slot,
+ * never a live Session: the Session behind a slot is lazy and may be respawned.
+ */
+export interface AgentTeamThreadInstanceBoundData {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  /** 0..4. A slot at or past the seat's current `instances` reads as unbound. */
+  readonly slot: number
+  readonly boundAt: string
+}
+
+/** Forward-only and append-only: the latest binding per (Thread, seat) wins; there is no release op. */
+export interface AgentTeamThreadInstanceBoundOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-instance-bound'
+  readonly data: AgentTeamThreadInstanceBoundData
+}
+
 /** One completed Turn's provider-reported usage, as the host derived it from session events. */
 export interface AgentTeamSessionTurnUsage {
   /** Uncached prompt input across every attempt of the Turn. null when the split is not provable; never 0 for "unknown". */
@@ -595,6 +615,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberSessionRenewedOperation
   | AgentTeamMemberSessionRolledOverOperation
   | AgentTeamThreadSessionBoundOperation
+  | AgentTeamThreadInstanceBoundOperation
   | AgentTeamSessionTurnRecordedOperation
   | AgentTeamTurnFailureNoticeOperation
   | AgentTeamThreadSummaryCommittedOperation

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { AgentTeamMemberCapabilities, AgentTeamModelSelection } from './types.ts'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { AGENT_TEAM_MAX_INSTANCES } from './member-instances.ts'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
@@ -594,6 +595,18 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       reason: z.enum(['start', 'resume', 'fork', 'cold-restart', 'rollover']),
       parentSessionId: sessionIdSchema.optional(),
       summaryGeneration: z.number().int().nonnegative().optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-instance-bound'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      memberId: memberIdSchema,
+      slot: z.number().int().min(0).max(AGENT_TEAM_MAX_INSTANCES - 1),
+      boundAt: z.string().min(1),
     }).strict(),
   }).strict(),
   z.object({
