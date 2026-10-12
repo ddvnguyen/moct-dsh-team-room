@@ -22,6 +22,8 @@ import type { CompactionEngine } from '@deepseek-ai/dsh-compaction'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
+// Brings the session-controller's `model/selection` event into the Session event map.
+import type {} from '@deepseek-ai/dsh-api-session-controller/types'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import z from '@deepseek-ai/schemastery'
@@ -526,6 +528,45 @@ export const TEAM_HOST_ROW_SETTINGS_SCHEMA = z.object({
 class ThreadSummaryLlmUnavailable extends Error {}
 
 /** Host owner of the single Agent Team in one dshHome. */
+/** The `model/selection` payload shape: provider, model, and an optional string effort. */
+interface SeatModelSelection {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+function seatModelSelection(selection: { readonly provider: string; readonly model: string; readonly reasoningEffort?: unknown }): SeatModelSelection {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: String(selection.reasoningEffort) }),
+  }
+}
+
+function sameModelSelection(left: SeatModelSelection, right: SeatModelSelection): boolean {
+  return left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
+}
+
+/**
+ * The session controller's `modelSelection` view, `next = pending ?? lastUsed`,
+ * folded from one Session's own events with the same rules: a selection sets
+ * `pending`; a request header sets `lastUsed` and clears `pending` only when the
+ * request used it. Null when the Session has neither.
+ */
+export function projectedNextModelSelection(events: readonly SessionEvent[]): SeatModelSelection | null {
+  let lastUsed: SeatModelSelection | null = null
+  let pending: SeatModelSelection | null = null
+  for (const event of events) {
+    if (event.type === 'model/selection') {
+      pending = seatModelSelection(event.data)
+    } else if (event.type === 'request/header') {
+      lastUsed = seatModelSelection(event.data.header.config)
+      if (pending !== null && sameModelSelection(pending, lastUsed)) pending = null
+    }
+  }
+  return pending ?? lastUsed
+}
+
 export default class AgentTeam extends TypertRemoteService {
   static Config = TEAM_HOST_ROW_SETTINGS_SCHEMA
   static inject = [
@@ -1075,6 +1116,8 @@ export default class AgentTeam extends TypertRemoteService {
       if (handle === undefined || handle.agent.session.id !== session.id) return
       this.turnRecorder.onSessionEvent(memberId, session.id, event)
       this.activityFeed.onSessionEvent(memberId, event)
+      // The seat's model is authoritative: a composer pick on the seat Session is re-asserted away.
+      if (event.type === 'model/selection') queueMicrotask(() => { this.assertSeatModel(memberId, handle.agent, 'composer pick') })
       // A successful assistant response ends any open provider-overflow
       // recovery sequence for this Member.
       if (event.type === 'assistant/message') this.pressurePolicy.onAssistantMessage(memberId)
@@ -1906,6 +1949,7 @@ export default class AgentTeam extends TypertRemoteService {
           const selection = this.modelSelections.get(request.memberId)
           if (selection === undefined) throw new Error(`Agent Member '${current.handle}' has no live model selection`)
           selection.current = current.model ?? this.ctx.agentDefaultModel.currentSelection()
+          this.assertSeatModel(request.memberId, active.agent, 'model change')
           effect = 'applied'
         }
         if (!this.memberRuntime.appliedCapabilitiesMatch(current.memberId, current.capabilities)) {
@@ -3422,6 +3466,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.handles.set(member.memberId, created)
       this.memberBySessionId.set(member.sessionId, member.memberId)
       this.modelSelections.set(member.memberId, selected)
+      this.assertSeatModel(member.memberId, created.agent, 'activation')
       this.clearMemberFailure(member.memberId, 'activation')
       this.clearMemberFailure(member.memberId, 'capabilityApply')
       this.nameMemberSession(member, created.agent)
@@ -3653,6 +3698,32 @@ export default class AgentTeam extends TypertRemoteService {
       return failure.kind === 'refused' ? { class: 'session-refused' as const, ...shared } : { class: 'session-unreadable' as const, ...shared }
     }
     return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
+  }
+
+  /**
+   * The seat's model is authoritative (human ruling): `installModelSelection`
+   * rewrites every seat request to the Member's selection, so a pick made in
+   * the native composer is recorded but never runs. Worse, the session
+   * controller's `modelSelection` projection clears a pending pick only when a
+   * request actually uses it — so without this, the composer label would keep
+   * naming a model the seat never runs. Whenever the Session's projected next
+   * selection differs from the seat's, append the seat's selection: the label
+   * then shows what will run, and the next request header consumes it. Loop-
+   * safe: the appended event equals the seat's selection, so it never differs.
+   */
+  private assertSeatModel(memberId: AgentTeamMemberId, agent: Agent, reason: string): void {
+    const seat = this.modelSelections.get(memberId)?.current
+    if (seat === undefined || this.handles.get(memberId)?.agent !== agent) return
+    const wanted = seatModelSelection(seat)
+    const next = projectedNextModelSelection(agent.session.ownEvents())
+    // A fresh Session has no selection yet: its first request header records the seat's.
+    if (next === null || sameModelSelection(next, wanted)) return
+    try {
+      agent.session.append('model/selection', wanted)
+      this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} model selection re-asserted to the seat's ${wanted.provider}/${wanted.model} (${reason})`)
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId)} could not re-assert the seat model (${reason}): ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'capabilityApply' | 'providerPoison'): boolean {
