@@ -116,6 +116,8 @@ import type {
   AgentTeamResolveTaskRefsResult,
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveThreadRefsResult,
+  AgentTeamResolveMessageRefsRequest,
+  AgentTeamResolveMessageRefsResult,
   AgentTeamTaskRef,
   AgentTeamThreadRef,
   AgentTeamOperation,
@@ -1368,6 +1370,14 @@ export default class AgentTeam extends TypertRemoteService {
       return true
     })
     return Object.freeze({ resolved: Object.freeze(this.requireLedger().resolveThreadRefs(request.workspaceId, threadRefs)) })
+  }
+
+  /** Read-only quote context for Messages cited by `replyToMessageRef`; unknown refs are omitted. */
+  @Remote('resolveMessageRefs')
+  resolveMessageRefs(request: AgentTeamResolveMessageRefsRequest): AgentTeamResolveMessageRefsResult {
+    this.requireWorkspace(request.workspaceId)
+    const messageRefs = [...new Set(request.messageRefs)]
+    return Object.freeze({ resolved: Object.freeze(this.requireLedger().resolveMessageRefs(request.workspaceId, messageRefs)) })
   }
 
   /** Browser-safe Human roster, optionally filtered to one participation. */
@@ -4573,6 +4583,7 @@ export default class AgentTeam extends TypertRemoteService {
           const detail = ['Direct Team mention', `Occurred at: ${formatTeamTimestamp(fact.occurredAt)}`, `From: ${sender}`, `Channel: ${item.channelRef}`,
             ...(item.task === undefined ? [] : [`Task: ${item.task.taskRef}`]),
             `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
+            ...(fact.message.replyToMessageRef === undefined ? [] : [`Replies to: ${fact.message.replyToMessageRef}`]),
             `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
           if (append(detail)) detailedFactCount += 1
         } else if (fact.kind === 'activity') {
