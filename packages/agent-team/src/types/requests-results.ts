@@ -189,6 +189,17 @@ export interface AgentTeamRecoverMemberRequest {
 /** Result of a recovery nudge; runtime-only steering, so there is no ledger receipt. */
 export interface AgentTeamRecoverMemberResult {
   readonly status: AgentTeamAgentMemberStatus
+  /**
+   * Present exactly when recovery refused to steer: the Member's Session is
+   * provider-poisoned (task-11 item 4) — its last consecutive Turns were all
+   * rejected by the provider with an identical signature before any usage, so
+   * re-queuing would replay the same error. The caller switches the model or
+   * starts the Member from a new context instead.
+   */
+  readonly sameError?: {
+    readonly detail: string
+    readonly failedTurns: number
+  }
 }
 
 /** Human intent to start one enabled Member's next turn from an empty context. */

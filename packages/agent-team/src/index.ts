@@ -49,6 +49,7 @@ import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
 import { AgentTeamTurnRecorder } from './turn-recorder.ts'
+import type { AgentTeamPoisonVerdict } from './poisoned-session.ts'
 import { AgentTeamActivityFeed } from './activity-feed.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { MoctOperationsTable } from './moct-table.ts'
@@ -549,6 +550,15 @@ export default class AgentTeam extends TypertRemoteService {
     compaction?: string
     /** The post-commit configuration apply failed; the stored row is ahead of the live surface. */
     capabilityApply?: AgentTeamMemberDiagnostic
+    /**
+     * Task-11: the Session's provider rejects its Turns with an identical 4xx
+     * INVALID_REQUEST signature before any usage (poisoned). Sticky until a
+     * clean recorded Turn or a non-matching failure clears it — the plain
+     * `runtime` slot is cleared on every `running` status, which would hide
+     * the very condition that needs a model switch or new context. Shown only
+     * while `sessionId` is still the Member's current Session.
+     */
+    providerPoison?: { readonly detail: string; readonly failedTurns: number; readonly sessionId: SessionId }
   }>()
   private readonly pressurePolicy: TeamPressurePolicy
   /**
@@ -603,7 +613,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
   }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt), message => {
     this.ctx.logger.warn(message)
-  })
+  }, (memberId, verdict, crossed) => this.onMemberPoisoned(memberId, verdict, crossed), memberId => this.onMemberPoisonCleared(memberId))
 
   /** Host activity feed (A13 v2): in-memory only, folded from session events. */
   private readonly activityFeed = new AgentTeamActivityFeed({
@@ -1456,6 +1466,18 @@ export default class AgentTeam extends TypertRemoteService {
       // retry reports again rather than something the restart heals.
       await this.reactivateMember(request.memberId)
       return Object.freeze({ status: this.memberStatus(member) })
+    }
+    // Task-11 item 4: a provider-poisoned Session cannot recover by steering —
+    // the resume prompt would replay the exact history the provider keeps
+    // rejecting with an identical signature before any usage. Report the same
+    // error instead of silently re-queuing a Turn that cannot succeed. Session-
+    // scoped to the live generation: a renewal or new context already moved
+    // past the poisoned history and may steer normally.
+    const poison = this.turnRecorder.poisonedVerdict(request.memberId, handle.agent.id)
+    if (poison !== undefined) {
+      const detail = `same error again: ${poison.failedTurns} consecutive Turns rejected by the provider (${poison.signature}, zero usage); steering would replay it — switch the model or start a new context`
+      this.ctx.logger.info(`agent-team: recovery not queued for ${this.memberScope(request.memberId)}: ${detail}`)
+      return Object.freeze({ status: this.memberStatus(member), sameError: { detail, failedTurns: poison.failedTurns } })
     }
     this.steerResume(member, this.manualResumeText(), 'operator recovery')
     return Object.freeze({ status: this.memberStatus(member) })
@@ -3535,6 +3557,12 @@ export default class AgentTeam extends TypertRemoteService {
       return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'preset-composition' as const, detail: ORPHANED_MEMBER_DIAGNOSTIC } })
     }
     const runtimeError = failures?.runtime ?? failures?.compaction
+    // A provider-poisoned Session outranks the plain runtime error: identical
+    // 4xx rejections before any usage mean re-queueing cannot recover this
+    // seat (task-11 item 1), and the detail carries the failing-Turn count the
+    // sidebar shows. Session-scoped so a renewal or rollover drops it.
+    const poison = failures?.providerPoison
+    if (poison !== undefined && poison.sessionId === member.sessionId) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'runtime' as const, detail: poison.detail } })
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'runtime' as const, detail: runtimeError } })
     // A failed apply outranks the plain success row but not a live runtime
     // error: the Member runs, yet its stored configuration is ahead of the
@@ -3594,12 +3622,63 @@ export default class AgentTeam extends TypertRemoteService {
     return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
   }
 
-  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'capabilityApply'): boolean {
+  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'capabilityApply' | 'providerPoison'): boolean {
     const failures = this.memberFailures.get(memberId)
     if (failures === undefined || failures[slot] === undefined) return false
     if (Object.keys(failures).length === 1) this.memberFailures.delete(memberId)
     else delete failures[slot]
     return true
+  }
+
+  /**
+   * Task-11 item 1: store the sticky provider-poison diagnosis (the plain
+   * `runtime` slot would be cleared by every `running` status poll) and
+   * refresh presence so the sidebar shows the failing-Turn count. On the one
+   * threshold crossing, also fire the Team-room notice — never awaited into
+   * the session event path that reached us; a notice failure is logged only.
+   */
+  private onMemberPoisoned(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict, crossed: boolean): void {
+    const detail = `provider-poisoned session: ${verdict.failedTurns} consecutive identical provider failures (${verdict.signature}, zero usage); re-queueing cannot recover this seat — switch its model or start it from a new context`
+    const failures = this.memberFailures.get(memberId) ?? {}
+    failures.providerPoison = Object.freeze({ detail, failedTurns: verdict.failedTurns, sessionId: verdict.sessionId })
+    this.memberFailures.set(memberId, failures)
+    this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} ${detail}`)
+    const member = this.ledger?.getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+    if (crossed) this.sendPoisonNotice(memberId, verdict).catch(error => {
+      this.ctx.logger.warn(`agent-team: poisoned-seat notice for '${memberId}' failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }
+
+  /** The streak ended (a clean recorded Turn, or a non-matching failure): drop the diagnosis so presence recovers. */
+  private onMemberPoisonCleared(memberId: AgentTeamMemberId): void {
+    if (!this.clearMemberFailure(memberId, 'providerPoison')) return
+    this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} provider-poison diagnosis cleared`)
+    const member = this.ledger?.getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+  }
+
+  /**
+   * The Team-room card for the threshold crossing: one durable message on the
+   * workspace's first live Channel naming the seat, the consecutive failed-Turn
+   * count, and the @Lead/@Architect mentions (unresolvable handles stay prose —
+   * the ledger resolves mentions only against live Channel Members). The
+   * deterministic requestId makes a crash-time re-send resolve to the message
+   * already committed instead of a second card.
+   */
+  private async sendPoisonNotice(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict): Promise<void> {
+    const ledger = this.ledger
+    const member = ledger?.getMember(memberId)
+    const workspaceId = ledger?.workspacesOf(memberId)[0]
+    if (ledger === undefined || member === undefined || workspaceId === undefined) return
+    const channelRef = ledger.view({ workspaceId }).channels[0]?.channelRef
+    if (channelRef === undefined) return
+    await this.sendMessageAs(agentTeamHumanActor(), {
+      requestId: `poisoned:${verdict.sessionId}:${verdict.turn}` as AgentTeamRequestId,
+      workspaceId,
+      channelRef,
+      body: `Provider-poisoned seat: @${member.handle} failed ${verdict.failedTurns} consecutive Turns (provider ${verdict.signature}, zero usage) — re-queueing cannot recover it; switch its model or start it from a new context. @Lead @Architect`,
+    })
   }
 
   private requireWorkspace(workspaceId: AgentTeamViewRequest['workspaceId']) {
