@@ -448,6 +448,14 @@ const threadSessionBound: Op<'team/thread-session-bound'> = {
   data: { workspaceId: threadRead.data.workspaceId, threadRef: memberThread, memberId, sessionId: SessionId('session:protocol-thread'), reason: 'start' },
 }
 
+/** The host binds the seat's turns in one Thread to instance slot 1, under the seat's own actor. */
+const threadInstanceBound: Op<'team/thread-instance-bound'> = {
+  ...opBase('operation:protocol-31', 'request:protocol-thread-instance-bound', 31, memberActor),
+  previousOperationId,
+  kind: 'team/thread-instance-bound',
+  data: { workspaceId: threadRead.data.workspaceId, threadRef: memberThread, memberId, slot: 1, boundAt: '2026-10-13T00:45:00+08:00' },
+}
+
 /** One completed Turn of the Member's Session in its Thread; usage buckets are the reported counts. */
 const sessionTurnRecorded: Op<'team/session-turn-recorded'> = {
   ...opBase('operation:protocol-28', 'request:protocol-session-turn', 28, memberActor),
@@ -1264,6 +1272,26 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
         sessionId: SessionId('session:protocol-thread'),
         reason: 'resume',
         actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
+  },
+  'team/thread-instance-bound': {
+    stored: threadInstanceBound,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.bindThreadInstance({
+          requestId: threadInstanceBound.requestId, workspaceId: threadInstanceBound.data.workspaceId, threadRef: memberThread,
+          slot: 1, boundAt: threadInstanceBound.data.boundAt, actor: memberActor,
+        })
+        expect(out.value.binding.slot, 'the binding answers with the recorded slot').toBe(1)
+        return out
+      },
+      changed: () => ledger.bindThreadInstance({
+        requestId: threadInstanceBound.requestId, workspaceId: threadInstanceBound.data.workspaceId, threadRef: memberThread,
+        slot: 0, boundAt: threadInstanceBound.data.boundAt, actor: memberActor,
       }),
     },
     legacy: { normalize: 'none', repair: 'none' },
