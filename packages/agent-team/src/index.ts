@@ -1393,6 +1393,7 @@ export default class AgentTeam extends TypertRemoteService {
         presetId: request.presetId,
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
         ...(request.capabilities === undefined ? {} : { capabilities: Object.freeze(deepCopyCapabilities(request.capabilities)) }),
+        ...(request.instances === undefined ? {} : { instances: request.instances }),
         privateMemoryPath: dshHomePath('agent-team', 'members', memberMemoryDirectoryName(memberId)),
         state: 'enabled',
       })

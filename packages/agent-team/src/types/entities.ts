@@ -104,6 +104,12 @@ export interface AgentTeamAgentMember {
   readonly model?: AgentTeamModelSelection | undefined
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities | undefined
+  /**
+   * Concurrent instances (slots) this seat may run, one Session each; Threads
+   * bind to a slot (multi-instance contract v2). An integer from 1 to 5;
+   * absent reads as the default, 2 (`memberInstances` in member-instances.ts).
+   */
+  readonly instances?: number | undefined
   /** Host-internal namespace; never exposed through Client projections. */
   readonly privateMemoryPath: string
   /**
