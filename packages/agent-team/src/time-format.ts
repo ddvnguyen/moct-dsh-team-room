@@ -10,7 +10,7 @@
  * passes through this module; a future configuration layer may make the
  * zone configurable, but the render must stay a single deterministic
  * formatter per stored instant.
- * @module moct-dsh-team-room/time-format
+ * @module @ddvnguyen/moct-dsh-team-room/time-format
  */
 
 /** The fixed Team coordination offset from UTC, in minutes. */

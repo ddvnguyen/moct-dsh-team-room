@@ -20,46 +20,46 @@
     ],
     "noEmit": true,
     "paths": {
-      "moct-dsh-team-room/host": [
+      "@ddvnguyen/moct-dsh-team-room/host": [
         "./packages/agent-team/src/index.ts"
       ],
-      "moct-dsh-team-room/invariant": [
+      "@ddvnguyen/moct-dsh-team-room/invariant": [
         "./packages/agent-team/src/invariant.ts"
       ],
-      "moct-dsh-team-room/types": [
+      "@ddvnguyen/moct-dsh-team-room/types": [
         "./packages/agent-team/src/types.ts"
       ],
-      "moct-dsh-team-room/typert": [
+      "@ddvnguyen/moct-dsh-team-room/typert": [
         "./packages/agent-team/lib/typert.host.d.ts"
       ],
-      "moct-dsh-team-room/remote": [
+      "@ddvnguyen/moct-dsh-team-room/remote": [
         "./packages/agent-team/lib/typert.remote-client.js"
       ],
-      "moct-dsh-team-room/sqlite-backend": [
+      "@ddvnguyen/moct-dsh-team-room/sqlite-backend": [
         "./packages/agent-team/src/vendor/storage-sqlite/index.ts"
       ],
-      "moct-dsh-team-room/compaction-engine": [
+      "@ddvnguyen/moct-dsh-team-room/compaction-engine": [
         "./packages/agent-team/src/compaction-engine.ts"
       ],
-      "moct-dsh-team-room/member-context": [
+      "@ddvnguyen/moct-dsh-team-room/member-context": [
         "./packages/agent-team/src/member-context.ts"
       ],
-      "moct-dsh-team-room/member-time-context": [
+      "@ddvnguyen/moct-dsh-team-room/member-time-context": [
         "./packages/agent-team/src/member-time-context.ts"
       ],
-      "moct-dsh-team-room/time-format": [
+      "@ddvnguyen/moct-dsh-team-room/time-format": [
         "./packages/agent-team/src/time-format.ts"
       ],
-      "moct-dsh-team-room/mentions": [
+      "@ddvnguyen/moct-dsh-team-room/mentions": [
         "./packages/agent-team/src/mentions.ts"
       ],
-      "moct-dsh-team-room/member-skills": [
+      "@ddvnguyen/moct-dsh-team-room/member-skills": [
         "./packages/agent-team/src/member-skills.ts"
       ],
-      "moct-dsh-team-room/tools": [
+      "@ddvnguyen/moct-dsh-team-room/tools": [
         "./packages/tool-agent-team/src/index.ts"
       ],
-      "moct-dsh-team-room/client": [
+      "@ddvnguyen/moct-dsh-team-room/client": [
         "./packages/client-agent-team/src/client/index.ts"
       ],
       "@deepseek-ai/dsh-storage-sqlite": [

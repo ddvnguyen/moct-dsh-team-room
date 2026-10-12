@@ -19,25 +19,25 @@ const cleaned = raw
 const base = JSON.parse(cleaned)
 
 const own = {
-  'moct-dsh-team-room/host': ['./packages/agent-team/src/index.ts'],
-  'moct-dsh-team-room/invariant': ['./packages/agent-team/src/invariant.ts'],
-  'moct-dsh-team-room/types': ['./packages/agent-team/src/types.ts'],
-  'moct-dsh-team-room/typert': ['./packages/agent-team/lib/typert.host.d.ts'],
-  'moct-dsh-team-room/remote': ['./packages/agent-team/lib/typert.remote-client.js'],
-  'moct-dsh-team-room/sqlite-backend': ['./packages/agent-team/src/vendor/storage-sqlite/index.ts'],
-  'moct-dsh-team-room/compaction-engine': ['./packages/agent-team/src/compaction-engine.ts'],
-  'moct-dsh-team-room/member-context': ['./packages/agent-team/src/member-context.ts'],
-  'moct-dsh-team-room/member-time-context': ['./packages/agent-team/src/member-time-context.ts'],
-  'moct-dsh-team-room/time-format': ['./packages/agent-team/src/time-format.ts'],
-  'moct-dsh-team-room/mentions': ['./packages/agent-team/src/mentions.ts'],
-  'moct-dsh-team-room/member-skills': ['./packages/agent-team/src/member-skills.ts'],
-  'moct-dsh-team-room/tools': ['./packages/tool-agent-team/src/index.ts'],
-  'moct-dsh-team-room/client': ['./packages/client-agent-team/src/client/index.ts'],
+  '@ddvnguyen/moct-dsh-team-room/host': ['./packages/agent-team/src/index.ts'],
+  '@ddvnguyen/moct-dsh-team-room/invariant': ['./packages/agent-team/src/invariant.ts'],
+  '@ddvnguyen/moct-dsh-team-room/types': ['./packages/agent-team/src/types.ts'],
+  '@ddvnguyen/moct-dsh-team-room/typert': ['./packages/agent-team/lib/typert.host.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/remote': ['./packages/agent-team/lib/typert.remote-client.js'],
+  '@ddvnguyen/moct-dsh-team-room/sqlite-backend': ['./packages/agent-team/src/vendor/storage-sqlite/index.ts'],
+  '@ddvnguyen/moct-dsh-team-room/compaction-engine': ['./packages/agent-team/src/compaction-engine.ts'],
+  '@ddvnguyen/moct-dsh-team-room/member-context': ['./packages/agent-team/src/member-context.ts'],
+  '@ddvnguyen/moct-dsh-team-room/member-time-context': ['./packages/agent-team/src/member-time-context.ts'],
+  '@ddvnguyen/moct-dsh-team-room/time-format': ['./packages/agent-team/src/time-format.ts'],
+  '@ddvnguyen/moct-dsh-team-room/mentions': ['./packages/agent-team/src/mentions.ts'],
+  '@ddvnguyen/moct-dsh-team-room/member-skills': ['./packages/agent-team/src/member-skills.ts'],
+  '@ddvnguyen/moct-dsh-team-room/tools': ['./packages/tool-agent-team/src/index.ts'],
+  '@ddvnguyen/moct-dsh-team-room/client': ['./packages/client-agent-team/src/client/index.ts'],
 }
 
 const ownTypes = {
   ...own,
-  'moct-dsh-team-room/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
 }
 
 const harnessSrc = {
@@ -68,20 +68,20 @@ const harnessTypes = Object.fromEntries(
 )
 
 const buildOwn = {
-  'moct-dsh-team-room/host': ['./packages/agent-team/lib/types/index.d.ts'],
-  'moct-dsh-team-room/invariant': ['./packages/agent-team/lib/types/invariant.d.ts'],
-  'moct-dsh-team-room/types': ['./packages/agent-team/lib/types/types.d.ts'],
-  'moct-dsh-team-room/typert': ['./packages/agent-team/lib/typert.host.d.ts'],
-  'moct-dsh-team-room/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
-  'moct-dsh-team-room/sqlite-backend': ['./packages/agent-team/lib/types/vendor/storage-sqlite/index.d.ts'],
-  'moct-dsh-team-room/compaction-engine': ['./packages/agent-team/lib/types/compaction-engine.d.ts'],
-  'moct-dsh-team-room/member-context': ['./packages/agent-team/lib/types/member-context.d.ts'],
-  'moct-dsh-team-room/member-time-context': ['./packages/agent-team/lib/types/member-time-context.d.ts'],
-  'moct-dsh-team-room/time-format': ['./packages/agent-team/lib/types/time-format.d.ts'],
-  'moct-dsh-team-room/mentions': ['./packages/agent-team/lib/types/mentions.d.ts'],
-  'moct-dsh-team-room/member-skills': ['./packages/agent-team/lib/types/member-skills.d.ts'],
-  'moct-dsh-team-room/tools': ['./packages/tool-agent-team/lib/types/index.d.ts'],
-  'moct-dsh-team-room/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/host': ['./packages/agent-team/lib/types/index.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/invariant': ['./packages/agent-team/lib/types/invariant.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/types': ['./packages/agent-team/lib/types/types.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/typert': ['./packages/agent-team/lib/typert.host.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/sqlite-backend': ['./packages/agent-team/lib/types/vendor/storage-sqlite/index.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/compaction-engine': ['./packages/agent-team/lib/types/compaction-engine.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/member-context': ['./packages/agent-team/lib/types/member-context.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/member-time-context': ['./packages/agent-team/lib/types/member-time-context.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/time-format': ['./packages/agent-team/lib/types/time-format.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/mentions': ['./packages/agent-team/lib/types/mentions.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/member-skills': ['./packages/agent-team/lib/types/member-skills.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/tools': ['./packages/tool-agent-team/lib/types/index.d.ts'],
+  '@ddvnguyen/moct-dsh-team-room/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
 }
 
 const shared = {

@@ -237,9 +237,9 @@ async function realHarness(
   // shipped cordis.patch.yml declares; bare internal loader names resolve
   // through the self-linked node_modules.
   const teamMemberPlugins: PresetDefinition['plugins'] = [
-    { id: 'member-context', name: 'moct-dsh-team-room/member-context' },
-    { id: 'member-time-context', name: 'moct-dsh-team-room/member-time-context' },
-    { id: 'team-tools', name: 'moct-dsh-team-room/tools' },
+    { id: 'member-context', name: '@ddvnguyen/moct-dsh-team-room/member-context' },
+    { id: 'member-time-context', name: '@ddvnguyen/moct-dsh-team-room/member-time-context' },
+    { id: 'team-tools', name: '@ddvnguyen/moct-dsh-team-room/tools' },
     { id: 'compaction', name: 'cordis:group', group: true, isolate: { compaction: true }, config: [
       { id: 'compaction-stub', name: pathToFileURL(compactionStub).href },
     ] },

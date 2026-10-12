@@ -28,8 +28,8 @@ import type {
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateMemberRequest,
   AgentTeamViewRequest,
-} from 'moct-dsh-team-room/types'
-import agentTeamRemote from 'moct-dsh-team-room/remote'
+} from '@ddvnguyen/moct-dsh-team-room/types'
+import agentTeamRemote from '@ddvnguyen/moct-dsh-team-room/remote'
 import type {} from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'

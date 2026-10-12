@@ -13,7 +13,7 @@ import { getDshRuntimeVersion } from '@deepseek-ai/dsh-app-boot'
 const TEAM_ROOT = '__TEAM_ROOT__'
 const HOME = '__HOME__'
 const CHROME = '__CHROME__'
-const STAGED_BUNDLE = join(HOME, 'profiles', 'node_modules', 'moct-dsh-team-room')
+const STAGED_BUNDLE = join(HOME, 'profiles', 'node_modules', '@ddvnguyen/moct-dsh-team-room')
 const BROWSER_ARTIFACTS = join(TEAM_ROOT, 'artifacts/browser')
 const UI01_SHOTS = join(BROWSER_ARTIFACTS, 'ui-01')
 const UI02_SHOTS = join(BROWSER_ARTIFACTS, 'ui-02')
@@ -219,7 +219,7 @@ async function entryUnreadCapsule(page: Page, lineSelector: string): Promise<Ret
 async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
   if (clearArtifacts) await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
-  const scope = `${HOME}/profiles/node_modules`
+  const scope = `${HOME}/profiles/node_modules/@ddvnguyen`
   await mkdir(scope, { recursive: true })
   // The filter must match on both separators: on Windows cp walks backslash
   // paths, so forward-slash-only matching lets node_modules and src through.
@@ -280,7 +280,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // asserted in the browser's scope rather than across the whole sidebar.
   const teamCurrentPage = page.locator('[data-slot="sidebar.workspaces"] [aria-current="page"]')
 
-  expect(scaffold.ctx.clientModules.graph().entries.some(entry => entry.id === 'moct-dsh-team-room')).toBe(true)
+  expect(scaffold.ctx.clientModules.graph().entries.some(entry => entry.id === '@ddvnguyen/moct-dsh-team-room')).toBe(true)
   // The Team entry is the sidebar rail's own row: the same list as the shipped
   // global panels, one row below the plugin page's, at the same height.
   const panelRail = page.locator('nav[class*="panelList"]')

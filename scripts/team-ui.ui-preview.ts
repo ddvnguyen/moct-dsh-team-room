@@ -5,12 +5,12 @@ import { launchWebScaffold, type WebScaffold } from './scaffold.ts'
 
 const TEAM_ROOT = '__TEAM_ROOT__'
 const HOME = '__HOME__'
-const STAGED_BUNDLE = join(HOME, 'profiles', 'node_modules', 'moct-dsh-team-room')
+const STAGED_BUNDLE = join(HOME, 'profiles', 'node_modules', '@ddvnguyen/moct-dsh-team-room')
 let scaffold: WebScaffold
 
 beforeAll(async () => {
   await rm(HOME, { recursive: true, force: true })
-  const scope = `${HOME}/profiles/node_modules`
+  const scope = `${HOME}/profiles/node_modules/@ddvnguyen`
   await mkdir(scope, { recursive: true })
   await cp(TEAM_ROOT, `${scope}/moct-dsh-team-room`, {
     recursive: true,

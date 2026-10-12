@@ -126,11 +126,11 @@ try {
     hostConfig: aggregate,
     clientConfig: join(tempPackage, 'tsconfig.client-missing.json'),
     faces: ['host'],
-    packages: ['moct-dsh-team-room'],
+    packages: ['@ddvnguyen/moct-dsh-team-room'],
   }).analyze()
   const face = workspace.faces.find(candidate => candidate.face === 'host')
   if (face === undefined) throw new Error('Typert did not analyze the Agent Team Host face')
-  const artifact = new FaceModelEmitter(face).emit('moct-dsh-team-room')
+  const artifact = new FaceModelEmitter(face).emit('@ddvnguyen/moct-dsh-team-room')
   if (artifact.remote === undefined) throw new Error('Typert did not emit the Agent Team Remote contribution')
 
   const generatedRoot = `packages/${tempPackage.slice(tempPackage.lastIndexOf('/') + 1)}`

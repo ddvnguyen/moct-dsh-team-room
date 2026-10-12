@@ -3,7 +3,7 @@
  *
  * The Host owns the append-only collaboration ledger and all Member lifecycle
  * effects. Session history and browser state are projections, never Team facts.
- * @module moct-dsh-team-room
+ * @module @ddvnguyen/moct-dsh-team-room
  */
 
 import { randomUUID } from 'node:crypto'

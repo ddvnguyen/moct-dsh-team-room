@@ -18,7 +18,7 @@ const RANGE = '>=0.1.7-rc.1 <0.1.8'
 
 /** A manifest shaped like the installed bundle's, with the DSH peers given. */
 const manifestWith = (peers: Record<string, string>): object => Object.freeze({
-  name: 'moct-dsh-team-room',
+  name: '@ddvnguyen/moct-dsh-team-room',
   version: '0.1.15',
   peerDependencies: Object.freeze({ '@deepseek-ai/cordis': '^4.0.1', ...peers }),
 })

@@ -11,7 +11,7 @@
  * (ledger, handles, notifications, recovery); this module owns per-Member
  * runtime invariants.
  *
- * @module moct-dsh-team-room/member-runtime
+ * @module @ddvnguyen/moct-dsh-team-room/member-runtime
  */
 
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'

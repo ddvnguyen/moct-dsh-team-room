@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 const { harnessDir } = await import('../../scripts/harness-dir.mjs')
 const { clientBundle } = await import(pathToFileURL(resolve(harnessDir, 'packages/client/tsdown.client.ts')).href)
 
-const bundle = clientBundle('moct-dsh-team-room', [
+const bundle = clientBundle('@ddvnguyen/moct-dsh-team-room', [
   'lib/types/index.js',
 ])
 
@@ -28,7 +28,7 @@ const teamRemoteTarget = resolve(import.meta.dirname, '../agent-team/lib/typert.
 const teamRemote = {
   name: 'dsh-agent-team-remote-entrypoint',
   resolveId(source: string) {
-    return source === 'moct-dsh-team-room/remote' ? teamRemoteTarget : null
+    return source === '@ddvnguyen/moct-dsh-team-room/remote' ? teamRemoteTarget : null
   },
 }
 

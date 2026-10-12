@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { AgentTeamEnvironmentResult } from 'moct-dsh-team-room/types'
+import type { AgentTeamEnvironmentResult } from '@ddvnguyen/moct-dsh-team-room/types'
 import { TeamEnvironmentCheck, type TeamEnvironmentLoader } from '../src/client/environment-check.ts'
 import { EnvironmentCheck } from '../src/client/EnvironmentCheck.tsx'
 import { zh } from '../src/client/locales.ts'
