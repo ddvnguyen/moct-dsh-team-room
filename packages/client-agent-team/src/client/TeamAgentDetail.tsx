@@ -24,11 +24,16 @@ export function formatRunTime(runMs: number): string {
 /** A null bucket is unknown, never 0. */
 export const tokensOrUnknown = (count: number | null): string => count === null ? UNKNOWN : formatTokens(count)
 
-/** A slot's presence under the seat's identity; the seat's diagnostic belongs to slot 0 only, so it is dropped. */
-function slotPresence(status: AgentTeamClientMemberStatus, presence: AgentTeamClientMemberStatus['presence']): AgentTeamClientMemberStatus {
+/** A slot's presence under the seat's identity. The seat's diagnostic describes slot 0 — the seat's own Session — so only that row keeps it. */
+function slotPresence(status: AgentTeamClientMemberStatus, slot: number, presence: AgentTeamClientMemberStatus['presence']): AgentTeamClientMemberStatus {
+  if (slot === 0) return { ...status, presence }
   const { diagnostic: _seatDiagnostic, ...rest } = status
   return { ...rest, presence }
 }
+
+/** A slot with no Session that is neither working nor failed is simply idle: it says so once instead of reading as an outage. */
+const idleSlot = (instance: { readonly sessionId?: unknown; readonly presence: AgentTeamClientMemberStatus['presence'] }): boolean =>
+  instance.sessionId === undefined && instance.presence !== 'working' && instance.presence !== 'error'
 
 type Loaded =
   | { readonly state: 'loading' }
@@ -118,7 +123,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, openM
             {instances.map(instance => (
               <li key={instance.slot} className={css.slot} data-slot={instance.slot} data-presence={instance.presence}>
                 <span>{t(instance.slot === 0 ? 'agentDetailsSlotMain' : 'agentDetailsSlot', { slot: String(instance.slot) })}</span>
-                <span>{presenceLabel(slotPresence(status, instance.presence), t)}</span>
+                {!idleSlot(instance) && <span>{presenceLabel(slotPresence(status, instance.slot, instance.presence), t)}</span>}
                 {instance.sessionId === undefined
                   ? <span className={css.muted}>{t('agentDetailsSlotIdle')}</span>
                   : <button type="button" className={css.open} aria-label={t('agentDetailsOpen', { id: instance.sessionId })} onClick={() => { openSlot(instance.sessionId!) }}><code>{shortSessionId(instance.sessionId)}</code></button>}

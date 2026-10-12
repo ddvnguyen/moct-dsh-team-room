@@ -55,6 +55,25 @@ describe('Agent detail instance slots', () => {
     expect(openMemberSession).toHaveBeenCalledWith('session:bbbbbbbb-1', expect.any(Function))
   })
 
+  it('keeps the seat diagnostic on slot 0 only, and an idle slot reads idle rather than unavailable', () => {
+    const status = { ...statusWith([
+      { slot: 0, sessionId: 'session:aaaaaaaa-0', presence: 'unavailable', threadRefs: [] },
+      { slot: 1, sessionId: 'session:bbbbbbbb-1', presence: 'available', threadRefs: [] },
+      { slot: 2, presence: 'unavailable', threadRefs: [] },
+      { slot: 3, presence: 'error', threadRefs: [] },
+    ]), diagnostic: { class: 'repairable', detail: 'model route refused' } } as unknown as AgentTeamClientMemberStatus
+    renderDetail(status)
+    const rows = document.querySelectorAll('[data-slot]')
+    expect(rows[0]!.textContent).toContain('statusUnavailable: model route refused')
+    expect(rows[1]!.textContent).not.toContain('model route refused')
+    // Idle-ended: one idle label, no alarm.
+    expect(rows[2]!.textContent).toContain('agentDetailsSlotIdle')
+    expect(rows[2]!.textContent).not.toContain('statusUnavailable')
+    // A failed slot with no Session still states the failure.
+    expect(rows[3]!.textContent).toContain('statusError')
+    expect(rows[3]!.textContent).not.toContain('model route refused')
+  })
+
   it('shows no slot section for a single-instance seat', () => {
     renderDetail(statusWith([{ slot: 0, sessionId: 'session:aaaaaaaa-0', presence: 'available', threadRefs: [] }]))
     expect(document.querySelector('[data-team-agent-slots]')).toBeNull()
