@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentTeamMemberId, AgentTeamMessageRef, AgentTeamThreadReplyStat } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamMemberId, AgentTeamMessageRef, AgentTeamThreadReplyStat } from 'moct-dsh-team-room/types'
 import { formatSeconds, formatTokens, replyStatsView, UNKNOWN } from '../src/client/reply-stats.ts'
 
 /** A reply stat with the Turn's usage; unset fields take the 1.2k / 340 / 12s / 7 tools fixture. */

@@ -11,7 +11,7 @@ import type {
   AgentTeamThreadRef,
   AgentTeamThreadTurnFailure,
   AgentTeamView,
-} from '@contexera/dsh-agent-team/types'
+} from 'moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'

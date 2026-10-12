@@ -57,7 +57,7 @@ import type {
   AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
-} from '@contexera/dsh-agent-team/types'
+} from 'moct-dsh-team-room/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
 import type { TeamChangeListener, TeamChangeScope } from './team-changes.ts'

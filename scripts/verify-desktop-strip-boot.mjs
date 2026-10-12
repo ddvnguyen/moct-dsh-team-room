@@ -10,7 +10,7 @@
  *
  * Layout under a temp dir (never the live profile or Host):
  *   gen/cordis.yml                                  rows under test
- *   gen/node_modules/@contexera/dsh-agent-team/      REAL COPY of our packed
+ *   gen/node_modules/moct-dsh-team-room/      REAL COPY of our packed
  *     package.json + packages/agent-team/lib        files (a symlink would
  *                                                   resolve back into this
  *                                                   repo and defeat the strip)
@@ -63,7 +63,7 @@ try {
   }
 
   // 1. Our own files enter the generation as a real copy.
-  const ownTarget = join(genModules, '@contexera/dsh-agent-team')
+  const ownTarget = join(genModules, 'moct-dsh-team-room')
   await mkdir(ownTarget, { recursive: true })
   await cp(join(root, 'package.json'), join(ownTarget, 'package.json'))
   await cp(join(root, 'cordis.patch.yml'), join(ownTarget, 'cordis.patch.yml'))
@@ -101,7 +101,7 @@ try {
     '  config:',
     `    root: ${JSON.stringify(storages)}`,
     '- id: storage-sqlite',
-    "  name: '@contexera/dsh-agent-team/sqlite-backend'",
+    "  name: 'moct-dsh-team-room/sqlite-backend'",
     '  config:',
     `    path: ${JSON.stringify(join(storages, 'agent_team.sqlite'))}`,
     '    journalMode: delete',

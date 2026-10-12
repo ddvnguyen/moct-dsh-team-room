@@ -28,8 +28,8 @@ import type {
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateMemberRequest,
   AgentTeamViewRequest,
-} from '@contexera/dsh-agent-team/types'
-import agentTeamRemote from '@contexera/dsh-agent-team/remote'
+} from 'moct-dsh-team-room/types'
+import agentTeamRemote from 'moct-dsh-team-room/remote'
 import type {} from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'

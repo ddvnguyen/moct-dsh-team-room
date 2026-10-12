@@ -19,7 +19,7 @@
  * context-continuity engine's codec, which Team constructs with its own plugin
  * identity and prose (`context-continuity-host.ts`): one writer, so the
  * envelope Team reads back can never drift from the one it wrote.
- * @module @contexera/dsh-agent-team/context-source
+ * @module moct-dsh-team-room/context-source
  */
 
 import type { ContextFormed, ContextSnapshotSection, MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'

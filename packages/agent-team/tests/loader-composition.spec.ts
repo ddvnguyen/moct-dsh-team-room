@@ -36,7 +36,7 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
     '  config:',
     '    backend: memory',
     '- id: agent-team',
-    "  name: '@contexera/dsh-agent-team/host'",
+    "  name: 'moct-dsh-team-room/host'",
     '',
   ].join('\n'))
 
@@ -59,7 +59,7 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
     ['@deepseek-ai/dsh-storage', Storage],
     ['test-memory-storage', memoryPlugin],
     ['@deepseek-ai/dsh-storage-domain', storageDomain],
-    ['@contexera/dsh-agent-team/host', { default: AgentTeam }],
+    ['moct-dsh-team-room/host', { default: AgentTeam }],
   ])
 
   const ctx = new Context()
