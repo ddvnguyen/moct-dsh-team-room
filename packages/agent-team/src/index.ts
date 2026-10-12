@@ -714,11 +714,13 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Host activity feed (A13 v2): in-memory only, folded from session events. */
   private readonly activityFeed = new AgentTeamActivityFeed({
-    identify: memberId => this.activityIdentity(memberId),
+    identify: (memberId, slot) => this.activityIdentity(memberId, slot),
     invalidate: memberId => this.invalidateActivity(memberId),
   })
   /** Each seat's Thread for its running Turn, from the Turn's delivery notices. */
   private readonly activityThreads = new Map<AgentTeamMemberId, AgentTeamThreadRef>()
+  /** Each extra slot's Thread for its running Turn, from the slot's own delivery notice. */
+  private readonly slotActivityThreads = new Map<string, AgentTeamThreadRef>()
   /** Activity wake epoch: a process-local counter that never takes part in a projection comparison. */
   private activityEpoch = 0
 
@@ -1082,7 +1084,10 @@ export default class AgentTeam extends TypertRemoteService {
     ), 'agentTeam.contextProjection')
     this.ctx.on('agent/error', ({ agent, error }) => {
       const member = this.memberForAgent(agent)
-      if (member === undefined) return
+      if (member === undefined) {
+        this.onSlotError(agent)
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       this.setMemberFailure(member.memberId, 'runtime', message)
       this.activityThreads.delete(member.memberId)
@@ -1135,7 +1140,10 @@ export default class AgentTeam extends TypertRemoteService {
     // any tool call streams, the map lookup succeeds.
     this.ctx.on('session/event', (session, event) => {
       const memberId = this.memberBySessionId.get(session.id)
-      if (memberId === undefined) return
+      if (memberId === undefined) {
+        this.onSlotSessionEvent(session.id, event)
+        return
+      }
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
       this.turnRecorder.onSessionEvent(memberId, session.id, event)
@@ -3915,12 +3923,12 @@ export default class AgentTeam extends TypertRemoteService {
     return workspace
   }
 
-  /** A seat's '@handle' and the Thread its running Turn was delivered for; undefined for an unknown seat. */
-  private activityIdentity(memberId: AgentTeamMemberId): { readonly handle: string; readonly threadRef?: AgentTeamThreadRef } | undefined {
+  /** A seat's '@handle' and the Thread its slot's running Turn was delivered for; undefined for an unknown seat. */
+  private activityIdentity(memberId: AgentTeamMemberId, slot: number): { readonly handle: string; readonly threadRef?: AgentTeamThreadRef } | undefined {
     const member = this.ledger?.getMember(memberId)
     if (member === undefined) return undefined
     const handle = member.handle.startsWith('@') ? member.handle : `@${member.handle}`
-    const threadRef = this.activityThreads.get(memberId)
+    const threadRef = slot === 0 ? this.activityThreads.get(memberId) : this.slotActivityThreads.get(slotKey(memberId, slot))
     return threadRef === undefined ? { handle } : { handle, threadRef }
   }
 
@@ -4253,6 +4261,9 @@ export default class AgentTeam extends TypertRemoteService {
     ]))
     if (this.notifiedSlotInbox.get(key) === signature) return
     this.notifiedSlotInbox.set(key, signature)
+    const threadRef = notifications[0]?.item.thread.threadRef
+    if (threadRef === undefined) this.slotActivityThreads.delete(key)
+    else this.slotActivityThreads.set(key, threadRef)
     const text = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
     const facts = this.notificationIdentity(notifications)
     void this.ensureSlot(member, slot).then(handle => {
@@ -4343,6 +4354,32 @@ export default class AgentTeam extends TypertRemoteService {
     return { handle, selection }
   }
 
+  /** The live slot behind a Session id, or undefined when the Session is not a current extra slot. */
+  private liveSlotOf(sessionId: SessionId): { readonly memberId: AgentTeamMemberId; readonly slot: number; readonly handle: AgentHandle } | undefined {
+    const entry = this.slotBySessionId.get(sessionId)
+    if (entry === undefined) return undefined
+    const handle = this.slotHandles.get(entry.memberId)?.get(entry.slot)
+    if (handle === undefined || handle.agent.id !== sessionId) return undefined
+    return { ...entry, handle }
+  }
+
+  /** Extra-slot session events feed the activity line of that slot (contract v2 §3, D6). */
+  private onSlotSessionEvent(sessionId: SessionId, event: SessionEvent): void {
+    const live = this.liveSlotOf(sessionId)
+    if (live === undefined) return
+    this.activityFeed.onSessionEvent(live.memberId, event, live.slot)
+  }
+
+  /** A failed extra slot ends its running Turn's activity; presence reads the error from the Agent itself. */
+  private onSlotError(agent: Agent): void {
+    const live = this.liveSlotOf(agent.id)
+    if (live === undefined) return
+    this.slotActivityThreads.delete(slotKey(live.memberId, live.slot))
+    this.activityFeed.onAgentError(live.memberId, live.slot)
+    const member = this.requireLedger().getMember(live.memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+  }
+
   /** Extra-slot status changes: presence follows them, and an idle slot ends after SLOT_IDLE_END_MS. */
   private onSlotStatus(agent: Agent, status: string): void {
     const entry = this.slotBySessionId.get(agent.id)
@@ -4352,6 +4389,8 @@ export default class AgentTeam extends TypertRemoteService {
     if (timer !== undefined) clearTimeout(timer)
     this.slotIdleTimers.delete(key)
     if (status === 'idle') {
+      this.slotActivityThreads.delete(key)
+      this.activityFeed.onAgentIdle(entry.memberId, entry.slot)
       const next = setTimeout(() => { void this.endSlot(entry.memberId, entry.slot) }, SLOT_IDLE_END_MS)
       next.unref?.()
       this.slotIdleTimers.set(key, next)
@@ -4375,6 +4414,8 @@ export default class AgentTeam extends TypertRemoteService {
     this.slotBySessionId.delete(handle.agent.id)
     this.slotSelections.delete(key)
     this.notifiedSlotInbox.delete(key)
+    this.slotActivityThreads.delete(key)
+    this.activityFeed.onAgentIdle(memberId, slot)
     await handle.dispose()
     this.ctx.logger.info(`agent-team: ${this.memberScope(memberId, handle.agent.id)} instance slot ${slot} ended while idle; its Thread bindings stay`)
     const member = this.requireLedger().getMember(memberId)
@@ -4395,6 +4436,8 @@ export default class AgentTeam extends TypertRemoteService {
       this.slotBySessionId.delete(handle.agent.id)
       this.slotSelections.delete(key)
       this.notifiedSlotInbox.delete(key)
+      this.slotActivityThreads.delete(key)
+      this.activityFeed.onAgentIdle(memberId, slot)
     }
     await Promise.all([...slots.values()].map(handle => handle.dispose()))
   }

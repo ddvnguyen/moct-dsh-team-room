@@ -92,6 +92,7 @@ async function seat(ctx: Context, channelRef: AgentTeamChannelRef, options: { re
   })
   const slotZero = fakeAgent(sessionId, options.slotZero)
   ctx.agentTeam['handles'].set(memberId, { agent: slotZero.agent, dispose: async () => {} })
+  ctx.agentTeam['memberBySessionId'].set(sessionId, memberId)
   const spawned: Array<{ readonly slot: number; readonly fake: FakeAgent }> = []
   ;(ctx.agentTeam as unknown as { spawnSlotAgent: unknown }).spawnSlotAgent = async (_member: unknown, slot: number) => {
     const fake = fakeAgent(`agent-team-slot-${slot}-${spawned.length + 1}`, 'idle')
@@ -150,6 +151,43 @@ describe('multi-instance slot router (contract v2)', () => {
     expect(spawned[1]!.fake.agent.session.id).not.toBe(spawned[0]!.fake.agent.session.id)
     expect(slotZero.calls.some(message => noticeText(message).includes(thread))).toBe(false)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('a slot reports its own activity line (D6): slot field, its Thread, and an end on idle or error', async () => {
+    const { ctx } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('mi-act-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const { memberId, slotZero, spawned } = await seat(ctx, channel.channel.channelRef, { slotZero: 'running' })
+    const sent = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId('mi-act-send'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Task D for @worker', recipients: [memberId] })
+    if (sent.kind !== 'committed') throw new Error('send must commit')
+    const thread = sent.thread.threadRef as AgentTeamThreadRef
+    await vi.waitFor(() => { expect(spawned[0]?.fake.calls).toHaveLength(1) })
+    const slotAgent = spawned[0]!.fake.agent
+    const event = (type: string, data: Record<string, unknown>) => ({ type, seq: 1, time: Date.now(), data }) as never
+    // The projection registry also folds session events: give it the minimal Session it reads.
+    const sessionOf = (agent: Agent) => ({ id: agent.id, header: {}, inheritedEventCount: 0, seq: 0, snapshotEvents: () => [] }) as never
+
+    // Both instances of one seat run at once: two lines, told apart by `slot`.
+    ctx.emit('session/event', sessionOf(slotZero.agent), event('step/start', { turn: 1, step: 1 }))
+    ctx.emit('session/event', sessionOf(slotAgent), event('step/start', { turn: 1, step: 1 }))
+    ctx.emit('session/event', sessionOf(slotAgent), event('tool/call', { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: JSON.stringify({ path: '/w/notes.md' }) }))
+    const both = ctx.agentTeam.memberActivity({ workspaceId: alpha }).activities.filter(activity => activity.memberId === memberId)
+    expect(both.map(activity => activity.slot ?? 0)).toEqual([0, 1])
+    expect(both.find(activity => activity.slot === undefined)).toMatchObject({ stepCount: 1, toolCount: 0 })
+    expect(both.find(activity => activity.slot === 1)).toMatchObject({ handle: '@worker', threadRef: thread, stepCount: 1, toolCount: 1, current: { tool: 'read', label: 'read notes.md' } })
+    // The Thread filter finds the slot that works on it.
+    expect(ctx.agentTeam.memberActivity({ workspaceId: alpha, threadRef: thread }).activities.map(activity => activity.slot)).toEqual([1])
+
+    // The slot going idle ends only its own line.
+    ctx.emit('agent/status', { agent: slotAgent, status: 'idle' } as never)
+    expect(ctx.agentTeam.memberActivity({ workspaceId: alpha }).activities.filter(activity => activity.memberId === memberId).map(activity => activity.slot)).toEqual([undefined])
+    // A slot error ends its line too, and a Session that is no longer a live slot is ignored.
+    ctx.emit('session/event', sessionOf(slotAgent), event('step/start', { turn: 2, step: 1 }))
+    ctx.emit('agent/error', { agent: slotAgent, error: new Error('boom') } as never)
+    expect(ctx.agentTeam.memberActivity({ workspaceId: alpha }).activities.some(activity => activity.slot === 1)).toBe(false)
+    expect(await ctx.agentTeam['endSlot'](memberId, 1)).toBe(true)
+    ctx.emit('session/event', sessionOf(slotAgent), event('step/start', { turn: 3, step: 1 }))
+    expect(ctx.agentTeam.memberActivity({ workspaceId: alpha }).activities.some(activity => activity.slot === 1)).toBe(false)
   })
 
   it('takes an unbound Thread on an idle slot 0 and binds it there', async () => {
