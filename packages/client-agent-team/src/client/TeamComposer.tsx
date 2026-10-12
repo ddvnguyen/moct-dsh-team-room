@@ -23,7 +23,15 @@ interface TriggerMatch {
 }
 
 /** One pickable row: the fixed @all expansion or one concrete member. */
-type MentionOption = { readonly kind: 'all' } | { readonly kind: 'member'; readonly status: AgentTeamClientMemberStatus }
+/**
+ * How directly a mention reaches a Member: 0 = follows this Thread (a pick
+ * delivers at once), 1 = takes part in the Channel but not this Thread, 2 = the
+ * rest of the Workspace. Ranking and row styling both read this, so the two can
+ * never disagree about which tier a Member is in.
+ */
+export type MentionTier = 0 | 1 | 2
+
+type MentionOption = { readonly kind: 'all' } | { readonly kind: 'member'; readonly status: AgentTeamClientMemberStatus; readonly tier: MentionTier }
 
 function findMention(draft: string, caret: number): MentionMatch | undefined {
   const beforeCaret = draft.slice(0, caret)
@@ -72,10 +80,25 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
-/** Thread followers rank first: mentioning them delivers directly, while a non-follower enters the two-send invite flow. */
-function rankMentionCandidates(candidates: readonly AgentTeamClientMemberStatus[], followers: ReadonlySet<AgentTeamMemberId> | undefined): readonly AgentTeamClientMemberStatus[] {
-  if (followers === undefined || followers.size === 0) return candidates
-  return [...candidates].sort((left, right) => Number(followers.has(right.member.memberId)) - Number(followers.has(left.member.memberId)))
+/**
+ * Ranks mention candidates by how directly a pick reaches them: this Thread's
+ * followers first (a mention delivers there at once), then Members taking part
+ * in the Channel through another Thread, then the rest of the Workspace. The
+ * order is a hint for the picker only — every tier stays eligible, because the
+ * ledger accepts all of them; a lower tier only means the Host may ask the
+ * Human to confirm before the Member is pulled in.
+ */
+function mentionTier(status: AgentTeamClientMemberStatus, followers: ReadonlySet<AgentTeamMemberId> | undefined,
+  channelPeers: ReadonlySet<AgentTeamMemberId> | undefined): MentionTier {
+  if (followers?.has(status.member.memberId) === true) return 0
+  if (channelPeers?.has(status.member.memberId) === true) return 1
+  return 2
+}
+
+function rankMentionCandidates(candidates: readonly AgentTeamClientMemberStatus[], followers: ReadonlySet<AgentTeamMemberId> | undefined,
+  channelPeers: ReadonlySet<AgentTeamMemberId> | undefined): readonly AgentTeamClientMemberStatus[] {
+  if ((followers === undefined || followers.size === 0) && (channelPeers === undefined || channelPeers.size === 0)) return candidates
+  return [...candidates].sort((left, right) => mentionTier(left, followers, channelPeers) - mentionTier(right, followers, channelPeers))
 }
 
 /** One object URL per draft file; revoked when the draft is removed. */
@@ -104,10 +127,12 @@ function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], store
   return members[0]!.member.memberId
 }
 
-export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, onManageMembers, activity, t }: {
+export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, onManageMembers, activity, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
+  /** Members taking part in the Channel but not following this Thread; they rank above the rest of the Workspace. */
+  readonly channelPeerMemberIds?: ReadonlySet<AgentTeamMemberId>
   /**
    * The draft cache this composer subscribes to: owning the subscription here
    * instead of in the hosting page keeps a keystroke from re-rendering the
@@ -172,10 +197,10 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const [triggerHighlight, setTriggerHighlight] = useState(0)
   // @all is a composer-layer expansion of the same eligibility filter a
   // handle pick uses; the fixed row stays on top of the matching members.
-  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query, humanMemberId), followerMemberIds)
+  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query, humanMemberId), followerMemberIds, channelPeerMemberIds)
   const options: readonly MentionOption[] = mention !== undefined && 'all'.startsWith(mention.query.toLocaleLowerCase())
-    ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status }))]
-    : memberCandidates.map(status => ({ kind: 'member' as const, status }))
+    ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status, tier: mentionTier(status, followerMemberIds, channelPeerMemberIds) }))]
+    : memberCandidates.map(status => ({ kind: 'member' as const, status, tier: mentionTier(status, followerMemberIds, channelPeerMemberIds) }))
   const menuOpen = mention !== undefined && options.length > 0
   const activeOption = options[highlight]
   const activeOptionKey = activeOption === undefined ? undefined : activeOption.kind === 'all' ? 'all' : activeOption.status.member.memberId
@@ -189,7 +214,10 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const triggerOptions = [...triggerGroups.commands, ...triggerGroups.skills].filter(item => item.kind !== 'notice')
   const activeTriggerOption = triggerOptions[triggerHighlight]
   const triggerListId = 'team-trigger-suggestions'
-  const allCount = allMentionMembers(members).length
+  // `@all` stands for the Channel's own participants, not every name the body
+  // could address — the same split the Host's allRecipientsFor makes.
+  const allMembers = channelPeerMemberIds === undefined ? members : members.filter(status => channelPeerMemberIds.has(status.member.memberId))
+  const allCount = allMentionMembers(allMembers).length
   const listId = 'team-mention-suggestions'
   const suggestionOpen = menuOpen || triggerMenuOpen
   const activeSuggestionKey = menuOpen ? activeOptionKey : activeTriggerOption === undefined ? undefined : activeTriggerOption.kind + ':' + activeTriggerOption.name
@@ -378,7 +406,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
       const nextDraft = `${draft.slice(0, mention.start)}@all ${draft.slice(mention.end)}`
       const nextCaret = mention.start + '@all '.length
       const nextRecipients = new Set(recipients)
-      for (const status of allMentionMembers(members)) nextRecipients.add(status.member.memberId)
+      for (const status of allMentionMembers(allMembers)) nextRecipients.add(status.member.memberId)
       commitMention(nextDraft, nextCaret, nextRecipients)
       return
     }
@@ -557,6 +585,9 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                   ref={selected ? activeOptionRef : undefined}
                   onMouseDown={event => { event.preventDefault() }}
                   onClick={() => { selectOption(option) }}
+                  // How directly a pick reaches this Member; the row's styling
+                  // and the sort order read the same tier.
+                  data-mention-tier={option.tier}
                 >
                   <TeamPresenceDot status={option.status} t={t} />
                   <span className={css.mentionName}>@{option.status.member.handle}</span>
