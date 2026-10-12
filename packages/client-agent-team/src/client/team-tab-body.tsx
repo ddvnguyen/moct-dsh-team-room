@@ -46,9 +46,12 @@ export function renderTeamTabBody(
   seat: TeamSidebarProps,
   props: NativeTabRenderProps,
 ): ReturnType<typeof createElement> {
-  // The host props ride along untouched: the seat's `useWorkspaces`/`openSession`
-  // are the same shape the framework hands the rail seat, and the host's own
-  // wrappings (session/workspace projections narrowed to the current automation
-  // run) are what make the tab show the same channels the rail shows.
-  return createElement(TeamWorkspaceBrowser, { ...seat, ...props, wide: true, agentsInSettings: true } as unknown as Parameters<typeof TeamWorkspaceBrowser>[0])
+  // The host props ride along untouched where the seat has no opinion: the
+  // seat carries no `useWorkspaces`/`openSession`/`useSessions`/`renderSlot`, so
+  // the host's own wrappings (session/workspace projections narrowed to the
+  // current automation run) are what make the tab show the same channels the rail
+  // shows. The seat goes last: the strip wraps the workspace entry's props, which
+  // include that entry's own `t` (the workspace dictionary) and navigation
+  // actions, and neither may replace the Team's.
+  return createElement(TeamWorkspaceBrowser, { ...props, ...seat, wide: true, agentsInSettings: true } as unknown as Parameters<typeof TeamWorkspaceBrowser>[0])
 }
