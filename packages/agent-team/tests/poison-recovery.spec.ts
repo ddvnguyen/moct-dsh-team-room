@@ -71,7 +71,7 @@ async function harness(config?: PoisonRecoveryConfig): Promise<TeamHarness> {
 async function poisonHost(config?: PoisonRecoveryConfig) {
   const test = await harness(config)
   const host = test.ctx.agentTeam
-  const presets = test.ctx.agentPresets as { mount: () => Promise<never>; composedPreset?: (agentCtx: unknown) => string }
+  const presets = test.ctx.agentPresets as unknown as { mount: () => Promise<never>; composedPreset?: (agentCtx: unknown) => string }
   presets.composedPreset = () => 'team-member'
   const channel = await host.createChannel({ requestId: requestId('pr-channel'), workspaceId: alpha, name: 'pr', description: '' })
   const member = (await host.addMember({
@@ -106,13 +106,15 @@ function operationRows(test: TeamHarness): OperationRow[] {
 }
 
 /** Team-message ops that are the poison notice (the body nests under data.message). */
-function poisonCards(test: TeamHarness): Array<{ readonly data: { readonly message: { readonly body: string } } }> {
-  return operationRows(test).filter((operation): operation is { readonly data: { readonly message: { readonly body: string } } } =>
+type PoisonCardRow = { readonly kind: string; readonly data: { readonly message: { readonly body: string } } }
+
+function poisonCards(test: TeamHarness): PoisonCardRow[] {
+  return operationRows(test).filter((operation): operation is PoisonCardRow =>
     operation.kind === 'team/message-sent'
     && String((operation.data as { message?: { body?: string } }).message?.body ?? '').includes('Provider-poisoned seat:'))
 }
 
-function rowFor(host: { members(): readonly { member: { memberId: AgentTeamMemberId } }[] }, memberId: AgentTeamMemberId) {
+function rowFor<T extends { readonly member: { readonly memberId: AgentTeamMemberId } }>(host: { members(): readonly T[] }, memberId: AgentTeamMemberId): T | undefined {
   return host.members().find(status => status.member.memberId === memberId)
 }
 
@@ -385,6 +387,6 @@ describe('poisoned-seat auto-recovery (task-11 item 2)', () => {
     expect(swap).toBeGreaterThanOrEqual(0)
     expect(swap).toBeLessThan(renew)
     expect((rows[swap]!.data as { member: { model?: unknown } }).member.model).toEqual({ provider: 'mock2', model: 'mock-backup' })
-    await vi.waitFor(() => expect(rowFor(host as never, member.memberId)?.diagnostic?.detail ?? '').not.toContain('provider-poisoned'))
+    await vi.waitFor(() => expect(rowFor(host, member.memberId)?.diagnostic?.detail ?? '').not.toContain('provider-poisoned'))
   })
 })
