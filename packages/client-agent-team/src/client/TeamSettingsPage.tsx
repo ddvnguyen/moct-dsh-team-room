@@ -12,7 +12,7 @@
  * `team-settings` section); the intro says where.
  */
 
-import { useState, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { TeamSidebarProps } from './slots.ts'
 import type { TeamWorkspaceChoice } from './TeamWorkspaceSelector.tsx'
@@ -35,7 +35,9 @@ export type TeamSettingsPageProps = Pick<TeamSidebarProps,
 }
 
 export function TeamSettingsPage({ workspaceList, initialWorkspaceId, t, ...agents }: TeamSettingsPageProps) {
-  const workspaces = useSyncExternalStore(workspaceList.subscribe, () => workspaceList.getSnapshot().items, () => workspaceList.getSnapshot().items)
+  const subscribe = useCallback((listener: () => void) => workspaceList.subscribe(listener), [workspaceList])
+  const getWorkspaces = useCallback(() => workspaceList.getSnapshot().items, [workspaceList])
+  const workspaces = useSyncExternalStore(subscribe, getWorkspaces, getWorkspaces)
   const [chosen, setChosen] = useState<WorkspaceId | undefined>(initialWorkspaceId)
   const selectedId = chosen !== undefined && workspaces.some(workspace => workspace.workspaceId === chosen)
     ? chosen
