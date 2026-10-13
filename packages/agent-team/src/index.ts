@@ -13,7 +13,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
-import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, estimateTokens, selectSummaryWindow, summaryDue, type ThreadSummaryPolicy } from './thread-summary.ts'
+import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, THREAD_SEED_TOKEN_BUDGET, buildThreadSeed, estimateTokens, selectSummaryWindow, summaryDue, type SummaryMessageLine, type ThreadSeed, type ThreadSummaryPolicy } from './thread-summary.ts'
 import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
@@ -110,6 +110,7 @@ import type {
   AgentTeamMessageAttachment,
   AgentTeamMemberEffect,
   AgentTeamMemberId,
+  AgentTeamMessage,
   AgentTeamMemberResult,
   AgentTeamMembersRequest,
   AgentTeamResolveTaskRefsRequest,
@@ -610,6 +611,8 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly routedSlots = new Map<string, number>()
   /** Last delivered Inbox signature per extra slot (slot 0 keeps `notifiedInbox`). */
   private readonly notifiedSlotInbox = new Map<string, string>()
+  /** Threads already delivered to each live extra-slot Session, seeded or not (A7b): only a Session's first delivery of a Thread seeds; a respawned slot is a new Session. */
+  private readonly seededSlotThreads = new Map<SessionId, Set<AgentTeamThreadRef>>()
   /** Idle-end timers of extra slots; an ended slot keeps its bindings and respawns on demand. */
   private readonly slotIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
@@ -4303,25 +4306,71 @@ export default class AgentTeam extends TypertRemoteService {
     const threadRef = notifications[0]?.item.thread.threadRef
     if (threadRef === undefined) this.slotActivityThreads.delete(key)
     else this.slotActivityThreads.set(key, threadRef)
-    const text = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
+    const notice = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
     const facts = this.notificationIdentity(notifications)
     void this.ensureSlot(member, slot).then(handle => {
       if (handle === undefined) throw new Error('the slot did not start')
       const agent = handle.agent
       const existing = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message => this.isInboxNotice(message))
       if (existing !== undefined) agent.inbox.remove(existing.id)
+      // A7b: a Thread this Session has not seen opens with its context, ahead of the notice facts.
+      const seeds = this.threadSeeds(agent.id, notifications, notice.length)
       const hint = createUserMessage({
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text: [...seeds.map(entry => entry.seed.text), notice].join('\n\n') }],
         source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
       })
       if (agent.status === 'idle') agent.followup(hint)
       else agent.steer(hint)
+      const delivered = this.seededSlotThreads.get(agent.id) ?? new Set<AgentTeamThreadRef>()
+      for (const entry of notifications) delivered.add(entry.item.thread.threadRef)
+      this.seededSlotThreads.set(agent.id, delivered)
+      for (const { threadRef, seed } of seeds) {
+        // Refs and counts only: a seed's Message bodies never reach the log.
+        this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} seeded Thread '${threadRef}' from ${seed.generation === undefined ? 'no summary' : `summary generation ${seed.generation}`} + ${seed.messageRefs.length} Message(s) [${seed.messageRefs.join(', ')}], ${seed.omitted} not shown`)
+      }
       this.slotRecorder(member.memberId, slot).noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
       this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} (${facts}): not yet read by the model`)
     }).catch((error: unknown) => {
       this.notifiedSlotInbox.delete(key)
       this.ctx.logger.warn(`agent-team: Team Inbox notice delivery failed for ${this.memberScope(member.memberId)} instance slot ${slot} (${facts}): ${failureDetail(error)}; the binding stands and the next fact touching this Thread retries it`)
     })
+  }
+
+  /**
+   * A7b: the context block for each notified Thread this slot Session has not been delivered yet: the
+   * latest summary (else the anchor) and the newest Messages before the slot's unread batch, which
+   * the notice and the slot's own read carry. Seeds share what the notice leaves of its 32 KiB cap.
+   * Slot 0 is the long-lived home Session; its cold-restart seed is A6, not this.
+   */
+  private threadSeeds(sessionId: SessionId, notifications: ReturnType<AgentTeamLedger['notificationFacts']>, noticeLength: number): readonly { readonly threadRef: AgentTeamThreadRef; readonly seed: ThreadSeed }[] {
+    const ledger = this.requireLedger()
+    const seeded = this.seededSlotThreads.get(sessionId)
+    const line = (message: AgentTeamMessage): SummaryMessageLine => ({
+      messageRef: message.messageRef,
+      sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? message.sender,
+      body: this.boundedNotificationBody(message.body),
+    })
+    let characters = 32 * 1024 - noticeLength
+    const seeds: { readonly threadRef: AgentTeamThreadRef; readonly seed: ThreadSeed }[] = []
+    for (const { item, facts } of notifications) {
+      const threadRef = item.thread.threadRef
+      if (seeded?.has(threadRef) === true) continue
+      const unread = facts.filter(entry => entry.unread).map(entry => entry.fact.sequence)
+      const before = unread.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...unread)
+      const summary = ledger.latestThreadSummary(threadRef)
+      const messages = ledger.threadMessagesAfter(threadRef, summary?.coversThroughSequence ?? 0).filter(message => message.sequence < before)
+      const anchor = summary === undefined ? messages[0] : undefined
+      const seed = buildThreadSeed({
+        threadRef,
+        summary: summary === undefined ? undefined : { generation: summary.generation, text: summary.text, coversThroughSequence: summary.coversThroughSequence },
+        anchor: anchor === undefined ? undefined : line(anchor),
+        earlier: (anchor === undefined ? messages : messages.slice(1)).map(line),
+      }, { tokens: THREAD_SEED_TOKEN_BUDGET, characters: characters - 2 })
+      if (seed === undefined) continue
+      characters -= seed.text.length + 2
+      seeds.push({ threadRef, seed })
+    }
+    return seeds
   }
 
   /** The live Agent behind one extra slot, spawned once on demand (contract v2 §2a: lazy, respawned after an idle end). */
@@ -4466,6 +4515,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.slotIdleTimers.delete(key)
     this.slotHandles.get(memberId)?.delete(slot)
     this.slotBySessionId.delete(handle.agent.id)
+    this.seededSlotThreads.delete(handle.agent.id)
     this.slotSelections.delete(key)
     this.notifiedSlotInbox.delete(key)
     this.slotActivityThreads.delete(key)
@@ -4489,6 +4539,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (timer !== undefined) clearTimeout(timer)
       this.slotIdleTimers.delete(key)
       this.slotBySessionId.delete(handle.agent.id)
+      this.seededSlotThreads.delete(handle.agent.id)
       this.slotSelections.delete(key)
       this.notifiedSlotInbox.delete(key)
       this.slotActivityThreads.delete(key)
