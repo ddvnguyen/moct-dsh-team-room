@@ -651,6 +651,17 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     environmentFailure = message
   }
 
+  // The bench Host runs without a MOCT backend, so every Team memory read
+  // answers the same BACKEND_UNAVAILABLE outcome the real Host gives then.
+  const memoryUnavailable = vi.fn(async () => ({
+    ok: true as const,
+    value: { ok: false as const, code: 'BACKEND_UNAVAILABLE', message: 'Team memory needs the MOCT Team Room backend.' },
+  }))
+  const memory = {
+    memoryList: memoryUnavailable, memoryRecord: memoryUnavailable, memoryRuleFeed: memoryUnavailable, memoryUsage: memoryUnavailable,
+    memorySettings: memoryUnavailable, updateMemorySettings: memoryUnavailable, memoryAct: memoryUnavailable,
+  }
+
   // rc.1: the runtime owns one TestRemote; the bench scripts the namespaces
   // the mounted features reach (remote.<name> injects included) and attaches
   // the change-stream and generated-remote-mount faces the shipped double
@@ -661,7 +672,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),

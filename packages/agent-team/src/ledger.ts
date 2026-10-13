@@ -4829,6 +4829,14 @@ export class AgentTeamLedger {
     }
   }
 
+  /** The Human Member the Team was initialized with; undefined before initialization. */
+  humanMemberId(): AgentTeamMemberId | undefined {
+    const operation = this.state.ordered[0]
+    if (operation === undefined) return undefined
+    this.assertInitializationRecord(operation)
+    return operation.data.humanMemberId
+  }
+
   private initialization(): AgentTeamInitializedOperation {
     const operation = this.state.ordered[0]
     if (operation === undefined) throw new Error('agent-team ledger is not initialized')

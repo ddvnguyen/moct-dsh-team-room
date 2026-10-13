@@ -137,3 +137,13 @@ Every step, the member-context row also injects a `<team-memory>` block as its o
 It opens with one line saying the notes are Team data to weigh and never override system, developer, user, or Workspace instructions, and a literal frame marker inside a record is escaped.
 
 The block comes from the backend's inject route for the current Task and Channel, cached for a minute; a down, slow (over 1.5 s), or pre-v8 backend yields no block and one warning per outage, and never fails or holds the step.
+
+## The Human's Memory page
+
+The human-only and curation verbs live on the Team Settings page instead, in a Memory section under the Agents for the same Workspace: records (the pending queue first), the task picture grouped by Channel, the rule feed, each home's use of the always-load cap, and the memory settings.
+
+The page reaches the backend through seven Host methods — `memoryList`, `memoryRecord`, `memoryRuleFeed`, `memoryUsage`, `memorySettings`, `updateMemorySettings`, `memoryAct`. Each request names only its Workspace, which must be one the Host knows; the Host adds the ledger's Human Member as the actor and reads with the whole Workspace in scope. A ledger with no Human Member refuses with `NO_HUMAN`.
+
+`memoryAct` takes a closed set of verbs: approve, retract, restore, purge, widen, edit, and pin. Purge needs `confirm` to be the record's title or id, checked against the record the Host reads, and a missing confirm is refused before any backend call. Widen needs `confirm: true`; the dialog first says how the expiry changes, and that a team-scope rule still needs the Human.
+
+`updateMemorySettings` writes only `expertApproval`, `orchestrators` (each one an agent Member of the Workspace), and `injectLayerTokens` (within the backend's bounds). Answers carry the backend's code, so a `CONFLICT` reloads the record instead of retrying. Record text renders as plain text, never as markup.

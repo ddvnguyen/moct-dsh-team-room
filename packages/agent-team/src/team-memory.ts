@@ -46,6 +46,9 @@ const ROLE_TTL_MS = 30_000
 const ROLE_FAILURE_TTL_MS = 10_000
 const MAX_GET_IDS = 20
 
+/** Backend JSON, as it arrives: record attrs and refusal details carry no narrower shape. */
+export type TeamMemoryJson = null | boolean | number | string | readonly TeamMemoryJson[] | { readonly [key: string]: TeamMemoryJson }
+
 export interface TeamMemoryHome { readonly kind: TeamMemoryHomeKind; readonly ref: string }
 
 export interface TeamMemoryRecord {
@@ -53,7 +56,7 @@ export interface TeamMemoryRecord {
   readonly type: TeamMemoryType
   readonly title: string | null
   readonly body: string | null
-  readonly attrs: Record<string, unknown> | null
+  readonly attrs: { readonly [key: string]: TeamMemoryJson } | null
   readonly home: TeamMemoryHome
   readonly status: string
   readonly flag: string | null
@@ -81,7 +84,7 @@ export interface TeamMemorySearchResult { readonly results: readonly TeamMemoryR
 export interface TeamMemoryGetResult { readonly records: readonly TeamMemoryRecord[]; readonly missing: readonly string[] }
 
 export interface TeamMemoryInjection {
-  readonly entries: readonly { readonly id: string; readonly type: TeamMemoryType; readonly title: string | null; readonly body: string | null; readonly attrs: Record<string, unknown> | null; readonly home: TeamMemoryHome; readonly pinned: boolean }[]
+  readonly entries: readonly { readonly id: string; readonly type: TeamMemoryType; readonly title: string | null; readonly body: string | null; readonly attrs: { readonly [key: string]: TeamMemoryJson } | null; readonly home: TeamMemoryHome; readonly pinned: boolean }[]
   readonly omitted: number
   readonly duplicates: number
   readonly conflicts: number
@@ -278,7 +281,12 @@ export class TeamMemoryClient {
     if (found.missing.length > 0) throw new TeamMemoryError(404, 'NOT_FOUND', `no memory record ${found.missing.join(', ')} in your scope`)
   }
 
-  private async request<T>(method: string, path: string, body: unknown, timeoutMs: number): Promise<T> {
+  /**
+   * The one transport to the backend, mapping refusals to TeamMemoryError.
+   * The Human Memory page (`team-memory-human.ts`) shares it; Member tools
+   * reach it only through `note`, `search` and `get` above.
+   */
+  async request<T>(method: string, path: string, body: unknown, timeoutMs: number = this.toolTimeoutMs): Promise<T> {
     let response: Response
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {

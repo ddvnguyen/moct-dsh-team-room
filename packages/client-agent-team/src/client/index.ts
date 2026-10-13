@@ -17,6 +17,11 @@ import type {
   AgentTeamJoinChannelRequest,
   AgentTeamMemberActivityRequest,
   AgentTeamMembersRequest,
+  AgentTeamMemoryActRequest,
+  AgentTeamMemoryListRequest,
+  AgentTeamMemoryRecordRequest,
+  AgentTeamMemorySettingsRequest,
+  AgentTeamMemoryWorkspaceRequest,
   AgentTeamPromoteThreadRequest,
   AgentTeamPutAttachmentRequest,
   AgentTeamRecoverMemberRequest,
@@ -26,6 +31,7 @@ import type {
   AgentTeamResolveTaskRefsRequest,
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveMessageRefsRequest,
+  AgentTeamTaskRef,
   AgentTeamTaskRequest,
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateMemberRequest,
@@ -56,6 +62,7 @@ import { createTeamTriggerCatalogLoader } from './trigger-catalog.ts'
 import { TeamPanelIcon } from './TeamPanelIcon.tsx'
 import { TeamSettingsPanelIcon } from './TeamSettingsPanelIcon.tsx'
 import { TeamSettingsPage } from './TeamSettingsPage.tsx'
+import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import { TeamMembersAction } from './TeamMembersAction.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
@@ -181,9 +188,44 @@ function registerTeamPanel(
       addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
       workspaceList: ctx.workspaces.list,
       initialWorkspaceId: () => navigation.getSnapshot().workspaceId,
+      memory: teamMemoryRemotes(ctx),
     }),
   }, TeamSettingsPage as never))
   return dropTeamRow
+}
+
+/**
+ * The Memory section's Host calls. Requests name only the Workspace; the Host
+ * adds the Human actor and the read scope from its ledger.
+ */
+function teamMemoryRemotes(ctx: ClientContext): TeamMemoryRemotes {
+  const agentTeam = ctx.remote.agentTeam
+  return {
+    list: (request: AgentTeamMemoryListRequest) => agentTeam.memoryList(request),
+    record: (request: AgentTeamMemoryRecordRequest) => agentTeam.memoryRecord(request),
+    ruleFeed: (request: AgentTeamMemoryWorkspaceRequest) => agentTeam.memoryRuleFeed(request),
+    usage: (request: AgentTeamMemoryWorkspaceRequest) => agentTeam.memoryUsage(request),
+    settings: (request: AgentTeamMemoryWorkspaceRequest) => agentTeam.memorySettings(request),
+    updateSettings: (request: AgentTeamMemorySettingsRequest) => agentTeam.updateMemorySettings(request),
+    act: (request: AgentTeamMemoryActRequest) => agentTeam.memoryAct(request),
+    // Task homes carry a Task ref; the task picture groups them by the
+    // Channel name the ledger resolves, and leaves out what it cannot.
+    taskChannels: async (workspaceId, taskRefs: readonly AgentTeamTaskRef[]) => {
+      if (taskRefs.length === 0) return {}
+      const [resolved, view] = await Promise.all([
+        agentTeam.resolveTaskRefs({ workspaceId, taskRefs }),
+        agentTeam.view({ workspaceId, limit: 1 }),
+      ])
+      if (!resolved.ok || !view.ok) return {}
+      const names = new Map(view.value.channels.map(channel => [channel.channelRef, channel.name] as const))
+      const channels: Record<string, string> = {}
+      for (const task of resolved.value.resolved) {
+        const name = names.get(task.channelRef)
+        if (name !== undefined) channels[task.taskRef] = name
+      }
+      return channels
+    },
+  }
 }
 
 /**

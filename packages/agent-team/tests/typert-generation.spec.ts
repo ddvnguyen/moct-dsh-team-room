@@ -41,6 +41,12 @@ describe('Agent Team generated Typert boundary', () => {
       'memberActivity',
       'memberSessions',
       'members',
+      'memoryAct',
+      'memoryList',
+      'memoryRecord',
+      'memoryRuleFeed',
+      'memorySettings',
+      'memoryUsage',
       'promoteThread',
       'putAttachment',
       'putHumanAvatar',
@@ -64,6 +70,7 @@ describe('Agent Team generated Typert boundary', () => {
       'threadTurnFailures',
       'updateChannel',
       'updateMember',
+      'updateMemorySettings',
       'view',
     ]
     expect(host.invocations.map(invocation => invocation.method).sort()).toEqual(expected)

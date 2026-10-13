@@ -99,3 +99,13 @@ preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用�
 块以一行说明开头：这些是需要权衡的 Team 数据，绝不覆盖 system、developer、user 或 Workspace 指令；记录中的字面边界标记会被转义。
 
 块来自 backend 针对当前 Task 与 Channel 的 inject 路由，缓存一分钟；backend 宕机、过慢（超过 1.5 秒）或早于 v8 时不注入任何块，每次中断只记一条 warning，绝不使该步失败或阻塞。
+
+## Human 的 Memory 页面
+
+只属于 Human 的动作和整理动作放在 Team Settings 页面上：同一 Workspace 的 Agents 下方有一个 Memory 区块，包含记录（pending 队列在前）、按 Channel 分组的 task picture、rule feed、每个 home 对 always-load 上限的占用，以及 memory 设置。
+
+页面通过七个 Host 方法访问 backend：`memoryList`、`memoryRecord`、`memoryRuleFeed`、`memoryUsage`、`memorySettings`、`updateMemorySettings`、`memoryAct`。每个请求只指定 Workspace，且必须是 Host 已知的 Workspace；Host 把 ledger 中的 Human Member 作为 actor，并以整个 Workspace 为范围读取。ledger 中没有 Human Member 时以 `NO_HUMAN` 拒绝。
+
+`memoryAct` 只接受一组封闭的动作：approve、retract、restore、purge、widen、edit、pin。purge 要求 `confirm` 等于记录的 title 或 id，并以 Host 读到的记录核对；缺少 confirm 时在任何 backend 调用之前拒绝。widen 要求 `confirm: true`；对话框先说明过期规则如何变化，以及 team 范围的 rule 仍需 Human 批准。
+
+`updateMemorySettings` 只写入 `expertApproval`、`orchestrators`（每个都须是该 Workspace 的 agent Member）和 `injectLayerTokens`（在 backend 的上下限之内）。返回值带有 backend 的 code，因此 `CONFLICT` 会重新加载记录而不是重试。记录文本一律按纯文本渲染，绝不作为标记解析。
