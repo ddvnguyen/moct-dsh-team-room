@@ -53,6 +53,8 @@ const HOMES: readonly TeamMemoryHomeKind[] = ['team', 'channel', 'task', 'expert
 /** Types the Team always sees, wherever they are homed (design v5 §2). */
 const TEAM_VISIBLE: ReadonlySet<string> = new Set(['decision', 'task', 'branch'])
 const UNAVAILABLE: ReadonlySet<string> = new Set(['BACKEND_UNAVAILABLE', 'MEMORY_UNSUPPORTED'])
+/** One page of a list read: the backend refuses a search limit above 20. */
+export const MEMORY_PAGE = 20
 
 /** Fold a transport failure, thrown or rejected, into the same outcome shape as a backend refusal. */
 async function settle<T>(call: () => Promise<RemoteResult<Outcome<T>>>): Promise<Outcome<T>> {
@@ -112,35 +114,90 @@ interface SectionProps {
   readonly t: TeamMemoryPanelProps['t']
 }
 
+/**
+ * Pages of list reads, one stream per request, kept in stream order so the
+ * pending queue stays above active records however far either is paged. The
+ * backend answers at most `MEMORY_PAGE` records per read and an offset cursor
+ * for the rest; `loadMore` follows every stream that still has one.
+ */
+function usePagedRecords(streams: readonly AgentTeamMemoryListRequest[], memory: TeamMemoryRemotes, onOutcome: SectionProps['onOutcome']) {
+  const [pages, setPages] = useState<{ readonly records: readonly (readonly TeamMemoryRecord[])[]; readonly cursors: readonly (string | null)[] }>()
+  const [error, setError] = useState<string>()
+  const [loading, setLoading] = useState(false)
+
+  const read = useCallback((cursors: readonly (string | null)[] | undefined) => Promise.all(streams.map((request, index) => {
+    const cursor = cursors?.[index]
+    if (cursors !== undefined && cursor === null) return Promise.resolve(undefined)
+    return settle(() => memory.list({ ...request, limit: MEMORY_PAGE, ...(cursor === undefined || cursor === null ? {} : { cursor }) })).then(onOutcome)
+  })), [streams, memory, onOutcome])
+
+  useEffect(() => {
+    let live = true
+    void read(undefined).then(outcomes => {
+      if (!live) return
+      const failed = outcomes.find(outcome => outcome !== undefined && !outcome.ok)
+      if (failed !== undefined && !failed.ok) { setError(failed.message); return }
+      setError(undefined)
+      setPages({
+        records: outcomes.map(outcome => outcome?.ok ? outcome.value.results : []),
+        cursors: outcomes.map(outcome => outcome?.ok ? outcome.value.nextCursor : null),
+      })
+    })
+    return () => { live = false }
+  }, [read])
+
+  const loadMore = useCallback(async () => {
+    if (pages === undefined) return
+    setLoading(true)
+    const outcomes = await read(pages.cursors)
+    setLoading(false)
+    const failed = outcomes.find(outcome => outcome !== undefined && !outcome.ok)
+    if (failed !== undefined && !failed.ok) { setError(failed.message); return }
+    setPages({
+      records: pages.records.map((page, index) => {
+        const outcome = outcomes[index]
+        return outcome?.ok ? [...page, ...outcome.value.results] : page
+      }),
+      cursors: pages.cursors.map((cursor, index) => {
+        const outcome = outcomes[index]
+        return outcome === undefined ? cursor : outcome.ok ? outcome.value.nextCursor : null
+      }),
+    })
+  }, [pages, read])
+
+  const records = useMemo(() => pages?.records.flat(), [pages])
+  const hasMore = pages !== undefined && pages.cursors.some(cursor => cursor !== null)
+  return { records, error, hasMore, loading, loadMore }
+}
+
+function LoadMore({ loading, onLoad, shown, t }: { readonly loading: boolean; readonly onLoad: () => void; readonly shown: number; readonly t: TeamMemoryPanelProps['t'] }) {
+  return <div className={css.actions} data-memory-more>
+    <span className={css.meta}>{t('memoryShown', { count: shown })}</span>
+    <Button size="sm" variant="outline" disabled={loading} onClick={onLoad}>{t('memoryLoadMore')}</Button>
+  </div>
+}
+
 function MemoryRecords({ workspaceId, memory, onOutcome, t }: SectionProps) {
   const [q, setQ] = useState('')
   const [type, setType] = useState<TeamMemoryType | ''>('')
   const [home, setHome] = useState<TeamMemoryHomeKind | ''>('')
   const [status, setStatus] = useState<'live' | 'superseded' | 'retracted' | 'expired' | 'all'>('live')
-  const [records, setRecords] = useState<readonly TeamMemoryRecord[]>()
-  const [error, setError] = useState<string>()
   const [reload, setReload] = useState(0)
 
-  useEffect(() => {
-    let live = true
+  const streams = useMemo(() => {
     const base = {
       workspaceId,
       ...(q.trim() === '' ? {} : { q: q.trim() }),
       ...(type === '' ? {} : { types: [type] }),
       ...(home === '' ? {} : { homes: [home] }),
-      limit: 100,
     }
     // Live means pending first, then active: the queue the Human owes is on top.
     const statuses = status === 'live' ? ['pending', 'active'] as const : [status] as const
-    void Promise.all(statuses.map(entry => settle(() => memory.list({ ...base, status: entry })).then(onOutcome))).then(outcomes => {
-      if (!live) return
-      const failed = outcomes.find(outcome => !outcome.ok)
-      if (failed !== undefined && !failed.ok) { setError(failed.message); return }
-      setError(undefined)
-      setRecords(outcomes.flatMap(outcome => outcome.ok ? outcome.value.results : []))
-    })
-    return () => { live = false }
-  }, [workspaceId, memory, onOutcome, q, type, home, status, reload])
+    // A fresh array per `reload` re-reads after a write; the rows keep their keys.
+    void reload
+    return statuses.map((entry): AgentTeamMemoryListRequest => ({ ...base, status: entry }))
+  }, [workspaceId, q, type, home, status, reload])
+  const { records, error, hasMore, loading, loadMore } = usePagedRecords(streams, memory, onOutcome)
 
   return <div className={css.records}>
     <div className={css.filters}>
@@ -166,6 +223,7 @@ function MemoryRecords({ workspaceId, memory, onOutcome, t }: SectionProps) {
     <ul className={css.list}>
       {records?.map(record => <MemoryRecordRow key={record.id} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} record={record} onChanged={() => setReload(value => value + 1)} t={t} />)}
     </ul>
+    {hasMore && records !== undefined && <LoadMore loading={loading} onLoad={() => void loadMore()} shown={records.length} t={t} />}
   </div>
 }
 
@@ -308,25 +366,26 @@ function EditDialog({ record, busy, onCancel, onSave, t }: {
 
 /** Task records with their decisions and branches, grouped by the Channel each Task sits in. */
 function MemoryTaskPicture({ workspaceId, memory, onOutcome, t }: SectionProps) {
-  const [groups, setGroups] = useState<readonly { readonly channel: string; readonly tasks: readonly TeamMemoryRecord[] }[]>()
-  const [error, setError] = useState<string>()
+  const streams = useMemo(() => [{ workspaceId, types: ['task'], status: 'active' }] as const satisfies readonly AgentTeamMemoryListRequest[], [workspaceId])
+  const { records: tasks, error, hasMore, loading, loadMore } = usePagedRecords(streams, memory, onOutcome)
+  const [channels, setChannels] = useState<Readonly<Record<string, string>>>({})
   useEffect(() => {
+    if (tasks === undefined || tasks.length === 0) return
     let live = true
-    void settle(() => memory.list({ workspaceId, types: ['task'], status: 'active', limit: 100 })).then(onOutcome).then(async outcome => {
-      if (!live) return
-      if (!outcome.ok) { setError(outcome.message); return }
-      const tasks = outcome.value.results
-      const channels = await memory.taskChannels(workspaceId, tasks.map(task => task.home.ref as AgentTeamTaskRef)).catch(() => ({} as Readonly<Record<string, string>>))
-      if (!live) return
-      const byChannel = new Map<string, TeamMemoryRecord[]>()
-      for (const task of tasks) {
-        const channel = channels[task.home.ref] ?? t('memoryNoChannel')
-        byChannel.set(channel, [...(byChannel.get(channel) ?? []), task])
-      }
-      setGroups([...byChannel.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([channel, entries]) => ({ channel, tasks: entries })))
-    })
+    void memory.taskChannels(workspaceId, tasks.map(task => task.home.ref as AgentTeamTaskRef))
+      .catch(() => ({} as Readonly<Record<string, string>>))
+      .then(names => { if (live) setChannels(names) })
     return () => { live = false }
-  }, [workspaceId, memory, onOutcome, t])
+  }, [workspaceId, memory, tasks])
+  const groups = useMemo(() => {
+    if (tasks === undefined) return undefined
+    const byChannel = new Map<string, TeamMemoryRecord[]>()
+    for (const task of tasks) {
+      const channel = channels[task.home.ref] ?? t('memoryNoChannel')
+      byChannel.set(channel, [...(byChannel.get(channel) ?? []), task])
+    }
+    return [...byChannel.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([channel, entries]) => ({ channel, tasks: entries }))
+  }, [tasks, channels, t])
   if (error !== undefined) return <p className={css.error} role="alert">{error}</p>
   if (groups !== undefined && groups.length === 0) return <p className={css.empty}>{t('memoryNoTasks')}</p>
   return <div className={css.records}>
@@ -336,6 +395,7 @@ function MemoryTaskPicture({ workspaceId, memory, onOutcome, t }: SectionProps) 
         {group.tasks.map(task => <MemoryTaskRow key={task.id} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} task={task} t={t} />)}
       </ul>
     </section>)}
+    {hasMore && tasks !== undefined && <LoadMore loading={loading} onLoad={() => void loadMore()} shown={tasks.length} t={t} />}
   </div>
 }
 

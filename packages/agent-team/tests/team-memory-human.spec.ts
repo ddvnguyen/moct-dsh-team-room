@@ -216,7 +216,7 @@ describe('Human memory: reads', () => {
   it('lists with the Human scope and only the declared filters', async () => {
     const { calls, human } = backend()
     await human.list(context(), { workspaceId: WORKSPACE as never, status: 'pending', types: ['rule', 'rule'], limit: 500, channels: 'x', expertId: BUILDER } as never)
-    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ workspaceId: WORKSPACE, expertId: HUMAN, all: '1', types: 'rule', status: 'pending', limit: '100' })
+    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ workspaceId: WORKSPACE, expertId: HUMAN, all: '1', types: 'rule', status: 'pending', limit: '20' })
     expect((await refused(human.list(context(), { workspaceId: WORKSPACE as never, status: 'purged' as never }))).code).toBe('INVALID_INPUT')
   })
 
