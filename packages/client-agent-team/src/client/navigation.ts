@@ -12,6 +12,14 @@ export type TeamMode = 'conversation' | 'team'
  */
 export const TEAM_PANEL_ID = 'agent-team' as MainPanelId
 
+/**
+ * The Team Settings page: the rail row that replaced the Team row. It is
+ * mode-neutral — selecting it neither enters nor leaves Team mode — so the Team
+ * tab keeps its Channel view beside it, and any Team destination picked while
+ * it holds the column hands the column back to `TEAM_PANEL_ID`.
+ */
+export const TEAM_SETTINGS_PANEL_ID = 'agent-team-settings' as MainPanelId
+
 export interface TeamNavigationSnapshot {
   mode: TeamMode
   workspaceId?: WorkspaceId

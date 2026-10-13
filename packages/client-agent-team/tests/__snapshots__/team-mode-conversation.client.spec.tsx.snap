@@ -140,6 +140,37 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
               团队
             </span>
           </button>
+          <button
+            aria-label="团队设置"
+            class="panelRow"
+            type="button"
+          >
+            <span
+              aria-hidden="true"
+              class="panelGlyph"
+            >
+              <div
+                data-slot="sidebar.panellist"
+                style="display: contents;"
+              >
+                <svg
+                  aria-hidden="true"
+                  data-content="5610364e"
+                  fill="none"
+                  height="16"
+                  stroke-width="1"
+                  viewBox="0 0 16 16"
+                  width="16"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </div>
+            </span>
+            <span
+              class="panelTitle wide"
+            >
+              团队设置
+            </span>
+          </button>
         </nav>
         <div
           class="regionArea"

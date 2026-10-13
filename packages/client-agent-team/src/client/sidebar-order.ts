@@ -118,12 +118,20 @@ let revision = 0
 const listeners = new Set<() => void>()
 interface SnapshotEntry {
   atRevision: number
-  signature: string
   /** Fingerprint of the persisted preference this result folded in. */
   savedFingerprint: string
   result: readonly string[]
 }
-const snapshots = new Map<string, SnapshotEntry>()
+/**
+ * Snapshots per list key, then per refs signature. Two readers of one list can
+ * hold different refs at the same moment — the rail's Agents group and the Team
+ * Settings page, one still loading — and a single entry per key would make each
+ * read evict the other's, so every `getSnapshot` returned a fresh array and
+ * `useSyncExternalStore` re-rendered without end.
+ */
+const snapshots = new Map<string, Map<string, SnapshotEntry>>()
+/** Distinct refs signatures kept per list; older ones are dropped first. */
+const SIGNATURES_PER_LIST = 8
 
 function savedFingerprint(key: string): string {
   const saved = storedOrders()[key]
@@ -140,12 +148,16 @@ function orderedSnapshot<R extends string>(workspaceId: WorkspaceId | undefined,
   if (key === undefined) return refs
   const signature = refs.join('\u0000')
   const fingerprint = savedFingerprint(key)
-  const hit = snapshots.get(key)
-  if (hit !== undefined && hit.atRevision === revision && hit.signature === signature && hit.savedFingerprint === fingerprint) {
+  const bySignature = snapshots.get(key) ?? new Map<string, SnapshotEntry>()
+  snapshots.set(key, bySignature)
+  const hit = bySignature.get(signature)
+  if (hit !== undefined && hit.atRevision === revision && hit.savedFingerprint === fingerprint) {
     return hit.result as readonly R[]
   }
   const result = reconcileSidebarOrder(storedOrders()[key] ?? [], refs)
-  snapshots.set(key, { atRevision: revision, signature, savedFingerprint: fingerprint, result })
+  bySignature.delete(signature)
+  bySignature.set(signature, { atRevision: revision, savedFingerprint: fingerprint, result })
+  if (bySignature.size > SIGNATURES_PER_LIST) bySignature.delete(bySignature.keys().next().value as string)
   return result as readonly R[]
 }
 

@@ -64,3 +64,23 @@ describe('moveSidebarItem persistence semantics', () => {
       .toEqual(['m3', 'm1', 'm2'])
   })
 })
+
+describe('useSidebarOrder with two readers of one list', () => {
+  it('keeps each reader identity-stable while they hold different refs at the same moment', () => {
+    // The rail's Agents group and the Team Settings page read one list; while
+    // one is still loading its refs differ, and neither read may evict the other.
+    const loaded = ['a', 'b'] as Ref[]
+    const loading = [] as Ref[]
+    const first = renderHook(() => useSidebarOrder<Ref>('w1' as never, 'agents', loaded))
+    const second = renderHook(() => useSidebarOrder<Ref>('w1' as never, 'agents', loading))
+    const firstSnapshot = first.result.current
+    const secondSnapshot = second.result.current
+    first.rerender()
+    second.rerender()
+    expect(first.result.current).toBe(firstSnapshot)
+    expect(second.result.current).toBe(secondSnapshot)
+    expect(firstSnapshot).toEqual(['a', 'b'])
+    expect(secondSnapshot).toEqual([])
+  })
+})
+
