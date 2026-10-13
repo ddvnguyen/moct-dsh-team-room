@@ -46,6 +46,12 @@
  * - No import of the Team shell's registered seats. The body renders the Team's
  *   own page (`TeamConversation`) through this package's React tree, fed by the
  *   same inject the registered seat uses.
+ * - No thunk in the descriptor. The strip renders `tab.label` as a static
+ *   string (`children: D.label`, 0.1.61 `lib/client.js`, byte 662719), so a
+ *   caller passes the thunk in the same shape the slot registrations use
+ *   (`label: () => ctx.locale.bind(NS)('team')`) but this module resolves it,
+ *   and on a language switch re-inserts the tab — the host's `insert` is keyed
+ *   by id, so the fresh descriptor relabels the strip without a removal.
  *
  * ## Version this was verified against
  *
@@ -111,6 +117,13 @@ export interface NativeTabRegistry {
 /** The one tab this module contributes. Extra fields are ignored by the host. */
 export interface NativeTabDescriptor {
   readonly id: string
+  /**
+   * The label the host renders — always a resolved string, never a thunk. The
+   * strip renders `children: D.label` straight into its tab button (0.1.61
+   * `lib/client.js`, byte 662719), so a function here would be a React child
+   * error; the re-resolution this module owes happens through the re-insert on
+   * a language switch instead (see {@link insertTeamTab}).
+   */
   readonly label: string
   readonly order: number
   readonly matchSession?: (sessionId: string) => boolean
@@ -176,10 +189,35 @@ function slotSubscribe(ctx: ClientContext, key: string, listener: () => void): (
   }
 }
 
+/**
+ * Subscribe to the locale face, never throwing — the same defensive shape as
+ * the two slot reads above. A composition whose locale service is absent or
+ * lacks `subscribe` yields no cleanup, and the label then keeps the value its
+ * first insert resolved, which is exactly the static-string behaviour this
+ * module had before it learned to relabel.
+ */
+function localeSubscribe(ctx: ClientContext, listener: () => void): (() => void) | undefined {
+  try {
+    const locale = (ctx as unknown as { locale?: unknown }).locale as
+      | { subscribe?: (listener: () => void) => (() => void) | undefined }
+      | undefined
+    const unsubscribe = typeof locale?.subscribe === 'function' ? locale.subscribe(listener) : undefined
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Insert options; `schedule` is the tests' seam. */
 export interface TeamTabOptions {
-  /** The localized tab label. */
-  readonly label: string
+  /**
+   * The localized tab label, either resolved now or as a thunk resolved at
+   * every insert. A thunk is what a caller passing the same shape the slot
+   * registrations use (`label: () => ctx.locale.bind(NS)('team')`) hands over,
+   * and it is this module's job to resolve it, because the host strip renders
+   * `tab.label` as a static string and never calls it.
+   */
+  readonly label: string | (() => string)
   /** Renders the tab body from the host's render props. */
   readonly render: (props: never) => unknown
   /** Test seam: replaces `setInterval`, so the retry budget is deterministic. */
@@ -200,9 +238,14 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
   const noop = (): void => {}
   let dispose: () => void = noop
   let unsubscribe: (() => void) | undefined
+  let unsubscribeLocale: (() => void) | undefined
   let timer: (() => void) | undefined
   let attempts = 0
   let stopped = false
+  /** The registry the tab currently lives on, once it lives anywhere. */
+  let host: NativeTabRegistry | undefined
+  /** The label the live descriptor carries — the churn guard for a re-insert. */
+  let currentLabel: string | undefined
 
   // The only timer this module may hold. The owner retries with a plain
   // interval; a client plugin has no scheduler of its own.
@@ -210,6 +253,41 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
     const handle = setInterval(fn, ms)
     return () => { clearInterval(handle) }
   })
+
+  /** Resolve the caller's label: a thunk at every insert, a string once. */
+  const resolveLabel = (): string => (typeof options.label === 'function' ? options.label() : options.label)
+
+  /**
+   * One insert, or one re-insert. The host's `insert` is keyed by id and
+   * replaces the live descriptor in place, notifying the strip's subscribers,
+   * so handing it a fresh descriptor with a freshly resolved label relabels
+   * the tab without the removal a dispose-then-insert would flash.
+   */
+  const insertOn = (registry: NativeTabRegistry): void => {
+    host = registry
+    currentLabel = resolveLabel()
+    dispose = registry.insert({
+      id: TAB_ID,
+      label: currentLabel,
+      order: TAB_ORDER,
+      matchSession: () => false,
+      render: options.render,
+    })
+  }
+
+  /**
+   * The relabel, driven by the locale face. The strip renders `tab.label` as a
+   * static string — it never calls a thunk — so a language switch can only
+   * reach the tab through this re-insert. That is the documented fallback for
+   * a native strip that genuinely accepts only a static label, and the same
+   * shape the owner itself uses to relabel its settings section.
+   */
+  const relabel = (): void => {
+    if (stopped || host === undefined) return
+    const label = resolveLabel()
+    if (label === currentLabel) return
+    insertOn(host)
+  }
 
   /**
    * One probe of every entry that can carry the registry. The owner may attach
@@ -221,13 +299,11 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
     for (const entry of slotEntries(ctx, REGISTRY_SLOT)) {
       const registry = discoverRegistry(entry)
       if (registry === undefined) continue
-      dispose = registry.insert({
-        id: TAB_ID,
-        label: options.label,
-        order: TAB_ORDER,
-        matchSession: () => false,
-        render: options.render,
-      })
+      insertOn(registry)
+      // The label is re-resolved for as long as the tab lives. Only a thunk
+      // can change, so a static string keeps the subscription out of the
+      // runtime entirely.
+      if (typeof options.label === 'function') unsubscribeLocale ??= localeSubscribe(ctx, relabel)
       options.onInserted?.(registry)
       // Found: drop the retry and the subscriptions, keep the insert for the
       // life of this plugin. The host's own `insert` is idempotent per id, so a
@@ -246,7 +322,14 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
   }
 
   probe()
-  if (dispose !== noop) return () => { stopped = true; dispose() }
+  if (dispose !== noop) {
+    return () => {
+      stopped = true
+      unsubscribeLocale?.()
+      unsubscribeLocale = undefined
+      dispose()
+    }
+  }
 
   // Late-registration path one: the owner's own subscriptions. It wraps on
   // `sidebar.workspaces` and re-wraps on `sidebar`, so both are watched.
@@ -276,6 +359,8 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
     stopped = true
     stopWaiting()
     dropParent()
+    unsubscribeLocale?.()
+    unsubscribeLocale = undefined
     dispose()
     dispose = noop
   }
