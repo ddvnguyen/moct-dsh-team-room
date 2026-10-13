@@ -671,7 +671,12 @@ function applyUi(ctx: ClientContext): void {
   // Once the tab is in the strip it is the Channel view's home, and the rail's
   // fallback Team row stands down; a strip that never appears keeps the row.
   ctx.effect(() => insertTeamTab(ctx, {
-    label: ctx.locale.bind(NS)('team'),
+    // A thunk, not the resolved string: the same shape the rail and settings
+    // registrations above use. The strip renders `tab.label` statically, so
+    // `insertTeamTab` resolves this on every insert and re-inserts on a
+    // language switch — the eager string this used to pass pinned the label to
+    // the language the client booted in.
+    label: () => ctx.locale.bind(NS)('team'),
     render: teamTabRender,
     onInserted: () => { dropTeamRow() },
   }), 'agent-team: interim native tab')

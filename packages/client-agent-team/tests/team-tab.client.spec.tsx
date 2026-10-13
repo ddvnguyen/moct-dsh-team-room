@@ -61,8 +61,75 @@ function fakeRegistry(): {
  * module's own narrow casts are what keep the client package free of a
  * dependency on the slots package's public types.
  */
-function fakeContext(slots: Record<string, unknown>): never {
-  return { slots } as never
+function fakeContext(slots: Record<string, unknown>, locale?: unknown): never {
+  return locale === undefined ? { slots } as never : { slots, locale } as never
+}
+
+/**
+ * A locale face in the shipped LocaleRuntime's shape: `bind` reads the active
+ * language at call time (the shipped runtime does the same — bind returns a
+ * translate that resolves against the current snapshot), and `subscribe` is
+ * notified on a switch. The switch is the test's lever.
+ */
+function fakeLocale(initial: 'zh' | 'en' = 'zh') {
+  const words = { zh: '团队', en: 'Team' } as const
+  const listeners = new Set<() => void>()
+  let active = initial
+  let subscribes = 0
+  return {
+    get subscribes() { return subscribes },
+    get listeners() { return listeners.size },
+    bind: () => (key: string) => { void key; return words[active] },
+    subscribe: (listener: () => void) => {
+      subscribes += 1
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    switch: (next: 'zh' | 'en') => {
+      active = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+/**
+ * The host registry in its real shape, read out of the owner's bundle: tabs
+ * live in a Map keyed by id, `insert` replaces in place and notifies, and
+ * `getTabs` answers from a cache the mutation recomputes (what the strip's
+ * useSyncExternalStore needs).
+ */
+function hostRegistryDouble() {
+  const tabs = new Map<string, NativeTabDescriptor>()
+  const listeners = new Set<() => void>()
+  let snapshot: readonly unknown[] = []
+  let inserts = 0
+  const publish = (): void => {
+    snapshot = [...tabs.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    for (const listener of [...listeners]) listener()
+  }
+  return {
+    get inserts() { return inserts },
+    getTabs: () => snapshot,
+    labels: () => [...tabs.values()].map(tab => tab.label),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    insert: (tab: NativeTabDescriptor) => {
+      inserts += 1
+      tabs.set(tab.id, tab)
+      publish()
+      return () => {
+        // The owner's own disposer, verbatim: only remove when the live
+        // descriptor is still the exact object this insert handed over, so a
+        // stale disposer cannot tear down a re-inserted tab.
+        if (tabs.get(tab.id) === tab) {
+          tabs.delete(tab.id)
+          publish()
+        }
+      }
+    },
+  }
 }
 
 describe('HOST_CONTRACT — the private key, pinned as literals', () => {
@@ -273,6 +340,98 @@ describe('insertTeamTab — the late-registration path', () => {
     vi.advanceTimersByTime(5000)
     expect(attempted).toBe(probes)
     expect(() => dispose()).not.toThrow()
+  })
+})
+
+describe('insertTeamTab — the label follows a language switch', () => {
+  // The strip renders `children: D.label` as a static string (0.1.61
+  // `lib/client.js`, byte 662719), so a thunk cannot ride the descriptor: the
+  // caller passes `() => ctx.locale.bind(NS)('team')` in the same shape the
+  // slot registrations use, and this module owes the re-insert. These tests
+  // pin both halves — the thunk is resolved at every insert, and the switch
+  // reaches the host through exactly one replacement descriptor.
+  it('resolves a thunk label at insert and re-inserts once per switch', () => {
+    const registry = hostRegistryDouble()
+    const locale = fakeLocale()
+    const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] }, locale)
+
+    const dispose = insertTeamTab(ctx, { label: () => locale.bind()('team'), render: () => null })
+    expect(registry.labels()).toEqual(['团队'])
+    expect(locale.subscribes).toBe(1)
+
+    locale.switch('en')
+    expect(registry.labels()).toEqual(['Team'])
+    expect(registry.inserts).toBe(2)
+
+    // Back the other way: every switch re-resolves, not just the first.
+    locale.switch('zh')
+    expect(registry.labels()).toEqual(['团队'])
+    expect(registry.inserts).toBe(3)
+
+    dispose()
+    expect(registry.labels()).toEqual([])
+    // The locale subscription dies with the tab: a disposed client must not
+    // keep re-inserting into a registry it no longer owns.
+    expect(locale.listeners).toBe(0)
+    locale.switch('en')
+    expect(registry.inserts).toBe(3)
+  })
+
+  it('holds the label still when a switch leaves it unchanged', () => {
+    // The LocaleFace notifies on dictionary registrations too, so a label that
+    // did not move must not churn the host: one descriptor, one insert.
+    const registry = hostRegistryDouble()
+    const locale = fakeLocale('en')
+    const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] }, locale)
+
+    const dispose = insertTeamTab(ctx, { label: () => locale.bind()('team'), render: () => null })
+    expect(registry.inserts).toBe(1)
+    locale.switch('en')
+    expect(registry.inserts).toBe(1)
+    expect(registry.labels()).toEqual(['Team'])
+    dispose()
+  })
+
+  it('keeps a static string label static and never subscribes to the locale', () => {
+    // A caller that passes a plain string has said the label cannot change;
+    // the module must not invent a subscription for it.
+    const registry = hostRegistryDouble()
+    const locale = fakeLocale()
+    const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] }, locale)
+
+    const dispose = insertTeamTab(ctx, { label: 'Team', render: () => null })
+    expect(registry.labels()).toEqual(['Team'])
+    expect(locale.subscribes).toBe(0)
+    locale.switch('zh')
+    expect(registry.labels()).toEqual(['Team'])
+    expect(registry.inserts).toBe(1)
+    dispose()
+  })
+
+  it('survives a locale face that throws on subscribe', () => {
+    // Nothing at plugin-apply time may throw: the locale read gets the same
+    // defensive treatment as the slot reads.
+    const registry = hostRegistryDouble()
+    const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] }, {
+      bind: () => () => '团队',
+      subscribe: () => { throw new Error('no subscription') },
+    })
+    let dispose: (() => void) | undefined
+    expect(() => { dispose = insertTeamTab(ctx, { label: () => '团队', render: () => null }) }).not.toThrow()
+    expect(registry.labels()).toEqual(['团队'])
+    expect(() => { dispose?.() }).not.toThrow()
+  })
+
+  it('inserts the first label when no locale face exists at all', () => {
+    // A composition without a locale service keeps the old behaviour: the
+    // first insert's value stands, nothing relabels, nothing throws.
+    const registry = hostRegistryDouble()
+    const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] })
+    let dispose: (() => void) | undefined
+    expect(() => { dispose = insertTeamTab(ctx, { label: () => 'Team', render: () => null }) }).not.toThrow()
+    expect(registry.labels()).toEqual(['Team'])
+    expect(registry.inserts).toBe(1)
+    expect(() => { dispose?.() }).not.toThrow()
   })
 })
 
