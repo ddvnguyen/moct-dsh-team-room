@@ -30,6 +30,7 @@ const own = {
   '@ddvnguyen/moct-dsh-team-room/member-time-context': ['./packages/agent-team/src/member-time-context.ts'],
   '@ddvnguyen/moct-dsh-team-room/time-format': ['./packages/agent-team/src/time-format.ts'],
   '@ddvnguyen/moct-dsh-team-room/mentions': ['./packages/agent-team/src/mentions.ts'],
+  '@ddvnguyen/moct-dsh-team-room/recovery-hints': ['./packages/agent-team/src/recovery-hints.ts'],
   '@ddvnguyen/moct-dsh-team-room/member-skills': ['./packages/agent-team/src/member-skills.ts'],
   '@ddvnguyen/moct-dsh-team-room/tools': ['./packages/tool-agent-team/src/index.ts'],
   '@ddvnguyen/moct-dsh-team-room/client': ['./packages/client-agent-team/src/client/index.ts'],

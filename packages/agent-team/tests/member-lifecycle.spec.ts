@@ -392,14 +392,19 @@ describe('Agent Team Member lifecycle', () => {
     expect(abbreviated.isError, abbreviated.isError ? abbreviated.error.message : '').toBe(false)
 
     // The ambiguous prefix is refused with a message that names both
-    // candidates and says what to do, rather than a bare lookup failure.
+    // candidates and says what to do, rather than a bare lookup failure. The
+    // assertions pin that contract — every candidate named, and a route out —
+    // never one word of the sentence, which the recovery registry owns.
     const ambiguous = await call('team_view', { workspace: 'workspace:1a2b3c4d' })
     expect(ambiguous.isError).toBe(true)
     if (!ambiguous.isError) throw new Error('expected an ambiguous-Workspace rejection')
-    expect(ambiguous.error.message).toContain('ambiguous')
     expect(ambiguous.error.message).toContain(homeId)
     expect(ambiguous.error.message).toContain(otherId)
     expect(ambiguous.error.message).toMatch(/longer prefix|full Workspace id/i)
+    // The rendered sentence states the refusal once. A doubled verb is the
+    // signature of a sentence rewritten around its own interpolated value
+    // instead of composing with it.
+    expect(ambiguous.error.message.match(/matches/g) ?? []).toHaveLength(1)
 
     // An unknown-but-unambiguous-shaped id still says it is not participated,
     // and still lists the choices.
@@ -436,9 +441,11 @@ describe('Agent Team Member lifecycle', () => {
     const historyArgs = await rejected('team_thread', { action: 'read', threadRef, beforeSequence: 1, limit: 5 })
     expect(historyArgs).toContain('action: history')
     expect(historyArgs).toMatch(/read .*(drain|unread)/i)
-    // A missing mutation basis says which token to copy and where from.
-    expect(await rejected('team_message', { action: 'reply', threadRef, body: 'no token' })).toMatch(/positive baseRevision/)
-    expect(await rejected('team_claim', { action: 'done', taskRef, claimRef: 'claim:missing' })).toMatch(/positive baseRevision/)
+    // A missing mutation basis says which token to copy and where from. Both
+    // tools refuse it on their own argument shape, before the Host ever sees
+    // the call, and both name the same drain-and-copy route.
+    expect(await rejected('team_message', { action: 'reply', threadRef, body: 'no token' })).toMatch(/team_thread read/)
+    expect(await rejected('team_claim', { action: 'done', taskRef, claimRef: 'claim:missing' })).toMatch(/team_thread read/)
     // A missing identity says which parameter is absent and where to get it.
     expect(await rejected('team_claim', { action: 'done', baseRevision: 1, claimRef: 'claim:missing' })).toContain('taskRef')
     expect(await rejected('team_claim', { action: 'list' })).toContain('taskRef')

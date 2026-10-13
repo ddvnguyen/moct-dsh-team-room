@@ -55,6 +55,7 @@ import { UNLIMITED_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit
 import { MEMORY_READ_ONLY_TOOLS, memoryRevision, seatMemoryGuard, seatMemoryStaleReason, type SeatMemoryStaleRefusal } from './seat-memory.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
+import { recoveryFor } from './recovery-hints.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
 import { AgentTeamTurnRecorder } from './turn-recorder.ts'
 import type { AgentTeamPoisonVerdict } from './poisoned-session.ts'
@@ -1990,7 +1991,7 @@ export default class AgentTeam extends TypertRemoteService {
       // started or settled after the tool-time validation.
       const blockingJobs = this.ownedJobsBlockingRollover(active.agent)
       if (blockingJobs.length > 0) {
-        throw new Error(`the context rollover is refused: this Member now owns jobs that would not survive the switch (${blockingJobs.join(', ')}); collect or stop them, then retry`)
+        throw new Error(`the context rollover is refused: this Member now owns jobs that would not survive the switch (${blockingJobs.join(', ')}) — ${recoveryFor('rollover_blocked_by_jobs').sentence({ refused: blockingJobs.join(', ') })}`)
       }
       const rolled = await this.rolloverSessionForAgent(active.agent, {
         // The engine plan carries the host-derived request id as a plain
@@ -3648,10 +3649,10 @@ export default class AgentTeam extends TypertRemoteService {
     // settle between this validation and the swap.
     const blocking = this.ownedJobsBlockingRollover(agent)
     if (blocking.length > 0) {
-      throw new Error(`context_rollover is refused while this Member owns jobs that would not survive the switch (${blocking.join(', ')}); collect or stop them first, then retry`)
+      throw new Error(`context_rollover is refused while this Member owns jobs that would not survive the switch (${blocking.join(', ')}) — ${recoveryFor('rollover_blocked_by_jobs').sentence({ refused: blocking.join(', ') })}`)
     }
     if (request.checkpointRef === undefined) return { mode: 'fresh' }
-    if (!/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/.test(request.checkpointRef)) throw new Error('checkpointRef must be an opaque ref exactly as returned by context_status')
+    if (!/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/.test(request.checkpointRef)) throw new Error(`checkpointRef '${request.checkpointRef}' is not an opaque ref — ${recoveryFor('checkpoint_ref_malformed').sentence({})}`)
     // Full current-state prevalidation through the ONE resolver the swap
     // itself uses: a ref that is fabricated, unattributable, nonshrinking,
     // unmeasurable, over-budget, or blocked by multiple active Claims

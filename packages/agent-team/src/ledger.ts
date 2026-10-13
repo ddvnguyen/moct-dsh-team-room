@@ -182,6 +182,7 @@ import type {
 import type { SessionId as AgentTeamMemberSessionId } from '@deepseek-ai/dsh-session'
 import { formatTeamTimestamp } from './time-format.ts'
 import { resolveBodyMentions } from './mentions.ts'
+import { recoveryFor } from './recovery-hints.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
 import type { AgentTeamRepliedThread } from './turn-threads.ts'
 import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
@@ -1596,7 +1597,7 @@ export class AgentTeamLedger {
           throw new Error(`unknown Claim '${request.claimRef ?? ''}'${request.claimRef === undefined ? '' : this.unknownRefHint(request.claimRef, 'claim', 'Claim')}`)
         }
         if (previous.taskRef !== task.taskRef || previous.owner !== actor.memberId) {
-          throw new Error(`Member can modify only its own Claim on this Task — claim ${previous.claimRef} is owned by another Member or belongs to another Task; list this Task's Claims with team_claim list and ${request.action} one of your own`)
+          throw new Error(`Member can modify only its own Claim on this Task — ${recoveryFor('claim_owned_by_another').sentence({ refused: `claim ${previous.claimRef}` })}`)
         }
         if (previous.state !== 'active') throw new Error(`Claim '${previous.claimRef}' is already ${previous.state}`)
         claim = Object.freeze({ ...previous, state: request.action === 'done' ? 'done' : 'released' })
@@ -5396,12 +5397,12 @@ export class AgentTeamLedger {
     const tail = ref.startsWith(`${prefix}:`) ? ref.slice(prefix.length + 1).replaceAll('-', '') : undefined
     if (tail !== undefined && this.isRefAbbreviationTail(tail)) {
       const lower = tail.toLowerCase()
-      const candidates = [...map.keys()].filter(candidate => candidate.slice(prefix.length + 1).replaceAll('-', '').startsWith(lower))
+      const candidates = [...map.keys()].filter(candidate => candidate.slice(prefix.length + 1).replaceAll('-', '').toLowerCase().startsWith(lower))
       if (candidates.length > 1) {
-        throw new Error(`ambiguous ${label} ref '${ref}' matches ${candidates.map(candidate => `'${candidate}'`).join(', ')}; reuse a longer prefix or the full ref exactly as returned by Team tools`)
+        throw new Error(`ambiguous ${label} ref '${ref}' matches ${candidates.map(candidate => `'${candidate}'`).join(', ')} — ${recoveryFor('ambiguous_ref').sentence({ refused: `'${ref}'` })}`)
       }
     }
-    throw new Error(`unknown ${label} ref '${ref}'${this.unknownRefHint(ref, prefix, label)}`)
+    throw new Error(`unknown ${label} ref '${ref}'${this.unknownRefHint(ref, prefix, label)} — ${recoveryFor('unknown_ref').sentence({ refused: `${label} '${ref}'` })}`)
   }
 
   /** Agents strip the branded prefix or abbreviate UUIDs when echoing refs; point at the fix instead of a bare lookup failure. */
@@ -5683,7 +5684,7 @@ export class AgentTeamLedger {
   private requireReplyParent(threadRef: AgentTeamThreadRef, messageRef: AgentTeamMessageRef): AgentTeamMessage {
     const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
     const parent = key === undefined ? undefined : this.state.messagesByRef.get(key)
-    if (parent === undefined) throw new Error(`unknown Message '${messageRef}' for replyToMessageRef${this.unknownRefHint(messageRef, 'message', 'Message')} — copy a messageRef rendered by team_thread read, team_view, or an inbox notice`)
+    if (parent === undefined) throw new Error(`unknown Message '${messageRef}' for replyToMessageRef${this.unknownRefHint(messageRef, 'message', 'Message')} — ${recoveryFor('reply_target_unknown').sentence({ refused: `'${messageRef}'` })}`)
     if (parent.threadRef !== threadRef) throw new Error(`Message '${parent.messageRef}' belongs to another Thread; replyToMessageRef must name a Message in Thread '${threadRef}'`)
     return parent
   }
