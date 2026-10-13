@@ -57,7 +57,12 @@ import type { AgentTeamPoisonVerdict } from './poisoned-session.ts'
 import { AgentTeamActivityFeed } from './activity-feed.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { MoctOperationsTable } from './moct-table.ts'
-import { TeamMemoryClient, TeamMemoryError, type TeamMemoryScope } from './team-memory.ts'
+import { TeamMemoryClient, TeamMemoryError, type TeamMemoryScope, type TeamMemorySearchResult, type TeamMemoryRecord } from './team-memory.ts'
+import { TeamMemoryHuman, memoryOutcome, type TeamMemoryHumanContext } from './team-memory-human.ts'
+import type {
+  AgentTeamMemoryActRequest, AgentTeamMemoryListRequest, AgentTeamMemoryOutcome, AgentTeamMemoryRecordRequest, AgentTeamMemoryRecordView,
+  AgentTeamMemorySettingsRequest, AgentTeamMemoryWorkspaceRequest, TeamMemorySettings, TeamMemoryUsage, TeamMemoryVersion,
+} from './types/memory.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -190,6 +195,8 @@ export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTI
 export { humanAvatarsRoot } from './human-avatar.ts'
 export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
 export { TEAM_MEMORY_HOMES, TEAM_MEMORY_STATUSES, TEAM_MEMORY_TYPES, TeamMemoryClient, TeamMemoryError } from './team-memory.ts'
+export { TeamMemoryHuman, memoryOutcome } from './team-memory-human.ts'
+export type { TeamMemoryHumanContext } from './team-memory-human.ts'
 export type { TeamMemoryGetResult, TeamMemoryNearMatch, TeamMemoryNoteInput, TeamMemoryNoteResult, TeamMemoryRecord, TeamMemoryScope, TeamMemorySearchInput, TeamMemorySearchResult } from './team-memory.ts'
 
 /** Process-stable marker carried by the final Team message tool definition. */
@@ -2739,6 +2746,73 @@ export default class AgentTeam extends TypertRemoteService {
       threadRef: resolved.threadRef, channelRef: resolved.channelRef, ...(resolved.taskRef === undefined ? {} : { taskRef: resolved.taskRef }),
     })
     return Object.freeze({ memberId, workspaceId, channelRefs, ...(thread === undefined ? {} : { thread }) })
+  }
+
+  /** Human Memory page (memory M3): the whole Workspace's records, newest and most important first. */
+  @Remote('memoryList')
+  memoryList(request: AgentTeamMemoryListRequest): Promise<AgentTeamMemoryOutcome<TeamMemorySearchResult>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.list(context, request))
+  }
+
+  /** One record with its links and every version. */
+  @Remote('memoryRecord')
+  memoryRecord(request: AgentTeamMemoryRecordRequest): Promise<AgentTeamMemoryOutcome<AgentTeamMemoryRecordView>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.record(context, request.id))
+  }
+
+  /** The rule change feed: every rule version in the Workspace, newest first. */
+  @Remote('memoryRuleFeed')
+  memoryRuleFeed(request: AgentTeamMemoryWorkspaceRequest): Promise<AgentTeamMemoryOutcome<readonly TeamMemoryVersion[]>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.ruleFeed(context))
+  }
+
+  /** Each home's always-load use against the cap. */
+  @Remote('memoryUsage')
+  memoryUsage(request: AgentTeamMemoryWorkspaceRequest): Promise<AgentTeamMemoryOutcome<TeamMemoryUsage>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.usage(context))
+  }
+
+  @Remote('memorySettings')
+  memorySettings(request: AgentTeamMemoryWorkspaceRequest): Promise<AgentTeamMemoryOutcome<TeamMemorySettings>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.settings(context))
+  }
+
+  /** Change the closed set of memory settings as the Human. */
+  @Remote('updateMemorySettings')
+  updateMemorySettings(request: AgentTeamMemorySettingsRequest): Promise<AgentTeamMemoryOutcome<TeamMemorySettings>> {
+    this.requireAccepting()
+    return this.humanMemory(request.workspaceId, (human, context) => human.updateSettings(context, {
+      workspaceId: request.workspaceId,
+      ...(request.expertApproval === undefined ? {} : { expertApproval: request.expertApproval }),
+      ...(request.orchestrators === undefined ? {} : { orchestrators: request.orchestrators }),
+      ...(request.injectLayerTokens === undefined ? {} : { injectLayerTokens: request.injectLayerTokens }),
+    }))
+  }
+
+  /** One Human verb on one record: approve, retract, restore, purge, widen, edit or pin. */
+  @Remote('memoryAct')
+  memoryAct(request: AgentTeamMemoryActRequest): Promise<AgentTeamMemoryOutcome<TeamMemoryRecord>> {
+    this.requireAccepting()
+    return this.humanMemory(request.workspaceId, (human, context) => human.act(context, request.id, request.action))
+  }
+
+  /**
+   * Fence one Human memory call. The request names only the Workspace the page
+   * browses, checked like every Human surface; the actor is the ledger's Human
+   * Member and the scope is the whole Workspace, both added here.
+   */
+  private async humanMemory<T>(workspaceId: WorkspaceId, run: (human: TeamMemoryHuman, context: TeamMemoryHumanContext) => Promise<T>): Promise<AgentTeamMemoryOutcome<T>> {
+    this.requireWorkspace(workspaceId)
+    const client = this.teamMemory
+    if (client === undefined) return { ok: false, code: 'BACKEND_UNAVAILABLE', message: 'team memory needs the MOCT Team Room backend (MOCT_TEAM_URL is not set)' }
+    const ledger = this.requireLedger()
+    const context: TeamMemoryHumanContext = {
+      humanId: ledger.humanMemberId(),
+      workspaceId,
+      agentMemberIds: new Set(this.members().map(status => status.member.memberId).filter(memberId => ledger.participatesIn(memberId, workspaceId))),
+      channelOfTask: taskRef => ledger.resolveTaskRefs(workspaceId, [taskRef as AgentTeamTaskRef])[0]?.channelRef,
+    }
+    return memoryOutcome(() => run(new TeamMemoryHuman(client), context))
   }
 
   /** Validate the durable ledger against an independently replayed projection. */

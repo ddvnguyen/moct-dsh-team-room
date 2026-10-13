@@ -1240,6 +1240,49 @@ describe('Agent Team Member lifecycle', () => {
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(1)
   })
 
+  it('acts on Team memory as the ledger Human, whatever the Memory page sends', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('human-memory-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('human-memory-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = builder.status.member.memberId
+
+    // Without the MOCT backend the page reads a stable code, not an exception.
+    expect(await ctx.agentTeam.memoryList({ workspaceId })).toMatchObject({ ok: false, code: 'BACKEND_UNAVAILABLE' })
+
+    const record = { id: 'mem-1', type: 'rule', title: 'Stage only your files', body: null, attrs: null, home: { kind: 'channel', ref: channel.channel.channelRef }, status: 'pending', flag: null, pinned: false, priority: 100, version: 1, authorId: memberId, updatedAt: '', supersedes: null, supersededBy: null, conflictsWith: [] }
+    const requests: { method: string; url: URL; body?: Record<string, unknown> }[] = []
+    const fetchImpl = (async (input: string, init: RequestInit = {}) => {
+      const url = new URL(input)
+      requests.push({ method: init.method ?? 'GET', url, ...(init.body === undefined ? {} : { body: JSON.parse(String(init.body)) as Record<string, unknown> }) })
+      if (url.pathname === '/team/v1/memory/get') return Response.json({ records: [{ ...record, links: [] }], missing: [] })
+      if (url.pathname === '/team/v1/memory') return Response.json({ results: [], total: 0, nextCursor: null })
+      if (url.pathname === '/team/v1/memory/settings') return Response.json({ expertApproval: 'required', orchestrators: [memberId], injectLayerTokens: 1000 })
+      return Response.json({ ...record, status: 'active', version: 2 })
+    }) as unknown as typeof fetch
+    Reflect.set(ctx.agentTeam, 'teamMemory', new TeamMemoryClient({ fetch: fetchImpl }))
+
+    // Reads take the whole Workspace as the Human; a smuggled scope or actor goes nowhere.
+    const listed = await ctx.agentTeam.memoryList({ workspaceId, q: 'stage', all: false, expertId: memberId, channels: ['channel:forged'], actor: { kind: 'member', id: memberId } } as never)
+    expect(listed.ok).toBe(true)
+    const list = requests.find(request => request.url.pathname === '/team/v1/memory')!.url.searchParams
+    expect(Object.fromEntries(list)).toEqual({ workspaceId, expertId: AGENT_TEAM_HUMAN_MEMBER_ID, all: '1', q: 'stage' })
+
+    const approved = await ctx.agentTeam.memoryAct({ workspaceId, id: 'mem-1', action: { verb: 'approve', baseVersion: 1, actor: { kind: 'member', id: memberId } }, actor: { kind: 'member', id: memberId }, humanId: 'member:forged' } as never)
+    expect(approved).toMatchObject({ ok: true, value: { status: 'active' } })
+    const approve = requests.find(request => request.url.pathname === '/team/v1/memory/mem-1/approve')!
+    expect(approve.body).toEqual({ baseVersion: 1, actor: { kind: 'human', id: AGENT_TEAM_HUMAN_MEMBER_ID } })
+
+    // Orchestrators must be agent Members of this Workspace; the check runs before the backend hears anything.
+    const before = requests.length
+    expect(await ctx.agentTeam.updateMemorySettings({ workspaceId, orchestrators: [memberId, 'member:stranger'] })).toMatchObject({ ok: false, code: 'INVALID_SETTING' })
+    expect(requests).toHaveLength(before)
+    expect(await ctx.agentTeam.updateMemorySettings({ workspaceId, orchestrators: [memberId] })).toMatchObject({ ok: true })
+    expect(requests.at(-1)!.body).toEqual({ actor: { kind: 'human', id: AGENT_TEAM_HUMAN_MEMBER_ID }, orchestrators: [memberId] })
+
+    // A Workspace the Team does not have is fenced like every Human surface.
+    await expect(ctx.agentTeam.memoryList({ workspaceId: 'ws-unknown' as never })).rejects.toThrow()
+  })
+
   it('delivers a direct message through the tool and injects it into the live recipient session', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)

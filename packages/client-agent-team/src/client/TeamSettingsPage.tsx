@@ -8,6 +8,9 @@
  * move the Channel view the tab shows. The selector starts on the Workspace the
  * Team navigation last selected, so the page opens where the reader just was.
  *
+ * Below the Agents sits the Team memory section (`TeamMemoryPanel`) for the
+ * same Workspace: records, the task picture, the rule feed, usage and settings.
+ *
  * The Human's own profile and the judge stay on the host's Settings page (the
  * `team-settings` section); the intro says where.
  */
@@ -18,6 +21,7 @@ import type { TeamSidebarProps } from './slots.ts'
 import type { TeamWorkspaceChoice } from './TeamWorkspaceSelector.tsx'
 import { TeamWorkspaceSelector } from './TeamWorkspaceSelector.tsx'
 import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
+import { TeamMemoryPanel, type TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import css from './team-settings.module.css'
 
 /** The host's Workspace list as the page reads it: a snapshot plus a change subscription. */
@@ -32,9 +36,11 @@ export type TeamSettingsPageProps = Pick<TeamSidebarProps,
   readonly workspaceList: TeamWorkspaceListSource
   /** The Workspace the Team navigation last selected; read once, when the page mounts. */
   readonly initialWorkspaceId: () => WorkspaceId | undefined
+  /** The Host's Human memory methods; each request names only the Workspace. */
+  readonly memory: TeamMemoryRemotes
 }
 
-export function TeamSettingsPage({ workspaceList, initialWorkspaceId, t, ...agents }: TeamSettingsPageProps) {
+export function TeamSettingsPage({ workspaceList, initialWorkspaceId, memory, t, ...agents }: TeamSettingsPageProps) {
   const subscribe = useCallback((listener: () => void) => workspaceList.subscribe(listener), [workspaceList])
   const getWorkspaces = useCallback(() => workspaceList.getSnapshot().items, [workspaceList])
   const workspaces = useSyncExternalStore(subscribe, getWorkspaces, getWorkspaces)
@@ -48,5 +54,6 @@ export function TeamSettingsPage({ workspaceList, initialWorkspaceId, t, ...agen
     <p className={css.intro}>{t('teamSettingsPageIntro')}</p>
     <TeamWorkspaceSelector workspaces={workspaces} selectedId={selectedId} current={false} onSelect={setChosen} t={t} />
     {selectedId !== undefined && <TeamAgentsPanel key={selectedId} workspaceId={selectedId} {...agents} onCreatingChange={() => {}} t={t} />}
+    {selectedId !== undefined && <TeamMemoryPanel key={`memory:${selectedId}`} workspaceId={selectedId} memory={memory} loadMembers={agents.loadMembers} t={t} />}
   </section>
 }
