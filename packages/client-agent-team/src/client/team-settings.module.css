@@ -14,6 +14,15 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The rail's Team Settings page reuses the settings column in the main seat,
+ * so it takes the shipped page gutter the settings shell would have given it. */
+.page {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
 .heading {
   margin: 0;
   font-size: 18px;

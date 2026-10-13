@@ -1,8 +1,9 @@
 /**
  * A10 — the interim Team tab in the host's native tab strip.
  *
- * The Team's home is the sidebar's panel rail (`registerTeamPanel` in
- * `./index.ts`). This module adds the interim *native tab* on top: one extra
+ * The Team page is a global panel (`registerTeamPanel` in `./index.ts`), and
+ * the rail carries a Team row only as a fallback while this tab is absent. This
+ * module adds the interim *native tab*, the Channel view's home: one extra
  * entry in the strip the automation plugin owns, so a session-scoped sidebar
  * shows a third tab beside Tasks and Scheduled without the Team panel having to
  * win the rail.
@@ -175,7 +176,7 @@ function slotSubscribe(ctx: ClientContext, key: string, listener: () => void): (
   }
 }
 
-/** Options the tests inject; production callers pass only `label` and `render`. */
+/** Insert options; `schedule` is the tests' seam. */
 export interface TeamTabOptions {
   /** The localized tab label. */
   readonly label: string
@@ -183,7 +184,7 @@ export interface TeamTabOptions {
   readonly render: (props: never) => unknown
   /** Test seam: replaces `setInterval`, so the retry budget is deterministic. */
   readonly schedule?: (fn: () => void, ms: number) => () => void
-  /** Test seam: observes that an insert actually happened, and on which registry. */
+  /** Observes that an insert actually happened, and on which registry: the client drops its fallback Team rail row here. */
   readonly onInserted?: (registry: NativeTabRegistry) => void
 }
 

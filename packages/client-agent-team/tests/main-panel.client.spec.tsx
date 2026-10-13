@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { act, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'
 
@@ -55,5 +55,28 @@ describe('Team mode and the shell main panel', () => {
     await waitFor(() => expect(b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy())
     expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
     expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
+  })
+
+  it('opens Team Settings from its rail row with the Agents config, then a Channel pick returns to the Team page', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
+    await act(async () => { b.selectPanel('agent-team') })
+    expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
+
+    fireEvent.click(b.view.getByRole('button', { name: '团队设置' }))
+
+    await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team-settings'))
+    const page = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-team-settings-page]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    expect(page.querySelector('h2')?.textContent).toBe('团队设置')
+    // The Agents config is on the page; the Team mode it was opened from stays.
+    expect(await within(page).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
+    expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
+
+    fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
+    await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
+    expect(b.view.container.querySelector('[data-team-settings-page]')).toBeNull()
   })
 })

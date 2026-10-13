@@ -15,6 +15,7 @@ describe('Team tab body seat precedence', () => {
     expect(element.props.selectChannel).toBe(selectChannel)
     expect(element.props.useWorkspaces).toBe(useWorkspaces)
     expect(element.props.wide).toBe(true)
-    expect(element.props.agentsInSettings).toBe(true)
+    expect(element.props.channelsOnly).toBe(true)
+    expect(element.props).not.toHaveProperty('agentsInSettings')
   })
 })

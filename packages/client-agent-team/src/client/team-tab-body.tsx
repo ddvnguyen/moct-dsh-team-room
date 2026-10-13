@@ -1,9 +1,9 @@
 /**
  * A10/T6 — the Team tab's body inside the host's native tab strip.
  *
- * The body is the Channel view: the Workspace selector and Channels list the
- * panel rail already shows, with the Agents config folded into one collapsed
- * "Team Settings" group below them. Picking a Channel goes through the same
+ * The body is the Channel view: the Inbox, the Workspace selector and the
+ * Channels list the Team rail seat also shows. The Agents config is not here:
+ * it lives on the rail's Team Settings page. Picking a Channel goes through the same
  * navigation actions as the rail, so the conversation opens in the main column
  * and the tab never mounts `TeamConversation` itself.
  *
@@ -53,5 +53,5 @@ export function renderTeamTabBody(
   // shows. The seat goes last: the strip wraps the workspace entry's props, which
   // include that entry's own `t` (the workspace dictionary) and navigation
   // actions, and neither may replace the Team's.
-  return createElement(TeamWorkspaceBrowser, { ...props, ...seat, wide: true, agentsInSettings: true } as unknown as Parameters<typeof TeamWorkspaceBrowser>[0])
+  return createElement(TeamWorkspaceBrowser, { ...props, ...seat, wide: true, channelsOnly: true } as unknown as Parameters<typeof TeamWorkspaceBrowser>[0])
 }

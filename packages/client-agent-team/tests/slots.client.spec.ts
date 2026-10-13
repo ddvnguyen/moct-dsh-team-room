@@ -11,7 +11,7 @@ function workspaceFeed() {
   }
 }
 
-async function bench(persisted: string | null = null) {
+async function bench(persisted: string | null = null, strip?: Record<string, unknown>) {
   vi.stubGlobal('localStorage', {
     getItem: () => persisted,
     setItem: vi.fn(),
@@ -66,7 +66,10 @@ async function bench(persisted: string | null = null) {
     'sidebar.settings': { kind: 'single', scope: 'root' },
     'sidebar.panellist': { kind: 'list', scope: 'root' },
   } } as never, root)
-  slots.register({ name: 'sidebar.workspaces', priority: 0 }, root)
+  // The automation plugin's native tab strip, when present, hangs its registry
+  // off the shipped workspace entry's component (see team-tab.ts).
+  const shippedWorkspaces = Object.assign(() => null, strip === undefined ? {} : { __dshNativeTabs: strip })
+  slots.register({ name: 'sidebar.workspaces', priority: 0 }, shippedWorkspaces)
   slots.register({ name: 'sidebar.settings', priority: 0 }, root)
   // The shipped Conversation occupies the keyed main panel under the reserved
   // 'conversation' key and declares the composer seats below it, mirroring
@@ -88,22 +91,24 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
 
     expect(slots.entriesOfSlot('sidebar.workspaces')).toHaveLength(1)
-    // The Team panel's own main seat is registered for the life of the client,
-    // beside the shipped conversation seat the mode shadows when it opens.
-    expect(slots.entriesOfSlot('main')).toHaveLength(2)
+    // The Team page and Team Settings main seats are registered for the life of
+    // the client, beside the shipped conversation seat the mode shadows when it
+    // opens. With no native tab strip, the rail keeps the fallback Team row
+    // beside the Team Settings row.
+    expect(slots.entriesOfSlot('main')).toHaveLength(3)
     expect(slots.entriesOfSlot('sidebar.settings')).toHaveLength(1)
-    expect(slots.entries('sidebar.panellist')).toHaveLength(1)
+    expect(slots.entries('sidebar.panellist')).toHaveLength(2)
 
     ctx.teamNavigation.actions().enterTeam()
     expect(slots.entries('sidebar.workspaces')).toHaveLength(2)
-    expect(slots.entries('main')).toHaveLength(3)
+    expect(slots.entries('main')).toHaveLength(4)
     expect(slots.entries('sidebar.settings')).toHaveLength(2)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
     expect(slots.spec('sidebar.workspaces.directoryFlow')).toBeUndefined()
 
     ctx.teamNavigation.actions().leaveTeam()
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-    expect(slots.entries('main')).toHaveLength(2)
+    expect(slots.entries('main')).toHaveLength(3)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
     await fiber.dispose()
@@ -129,7 +134,7 @@ describe('Team Client slot takeover', () => {
       expect(slots.entriesOfSlot('main')[0]!.options.priority).toBe(-100)
       ctx.teamNavigation.actions().leaveTeam()
       expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-      expect(slots.entries('main')).toHaveLength(2)
+      expect(slots.entries('main')).toHaveLength(3)
       expect(slots.entries('sidebar.settings')).toHaveLength(1)
     }
     ctx.teamNavigation.actions().enterTeam()
@@ -145,7 +150,7 @@ describe('Team Client slot takeover', () => {
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
-    expect(slots.entries('main')).toHaveLength(3)
+    expect(slots.entries('main')).toHaveLength(4)
     await fiber.dispose()
     expect(slots.entries('main')).toHaveLength(1)
   })
@@ -175,8 +180,8 @@ describe('Team Client slot takeover', () => {
     expect(uiWorkspace.openSession).toHaveBeenCalledWith('session:builder')
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder', returnToSessionId: 'session:human-origin' })
     // The conversation shadow yields to the shipped root while both sidebars
-    // stay; the panel's own seat is not the shadow and keeps its registration.
-    expect(slots.entries('main')).toHaveLength(2)
+    // stay; the panels' own seats are not the shadow and keep their registration.
+    expect(slots.entries('main')).toHaveLength(3)
     // The Member view registers no composer surface at all: the shipped
     // InputBar owns the bar, its trigger overlay, and the dock — the Team
     // chrome is sidebar-only around the embedded session.
@@ -199,7 +204,7 @@ describe('Team Client slot takeover', () => {
     expect(uiWorkspace.openSession).toHaveBeenLastCalledWith('session:human-origin')
     expect(ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
-    expect(slots.entriesOfSlot('main')).toHaveLength(2)
+    expect(slots.entriesOfSlot('main')).toHaveLength(3)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
 
     await fiber.dispose()
@@ -248,12 +253,123 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
     ctx.teamNavigation.actions().enterTeam()
     ctx.teamNavigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
-    expect(slots.entries('main')).toHaveLength(2)
+    expect(slots.entries('main')).toHaveLength(3)
 
     ctx.teamNavigation.actions().selectChannel('channel:engineering' as never)
     expect(ctx.teamNavigation.getSnapshot().memberSessionId).toBeUndefined()
-    expect(slots.entries('main')).toHaveLength(3)
+    expect(slots.entries('main')).toHaveLength(4)
 
     await fiber.dispose()
   })
 })
+
+describe('Team Settings rail row', () => {
+  type PanelRow = { options: { id: string; label: () => string } }
+  const panelRows = (slots: SlotRegistry) => slots.entries('sidebar.panellist') as unknown as PanelRow[]
+  const panel = (ctx: Context) => ctx.get('layout') as unknown as {
+    selectPanel: (id: string | null) => void
+    panelInfo: { getSnapshot: () => { activePanelId: string | null } }
+  }
+  function nativeStrip() {
+    const inserted: string[] = []
+    const renders: Array<(props: unknown) => unknown> = []
+    return {
+      inserted,
+      renders,
+      registry: {
+        version: 1,
+        getTabs: () => inserted.map(id => ({ id })),
+        subscribe: () => () => {},
+        insert: (tab: { id: string; render: (props: unknown) => unknown }) => {
+          inserted.push(tab.id)
+          renders.push(tab.render)
+          return () => { inserted.splice(inserted.indexOf(tab.id), 1) }
+        },
+      },
+    }
+  }
+
+  it('registers the rail row as Team Settings with a locale thunk, and its page as a main seat', async () => {
+    const { registry } = nativeStrip()
+    const { ctx, slots } = await bench(null, registry)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+
+    const rows = panelRows(slots)
+    expect(rows.map(row => row.options.id)).toEqual(['agent-team-settings'])
+    // A thunk, not a captured string: a language switch relabels the row.
+    expect(typeof rows[0]!.options.label).toBe('function')
+    const locale = ctx.get('locale') as LocaleRuntime
+    expect(rows[0]!.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
+    expect(slots.entriesOfSlot('main').map(entry => (entry.options as { key?: string }).key))
+      .toEqual(expect.arrayContaining(['agent-team', 'agent-team-settings', 'conversation']))
+
+    await fiber.dispose()
+    expect(slots.entries('sidebar.panellist')).toHaveLength(0)
+  })
+
+  it('keeps the fallback Team row while no native tab strip is there, and drops it once the tab is inserted', async () => {
+    const without = await bench()
+    const plain = without.ctx.plugin({ inject: [...inject], apply })
+    await plain.await()
+    expect(panelRows(without.slots).map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-settings'])
+    await plain.dispose()
+
+    const strip = nativeStrip()
+    const withStrip = await bench(null, strip.registry)
+    const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    expect(strip.inserted).toHaveLength(1)
+    expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
+    await fiber.dispose()
+  })
+
+  it('opens Team Settings without leaving Team mode, and a Channel pick hands the column back to the Team page', async () => {
+    const { ctx, slots } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const layout = panel(ctx)
+
+    layout.selectPanel('agent-team')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
+    layout.selectPanel('agent-team-settings')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
+
+    const shadow = slots.entriesOfSlot('sidebar.workspaces').find(entry => entry.options.priority === -100)
+    const injected = (shadow!.inject as () => Record<string, unknown>)()
+    ;(injected.selectChannel as (ref: string) => void)('channel:engineering')
+    expect(layout.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
+
+    // Re-picking the Channel already open still brings the page back.
+    layout.selectPanel('agent-team-settings')
+    ;(injected.selectChannel as (ref: string) => void)('channel:engineering')
+    expect(layout.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
+
+    await fiber.dispose()
+  })
+
+  it('enters Team mode from a plain conversation when the tab picks a Channel', async () => {
+    const strip = nativeStrip()
+    const { ctx } = await bench(null, strip.registry)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+
+    // The strip calls the tab's render; the element it returns carries the
+    // seat the Channel view picks through.
+    const element = strip.renders[0]!({}) as { props: Record<string, unknown> }
+    expect(element.props.channelsOnly).toBe(true)
+    ;(element.props.selectChannel as (ref: string) => void)('channel:engineering')
+    expect(panel(ctx).panelInfo.getSnapshot().activePanelId).toBe('agent-team')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
+
+    // A Workspace switch from a plain conversation only rescopes the list.
+    ;(element.props.leaveTeam as () => void)()
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+    ;(element.props.selectWorkspace as (id: string) => void)('workspace:one')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+    await fiber.dispose()
+  })
+})
+
