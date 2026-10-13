@@ -655,8 +655,12 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // the mounted features reach (remote.<name> injects included) and attaches
   // the change-stream and generated-remote-mount faces the shipped double
   // refuses by contract.
+  const commandList = vi.fn(async () => ({ ok: true as const, value: [] as const }))
+  const skillList = vi.fn(async () => ({ ok: true as const, value: { skills: [] as const } }))
   runtime.remote.provideNamespaces({
     session: { modelCatalog },
+    commands: { list: commandList },
+    skills: { list: skillList },
     agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar },
   })
   Object.assign(runtime.remote, {

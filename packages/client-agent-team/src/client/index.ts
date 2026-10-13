@@ -52,6 +52,7 @@ import { TEAM_PANEL_ID, TEAM_SETTINGS_PANEL_ID, TeamNavigation, type TeamNavigat
 import { TeamChangeStream, TeamReadStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
 import { TeamQueries, type TeamQueryIdentity } from './team-queries.ts'
 import { TeamDraftStore } from './drafts.ts'
+import { createTeamTriggerCatalogLoader } from './trigger-catalog.ts'
 import { TeamPanelIcon } from './TeamPanelIcon.tsx'
 import { TeamSettingsPanelIcon } from './TeamSettingsPanelIcon.tsx'
 import { TeamSettingsPage } from './TeamSettingsPage.tsx'
@@ -78,7 +79,7 @@ const NS = 'team'
 const TEAM_SETTINGS_NS = 'wowyuarm-agent-team-host'
 
 export const inject = [
-  'slots', 'workspaces', 'layout', 'locale', 'remote', 'remote.session', 'sessions', 'connection', 'conversation', 'uiWorkspace',
+  'slots', 'workspaces', 'layout', 'locale', 'remote', 'remote.session', 'remote.commands', 'remote.skills', 'sessions', 'connection', 'conversation', 'uiWorkspace',
 ]
 
 /**
@@ -277,7 +278,13 @@ function teamSharedRemotes(
   drafts: TeamDraftStore,
   humanIdentity: TeamHumanIdentity,
 ): Record<string, unknown> {
+  const loadTriggerCatalog = createTeamTriggerCatalogLoader({
+    getSessionId: () => currentMainSessionId(ctx),
+    sessions: ctx.sessions as unknown as ISessions,
+    remotes: { commands: ctx.remote.commands, skills: ctx.remote.skills },
+  })
   return {
+    loadTriggerCatalog,
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
     loadInbox: (request: AgentTeamInboxRequest) => queries.read(inboxQuery(request), () => ctx.remote.agentTeam.inbox(request)),
     subscribeReads: (listener: () => void) => reads.subscribe(listener),
