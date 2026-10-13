@@ -79,4 +79,23 @@ describe('Team mode and the shell main panel', () => {
     await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
     expect(b.view.container.querySelector('[data-team-settings-page]')).toBeNull()
   })
+
+  it('shows the Inbox page when the native Team tab picks the Inbox from a plain conversation', async () => {
+    const b = await runtimeWithTeam({ nativeTabs: true, workspaceId: 'w1' })
+    expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-native-tab="team"]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+
+    // TEST-6: the card took the current-page mark while the column stayed on the
+    // conversation, because the tab only moved the Team navigation.
+    fireEvent.click(await within(tab).findByRole('button', { name: /^收件箱/ }))
+
+    await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
+    expect(b.runtime.ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', inbox: true })
+    expect(await b.view.findByRole('heading', { level: 1, name: '收件箱' })).toBeTruthy()
+    expect(b.view.container.querySelector('[data-team-inbox]')).not.toBeNull()
+  })
 })

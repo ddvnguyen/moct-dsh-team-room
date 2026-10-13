@@ -1,7 +1,7 @@
 import { RemoteStream, RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import type { AgentTeamChangesRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import { afterEach, expect, vi } from 'vitest'
-import { useState } from 'react'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -65,6 +65,34 @@ function Frame({ renderSlot, usePanelInfo }: FrameProps) {
 }
 
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
+/**
+ * The automation plugin's native tab strip, reduced to what the Team tab reads:
+ * the private registry hung off the shipped workspace entry, and a body that
+ * renders every inserted tab under the baseline list the way the strip shows
+ * the active one.
+ */
+function nativeTabStrip() {
+  const tabs: Array<{ readonly id: string; readonly render: (props: never) => unknown }> = []
+  const listeners = new Set<() => void>()
+  let version = 0
+  const notify = (): void => { version += 1; for (const listener of listeners) listener() }
+  const registry = {
+    version: 1,
+    getTabs: () => tabs,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    insert: (tab: (typeof tabs)[number]) => {
+      tabs.push(tab)
+      notify()
+      return () => { tabs.splice(tabs.indexOf(tab), 1); notify() }
+    },
+  }
+  // The strip hands each tab the shipped entry's own props, as the host does.
+  function StripWorkspace(props: Record<string, unknown>) {
+    useSyncExternalStore(registry.subscribe, () => version)
+    return <div data-baseline-workspaces>普通工作区{tabs.map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
+  }
+  return Object.assign(StripWorkspace, { __dshNativeTabs: registry })
+}
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
 interface HumanProfileSeed {
   readonly name?: string
@@ -93,7 +121,7 @@ interface SeededMessage {
   readonly replyToMessageRef?: string
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[] }) {
+export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[] }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -667,7 +695,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   // session-maybe seat's adoption semantics (remount on no-session) through
   // real element identity of the root's [data-phase] node.
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation })
-  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, BaselineWorkspace as never)
+  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === true ? nativeTabStrip() : BaselineWorkspace) as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
