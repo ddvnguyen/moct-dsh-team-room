@@ -29,14 +29,14 @@ export interface AgentTeamMemoryWorkspaceRequest {
   readonly workspaceId: WorkspaceId
 }
 
-/** One version row of a record's history (the rule feed lists the same rows). */
+/** One version row of a record's history (the rule feed lists the same rows), as moct's `MemoryVersion` sends it. */
 export interface TeamMemoryVersion {
   readonly memoryId: string
   readonly version: number
   readonly action: string
+  readonly workspaceId: string | null
   readonly type: TeamMemoryType
-  readonly homeKind: TeamMemoryHomeKind
-  readonly homeRef: string
+  readonly home: TeamMemoryHome
   readonly title: string | null
   readonly body: string | null
   readonly status: string
