@@ -109,6 +109,21 @@
   box-shadow: var(--dsw-elevation-prominent);
 }
 
+.triggerGroupHeading {
+  padding: 6px 10px 2px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-tertiary));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.triggerStatus {
+  padding: 10px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-tertiary));
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .mentionOption {
   align-items: center;
   display: grid;

@@ -41,6 +41,7 @@ interface TeamChannelPageProps {
   /** The Human's own unread per Thread: the Host's three-class judgement, never a Client guess. */
   readonly loadInbox: TeamConversationProps['loadInbox']
   readonly drafts: TeamDraftStore
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly sendMessage: TeamConversationProps['sendMessage']
@@ -109,7 +110,7 @@ function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, nu
   return new Map(inbox.items.filter(item => item.unreadCount > 0).map(item => [item.thread.threadRef, item.unreadCount]))
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
@@ -547,6 +548,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
       key={draftKey}
       members={channelMembers}
       drafts={drafts}
+      loadTriggerCatalog={loadTriggerCatalog}
       draftKey={draftKey}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}

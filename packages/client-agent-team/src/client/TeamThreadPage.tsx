@@ -57,6 +57,7 @@ interface TeamThreadPageProps {
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly loadMemberActivity: TeamConversationProps['loadMemberActivity']
   readonly drafts: TeamDraftStore
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
@@ -120,7 +121,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
-    subscribeChanges, loadMembers, loadMemberActivity, drafts, getAttachment, reply, changeTask, promoteThread, t,
+    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
@@ -1039,6 +1040,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       members={channelMembers}
       followerMemberIds={followerIds}
       drafts={drafts}
+      loadTriggerCatalog={loadTriggerCatalog}
       draftKey={draftKey}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}

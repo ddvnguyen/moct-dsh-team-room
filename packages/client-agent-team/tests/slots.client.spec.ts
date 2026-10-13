@@ -25,6 +25,8 @@ async function bench(persisted: string | null = null, strip?: Record<string, unk
   // rc.1: the client declares the model-catalog sub-namespace; the bench
   // supplies it so the takeover fiber is not left pending on inject.
   ctx.provide('remote.session', { modelCatalog: vi.fn(async () => ({ ok: true, value: { groups: [], failures: [] } })) })
+  ctx.provide('remote.commands', { list: vi.fn(async () => ({ ok: true, value: [] })) })
+  ctx.provide('remote.skills', { list: vi.fn(async () => ({ ok: true, value: { skills: [] } })) })
   ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   // The plugin declares these runtime services; the takeover bench only mounts
   // them, it never drives sessions or the model catalog.
