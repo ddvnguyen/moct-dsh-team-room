@@ -30,7 +30,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, isTsxDevMode, markAgentTeamPreset, teamPresetScopeMismatchMessage } from '../src/index.ts'
+import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, isTsxDevMode, markAgentTeamPreset, teamPresetScopeMismatchMessage, TeamMemoryClient } from '../src/index.ts'
 import { checkpointRefFor, foldTeamContextProjection } from '../src/context-projection.ts'
 import { AGENT_TEAM_PLUGIN_ID, continuationCheckpointRefOf, handoffOf, isCheckpointContinuationMessage, isHandoffMessage } from '../src/context-source.ts'
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
@@ -1195,6 +1195,51 @@ describe('Agent Team Member lifecycle', () => {
     expect(await call('team_inbox', {})).toMatchObject({ totalUnreadCount: 0, items: [] })
   })
 
+  it('scopes the memory tools to the live Member: its Channels, its Threads, its identity', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const open = await ctx.agentTeam.createChannel({ requestId: requestId('memory-open'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const closed = await ctx.agentTeam.createChannel({ requestId: requestId('memory-closed'), workspaceId, name: 'leads', description: 'Not joined' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('memory-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [open.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const memberId = builder.status.member.memberId
+    const ownTask = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('memory-own-task'), workspaceId, channelRef: open.channel.channelRef, body: 'Memory work' })
+    const foreign = await ctx.agentTeam.sendMessage({ requestId: requestId('memory-foreign'), workspaceId, channelRef: closed.channel.channelRef, body: 'Leads only' })
+    if (ownTask.kind !== 'committed' || foreign.kind !== 'committed') throw new Error('expected committed Threads')
+    let callNumber = 0
+    const call = (name: string, args: unknown) => ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`memory-${++callNumber}`), name, arguments: args, agent })
+
+    // Without the MOCT backend the tools refuse with a stable code instead of guessing.
+    const unavailable = await call('memory_search', {})
+    expect(unavailable.isError && unavailable.error.message).toContain('BACKEND_UNAVAILABLE')
+
+    const requests: { method: string; url: URL; body?: Record<string, unknown> }[] = []
+    const fetchImpl = (async (input: string, init: RequestInit = {}) => {
+      const url = new URL(input)
+      requests.push({ method: init.method ?? 'GET', url, ...(init.body === undefined ? {} : { body: JSON.parse(String(init.body)) as Record<string, unknown> }) })
+      if (url.pathname === '/team/v1/memory/settings') return Response.json({ orchestrators: [] })
+      if (url.pathname === '/team/v1/memory') return init.method === 'POST'
+        ? Response.json({ record: null, nearMatches: [] })
+        : Response.json({ results: [], total: 0, nextCursor: null })
+      return Response.json({ ok: false, error: 'not found' }, { status: 404 })
+    }) as unknown as typeof fetch
+    Reflect.set(ctx.agentTeam, 'teamMemory', new TeamMemoryClient({ fetch: fetchImpl }))
+
+    const searched = await call('memory_search', { all: true, channels: [closed.channel.channelRef] })
+    expect(searched.isError).toBe(false)
+    const search = requests.find(request => request.url.pathname === '/team/v1/memory' && request.method === 'GET')!.url.searchParams
+    expect(Object.fromEntries(search)).toEqual({ workspaceId, expertId: memberId, channels: open.channel.channelRef })
+
+    const noted = await call('memory_note', { type: 'decision', title: 'Keep the reader scope in the Host', threadRef: ownTask.thread.threadRef, actor: { kind: 'human', id: 'human' } })
+    expect(noted.isError).toBe(false)
+    const post = requests.find(request => request.method === 'POST')!.body!
+    expect(post).toMatchObject({ actor: { kind: 'member', id: memberId }, workspaceId, home: { kind: 'task', ref: ownTask.task!.taskRef }, taskRef: ownTask.task!.taskRef })
+
+    // A Thread in a Channel the Member never joined cannot be named, so the scope cannot widen.
+    const widened = await call('memory_note', { type: 'rule', title: 'Leads rule', threadRef: foreign.thread.threadRef })
+    expect(widened.isError && widened.error.message).toContain('SCOPE_FORBIDDEN')
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1)
+  })
+
   it('delivers a direct message through the tool and injects it into the live recipient session', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
@@ -1889,7 +1934,7 @@ describe('Agent Team Member lifecycle', () => {
   })
 
   it('validates the final Team tool marker during unpublished setup', async () => {
-    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'context_rollover', 'context_checkpoint', 'context_status', 'context_compact'])
+    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'context_rollover', 'context_checkpoint', 'context_status', 'context_compact', 'memory_note', 'memory_search', 'memory_get'])
     const definition = markAgentTeamPreset({ name: 'team_message' })
     expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
   })

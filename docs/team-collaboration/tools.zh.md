@@ -79,3 +79,23 @@ seed 成本按来源 Session 自身重放的测量逐节点定价，retained 数
 Team 从该 Member 自己的 preset 作用域回答引擎的两个问题。第一，由哪个 compaction 引擎服务。第二，surface 值多少。范围由压力策略读取的同一 meter 定价，因此 compaction 实际替换的内容与 `context_status` 承诺的内容不会互相矛盾。
 
 preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用域不可用。这绝不是静默 no-op。没有可安全替换内容的上下文会报告未改变。
+
+## Team memory: `memory_note`, `memory_search`, `memory_get`
+
+三个 Team memory 工具与协议工具并列。它们读写 MOCT Team Room backend 的 typed memory records（`/team/v1/memory`，schema v8）：rule、convention、decision、how_to_work、task、branch，每条记录归属一个 home（task、Channel、Team 或 expert）。未设置 `MOCT_TEAM_URL` 时返回 `BACKEND_UNAVAILABLE`；没有 v8 路由的 backend 返回 `MEMORY_UNSUPPORTED`。
+
+身份与范围只来自 Session。Host 解析 actor（seat 的 Member id）、Workspace、该 Member 自己的 Channels，以及本 slot 当前 Turn 投递所在的 Thread。没有任何参数能指定 actor、读取范围或 home ref，工具逐个复制已声明字段，模型编造的参数到不了 backend。
+
+`threadRef` 参数只能收窄到该 Member 自己某个 Channel 内的 Thread，其他一律以 `SCOPE_FORBIDDEN` 拒绝。角色只来自 backend 的 `orchestrators` 设置：orchestrator 读整个 Workspace，其他人按自己的 Channels 读；设置读取失败或超时一律按 worker 处理，绝不发送 `all`。
+
+`memory_note` 新建记录，或更新一条读者可见的记录（`id` + `baseVersion`）。模型选择 type，并在该 type 允许的 home 中选择 home kind；ref 总是当前 Task、当前 Channel、Workspace 或 Member 自己。
+
+与已有记录相近的 note 不会保存：结果列出 near matches，`confirmNew` 是越过它们的唯一方式。结果带回 backend 的 notice，pending 记录会说明在 orchestrator 或 Human 批准前不会生效。
+
+`memory_search` 与 `memory_get` 把记录渲染为 Team 数据而非指令；`memory_get` 把读者范围外的 id 报为 missing。只属于 Human 的动作（approve、restore、purge、settings）和整理动作（widen、retract、pin）都不是工具。
+
+每一步，member-context row 还会把 `<team-memory>` 块作为独立消息注入，与身份块并列，只在其文本变化时重新进入。
+
+块以一行说明开头：这些是需要权衡的 Team 数据，绝不覆盖 system、developer、user 或 Workspace 指令；记录中的字面边界标记会被转义。
+
+块来自 backend 针对当前 Task 与 Channel 的 inject 路由，缓存一分钟；backend 宕机、过慢（超过 1.5 秒）或早于 v8 时不注入任何块，每次中断只记一条 warning，绝不使该步失败或阻塞。

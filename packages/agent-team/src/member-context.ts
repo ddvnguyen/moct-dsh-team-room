@@ -7,6 +7,7 @@ import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { matchesProducerKind } from './context-source.ts'
 import type { AgentTeamAgentMember } from './types.ts'
 import { memberMemoryDirectoryPath } from './member-runtime.ts'
+import { TEAM_MEMORY_BEGIN } from './team-memory.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
 
@@ -50,7 +51,18 @@ export function apply(ctx: Context): void {
     }
     const workspaces = renderMemberWorkspaces(host.workspacesForAgent(agent))
     const text = `${renderMemberIdentity(member)}\n\n${memory}${workspaces === '' ? '' : `\n\n${workspaces}`}`
-    const latestText = agent.session.surface.nodes.toReversed().flatMap(sequence => {
+    // Team memory rides beside the identity block as its own message, so each
+    // is re-entered only when its own text changes. A missing or failing
+    // backend yields no block and never blocks or fails the step.
+    let teamMemory: string | undefined
+    if (typeof host.teamMemoryBlockForAgent === 'function') {
+      try {
+        teamMemory = await host.teamMemoryBlockForAgent(agent)
+      } catch {
+        teamMemory = undefined
+      }
+    }
+    const visible = agent.session.surface.nodes.toReversed().flatMap(sequence => {
       // `nodes` are event identities (SessionSeq); snapshotEvents takes log
       // offsets. Re-entering through the validating constructor keeps the two
       // number domains explicit (the seq = log.length contiguity contract).
@@ -60,14 +72,18 @@ export function apply(ctx: Context): void {
         && event.data.content[0]?.type === 'text'
         ? [event.data.content[0].text]
         : []
-    })[0]
-    const alreadyVisible = latestText === text
-    if (alreadyVisible) return decision
-    const message = createUserMessage({
-      content: [{ type: 'text', text }],
-      source: { kind: name, form: 'instructions' },
     })
-    return { kind: 'enter', messages: [...decision.messages, message] }
+    const latestText = visible.find(entry => !entry.startsWith(TEAM_MEMORY_BEGIN))
+    const latestTeamMemory = visible.find(entry => entry.startsWith(TEAM_MEMORY_BEGIN))
+    const messages = [
+      ...(latestText === text ? [] : [text]),
+      ...(teamMemory === undefined || latestTeamMemory === teamMemory ? [] : [teamMemory]),
+    ].map(entry => createUserMessage({
+      content: [{ type: 'text', text: entry }],
+      source: { kind: name, form: 'instructions' },
+    }))
+    if (messages.length === 0) return decision
+    return { kind: 'enter', messages: [...decision.messages, ...messages] }
   }, { prepend: true })
 }
 

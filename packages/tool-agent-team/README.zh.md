@@ -15,6 +15,7 @@
 - `context_checkpoint` 为调用的 Member 记录一个命名的当前上下文 checkpoint。durable checkpoint 就是 Session projection 折叠的成功 `tool/call`+`tool/result` 对；返回的 ref 由 Member Session 身份加 tool call id 确定性派生。工具体不做 lifecycle 副作用，但会结束 turn：checkpoint 在其所属 turn 结束时 resolve，因此模型把它作为一个完整工作单元的最后动作来记录。
 - `context_status` 返回该 Member 跨当前 Session 与已归档祖先 lineage 的上下文代际有界结构视图：已记录的 checkpoints 与 handoff/Team/compaction 边界，无法证明可安全回返的条目携带拒绝原因；同时给出该 Member 相对 handoff 预算的用量，以及作用域能定价时此刻发起 compaction 会替换的内容。Team 边界只有在「经它保留的前缀仍停留在单一 Thread 内」且回返能把工作集缩到 handoff 预算之下时才会被提供。对不可返回的行，Team 以该行自身 ref 的短稳定 `anchor` 摘要作答，使名称与价格相同的行仍可区分，且任何不可选择的行都不携带可引用的字符串；只有 restorable 行上打印的 `ref` 可被引用。仅结构信息——不含任何 transcript 正文。fresh 的 `context_rollover` 从不需要先读 status。
 - `context_compact` 就地缩短调用方 Member 的当前代：较早历史中的一段被替换为摘要，最新工作保持原文。它绝不切换代际，也绝不回返到锚点。preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用域不可用；没有可安全替换内容的上下文会报告自身未改变。
+- `memory_note`、`memory_search`、`memory_get` 访问 MOCT Team Room backend 的 typed Team memory（schema v8）。actor、Workspace、Channels、当前 Thread 与角色只来自 Session——没有参数能指定它们，已声明字段逐个复制。`memory_note` 返回 backend 的 notice 与 near matches（`confirmNew` 是越过它们的唯一方式），pending 记录会说明批准前不生效；读取结果把记录渲染为 Team 数据而非指令。只属于 Human 的动作与整理动作（approve、restore、purge、settings、widen、retract、pin）都不是工具。见 [Team memory](../../docs/team-collaboration/tools.zh.md#team-memory-memory_note-memory_search-memory_get)。
 
 四个 context 工具全部用引擎自己的定义（`createContinuityTools`）：参数契约、对引用 ref 的 anti-forgery 门、结束 turn 的时机与渲染形状都由引擎负责，Team 只提供自己的词汇与它们背后的 adapter。
 
