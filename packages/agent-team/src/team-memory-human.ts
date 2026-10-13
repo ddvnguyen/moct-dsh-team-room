@@ -25,7 +25,8 @@ import type {
   TeamMemoryRecordWithLinks, TeamMemorySettings, TeamMemoryUsage, TeamMemoryVersion,
 } from './types/memory.ts'
 
-const MAX_LIST = 100
+/** The backend's search bound (`limit must be 1..20`); a larger page is clamped here, never sent. */
+const MAX_LIST = 20
 const RULE_FEED_LIMIT = 50
 const MEMORY_VERBS = ['approve', 'retract', 'restore', 'purge', 'widen', 'edit', 'pin'] as const
 

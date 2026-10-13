@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { AgentTeamMemoryActRequest, AgentTeamMemoryOutcome, TeamMemoryRecord } from '@ddvnguyen/moct-dsh-team-room/types'
-import { PurgeDialog, TeamMemoryPanel, WidenDialog, memoryStatusLabel, type TeamMemoryPanelProps, type TeamMemoryRemotes } from '../src/client/TeamMemoryPanel.tsx'
+import type { AgentTeamMemoryActRequest, AgentTeamMemoryListRequest, AgentTeamMemoryOutcome, TeamMemoryRecord } from '@ddvnguyen/moct-dsh-team-room/types'
+import { MEMORY_PAGE, PurgeDialog, TeamMemoryPanel, WidenDialog, memoryStatusLabel, type TeamMemoryPanelProps, type TeamMemoryRemotes } from '../src/client/TeamMemoryPanel.tsx'
 import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
@@ -32,16 +32,29 @@ const refused = (code: string, message: string) => async (): Promise<RemoteResul
   ({ ok: true, value: { ok: false, code, message } }) as RemoteResult<AgentTeamMemoryOutcome<never>>
 
 /** A list remote that answers each status with the records in it, like the backend. */
+/**
+ * A list remote that behaves like moct's search: it refuses a limit outside
+ * 1..20 (default 10) exactly as the backend does, filters by status and type,
+ * and pages with the backend's offset cursor.
+ */
 function listed(...records: TeamMemoryRecord[]): TeamMemoryRemotes['list'] {
-  return vi.fn(async (request: { status?: string }) => {
-    const results = records.filter(entry => request.status === undefined || request.status === 'all' || entry.status === request.status)
-    return ok({ results, total: results.length, nextCursor: null })()
+  return vi.fn(async (request: AgentTeamMemoryListRequest) => {
+    const limit = request.limit ?? 10
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) return refused('INVALID_INPUT', 'limit must be 1..20')()
+    const matching = records.filter(entry => (request.status === undefined || request.status === 'all' || entry.status === request.status)
+      && (request.types === undefined || request.types.includes(entry.type)))
+    const offset = request.cursor === undefined ? 0 : Number(request.cursor)
+    const results = matching.slice(offset, offset + limit)
+    return ok({ results, total: matching.length, nextCursor: offset + results.length < matching.length ? String(offset + results.length) : null })()
   }) as unknown as TeamMemoryRemotes['list']
 }
 
+const many = (count: number, overrides: Partial<TeamMemoryRecord>, prefix: string): TeamMemoryRecord[] =>
+  Array.from({ length: count }, (_, index) => record({ ...overrides, id: `${prefix}-${index + 1}`, title: `${prefix} ${index + 1}` }))
+
 function remotes(overrides: Partial<TeamMemoryRemotes> = {}): TeamMemoryRemotes {
   return {
-    list: vi.fn(ok({ results: [], total: 0, nextCursor: null })),
+    list: listed(),
     record: vi.fn(ok({ record: { ...record(), links: [] }, versions: [] })),
     ruleFeed: vi.fn(ok([])),
     usage: vi.fn(ok({ workspaceId: WORKSPACE, capTokens: 2000, injectLayerTokens: { min: 1, max: 2000 }, homes: [] })),
@@ -116,6 +129,34 @@ describe('Team memory page', () => {
     expect(await screen.findByText(en.memoryUsageUnavailable)).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: en.memoryViewRecords }))
     expect(await screen.findByText('Use the ledger')).toBeTruthy()
+  })
+
+  it('reads within the backend limit and pages the rest, pending kept above active', async () => {
+    const list = listed(...many(25, { status: 'pending' }, 'pending'), ...many(3, {}, 'active'))
+    renderPanel(remotes({ list }))
+    await screen.findByText('pending 20')
+    const shown = () => [...document.querySelectorAll('[data-memory-record]')].map(row => row.getAttribute('data-memory-record'))
+    expect(shown()).toHaveLength(23)
+    expect(shown().slice(19, 21)).toEqual(['pending-20', 'active-1'])
+    expect(screen.queryByRole('alert')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.memoryLoadMore }))
+    await screen.findByText('pending 25')
+    expect(shown()).toHaveLength(28)
+    expect(shown().slice(24, 26)).toEqual(['pending-25', 'active-1'])
+    expect(document.querySelector('[data-memory-more]')).toBeNull()
+    for (const [request] of vi.mocked(list).mock.calls) expect(request.limit).toBe(MEMORY_PAGE)
+  })
+
+  it('pages the task picture past one backend page', async () => {
+    const tasks = many(23, { type: 'task', home: { kind: 'task', ref: 'task:1' } }, 'task')
+    renderPanel(remotes({ list: listed(...tasks, record()) }))
+    fireEvent.click(screen.getByRole('tab', { name: en.memoryViewTasks }))
+    await screen.findByText('task 20')
+    expect(screen.queryByText('task 21')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.memoryLoadMore }))
+    expect(await screen.findByText('task 23')).toBeTruthy()
+    expect(document.querySelector('[data-memory-more]')).toBeNull()
   })
 })
 
