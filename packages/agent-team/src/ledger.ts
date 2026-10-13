@@ -4599,6 +4599,13 @@ export class AgentTeamLedger {
     return new Set([...projection.threads.keys()].filter(threadRef => this.channelRefForThreadFrom(projection, threadRef) === channelRef))
   }
 
+  /** Live Channels of one Workspace the Member belongs to: the team-memory reader scope, sorted. */
+  memberChannels(memberId: AgentTeamMemberId, workspaceId: WorkspaceId): readonly AgentTeamChannelRef[] {
+    return Object.freeze([...this.state.channels.values()]
+      .filter(channel => channel.workspaceId === workspaceId && channel.state !== 'archived' && this.isChannelMember(channel.channelRef, memberId))
+      .map(channel => channel.channelRef).sort())
+  }
+
   /** The Workspace authorization question: does this Member participate in this Workspace. */
   participatesIn(memberId: AgentTeamMemberId, workspaceId: WorkspaceId): boolean {
     return this.participatesInFrom(this.state, memberId, workspaceId)

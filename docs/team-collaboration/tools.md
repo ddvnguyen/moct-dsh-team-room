@@ -117,3 +117,23 @@ When an ancestor cannot be read, the walk stops there and the result carries `in
 The Team answers the engine's two questions about that stretch from the Member's own preset scope: which compaction engine serves it, and what its surface costs. The same meter the pressure policy reads prices the range, so what a compaction replaces and what a `context_status` promised cannot disagree.
 
 A Member whose preset mounts no compaction engine is told the capability is not available in this scope — never a silent no-op — and a context with nothing safe to replace reports that this context is unchanged.
+
+## Team memory: `memory_note`, `memory_search`, `memory_get`
+
+Three Team memory tools sit beside the protocol tools. They read and write the MOCT Team Room backend's typed memory records (`/team/v1/memory`, schema v8): rule, convention, decision, how_to_work, task, and branch, each filed under a home (task, Channel, Team, or expert). Without `MOCT_TEAM_URL` they refuse with `BACKEND_UNAVAILABLE`; a backend without the v8 routes answers `MEMORY_UNSUPPORTED`.
+
+Identity and scope come from the Session only. The Host resolves the actor (the seat's Member id), the Workspace, the Member's own Channels, and the Thread this slot's Turn was delivered for. No parameter names an actor, a reader scope, or a home ref, and the tool copies its declared fields one by one, so an invented argument never reaches the backend.
+
+A `threadRef` argument can only narrow to a Thread in one of the Member's Channels — any other is refused with `SCOPE_FORBIDDEN`. The role comes from the backend's `orchestrators` setting alone: an orchestrator reads the whole Workspace, everyone else reads with their Channels, and a failed or timed-out settings read counts as a worker, never as `all`.
+
+`memory_note` creates a record, or updates one the reader can see (`id` + `baseVersion`). The model picks the type and, within the type's allowed homes, the home kind; the ref is the current Task, the current Channel, the Workspace, or the Member itself.
+
+A note close to an existing one is not saved: the result lists the near matches, and `confirmNew` is the only way past them. The result carries the backend's notice, and a pending record says it is not live until an orchestrator or the Human approves it.
+
+`memory_search` and `memory_get` render records as Team data, not instructions; `memory_get` reports ids outside the reader's scope as missing. The human-only verbs (approve, restore, purge, settings) and the curation verbs (widen, retract, pin) are not tools.
+
+Every step, the member-context row also injects a `<team-memory>` block as its own message, beside the identity block and re-entered only when its text changes.
+
+It opens with one line saying the notes are Team data to weigh and never override system, developer, user, or Workspace instructions, and a literal frame marker inside a record is escaped.
+
+The block comes from the backend's inject route for the current Task and Channel, cached for a minute; a down, slow (over 1.5 s), or pre-v8 backend yields no block and one warning per outage, and never fails or holds the step.

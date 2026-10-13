@@ -57,6 +57,7 @@ import type { AgentTeamPoisonVerdict } from './poisoned-session.ts'
 import { AgentTeamActivityFeed } from './activity-feed.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { MoctOperationsTable } from './moct-table.ts'
+import { TeamMemoryClient, TeamMemoryError, type TeamMemoryScope } from './team-memory.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -188,6 +189,8 @@ export { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIAL
 export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName } from './human-profile.ts'
 export { humanAvatarsRoot } from './human-avatar.ts'
 export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
+export { TEAM_MEMORY_HOMES, TEAM_MEMORY_STATUSES, TEAM_MEMORY_TYPES, TeamMemoryClient, TeamMemoryError } from './team-memory.ts'
+export type { TeamMemoryGetResult, TeamMemoryNearMatch, TeamMemoryNoteInput, TeamMemoryNoteResult, TeamMemoryRecord, TeamMemoryScope, TeamMemorySearchInput, TeamMemorySearchResult } from './team-memory.ts'
 
 /** Process-stable marker carried by the final Team message tool definition. */
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
@@ -594,6 +597,8 @@ export default class AgentTeam extends TypertRemoteService {
 
   private domain?: Domain<typeof agentTeamDomainSpec>
   private ledger?: AgentTeamLedger
+  /** Team memory (MOCT schema v8); present only beside the MOCT ledger backend. */
+  private teamMemory?: TeamMemoryClient
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   /** Live Member per session id; drives the root session/event listener. */
   private readonly memberBySessionId = new Map<SessionId, AgentTeamMemberId>()
@@ -1230,6 +1235,7 @@ export default class AgentTeam extends TypertRemoteService {
           workspaceId: requiredEnv('MOCT_TEAM_WORKSPACE'),
         })
       : domain.table('operations')
+    if (mocUrl) this.teamMemory = new TeamMemoryClient({ baseUrl: mocUrl })
     const ledger = new AgentTeamLedger(operationsTable)
     this.ledger = ledger
     // A live Config edit in the constructor's window may have arrived before
@@ -2679,6 +2685,60 @@ export default class AgentTeam extends TypertRemoteService {
       const title = this.ctx.workspaceRegistry.get(participation.workspaceId)?.title
       return title === undefined ? participation : Object.freeze({ ...participation, title })
     })) })
+  }
+
+  /**
+   * Team memory for one live instance (memory M2). The reader is resolved from
+   * the Session alone: the seat's Member id is the actor, its Channels in the
+   * Workspace are the scope, and the Thread is the one this slot's Turn was
+   * delivered for. A `threadRef` argument may only narrow to a Thread in one of
+   * the Member's own Channels; it never widens the scope.
+   */
+  teamMemoryForAgent(agent: Agent, request: { readonly workspaceId?: WorkspaceId; readonly threadRef?: string } = {}): { readonly client: TeamMemoryClient; readonly scope: TeamMemoryScope } {
+    const client = this.teamMemory
+    if (client === undefined) throw new TeamMemoryError(503, 'BACKEND_UNAVAILABLE', 'team memory needs the MOCT Team Room backend (MOCT_TEAM_URL is not set)')
+    return { client, scope: this.teamMemoryScope(agent, request) }
+  }
+
+  /** The `<team-memory>` block for this instance's next step, or undefined; never throws. */
+  async teamMemoryBlockForAgent(agent: Agent): Promise<string | undefined> {
+    const client = this.teamMemory
+    if (client === undefined) return undefined
+    let scope: TeamMemoryScope
+    try {
+      scope = this.teamMemoryScope(agent, {})
+    } catch {
+      return undefined
+    }
+    return client.injectionBlock(scope, message => this.ctx.logger.warn(message))
+  }
+
+  private teamMemoryScope(agent: Agent, request: { readonly workspaceId?: WorkspaceId; readonly threadRef?: string }): TeamMemoryScope {
+    const seat = this.seatForAgent(agent)
+    if (seat === undefined) throw new Error('Agent is not an active Team Member')
+    const ledger = this.requireLedger()
+    const memberId = seat.member.memberId
+    const delivered = seat.slot === 0 ? this.activityThreads.get(memberId) : this.slotActivityThreads.get(slotKey(memberId, seat.slot))
+    const workspaces = ledger.workspacesOf(memberId)
+    let workspaceId = seat.member.workspaceId
+    if (request.workspaceId !== undefined) {
+      if (!workspaces.includes(request.workspaceId)) throw new Error(`Not participating in Workspace '${request.workspaceId}'`)
+      workspaceId = request.workspaceId
+    }
+    const threadRef = (request.threadRef ?? delivered) as AgentTeamThreadRef | undefined
+    if (request.workspaceId === undefined) {
+      // The Thread names its Workspace; otherwise the seat's default.
+      workspaceId = (threadRef === undefined ? undefined : workspaces.find(id => ledger.resolveThreadRefs(id, [threadRef]).length > 0)) ?? seat.member.workspaceId
+    }
+    const channelRefs = ledger.memberChannels(memberId, workspaceId)
+    const resolved = threadRef === undefined ? undefined : ledger.resolveThreadRefs(workspaceId, [threadRef])[0]
+    if (request.threadRef !== undefined && (resolved === undefined || !channelRefs.includes(resolved.channelRef))) {
+      throw new TeamMemoryError(403, 'SCOPE_FORBIDDEN', `Thread '${request.threadRef}' is not in one of your Channels in Workspace '${workspaceId}'`)
+    }
+    const thread = resolved === undefined || !channelRefs.includes(resolved.channelRef) ? undefined : Object.freeze({
+      threadRef: resolved.threadRef, channelRef: resolved.channelRef, ...(resolved.taskRef === undefined ? {} : { taskRef: resolved.taskRef }),
+    })
+    return Object.freeze({ memberId, workspaceId, channelRefs, ...(thread === undefined ? {} : { thread }) })
   }
 
   /** Validate the durable ledger against an independently replayed projection. */
