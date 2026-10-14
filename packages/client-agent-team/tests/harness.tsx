@@ -50,18 +50,55 @@ afterEach(() => {
   expect(crashes, `slot entries crashed:\n${crashes.join('\n')}`).toEqual([])
 })
 
-type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main'>
-function Frame({ renderSlot, usePanelInfo }: FrameProps) {
-  const [collapsed, setCollapsed] = useState(false)
+/**
+ * The fixture frame's sidebar column state, shared with the layout double so a
+ * header control can observe the same collapse the column renders. The shipped
+ * AppFrame derives it from the layout store (sidebar === 0, or the narrow
+ * auto-collapse override) and publishes it as `data-sidebar-collapsed` on its
+ * own element; the Team headers read that attribute, so the fixture publishes
+ * the same one instead of a fixture-only prop.
+ */
+export interface FixtureSidebarState {
+  readonly collapsed: boolean
+  readonly subscribe: (listener: () => void) => () => void
+  readonly setCollapsed: (next: boolean) => void
+  /**
+   * The bare boolean, not a fresh object: useSyncExternalStore compares with
+   * Object.is, so an allocated snapshot reads as a change on every poll and
+   * re-renders forever.
+   */
+  readonly getSnapshot: () => boolean
+}
+
+function createFixtureSidebarState(): FixtureSidebarState {
+  const listeners = new Set<() => void>()
+  let collapsed = false
+  return {
+    get collapsed() { return collapsed },
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    setCollapsed: (next) => { if (collapsed === next) return; collapsed = next; for (const listener of [...listeners]) listener() },
+    getSnapshot: () => collapsed,
+  }
+}
+
+type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main'> & { sidebarState: FixtureSidebarState }
+function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
   // The shipped frame renders the keyed main cell for the selected global panel
   // and falls back to the conversation seat, so the bench follows the same rule
   // instead of pinning that seat.
   const panelId = usePanelInfo(info => info.activePanelId)
-  return <>
-    <button type="button" data-test-control onClick={() => { setCollapsed(value => !value) }}>Toggle fixture sidebar</button>
+  // Subscribed exactly as the shipped frame subscribes to its store, so a
+  // toggle from either side re-renders the column and re-publishes the
+  // attribute. A plain getter read would not: the Frame holds no subscription
+  // of its own.
+  const collapsed = useSyncExternalStore(sidebarState.subscribe, sidebarState.getSnapshot, sidebarState.getSnapshot)
+  // The window-chrome contract the real frame honours: the attribute is
+  // present while the column is closed and absent while it is open.
+  return <div {...(collapsed ? { 'data-sidebar-collapsed': true } : {})}>
+    <button type="button" data-test-control onClick={() => { sidebarState.setCollapsed(!collapsed) }}>Toggle fixture sidebar</button>
     {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280 })}
     {renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })}
-  </>
+  </div>
 }
 
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
@@ -138,7 +175,11 @@ interface SeededMessage {
   readonly replyToMessageRef?: string
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[] }) {
+export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
+  /** Replace the bench roster wholesale; the Thread roster spec needs archived/inactive states. */
+  readonly seedRoster?: readonly { readonly memberId: string; readonly workspaceId: string; readonly handle: string; readonly presence?: 'available' | 'working' | 'error' | 'unavailable'; readonly diagnostic?: AgentTeamMemberDiagnostic; readonly state?: 'enabled' | 'inactive' | 'archived' }[];
+  /** Seed Channel membership rows: which Members joined which Channel. */
+  readonly seedChannelMembers?: readonly { readonly channelRef: string; readonly memberId: string }[] }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -152,10 +193,13 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // panelInfo source (the same one `usePanelInfo` reads), so a spec selects a
   // global panel exactly the way the shipped sidebar and plugin manager do.
   const selectPanel = vi.fn((panelId: string | null): void => { runtime.panelInfo.set({ activePanelId: panelId as never }) })
+  const sidebarState = createFixtureSidebarState()
+  const toggleSidebar = vi.fn((): void => { sidebarState.setCollapsed(!sidebarState.collapsed) })
   runtime.ctx.provide('layout', {
-    toggleSidebar: vi.fn(),
+    toggleSidebar,
     selectPanel,
     panelInfo: runtime.panelInfo,
+    sidebarState,
   } as never)
   // The shipped layout store drops a selection once no live `main` entry owns
   // its key (ui-layout's `retainMainPanels`, subscribed to the main slot): that
@@ -215,24 +259,28 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     releaseDraftAttachments: () => {},
     rebindDraftFiles: () => {},
   } as never)
-  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: AgentTeamMemberDiagnostic) => ({
+  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: AgentTeamMemberDiagnostic, state: 'enabled' | 'inactive' | 'archived' = 'enabled', availability?: 'active' | 'archived' | 'inactive') => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
-      presetId: 'team-member', state: 'enabled', sessionId: `session:${memberId}`,
+      presetId: 'team-member', state, sessionId: `session:${memberId}`,
     },
     workspaceIds: [workspaceId],
     instances: [],
-    availability: presence === 'unavailable' ? 'unavailable' : 'active',
+    availability: availability ?? (state === 'archived' ? 'archived' : state === 'inactive' ? 'inactive' : presence === 'unavailable' ? 'unavailable' : 'active'),
     presence,
     ...(diagnostic === undefined ? {} : { diagnostic }),
   })
-  let memberRows = [
+  let memberRows: Array<ReturnType<typeof status>> = [
     status('member:builder', 'w1', 'builder', 'available'),
     status('member:worker', 'w1', 'worker', 'working'),
     status('member:failed', 'w1', 'failed', 'error', { class: 'runtime', detail: 'model failed' }),
     status('member:offline', 'w1', 'offline', 'unavailable', { class: 'preset-composition', detail: 'preset missing' }),
     status('member:builder-beta', 'w2', 'builder', 'available'),
   ]
+  // A spec may replace the bench roster wholesale: the Thread roster spec
+  // needs a Thread-only participant, extra Workspace members, and
+  // archived/inactive states the default bench does not carry.
+  if (options?.seedRoster !== undefined) memberRows = options.seedRoster.map(entry => status(entry.memberId, entry.workspaceId, entry.handle, entry.presence ?? 'available', entry.diagnostic, entry.state))
   const members = vi.fn(async ({ workspaceId }: { workspaceId?: string }) => ({ ok: true, value: memberRows.filter(entry => workspaceId === undefined || entry.workspaceIds.includes(workspaceId)) }))
   const joinWorkspace = vi.fn(async (request: { memberId: string; workspaceId: string }) => {
     const member = memberRows.find(entry => entry.member.memberId === request.memberId)!
@@ -258,7 +306,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   let channels: Array<Record<string, unknown>> = options?.initialChannels === true
     ? [{ channelRef: 'channel:engineering', workspaceId: 'w1', name: 'engineering', description: 'Engineering work', createdAtSequence: 1 }]
     : []
-  let memberships: Array<Record<string, unknown>> = []
+  let memberships: Array<Record<string, unknown>> = (options?.seedChannelMembers ?? []).map(entry => ({ channelRef: entry.channelRef, memberId: entry.memberId }))
   const seedTaskRef = options?.seedTaskRef ?? 'task:1'
   const seedThreadRef = options?.seedThreadRef ?? 'thread:1'
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
@@ -711,10 +759,11 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
       { workspaceId: 'w2' as WorkspaceId, title: 'Beta', path: '/work/beta', sessionIds: [], createdAt: '', updatedAt: '' },
     ] as never
   })
+  const FrameWithSidebar = (props: object): ReactNode => Frame({ ...(props as object), sidebarState } as never)
   await runtime.root.declare({
     sidebar: { kind: 'single', scope: 'root' },
     main: { kind: 'keyed', scope: 'root' },
-  } as never, Frame as never)
+  } as never, FrameWithSidebar as never)
   // The shipped store keeps a selection only while a live `main` entry owns that
   // key, so a requested panel gets a stand-in entry of its own instead of a
   // dangling id no page backs. The selection itself is set here rather than at
@@ -747,5 +796,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

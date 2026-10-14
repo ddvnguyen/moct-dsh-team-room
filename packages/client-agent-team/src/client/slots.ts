@@ -193,6 +193,14 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
   /** Agent-card session jump, shared by every slot; message member chips reuse it. */
   openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
+  /**
+   * L1 (issue 57): whether the shell's left column is closed, read reactively.
+   * The frame publishes it on its element and hands the main seat no owner
+   * props, so the whole Channel/Thread surface reads it through this hook.
+   */
+  useSidebarCollapsed: () => boolean
+  /** Reopen the shell's left column through the shell's own action. */
+  openSidebar: () => void
 }
 
 export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'team'> & TeamNavigationActions & {

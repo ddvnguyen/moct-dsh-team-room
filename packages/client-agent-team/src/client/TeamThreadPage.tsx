@@ -14,7 +14,7 @@ import type {
   AgentTeamView,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
@@ -69,6 +69,10 @@ interface TeamThreadPageProps {
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
+  /** Whether the shell's left column is closed; the header offers the open control while it is. */
+  readonly sidebarCollapsed: boolean
+  /** Reopen the shell's left column through the shell's own action. */
+  readonly openSidebar: () => void
   readonly t: TeamConversationProps['t']
 }
 
@@ -121,7 +125,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
-    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, t,
+    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
@@ -500,7 +504,41 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const taskClaims = activeProjection?.claims ?? []
   const effectiveChannelRef = task?.channelRef ?? channelRef
   const channelMemberIds = useMemo(() => new Set(channelView?.members.filter(item => item.channelRef === effectiveChannelRef).map(item => item.memberId) ?? []), [channelView, effectiveChannelRef])
-  const channelMembers = members.filter(status => channelMemberIds.size === 0 || channelMemberIds.has(status.member.memberId))
+  const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor, activeProjection.anchorMentions)], currentFacts)
+  // This Thread's participants: every actor holding a Message in the loaded
+  // window, in first-appearance order. A Thread is where those actors belong,
+  // so their roster is the Channel's member set only as a fallback — a Channel
+  // with no joined Member once leaked its whole Workspace here.
+  const threadParticipantIds = useMemo(() => {
+    const seen = new Set<AgentTeamMemberId>()
+    const ids: AgentTeamMemberId[] = []
+    for (const fact of currentFactsWithAnchor) {
+      if (fact.kind !== 'message' || seen.has(fact.message.sender)) continue
+      seen.add(fact.message.sender)
+      ids.push(fact.message.sender)
+    }
+    return ids
+  }, [currentFactsWithAnchor])
+  // The seat's own roster, then the Thread's participants on top of it: the
+  // writing Human is a participant without holding a Message of their own, and
+  // a participant the Host has not projected yet still belongs to the Thread.
+  const threadRosterIds = useMemo(() => {
+    if (threadParticipantIds.length === 0) return undefined
+    const ids = new Set<AgentTeamMemberId>(threadParticipantIds)
+    if (channelView?.humanMemberId !== undefined) ids.add(channelView.humanMemberId)
+    return ids
+  }, [threadParticipantIds, channelView?.humanMemberId])
+  // The same guard the Channel page applies (TeamChannelPage.tsx:220): an
+  // archived or inactive seat is not a selectable member anywhere.
+  const selectable = (status: { readonly member: { readonly state: string } }): boolean => status.member.state !== 'inactive' && status.member.state !== 'archived'
+  const channelMembers = useMemo(() => {
+    if (threadRosterIds !== undefined) return members.filter(status => threadRosterIds.has(status.member.memberId) && selectable(status))
+    // No Thread facts yet: fall back to the Channel's own members, the
+    // selectable ones only, so an empty membership yields an empty roster
+    // instead of every Workspace seat.
+    if (channelMemberIds.size === 0) return []
+    return members.filter(status => channelMemberIds.has(status.member.memberId) && selectable(status))
+  }, [members, threadRosterIds, channelMemberIds])
   const mentionHandlesMap = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')])), [members])
   const metadata = useMemo(() => readMeta(readFacts), [readFacts])
   const unreadIndex = useMemo(() => {
@@ -872,7 +910,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     } finally { setPending(false) }
   }
 
-  const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor, activeProjection.anchorMentions)], currentFacts)
   // Notices older than the first current fact belong to the history block when there is one; otherwise they lead the current block.
   const firstCurrentSequence = currentFacts[0]?.sequence ?? Number.POSITIVE_INFINITY
   const historyFailures = olderFacts.length > 0 ? turnFailures.filter(failure => failure.sequence < firstCurrentSequence) : []
@@ -953,6 +990,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
             : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
         </span>}
+        {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
       </header>
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>
