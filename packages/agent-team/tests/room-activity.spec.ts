@@ -162,10 +162,11 @@ describe('roomActivity (§19.1)', () => {
     expect(thread.scope).toBe('thread')
     expect(thread.totals.messages).toBe(2)
     expect(thread.totals.turns).toBe(2)
-    // One Turn reported no uncached input (null), so every usage bucket stays null (§3.2) — never folded to 0.
+    // One Turn reported no uncached input (null), so only that bucket stays null (§3.2) — never folded to 0.
+    // The other three buckets were proven by the same Turn, so they still sum.
     expect(thread.totals.tokensIn).toBeNull()
-    expect(thread.totals.tokensOut).toBeNull()
-    expect(thread.totals.cacheRead).toBeNull()
+    expect(thread.totals.tokensOut).toBe(52)
+    expect(thread.totals.cacheRead).toBe(980)
     expect(thread.totals.cacheWrite).toBeNull()
     expect(thread.totals.toolCalls).toBe(4)
     expect(thread.totals.runMs).toBe(1500)
@@ -173,7 +174,9 @@ describe('roomActivity (§19.1)', () => {
     const seats = thread.perAgent.filter(agent => agent.memberId === space.seatA.memberId)
     expect(seats).toHaveLength(1)
     expect(seats[0]!.tokensIn).toBeNull()
-    expect(seats[0]!.tokensOut).toBeNull()
+    expect(seats[0]!.tokensOut).toBe(52)
+    expect(seats[0]!.cacheRead).toBe(980)
+    expect(seats[0]!.cacheWrite).toBeNull()
     expect(seats[0]!.turns).toBe(2)
     expect(seats[0]!.failedTurns).toBe(1)
     expect(seats[0]!.sessionIds).toEqual(['session-local-a'])
@@ -229,6 +232,80 @@ describe('roomActivity (§19.1)', () => {
     const next = await space.host.roomActivity({ workspaceId: alpha, channelRef: space.channelRef, limit: 2, cursor: bounded.nextCursor ?? '' })
     expect(next.events).toHaveLength(2)
     expect(next.events[0]!.sequence).toBeLessThan(bounded.events[0]!.sequence)
+  })
+
+  it('rejects a Thread paired with a foreign Channel and an archived Channel, both scopes', async () => {
+    const space = await room()
+    // Thread scope: the Thread must belong to the requested Channel, not merely be resolvable.
+    let foreignScope: unknown
+    try {
+      await space.host.roomActivity({ workspaceId: alpha, channelRef: space.otherChannelRef, threadRef: space.threadA })
+    } catch (thrown) { foreignScope = thrown }
+    expect((foreignScope as { code?: string }).code).toBe('team/room-activity-not-found')
+    expect((foreignScope as { message?: string }).message).toContain('does not belong to Channel')
+
+    await space.host.archiveChannel({ requestId: requestId('room-archive'), workspaceId: alpha, channelRef: space.channelRef })
+    for (const missing of [{ channelRef: space.channelRef }, { channelRef: space.channelRef, threadRef: space.threadA }]) {
+      let error: unknown
+      try {
+        await space.host.roomActivity({ workspaceId: alpha, ...missing })
+      } catch (thrown) { error = thrown }
+      expect((error as { code?: string }).code).toBe('team/room-activity-not-found')
+    }
+    // A live Channel next to an archived one stays readable, so the rejection is the Channel's, not the Workspace's.
+    const foreign = await space.host.roomActivity({ workspaceId: alpha, channelRef: space.otherChannelRef })
+    expect(foreign.scope).toBe('channel')
+  })
+
+  it('keeps null buckets independent, so one unproven bucket nulls only itself', async () => {
+    const space = await room()
+    // Only cacheWrite is unproven here; the input split, output and cache read are all reported.
+    await turn(space, { sessionId: SessionId('session-buckets'), member: space.seatA, actor: space.actorA, turn: 1, threadRef: space.threadA, uncachedInputTokens: 100, outputTokens: 40, cacheReadTokens: 900, cacheWriteTokens: null })
+    await turn(space, { sessionId: SessionId('session-buckets'), member: space.seatA, actor: space.actorA, turn: 2, threadRef: space.threadA, uncachedInputTokens: 200, outputTokens: 60, cacheReadTokens: 100, cacheWriteTokens: null })
+    await turn(space, { sessionId: SessionId('session-buckets-b'), member: space.seatB, actor: space.actorB, turn: 1, threadRef: space.threadA, uncachedInputTokens: 50, outputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 5 })
+
+    const thread = await space.host.roomActivity({ workspaceId: alpha, channelRef: space.channelRef, threadRef: space.threadA })
+    // Seat A: the only unproven bucket is cacheWrite.
+    const seatA = thread.perAgent.filter(agent => agent.memberId === space.seatA.memberId)
+    expect(seatA).toHaveLength(1)
+    expect(seatA[0]!.tokensIn).toBe(300)
+    expect(seatA[0]!.tokensOut).toBe(100)
+    expect(seatA[0]!.cacheRead).toBe(1000)
+    expect(seatA[0]!.cacheWrite).toBeNull()
+    // Seat B proves every bucket, so its row is fully statable.
+    const seatB = thread.perAgent.filter(agent => agent.memberId === space.seatB.memberId)
+    expect(seatB[0]!.tokensIn).toBe(50)
+    expect(seatB[0]!.cacheWrite).toBe(5)
+    // A total across members inherits a null from exactly the one bucket that carries it.
+    expect(thread.totals.tokensIn).toBe(350)
+    expect(thread.totals.tokensOut).toBe(110)
+    expect(thread.totals.cacheRead).toBe(1020)
+    expect(thread.totals.cacheWrite).toBeNull()
+    // Every Turn that left any bucket unproven counts as unrecorded, not only those with a null input split.
+    expect(thread.totals.unrecordedTurns).toBe(2)
+    expect(thread.totals.turns).toBe(3)
+    // A scope with no Turn at all stays fully statable at every bucket.
+    const proven = await space.host.roomActivity({ workspaceId: alpha, channelRef: space.otherChannelRef })
+    expect(proven.totals.tokensIn).toBe(0)
+    expect(proven.totals.unrecordedTurns).toBe(0)
+  })
+
+  it('rejects a cursor that cannot be a sequence instead of silently paging', async () => {
+    const space = await room()
+    await space.host.sendMessage({ requestId: requestId('room-cursor'), workspaceId: alpha, channelRef: space.channelRef, body: 'cursor row', asTask: false })
+    for (const cursor of ['abc', '', '-1', '1e400', 'NaN', ' 12']) {
+      let error: unknown
+      try {
+        await space.host.roomActivity({ workspaceId: alpha, channelRef: space.channelRef, cursor })
+      } catch (thrown) { error = thrown }
+      expect((error as { message?: string }).message).toContain('room activity cursor')
+      expect((error as { name?: string }).name).toBe('RemoteError')
+    }
+        // A well-formed sequence still pages, and the page it returns is bounded by that sequence.
+    const newest = await space.host.roomActivity({ workspaceId: alpha, channelRef: space.channelRef })
+    const cursor = String(newest.events[0]!.sequence)
+    const page = await space.host.roomActivity({ workspaceId: alpha, channelRef: space.channelRef, cursor })
+    expect(page.events.every(event => event.sequence <= Number(cursor))).toBe(true)
   })
 })
 

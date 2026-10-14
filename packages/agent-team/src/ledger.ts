@@ -613,8 +613,32 @@ const ROOM_ACTIVITY_LIMIT_DEFAULT = 50
 /** Event rows a room-activity read may return per page: the contract's upper clamp. */
 const ROOM_ACTIVITY_EVENT_LIMIT = 200
 
+/** A cursor token is a plain run of digits — the shape `nextCursor` hands back. */
+const ROOM_ACTIVITY_SEQUENCE = /^\d+$/
+
 /** Character bound of one event summary; the first line wins, then the bound (contract §19.1). */
 const ROOM_ACTIVITY_SUMMARY_LIMIT = 200
+
+/**
+ * The four usage buckets of one Turn. Each row names the result field, the Turn-usage field it
+ * folds, and whether the Turn proved it: outputTokens is always reported, the other three may
+ * arrive null and then stick as null in every scope they reach (contract §3.2).
+ */
+const ROOM_ACTIVITY_BUCKETS: readonly { readonly field: RoomActivityBucket; readonly usage: keyof Pick<AgentTeamSessionTurnUsage, 'uncachedInputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'> }[] = [
+  { field: 'tokensIn', usage: 'uncachedInputTokens' },
+  { field: 'tokensOut', usage: 'outputTokens' },
+  { field: 'cacheRead', usage: 'cacheReadTokens' },
+  { field: 'cacheWrite', usage: 'cacheWriteTokens' },
+]
+
+/** One Member's proof state: which of its buckets stay null because a Turn never proved them. */
+type RoomActivityBuckets = Record<RoomActivityBucket, boolean>
+
+/** The neutral proof state: no bucket is known-unproven until a Turn proves otherwise. */
+const ROOM_ACTIVITY_BUCKET_PROVEN: RoomActivityBuckets = { tokensIn: false, tokensOut: false, cacheRead: false, cacheWrite: false }
+
+/** The name of one usage bucket, shared by the projection types and the result rows. */
+type RoomActivityBucket = 'tokensIn' | 'tokensOut' | 'cacheRead' | 'cacheWrite'
 
 /** Plain-text gist of an event: the opening line, trimmed, then bounded. Never a whole body. */
 function roomActivitySummary(text: string): string {
@@ -2195,19 +2219,41 @@ export class AgentTeamLedger {
    * projection: Messages, SessionRun rows, Turn records, failure notices and the committed
    * operations of the scope. Read-only — no receipt, no lock, no wake, no attention change.
    *
-   * Scope resolution reuses the guards every other read uses: an unknown Channel or Thread, a
-   * Thread outside the Workspace and an archived Channel all throw the ledger Error the host maps
-   * to a typed not-found. A Channel scope includes every Thread the Channel owns.
+   * Scope resolution reuses the guards every other read uses. A Channel scope takes the Channel
+   * itself; a Thread scope resolves the Thread and then proves it belongs to the requested Channel,
+   * so a Thread paired with somebody else’s Channel is the same typed not-found as an unknown ref.
+   * An unknown Channel or Thread, a Thread outside the Workspace and an archived Channel all
+   * throw the ledger Error the host maps to that not-found. A Channel scope includes every
+   * Thread the Channel owns.
    *
    * Usage buckets are null while any contributing Turn left the bucket unproven (contract §3.2):
-   * null is sticky and is never folded to 0. `turns` always counts recorded Turns; a Turn whose
-   * uncached input is unknown still counts, and is also counted in `unrecordedTurns`.
+   * null is sticky, per bucket, and never folded to 0. `turns` always counts recorded Turns;
+   * `unrecordedTurns` counts a Turn whose usage is not fully proven — any bucket null makes it
+   * unrecorded, not only the input split.
+   *
+   * Every field is a fold over the projection, so one call costs the operations, Turns and
+   * Messages of the scope: bounded by ledger size, never by the request.
    */
   roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
+    // A cursor is an opaque sequence token. Anything that cannot be one is rejected here as a
+    // typed bad-request rather than silently paging from the newest event, so a stale or mangled
+    // cursor is a visible failure instead of a duplicated page. `Number` is not the test: it reads
+    // an empty string and a whitespace-padded one as 0 and 12, which would replay a page the
+    // caller never asked for, so the token must be a plain run of digits to count at all.
+    const cursor = request.cursor === undefined ? null : ROOM_ACTIVITY_SEQUENCE.test(request.cursor) ? Number(request.cursor) : null
+    if (request.cursor !== undefined && cursor === null) throw new Error('room activity cursor must be a non-negative decimal sequence')
+    const limit = Math.min(Math.max(request.limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT)
+
+    const channelRef = this.requireChannel(request.workspaceId, request.channelRef).channelRef
     const scope: 'channel' | 'thread' = request.threadRef === undefined ? 'channel' : 'thread'
-    const threadRefs: ReadonlySet<AgentTeamThreadRef> = request.threadRef === undefined
-      ? this.channelThreadRefs(this.requireChannel(request.workspaceId, request.channelRef).channelRef)
-      : new Set<AgentTeamThreadRef>([this.threadContextFrom(this.state, request.workspaceId, { threadRef: request.threadRef }).thread.threadRef])
+    const threadContext = request.threadRef === undefined ? undefined : this.threadContextFrom(this.state, request.workspaceId, { threadRef: request.threadRef })
+    // The Thread’s own Channel must be the requested one, and that Channel must still be active: a
+    // Thread paired with a foreign or archived Channel is not-found, never an empty success.
+    if (threadContext !== undefined && threadContext.channelRef !== channelRef) throw new Error(`Thread '${request.threadRef}' does not belong to Channel '${channelRef}'`)
+    if (threadContext === undefined && this.state.channels.get(channelRef)?.state === 'archived') throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
+    const threadRefs: ReadonlySet<AgentTeamThreadRef> = threadContext === undefined
+      ? this.channelThreadRefs(channelRef)
+      : new Set<AgentTeamThreadRef>([threadContext.thread.threadRef])
     const inScope = (threadRef: AgentTeamThreadRef): boolean => threadRefs.has(threadRef)
 
     const byMember = new Map<AgentTeamMemberId, RoomActivityMemberTotals>()
@@ -2231,7 +2277,14 @@ export class AgentTeamLedger {
     let turns = 0
     let failedTurns = 0
     let unrecordedTurns = 0
-    const unknownTurns = new Set<AgentTeamMemberId>()
+    const unknownBuckets = new Map<AgentTeamMemberId, RoomActivityBuckets>()
+    const unknownFor = (memberId: AgentTeamMemberId) => {
+      const existing = unknownBuckets.get(memberId)
+      if (existing !== undefined) return existing
+      const created = { tokensIn: false, tokensOut: false, cacheRead: false, cacheWrite: false }
+      unknownBuckets.set(memberId, created)
+      return created
+    }
     const sessionIdsInScope = new Set<SessionId>()
     for (const operation of this.state.sessionTurns.values()) {
       const turn = operation.data
@@ -2239,18 +2292,20 @@ export class AgentTeamLedger {
       turns += 1
       sessionIdsInScope.add(turn.sessionId)
       const bucket = bucketFor(turn.memberId)
+      const unknown = unknownFor(turn.memberId)
       bucket.turns += 1
       bucket.toolCalls += turn.toolCalls
       bucket.runMs += turn.runMs
-      bucket.tokensOut += turn.usage.outputTokens
-      if (turn.usage.uncachedInputTokens === null) {
-        unrecordedTurns += 1
-        unknownTurns.add(turn.memberId)
-      } else bucket.tokensIn += turn.usage.uncachedInputTokens
-      if (turn.usage.cacheReadTokens === null) unknownTurns.add(turn.memberId)
-      else bucket.cacheRead += turn.usage.cacheReadTokens
-      if (turn.usage.cacheWriteTokens === null) unknownTurns.add(turn.memberId)
-      else bucket.cacheWrite += turn.usage.cacheWriteTokens
+      // Each bucket is proven independently: one null makes that bucket unproven for this Member
+      // and leaves the other buckets statable. `outputTokens` is never null, but the same
+      // accounting keeps the four buckets symmetric.
+      let proven = true
+      for (const { field, usage } of ROOM_ACTIVITY_BUCKETS) {
+        const value = turn.usage[usage]
+        if (value === null) { unknown[field] = true; proven = false } else bucket[field] += value
+      }
+      // A Turn with any unproven bucket is an unrecorded Turn, whatever the other buckets say.
+      if (!proven) unrecordedTurns += 1
       if (!bucket.sessionIds.includes(turn.sessionId)) bucket.sessionIds.push(turn.sessionId)
     }
 
@@ -2267,26 +2322,28 @@ export class AgentTeamLedger {
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
       .slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
 
-    // Sticky null: one unproven bucket nulls that Member’s browser’s room bucket forever
-    // — the signature of an unknown, never a 0.
-    const bucketNulled = new Set<AgentTeamMemberId>(unknownTurns)
+    // Sticky null, per bucket: a bucket is unproven for a Member once any of its Turns left that
+    // bucket unreported, and stays unproven in this scope — the signature of an unknown, never a 0.
+    const bucketState = (memberId: AgentTeamMemberId) => unknownBuckets.get(memberId) ?? ROOM_ACTIVITY_BUCKET_PROVEN
     const perAgent: readonly AgentTeamRoomActivityAgent[] = [...byMember.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([memberId, bucket]) => Object.freeze({
-        memberId,
-        messages: bucket.messages,
-        turns: bucket.turns,
-        tokensIn: bucketNulled.has(memberId) ? null : bucket.tokensIn,
-        tokensOut: bucketNulled.has(memberId) ? null : bucket.tokensOut,
-        cacheRead: bucketNulled.has(memberId) ? null : bucket.cacheRead,
-        cacheWrite: bucketNulled.has(memberId) ? null : bucket.cacheWrite,
-        toolCalls: bucket.toolCalls,
-        runMs: bucket.runMs,
-        failedTurns: bucket.failedTurns,
-        sessionIds: Object.freeze([...bucket.sessionIds].sort()),
-      }))
+      .map(([memberId, bucket]) => {
+        const unknown = bucketState(memberId)
+        return Object.freeze({
+          memberId,
+          messages: bucket.messages,
+          turns: bucket.turns,
+          tokensIn: unknown.tokensIn ? null : bucket.tokensIn,
+          tokensOut: unknown.tokensOut ? null : bucket.tokensOut,
+          cacheRead: unknown.cacheRead ? null : bucket.cacheRead,
+          cacheWrite: unknown.cacheWrite ? null : bucket.cacheWrite,
+          toolCalls: bucket.toolCalls,
+          runMs: bucket.runMs,
+          failedTurns: bucket.failedTurns,
+          sessionIds: Object.freeze([...bucket.sessionIds].sort()),
+        })
+      })
 
-    const anyUnknown = perAgent.some(agent => agent.tokensIn === null || agent.tokensOut === null || agent.cacheRead === null || agent.cacheWrite === null)
     const total = (pick: (agent: AgentTeamRoomActivityAgent) => number | null): number | null => {
       let total = 0
       for (const agent of perAgent) {
@@ -2299,20 +2356,20 @@ export class AgentTeamLedger {
     const totals: AgentTeamRoomActivityTotals = Object.freeze({
       messages,
       turns,
-      tokensIn: anyUnknown ? null : total(agent => agent.tokensIn),
-      tokensOut: anyUnknown ? null : total(agent => agent.tokensOut),
-      cacheRead: anyUnknown ? null : total(agent => agent.cacheRead),
-      cacheWrite: anyUnknown ? null : total(agent => agent.cacheWrite),
+      tokensIn: total(agent => agent.tokensIn),
+      tokensOut: total(agent => agent.tokensOut),
+      cacheRead: total(agent => agent.cacheRead),
+      cacheWrite: total(agent => agent.cacheWrite),
       toolCalls: total(agent => agent.toolCalls),
       runMs: total(agent => agent.runMs),
       failedTurns,
       unrecordedTurns,
     })
 
-    const limit = Math.min(Math.max(request.limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT)
-    const cursor = request.cursor === undefined ? null : Number(request.cursor)
-    return Object.freeze(this.roomActivityEvents(request.workspaceId, request.threadRef === undefined ? request.channelRef : this.channelRefForThread(request.threadRef) ?? null, threadRefs, scope, totals, perAgent, sessions, limit, cursor !== null && Number.isFinite(cursor) ? cursor : null))
+    const eventChannelRef = scope === 'thread' ? (threadContext?.channelRef ?? null) : channelRef
+    return Object.freeze(this.roomActivityEvents(request.workspaceId, eventChannelRef, threadRefs, scope, totals, perAgent, sessions, limit, cursor))
   }
+
 
   /**
    * The bounded event feed of a room-activity scope: one row per committed operation that belongs
