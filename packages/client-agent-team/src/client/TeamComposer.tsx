@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
 import { IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -53,6 +53,7 @@ function matchingTriggerGroups(catalog: readonly TeamTriggerCatalogItem[], match
   return {
     commands: rankByName(eligible.filter(item => item.kind === 'command'), match.query),
     skills: rankByName(eligible.filter(item => item.kind === 'skill'), match.query),
+    notices: eligible.filter(item => item.kind === 'notice'),
   }
 }
 
@@ -81,6 +82,19 @@ function draftPreviewUrl(file: File): string | undefined {
     draftPreviewUrls.set(file, url)
   }
   return url
+}
+
+/**
+ * The composer's selected agent: a Member id never survives a reload (human
+ * rule 3273) and never outlives its scope, so it is derived state — the stored
+ * id when it still names a Member of the current Channel/Thread, otherwise the
+ * first member. Nothing is persisted, and a scope change (or a roster that
+ * dropped the pick) falls back on the next render rather than staying stale.
+ */
+function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], stored: AgentTeamMemberId | undefined): AgentTeamMemberId | undefined {
+  if (members.length === 0) return undefined
+  if (stored !== undefined && members.some(status => status.member.memberId === stored)) return stored
+  return members[0]!.member.memberId
 }
 
 export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
@@ -127,6 +141,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLFormElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const agentMenuRef = useRef<HTMLDivElement>(null)
   const activeOptionRef = useRef<HTMLButtonElement>(null)
   const composingRef = useRef(false)
   const pasteSuppressesSlashRef = useRef(false)
@@ -138,6 +153,11 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const [mention, setMention] = useState<MentionMatch>()
   const [trigger, setTrigger] = useState<TriggerMatch>()
   const [triggerCatalog, setTriggerCatalog] = useState<readonly TeamTriggerCatalogItem[] | null>(null)
+  // The selected agent for the slash-trigger skills and the indicator chip.
+  // Derived from the roster: a stored id that left this scope is dropped, so a
+  // Channel/Thread switch can never keep a stale pick on screen.
+  const [pickedMemberId, setPickedMemberId] = useState<AgentTeamMemberId>()
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   const [triggerCatalogError, setTriggerCatalogError] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const [triggerHighlight, setTriggerHighlight] = useState(0)
@@ -151,8 +171,13 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const activeOption = options[highlight]
   const activeOptionKey = activeOption === undefined ? undefined : activeOption.kind === 'all' ? 'all' : activeOption.status.member.memberId
   const triggerMenuOpen = trigger !== undefined
-  const triggerGroups = trigger === undefined || triggerCatalog === null ? { commands: [], skills: [] } : matchingTriggerGroups(triggerCatalog, trigger, draft)
-  const triggerOptions = [...triggerGroups.commands, ...triggerGroups.skills]
+  const triggerGroups = trigger === undefined || triggerCatalog === null ? { commands: [], skills: [], notices: [] } : matchingTriggerGroups(triggerCatalog, trigger, draft)
+  // The selected agent, resolved against this scope's roster every render: a
+  // pick that is no longer a member here falls back to the first member rather
+  // than lingering as a dead selection.
+  const currentMemberId = selectedMemberId(members, pickedMemberId)
+  const selectedMember = members.find(status => status.member.memberId === currentMemberId)
+  const triggerOptions = [...triggerGroups.commands, ...triggerGroups.skills].filter(item => item.kind !== 'notice')
   const activeTriggerOption = triggerOptions[triggerHighlight]
   const triggerListId = 'team-trigger-suggestions'
   const allCount = allMentionMembers(members).length
@@ -164,6 +189,9 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   useDismissOnOutsidePointer(rootRef, suggestionOpen, open => {
     if (!open) { setMention(undefined); setTrigger(undefined) }
   })
+  // The agent picker is a row-local menu inside the same root: an outside
+  // pointer closes it without touching the draft menus.
+  useDismissOnOutsidePointer(agentMenuRef, agentMenuOpen, open => { if (!open) setAgentMenuOpen(false) })
 
   useLayoutEffect(() => {
     const input = inputRef.current
@@ -196,12 +224,21 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
     activeOptionRef.current?.scrollIntoView?.({ block: 'nearest' })
   }, [suggestionOpen, highlight, triggerHighlight, activeSuggestionKey])
 
+  // The catalog is scoped to the selected agent, so changing the selection
+  // reloads it: each Member's skills ride that Member's own session. The
+  // callback keys on the two facts that scope it, so a roster refresh that
+  // leaves the pick untouched does not re-read the catalogs.
+  const memberSessionId = selectedMember?.member.sessionId
+  const memberHandle = selectedMember === undefined ? '' : selectedMember.member.handle.replace(/^@/, '')
+  const loadCatalog = useCallback((signal: AbortSignal) => loadTriggerCatalog({ sessionId: memberSessionId, memberHandle }, signal), [
+    loadTriggerCatalog, memberSessionId, memberHandle,
+  ])
   useEffect(() => {
     if (!triggerMenuOpen) return
     const controller = new AbortController()
     setTriggerCatalog(null)
     setTriggerCatalogError(false)
-    void loadTriggerCatalog(controller.signal).then(catalog => {
+    void loadCatalog(controller.signal).then(catalog => {
       if (!controller.signal.aborted) setTriggerCatalog(catalog)
     }).catch(() => {
       if (!controller.signal.aborted) {
@@ -210,7 +247,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
       }
     })
     return () => { controller.abort() }
-  }, [triggerMenuOpen, loadTriggerCatalog])
+  }, [triggerMenuOpen, loadCatalog])
 
   useEffect(() => () => {
     if (pasteResetRef.current !== undefined) clearTimeout(pasteResetRef.current)
@@ -438,7 +475,12 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
     >
       <span className={css.mentionAllDot} aria-hidden="true" />
       <span className={css.mentionName}>/{option.name}</span>
-      <span className={css.mentionDescription}>{option.description}</span>
+      <span className={css.mentionDescription}>
+        {option.kind === 'skill' && option.memberHandle !== undefined
+          ? <span className={css.triggerOwner}>@{option.memberHandle}</span>
+          : null}
+        {option.description}
+      </span>
     </button>
   }
   return <form ref={rootRef} className={css.root} onSubmit={event => {
@@ -466,9 +508,12 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                   <div className={css.triggerGroupHeading}>{t('triggerCommands')}</div>
                   {triggerGroups.commands.map((option, index) => renderTriggerOption(option, index))}
                 </div>}
-                {triggerGroups.skills.length > 0 && <div role="group" aria-label={t('triggerSkills')}>
+                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0) && <div role="group" aria-label={t('triggerSkills')}>
                   <div className={css.triggerGroupHeading}>{t('triggerSkills')}</div>
                   {triggerGroups.skills.map((option, index) => renderTriggerOption(option, triggerGroups.commands.length + index))}
+                  {triggerGroups.notices.map(notice => <p key={notice.name} className={css.triggerNotice} data-trigger-notice={notice.name}>
+                    {t(notice.name === 'skills-unavailable' ? 'triggerSkillsUnavailable' : 'triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
+                  </p>)}
                 </div>}
               </>}
         </div>}
@@ -550,6 +595,55 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
           })}
         </ul>
       )}
+      <div className={css.agentRow}>
+        {/* The selected agent is always on screen — with one agent in scope
+            too, so a reader never has to guess whose skills the slash menu
+            lists. The picker behind it lists this Channel/Thread's members. */}
+        {selectedMember !== undefined && <span className={css.agentIndicator} role="status" data-team-agent-indicator={selectedMember.member.memberId} aria-label={t('agentIndicatorLabel', { handle: selectedMember.member.handle.replace(/^@/, '') })}>
+          <TeamPresenceDot status={selectedMember} t={t} />
+          <span className={css.agentIndicatorName}>@{selectedMember.member.handle.replace(/^@/, '')}</span>
+        </span>}
+        {members.length > 0 && <div className={css.agentPicker}>
+          <button
+            type="button"
+            className={css.agentPickerButton}
+            aria-label={t('selectAgent')}
+            aria-haspopup="listbox"
+            aria-expanded={agentMenuOpen}
+            disabled={pending}
+            onClick={() => { setAgentMenuOpen(open => !open) }}
+          >
+            <IconChecklistOutlineMedium size={14} />
+            <span className={css.agentPickerLabel}>{t('selectAgent')}</span>
+            <span className={css.agentPickerCurrent}>{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
+          </button>
+          {agentMenuOpen && <div className={css.agentMenu} role="listbox" aria-label={t('selectAgent')} ref={agentMenuRef}>
+            {members.map(status => {
+              const chosen = status.member.memberId === currentMemberId
+              return <button
+                key={status.member.memberId}
+                type="button"
+                role="option"
+                aria-selected={chosen}
+                className={chosen ? `${css.agentOption} ${css.agentOptionOn}` : css.agentOption}
+                onMouseDown={event => { event.preventDefault() }}
+                onClick={() => {
+                  setPickedMemberId(status.member.memberId)
+                  setAgentMenuOpen(false)
+                  // The catalog is scoped to the pick, so the open slash menu
+                  // must reload against the new Member's session.
+                  setTriggerCatalog(null)
+                  inputRef.current?.focus({ preventScroll: true })
+                }}
+              >
+                <TeamPresenceDot status={status} t={t} />
+                <span className={css.agentOptionHandle}>@{status.member.handle.replace(/^@/, '')}</span>
+                <span className={css.agentOptionDescription}>{status.member.description}</span>
+              </button>
+            })}
+          </div>}
+        </div>}
+      </div>
       <div className={css.toolbar}>
         {onFilesChange !== undefined && (
           <>
