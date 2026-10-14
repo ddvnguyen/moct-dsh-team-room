@@ -129,3 +129,9 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+.sectionTitle {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}

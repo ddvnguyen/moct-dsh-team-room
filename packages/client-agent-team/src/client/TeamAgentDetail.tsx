@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamSessionRun } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamClientMemberStatus, AgentTeamSessionRun, TeamMemoryRecord } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button, IconCopyOutlineRegular, Modal, SegmentedTabs, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { presenceLabel } from './TeamPresenceDot.tsx'
 import { formatTokens, UNKNOWN } from './reply-stats.ts'
 import { formatAbsoluteTime } from './team-formatters.ts'
+import { loadAgentMemory, type AgentMemoryLoad } from './agent-memory.ts'
 import { cachedResolvedThreadRef, hostThreadRefLookup, useResolvedThreadRefVersion } from './refs.ts'
 import createCss from './create.module.css'
 import css from './agent-detail.module.css'
@@ -36,7 +37,7 @@ function slotPresence(status: AgentTeamClientMemberStatus, slot: number, presenc
 const idleSlot = (instance: { readonly sessionId?: unknown; readonly presence: AgentTeamClientMemberStatus['presence'] }): boolean =>
   instance.sessionId === undefined && instance.presence !== 'working' && instance.presence !== 'error'
 
-type DetailTab = 'sessions' | 'overview'
+type DetailTab = 'sessions' | 'overview' | 'memory'
 
 /**
  * Where a Session run happened, as one line: the first Thread's Channel and
@@ -68,11 +69,12 @@ type Loaded =
  * through the same path as the row click; an id the Client cannot open is
  * reported in the dialog, not swallowed.
  */
-export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadChannels, openMemberSession, onClose, t }: {
+export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onClose, t }: {
   readonly workspaceId: WorkspaceId
   readonly status: AgentTeamClientMemberStatus
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
   readonly resolveThreadRefs: TeamSidebarProps['resolveThreadRefs']
+  readonly loadMemory: TeamSidebarProps['loadMemory']
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onClose: () => void
@@ -83,6 +85,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   const [tab, setTab] = useState<DetailTab>('sessions')
   /** Sessions the Client refused to open (retired or not in its catalog): the row says so instead of staying silent. */
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(new Set())
+  const [memory, setMemory] = useState<AgentMemoryLoad | 'loading'>('loading')
   const [channelNames, setChannelNames] = useState<ReadonlyMap<string, string>>(new Map())
   const name = status.member.handle.replace(/^@/, '')
 
@@ -119,6 +122,22 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   }, [threadRefsKey, resolveThreadRefs, loadChannels, workspaceId])
   useResolvedThreadRefVersion()
   const placeOf = useMemo(() => (run: AgentTeamSessionRun) => runPlace(run, channelNames, ref => cachedResolvedThreadRef(ref)), [channelNames])
+
+  // The Memory tab reads on first open only; a failure is shown, never swallowed.
+  const [memoryRequested, setMemoryRequested] = useState(false)
+  useEffect(() => {
+    if (tab !== 'memory') return
+    setMemoryRequested(true)
+  }, [tab])
+  useEffect(() => {
+    if (!memoryRequested) return
+    let live = true
+    setMemory('loading')
+    loadAgentMemory(loadMemory, workspaceId, status.member.memberId)
+      .then(result => { if (live) setMemory(result) })
+      .catch((cause: unknown) => { if (live) setMemory({ ok: false, code: 'ERROR', message: cause instanceof Error ? cause.message : String(cause) }) })
+    return () => { live = false }
+  }, [memoryRequested, loadMemory, workspaceId, status.member.memberId])
 
   const copy = async (sessionId: string): Promise<void> => {
     try {
@@ -171,6 +190,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
         items={[
           { value: 'sessions', label: t('agentDetailsTabSessions'), id: 'agent-detail-tab-sessions', panelId: 'agent-detail-panel-sessions' },
           { value: 'overview', label: t('agentDetailsTabOverview'), id: 'agent-detail-tab-overview', panelId: 'agent-detail-panel-overview' },
+          { value: 'memory', label: t('agentDetailsTabMemory'), id: 'agent-detail-tab-memory', panelId: 'agent-detail-panel-memory' },
         ]}
       />
       {tab === 'overview' && (
@@ -183,6 +203,24 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             <dt>{t('agentDetailsFactInstances')}</dt><dd>{String(instances.length)}</dd>
             <dt>{t('agentDetailsFactWorkspaces')}</dt><dd>{String(status.workspaceIds.length)}</dd>
           </dl>
+        </div>
+      )}
+      {tab === 'memory' && (
+        <div role="tabpanel" id="agent-detail-panel-memory" aria-labelledby="agent-detail-tab-memory" data-team-agent-memory>
+          {memory === 'loading' && <p className={css.muted}>{t('agentMemoryLoading')}</p>}
+          {memory !== 'loading' && !memory.ok && <p className={css.partial} role="alert">{t('agentMemoryFailed', { message: memory.message })}</p>}
+          {memory !== 'loading' && memory.ok && (
+            <>
+              <h3 className={css.sectionTitle}>{t('agentMemoryOwn')}</h3>
+              {memory.own.length === 0 && <p className={css.muted}>{t('agentMemoryOwnEmpty')}</p>}
+              <MemoryList records={memory.own} />
+              {memory.ownMore && <p className={css.muted} data-memory-more>{t('agentMemoryMore')}</p>}
+              <h3 className={css.sectionTitle}>{t('agentMemoryTeam')}</h3>
+              {memory.team.length === 0 && <p className={css.muted}>{t('agentMemoryTeamEmpty')}</p>}
+              <MemoryList records={memory.team} />
+              {memory.teamMore && <p className={css.muted} data-memory-more>{t('agentMemoryMore')}</p>}
+            </>
+          )}
         </div>
       )}
       {tab === 'sessions' && (
@@ -249,5 +287,19 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
         </div>
       )}
     </Modal>
+  )
+}
+
+function MemoryList({ records }: { readonly records: readonly TeamMemoryRecord[] }) {
+  if (records.length === 0) return null
+  return (
+    <ul className={css.list}>
+      {records.map(record => (
+        <li key={record.id} className={css.run} data-memory-id={record.id}>
+          <div className={css.runHead}><code>{record.type}</code> <strong>{record.title ?? record.id}</strong>{record.pinned ? ' 📌' : ''}</div>
+          {record.body !== null && record.body !== '' && <div className={css.muted}>{record.body}</div>}
+        </li>
+      ))}
+    </ul>
   )
 }

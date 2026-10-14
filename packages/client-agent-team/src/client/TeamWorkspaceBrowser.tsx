@@ -24,7 +24,7 @@ function InboxMark({ unread }: { readonly unread: number }) {
   </span>
 }
 
-export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, loadMemberSessions, resolveThreadRefs, openMemberSession, channelsOnly }: TeamSidebarProps & {
+export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, loadMemberSessions, resolveThreadRefs, loadMemory, openMemberSession, channelsOnly }: TeamSidebarProps & {
   /** The Team tab is the Channel view only: the Agents config lives on the rail's Team Settings page. The rail seat keeps its own Agents group. */
   readonly channelsOnly?: boolean
 }) {
@@ -141,7 +141,7 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
 
   const agents = selectedId === undefined ? null : (
     <div ref={agentsRef}>
-      <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} addMember={addMember} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} joinWorkspace={joinWorkspace} leaveWorkspace={leaveWorkspace} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadChannels={loadChannels} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
+      <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} addMember={addMember} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} joinWorkspace={joinWorkspace} leaveWorkspace={leaveWorkspace} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadMemory={loadMemory} loadChannels={loadChannels} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
     </div>
   )
 

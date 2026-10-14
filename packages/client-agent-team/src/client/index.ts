@@ -369,6 +369,7 @@ function teamSharedRemotes(
     },
     /** Agent detail names the Threads a Session run touched. */
     resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => ctx.remote.agentTeam.resolveThreadRefs(request),
+    loadMemory: (request: AgentTeamMemoryListRequest) => ctx.remote.agentTeam.memoryList(request),
   }
 }
 

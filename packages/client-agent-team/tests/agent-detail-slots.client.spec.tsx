@@ -23,6 +23,7 @@ const renderDetail = (status: AgentTeamClientMemberStatus, openMemberSession = v
     status={status}
     loadMemberSessions={loadMemberSessions as never}
     resolveThreadRefs={vi.fn(async () => ({ ok: true, value: [] })) as never}
+    loadMemory={vi.fn(async () => ({ ok: true, value: { results: [], total: 0, nextCursor: null } })) as never}
     loadChannels={vi.fn(async () => ({ ok: true, value: { channels: [] } })) as never}
     openMemberSession={openMemberSession as never}
     onClose={() => undefined}
