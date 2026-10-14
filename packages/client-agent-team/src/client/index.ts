@@ -79,7 +79,7 @@ const GuardedSettingsPanelIcon = withSlotBoundary('sidebar.panellist:team-settin
 const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsPage as never)
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedMembersAction = withSlotBoundary('sidebar.settings', TeamMembersAction as never)
-const GuardedWorkspaceBrowser = withSlotBoundary('sidebar.workspaces', TeamWorkspaceBrowser as never)
+const GuardedWorkspaceBrowser = withSlotBoundary('sidebar.sections:team', TeamWorkspaceBrowser as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { renderTeamTabBody } from './team-tab-body.tsx'
@@ -547,7 +547,7 @@ function registerTeamSection(
             // the column state, so the section carries its own expand source.
             expandSidebar: () => { ctx.layout.toggleSidebar() },
           }),
-        } as never, TeamWorkspaceBrowser as never)
+        } as never, GuardedWorkspaceBrowser as never)
       } else if (navigation.getSnapshot().mode !== 'team' && dispose !== undefined) {
         dispose()
         dispose = undefined
