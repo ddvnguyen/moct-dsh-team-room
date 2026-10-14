@@ -98,6 +98,18 @@ describe('Team mode and the shell main panel', () => {
     expect(within(team).queryByRole('button', { name: '添加 Agent' })).toBeNull()
   })
 
+  it('opens Agent detail, not the Session, when an Agent row is selected', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true, agentsTab: true })
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="agents"]')
+      expect(found).not.toBeNull()
+      return found!
+    })
+    fireEvent.click(await within(tab).findByRole('button', { name: /^打开 builder 的详情$/u }))
+    const dialog = await b.view.findByRole('dialog')
+    expect(dialog.querySelector('[data-team-agent-sessions]')).not.toBeNull()
+  })
+
   it('keeps the Agents list on Team Settings while the strip has no Agents tab', async () => {
     const b = await runtimeWithTeam({ nativeTabs: false, mode: 'team', workspaceId: 'w1', initialChannels: true })
     fireEvent.click(await b.view.findByRole('button', { name: '团队设置' }))
