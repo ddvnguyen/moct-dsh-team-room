@@ -1193,8 +1193,9 @@ describe('Team conversation surfaces', () => {
   })
 
   it('shows the composer agent selector and the indicator for the picked Channel', async () => {
+    // The Channel is reached through the Team tab of the shell's strip: the
+    // rail Team row is gone once the tab is inserted.
     const b = await runtimeWithTeam({ remainingUnreadCounts: [1] })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
