@@ -158,6 +158,21 @@ describe('Team memory page', () => {
     expect(await screen.findByText('task 23')).toBeTruthy()
     expect(document.querySelector('[data-memory-more]')).toBeNull()
   })
+
+  it('reads rule-feed rows in the shape moct sends them', async () => {
+    // One `GET /memory/rule-feed` row as moct v0.11.1 serves it: the home is an object, not homeKind/homeRef.
+    const row = {
+      memoryId: 'mem-w', version: 2, action: 'approve', workspaceId: 'ws-1', type: 'rule', home: { kind: 'team', ref: 'ws-1' },
+      tags: [{ kind: 'team', ref: 'ws-1' }], title: 'Page-approve witness', body: 'b', attrs: { level: 'should' }, priority: 100, pinned: false,
+      status: 'active', actorKind: 'human', actorId: 'member:human', reason: '', at: '2026-10-13T23:41:08.103Z',
+    }
+    renderPanel(remotes({ ruleFeed: vi.fn(ok([row])) as unknown as TeamMemoryRemotes['ruleFeed'] }))
+    fireEvent.click(screen.getByRole('tab', { name: en.memoryViewFeed }))
+    await screen.findByText('Page-approve witness')
+    const feed = screen.getByRole('list', { name: en.memoryViewFeed })
+    expect(feed.textContent).toContain('2026-10-13T23:41:08.103Z · approve · active · team · human member:human')
+    expect(feed.textContent).not.toContain('undefined')
+  })
 })
 
 describe('Team memory dialogs', () => {

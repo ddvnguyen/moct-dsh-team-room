@@ -434,7 +434,7 @@ function MemoryRuleFeed({ workspaceId, memory, onOutcome, t }: SectionProps) {
   if (versions !== undefined && versions.length === 0) return <p className={css.empty}>{t('memoryNoRuleChanges')}</p>
   return <ol className={css.versions} aria-label={t('memoryViewFeed')}>
     {versions?.map(entry => <li key={`${entry.memoryId}:${entry.version}`}>
-      <span>{`${entry.at} · ${entry.action} · ${entry.status} · ${entry.homeKind} · ${entry.actorKind} ${entry.actorId}`}</span>
+      <span>{`${entry.at} · ${entry.action} · ${entry.status} · ${entry.home.kind} · ${entry.actorKind} ${entry.actorId}`}</span>
       <span className={css.versionText}>{entry.title ?? entry.memoryId}</span>
     </li>)}
   </ol>
