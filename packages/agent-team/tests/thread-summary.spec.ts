@@ -10,6 +10,10 @@ describe('thread summary policy and budget (§3.3)', () => {
     expect(estimateTokens('é')).toBe(1)
   })
 
+  it('pins the default summary model to an id that resolves on the hosts (contract §8)', () => {
+    expect(DEFAULT_THREAD_SUMMARY_POLICY.model).toEqual({ provider: 'dsh-opencode-go', model: 'mimo-v2.6-flash' })
+  })
+
   it('is due at the turn threshold or the token threshold, and never when disabled', () => {
     const policy = DEFAULT_THREAD_SUMMARY_POLICY
     expect(policy).toMatchObject({ enabled: true, everyTurns: 20, everyTokens: 100_000 })
