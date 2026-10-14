@@ -35,6 +35,26 @@ describe('TeamNavigation', () => {
     off()
   })
 
+  it('keeps the picked Channel when the first Workspace is adopted after the pick', () => {
+    // A pick from a plain conversation lands before any Workspace is selected;
+    // the browser then adopts the default Workspace it is already showing.
+    const navigation = new TeamNavigation()
+    navigation.actions().selectChannel('channel:one' as never)
+    navigation.actions().enterTeam()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:one' })
+  })
+
+  it('still drops the Channel when a Workspace is switched for another', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+    navigation.actions().selectChannel('channel:one' as never)
+    navigation.actions().selectWorkspace('workspace:two' as never)
+
+    expect(navigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:two' })
+  })
+
   it('rehydrates the last Team location while ignoring unknown persisted fields', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       mode: 'team', workspaceId: 'workspace:old', channelRef: 'channel:old',

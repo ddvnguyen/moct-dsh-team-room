@@ -98,4 +98,25 @@ describe('Team mode and the shell main panel', () => {
     expect(await b.view.findByRole('heading', { level: 1, name: '收件箱' })).toBeTruthy()
     expect(b.view.container.querySelector('[data-team-inbox]')).not.toBeNull()
   })
+
+  it('opens the picked Channel when the native Team tab picks it from a plain conversation', async () => {
+    // The Workspace selection starts unset here (a fresh load): the pick enters
+    // Team mode, the browser remounts in the section, and its default-Workspace
+    // adoption must not discard the Channel the click just chose.
+    const b = await runtimeWithTeam({ nativeTabs: true, workspaceId: 'w1', initialChannels: true })
+    expect(b.runtime.ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation' })
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-native-tab="team"]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+
+    fireEvent.click(await within(tab).findByRole('button', { name: '# engineering' }))
+
+    await waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team'))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    expect(b.runtime.ctx.teamNavigation.getSnapshot().channelRef).toBeDefined()
+    expect(b.view.container.querySelector('[data-team-channel]')).not.toBeNull()
+    expect(b.view.queryByRole('textbox', { name: '消息内容' })).not.toBeNull()
+  })
 })
