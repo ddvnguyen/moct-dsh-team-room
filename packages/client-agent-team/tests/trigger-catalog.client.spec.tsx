@@ -251,6 +251,28 @@ describe('Team composer agent selector', () => {
     void b
   })
 
+  it('seats the indicator and the picker on the toolbar line with the send control', () => {
+    renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
+
+    // Human review 3690: the agent controls live on the bottom line with attach
+    // and send, not on a row of their own above it.
+    const toolbar = screen.getByRole('button', { name: 'Send' }).parentElement as HTMLElement
+    expect(toolbar.querySelector('[data-team-agent-indicator]')).toBeTruthy()
+    expect(toolbar.contains(screen.getByRole('button', { name: 'Select Agent' }))).toBe(true)
+  })
+
+  it('keeps a muted no-agent chip and a slash notice when the scope has no agent', async () => {
+    const loadTriggerCatalog = vi.fn(async () => [{ kind: 'command', name: 'compact', description: 'Compact' }]) as unknown as TeamConversationProps['loadTriggerCatalog']
+    const b = renderComposer(loadTriggerCatalog, [])
+
+    expect(document.querySelector('[data-team-agent-indicator]')).toBeNull()
+    expect(document.querySelector('[data-team-no-agent]')?.textContent).toBe('No agent')
+    expect(screen.queryByRole('button', { name: 'Select Agent' })).toBeNull()
+    fireEvent.change(b.input, { target: { value: '/' } })
+    await waitFor(() => expect(document.querySelector('[data-trigger-notice="no-agents"]')).toBeTruthy())
+    expect(await screen.findByRole('option', { name: /compact/ })).toBeTruthy()
+  })
+
   it('changes the indicator and the scoped slash catalog when a second agent is picked', async () => {
     const scopes: string[] = []
     const loadTriggerCatalog = vi.fn(async (scope: { memberHandle: string }) => {
