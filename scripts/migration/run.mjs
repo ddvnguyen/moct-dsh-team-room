@@ -3,7 +3,7 @@
 // curated records against the backend's bounds and prints the list and counts;
 // it opens no connection. `--write` is a TEST mutation and needs explicit env:
 //   MOCT_TEAM_URL=http://127.0.0.1:8110   (loopback, TEST port only)
-//   MOCT_MIGRATION_ACTOR=<human member id>  (the actor the backend records)
+//   MOCT_MIGRATION_ACTOR=<member id>  (the agent Member who approved the list; never the Human)
 // A re-run matches records by (home, type, exact title): same body = unchanged,
 // changed body = PATCH with the version read, otherwise POST. Task records use
 // the backend's own idempotent upsert on attrs.taskRef.
@@ -31,7 +31,8 @@ const actorId = process.env.MOCT_MIGRATION_ACTOR ?? ''
 if (!/^http:\/\/127\.0\.0\.1:8110\/?$/.test(url)) { console.error('refusing: MOCT_TEAM_URL must be http://127.0.0.1:8110 (TEST only)'); process.exit(2) }
 if (actorId === '') { console.error('refusing: MOCT_MIGRATION_ACTOR is not set'); process.exit(2) }
 const base = `${url.replace(/\/$/, '')}/team/v1`
-const actor = { kind: 'human', id: actorId }
+if (!actorId.startsWith('member:')) { console.error('refusing: the actor must be a member: ref, never the Human'); process.exit(2) }
+const actor = { kind: 'member', id: actorId }
 const call = async (method, path, body) => {
   const response = await fetch(`${base}${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   const json = await response.json().catch(() => ({}))
