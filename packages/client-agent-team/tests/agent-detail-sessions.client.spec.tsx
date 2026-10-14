@@ -28,7 +28,7 @@ describe('Agent detail Sessions tab', () => {
     status={status}
     loadMemberSessions={vi.fn(async () => ({ ok: true, value: { current: null, runs: [run('session:aaaaaaaa-1', []), run('session:bbbbbbbb-2', [])] } })) as never}
     resolveThreadRefs={vi.fn(async () => ({ ok: true, value: [] })) as never}
-    loadMemory={vi.fn(async () => ({ ok: true, value: { results: [], total: 0, nextCursor: null } })) as never}
+    loadMemory={vi.fn(async () => ({ ok: true, value: { ok: true, value: { results: [], total: 0, nextCursor: null } } })) as never}
     loadChannels={vi.fn(async () => ({ ok: true, value: { channels: [] } })) as never}
     openMemberSession={openMemberSession as never}
     onClose={() => undefined}

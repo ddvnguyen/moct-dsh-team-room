@@ -4,6 +4,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+- Fix: the Agent detail Memory tab read Team memory as if the Host answered without its transport result, so on a real host it showed "Cannot read properties of undefined" instead of the records. It now unwraps the transport result first and folds a transport failure into the same visible refusal. The specs' memory stubs now use the Host's real double-wrapped shape.
 - Agent detail gets a Memory tab: the Team memory that is kept for the Agent (its `expert` home records, read through the Human memory list with the Member id matched on the client, at most five pages of 20) and the Team's rules and conventions (one page, read-only). A read that hits the page cap says more records exist and points to the Memory page in Team Settings; a failed read is shown, not an empty list. No new op or schema.
 - Selecting an Agent row in the Agents tab opens Agent detail (Sessions first) instead of the Member's current Session; picking a Session there opens it in the native chat view and closes the dialog. The row menu entry is now "Agent detail", and "Open current session" stays on the menu as the quick action.
 - Agent detail opens on a Sessions tab (Overview is the second): every run of the Member, newest first, with its Channel and Thread names (`+N` for more Threads), times, turns, tokens and model. Opening a Session the Client cannot open now says so on its row.

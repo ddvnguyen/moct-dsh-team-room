@@ -11,12 +11,12 @@ const record = (id: string, kind: string, ref: string, type = 'how_to_work') => 
 
 /** A backend that holds to its real bound: `limit` must be 1..20, and pages come with a cursor. */
 const backend = (expertRows: ReturnType<typeof record>[], teamRows: ReturnType<typeof record>[] = []) => vi.fn(async (request: { homes?: string[]; limit?: number; cursor?: string }) => {
-  if (request.limit === undefined || request.limit < 1 || request.limit > 20) return { ok: false as const, code: 'BAD_REQUEST', message: 'limit must be 1..20' }
+  if (request.limit === undefined || request.limit < 1 || request.limit > 20) return { ok: true as const, value: { ok: false as const, code: 'BAD_REQUEST', message: 'limit must be 1..20' } }
   const rows = request.homes?.[0] === 'team' ? teamRows : expertRows
   const start = request.cursor === undefined ? 0 : Number(request.cursor)
   const results = rows.slice(start, start + request.limit)
   const next = start + request.limit
-  return { ok: true as const, value: { results, total: rows.length, nextCursor: next < rows.length ? String(next) : null } }
+  return { ok: true as const, value: { ok: true as const, value: { results, total: rows.length, nextCursor: next < rows.length ? String(next) : null } } }
 })
 
 describe('loadAgentMemory', () => {
@@ -34,8 +34,12 @@ describe('loadAgentMemory', () => {
     expect(result).toMatchObject({ ok: true, ownMore: true })
     if (result.ok) expect(result.own).toHaveLength(50)
   })
+  it('folds a transport failure, rejected or returned, into a refusal', async () => {
+    expect(await loadAgentMemory((async () => ({ ok: false, error: new Error('socket closed') })) as never, 'w1' as never, 'member:me')).toEqual({ ok: false, code: 'REMOTE', message: 'socket closed' })
+    expect(await loadAgentMemory((async () => { throw new Error('boom') }) as never, 'w1' as never, 'member:me')).toEqual({ ok: false, code: 'REMOTE', message: 'boom' })
+  })
   it('reports a refusal with its code', async () => {
-    const result = await loadAgentMemory((async () => ({ ok: false, code: 'BACKEND_UNAVAILABLE', message: 'down' })) as never, 'w1' as never, 'member:me')
+    const result = await loadAgentMemory((async () => ({ ok: true, value: { ok: false, code: 'BACKEND_UNAVAILABLE', message: 'down' } })) as never, 'w1' as never, 'member:me')
     expect(result).toEqual({ ok: false, code: 'BACKEND_UNAVAILABLE', message: 'down' })
   })
 })
@@ -58,7 +62,7 @@ describe('Agent detail Memory tab', () => {
     await waitFor(() => expect(document.querySelectorAll('[data-memory-id]')).toHaveLength(2))
   })
   it('shows a failed read, not an empty list', async () => {
-    mount(async () => ({ ok: false, code: 'BACKEND_UNAVAILABLE', message: 'down' }))
+    mount(async () => ({ ok: true, value: { ok: false, code: 'BACKEND_UNAVAILABLE', message: 'down' } }))
     fireEvent.click(screen.getByText('agentDetailsTabMemory'))
     expect((await screen.findByRole('alert')).textContent).toContain('down')
   })
