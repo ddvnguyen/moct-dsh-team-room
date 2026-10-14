@@ -78,8 +78,7 @@ async function bench(persisted: string | null = null, strip?: Record<string, unk
     'sidebar.panellist': { kind: 'list', scope: 'root' },
   } } as never, root)
   // The automation plugin's native tab strip, when present, hangs its registry
-  // off the shipped workspace entry's component (the two-step discovery: the
-  // entry first, then its component).
+  // off the shipped workspace entry's component (see team-tab.ts).
   const shippedWorkspaces = Object.assign(() => null, strip === undefined ? {} : { __dshNativeTabs: strip })
   slots.register({ name: 'sidebar.workspaces', priority: 0 }, shippedWorkspaces)
   slots.register({ name: 'sidebar.settings', priority: 0 }, root)
@@ -96,16 +95,46 @@ async function bench(persisted: string | null = null, strip?: Record<string, unk
   return { ctx, slots, uiWorkspace }
 }
 
+
+function nativeStrip() {
+  const inserted: string[] = []
+  const renders: Array<(props: unknown) => unknown> = []
+  return {
+    inserted,
+    renders,
+    registry: {
+      version: 1,
+      getTabs: () => inserted.map(id => ({ id })),
+      subscribe: () => () => {},
+      insert: (tab: { id: string; render: (props: unknown) => unknown }) => {
+        inserted.push(tab.id)
+        renders.push(tab.render)
+        return () => { inserted.splice(inserted.indexOf(tab.id), 1) }
+      },
+    },
+  }
+}
+
+/**
+ * The seat the Team tab's body is built from: the strip calls the tab's render,
+ * the element it returns is the slot boundary, and the body inside carries the
+ * share the Channel list picks and opens Member views through.
+ */
+function tabSeat(strip: ReturnType<typeof nativeStrip>): Record<string, (...args: never[]) => unknown> & { channelsOnly: boolean } {
+  const guarded = strip.renders[0]!({}) as { props: { slot: string; children: { props: Record<string, unknown> } } }
+  expect(guarded.props.slot).toBe('native-tab')
+  return guarded.props.children.props as never
+}
+
 describe('Team Client slot takeover', () => {
-  it('enters and leaves Team mode by rendering the Team section beside the shipped browser', async () => {
+  it('enters and leaves Team mode by shadowing only the conversation, with the sidebar left alone', async () => {
     const { ctx, slots } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
 
     expect(slots.entriesOfSlot('sidebar.workspaces')).toHaveLength(1)
-    // The Team's browsing surface is a section of the shell's own column,
-    // not a shadow over the shipped browser, so its seat is empty while
-    // Team mode stands down.
+    // The shell keeps one sidebar: the Team adds nothing to its section seat,
+    // in or out of the mode.
     expect(slots.entries(SECTIONS)).toHaveLength(0)
     // The Team page and Team Settings main seats are registered for the life of
     // the client, beside the shipped conversation seat the mode shadows when it
@@ -116,15 +145,14 @@ describe('Team Client slot takeover', () => {
     expect(slots.entries('sidebar.panellist')).toHaveLength(2)
 
     ctx.teamNavigation.actions().enterTeam()
-    // The section stands BESIDE the shipped browser: the shipped entry keeps its
-    // row, and the Team never shadows it — it adds a section of its own instead.
-    expect(slots.entriesOfSlot(SECTIONS)[0]!.options.id).toBe('team')
-    expect(slots.entriesOfSlot(SECTIONS)[0]!.options.priority).toBe(-100)
+    // Entering the mode swaps nothing in the sidebar: no Team section, no
+    // shadow of the shipped browser, no shadow of its footer.
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
     expect(slots.entries('sidebar.workspaces.session.row.action')).toHaveLength(0)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(0)
     expect(slots.entries('main')).toHaveLength(4)
-    expect(slots.entries('sidebar.settings')).toHaveLength(2)
+    expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
     ctx.teamNavigation.actions().leaveTeam()
     expect(slots.entries(SECTIONS)).toHaveLength(0)
@@ -177,7 +205,8 @@ describe('Team Client slot takeover', () => {
   })
 
   it('keeps Team chrome mounted for a Member Session view and restores the return session on leave', async () => {
-    const { ctx, slots, uiWorkspace } = await bench()
+    const strip = nativeStrip()
+    const { ctx, slots, uiWorkspace } = await bench(null, strip.registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     const sessions = ctx.get('sessions') as unknown as {
@@ -191,11 +220,9 @@ describe('Team Client slot takeover', () => {
     ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
     ctx.teamNavigation.actions().enterTeam()
 
-    // Drive the real wiring through the section seat's injected remotes —
-    // the same payload the Agent card button consumes.
-    const section = teamSection(slots)
-    expect(section).toBeDefined()
-    const injected = (section!.inject as () => Record<string, unknown>)()
+    // Drive the real wiring through the Team tab's seat — the share the Agent
+    // card button consumed when the Agents panel was mounted.
+    const injected = tabSeat(strip)
     ;(injected.openMemberSession as (sessionId: string) => void)('session:builder')
 
     expect(uiWorkspace.openSession).toHaveBeenCalledWith('session:builder')
@@ -213,14 +240,12 @@ describe('Team Client slot takeover', () => {
     ctx.teamNavigation.actions().enterMemberSession('session:reviewer' as never)
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-    expect(slots.entries(SECTIONS)).toHaveLength(1)
-    expect(slots.entriesOfSlot('sidebar.settings')[0]!.options.priority).toBe(-100)
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
+    expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
-    // The Team foot's wrapped leave closes the Member view, clears the panel,
-    // and restores the Human's original session before deregistering the chrome.
-    const foot = slots.entriesOfSlot('sidebar.settings').find(entry => entry.options.priority === -100)!
-    const footActions = (foot.inject as () => Record<string, unknown>)()
-    ;(footActions.leaveTeam as () => void)()
+    // The tab's wrapped leave closes the Member view, clears the panel, and
+    // restores the Human's original session before deregistering the chrome.
+    ;(injected.leaveTeam as () => void)()
 
     expect(uiWorkspace.openSession).toHaveBeenLastCalledWith('session:human-origin')
     expect(ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
@@ -232,7 +257,8 @@ describe('Team Client slot takeover', () => {
   })
 
   it('never captures a Member Session as the return target when the main view still retains one', async () => {
-    const { ctx, slots, uiWorkspace } = await bench()
+    const strip = nativeStrip()
+    const { ctx, uiWorkspace } = await bench(null, strip.registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     const sessions = ctx.get('sessions') as unknown as {
@@ -240,8 +266,7 @@ describe('Team Client slot takeover', () => {
     }
     ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
     ctx.teamNavigation.actions().enterTeam()
-    const section = teamSection(slots)
-    const injected = (section!.inject as () => Record<string, unknown>)()
+    const injected = tabSeat(strip)
     // Nothing is retained yet, so this first entry has no return target at all.
     ;(injected.openMemberSession as (sessionId: string) => void)('session:builder')
     expect(uiWorkspace.openSession).toHaveBeenCalledWith('session:builder')
@@ -290,41 +315,18 @@ describe('Team Settings rail row', () => {
     selectPanel: (id: string | null) => void
     panelInfo: { getSnapshot: () => { activePanelId: string | null } }
   }
-  function nativeStrip() {
-    const inserted: string[] = []
-    const renders: Array<(props: unknown) => unknown> = []
-    return {
-      inserted,
-      renders,
-      registry: {
-        version: 1,
-        getTabs: () => inserted.map(id => ({ id })),
-        subscribe: () => () => {},
-        insert: (tab: { id: string; render: (props: unknown) => unknown }) => {
-          inserted.push(tab.id)
-          renders.push(tab.render)
-          return () => { inserted.splice(inserted.indexOf(tab.id), 1) }
-        },
-      },
-    }
-  }
-
   it('registers the rail row as Team Settings with a locale thunk, and its page as a main seat', async () => {
-    const strip = nativeStrip()
-    const { ctx, slots } = await bench(null, strip.registry)
+    const { registry } = nativeStrip()
+    const { ctx, slots } = await bench(null, registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
 
     const rows = panelRows(slots)
-    // A strip registry being present changes nothing: the legacy insert is
-    // gone, so the rail keeps both Team rows instead of standing one down.
-    expect(strip.inserted).toHaveLength(0)
-    expect(rows.map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-settings'])
+    expect(rows.map(row => row.options.id)).toEqual(['agent-team-settings'])
     // A thunk, not a captured string: a language switch relabels the row.
-    const settings = rows.find(row => row.options.id === 'agent-team-settings')!
-    expect(typeof settings.options.label).toBe('function')
+    expect(typeof rows[0]!.options.label).toBe('function')
     const locale = ctx.get('locale') as LocaleRuntime
-    expect(settings.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
+    expect(rows[0]!.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
     expect(slots.entriesOfSlot('main').map(entry => (entry.options as { key?: string }).key))
       .toEqual(expect.arrayContaining(['agent-team', 'agent-team-settings', 'conversation']))
 
@@ -332,7 +334,7 @@ describe('Team Settings rail row', () => {
     expect(slots.entries('sidebar.panellist')).toHaveLength(0)
   })
 
-  it('keeps the fallback Team row whether or not a native tab strip is there', async () => {
+  it('keeps the fallback Team row while no native tab strip is there, and drops it once the tab is inserted', async () => {
     const without = await bench()
     const plain = without.ctx.plugin({ inject: [...inject], apply })
     await plain.await()
@@ -343,33 +345,106 @@ describe('Team Settings rail row', () => {
     const withStrip = await bench(null, strip.registry)
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    // Nothing inserts into the strip anymore, so the row never stands down.
-    expect(strip.inserted).toHaveLength(0)
-    expect(panelRows(withStrip.slots).map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-settings'])
+    expect(strip.inserted).toHaveLength(1)
+    expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
     await fiber.dispose()
   })
 
-  it('opens Team Settings without leaving Team mode, and a Channel pick hands the column back to the Team page', async () => {
-    const { ctx, slots } = await bench()
+  it('opens Team Settings without leaving Team mode, and a Channel pick from the tab hands the column back to the Team page', async () => {
+    const strip = nativeStrip()
+    const { ctx, slots } = await bench(null, strip.registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     const layout = panel(ctx)
+    const seat = tabSeat(strip)
 
-    layout.selectPanel('agent-team')
-    expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
+    ctx.teamNavigation.actions().enterTeam()
     layout.selectPanel('agent-team-settings')
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
 
-    const section = teamSection(slots)
-    const injected = (section!.inject as () => Record<string, unknown>)()
-    ;(injected.selectChannel as (ref: string) => void)('channel:engineering')
-    expect(layout.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
+    ;(seat.selectChannel as (ref: string) => void)('channel:engineering')
+    // The Team page is the Team main seat standing in for the conversation: the
+    // settings panel lets go of the column, and no Team panel is selected.
+    expect(layout.panelInfo.getSnapshot().activePanelId).toBeNull()
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
 
     // Re-picking the Channel already open still brings the page back.
     layout.selectPanel('agent-team-settings')
-    ;(injected.selectChannel as (ref: string) => void)('channel:engineering')
-    expect(layout.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
+    ;(seat.selectChannel as (ref: string) => void)('channel:engineering')
+    expect(layout.panelInfo.getSnapshot().activePanelId).toBeNull()
+
+    await fiber.dispose()
+  })
+
+  it('enters Team mode from a plain conversation when the tab picks a Channel, without selecting the Team panel or mounting a Team section', async () => {
+    const strip = nativeStrip()
+    const { ctx, slots } = await bench(null, strip.registry)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+
+    const element = tabSeat(strip)
+    expect(element.channelsOnly).toBe(true)
+    ;(element.selectChannel as (ref: string) => void)('channel:engineering')
+
+    // The one-sidebar contract: the pick opens the Channel in the main column and
+    // nothing else changes around it.
+    expect(panel(ctx).panelInfo.getSnapshot().activePanelId).toBeNull()
+    expect(panel(ctx).selectPanel).not.toHaveBeenCalledWith('agent-team')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
+    expect(slots.entries('sidebar.settings')).toHaveLength(1)
+    expect(slots.entries('main')).toHaveLength(4)
+
+    // A Workspace switch from a plain conversation only rescopes the list.
+    ;(element.leaveTeam as () => void)()
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+    ;(element.selectWorkspace as (id: string) => void)('workspace:one')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+    await fiber.dispose()
+  })
+
+  it('ends Team mode when the Human opens a plain Session, and re-enters on the next Channel pick', async () => {
+    const strip = nativeStrip()
+    const { ctx } = await bench(null, strip.registry)
+    const sessions = ctx.get('sessions') as unknown as {
+      list: { getSnapshot: () => { byId?: Record<string, unknown> }; subscribe: (listener: () => void) => () => void }
+    }
+    const listeners = new Set<() => void>()
+    let byId: Record<string, unknown> = {}
+    sessions.list.getSnapshot = () => ({ byId })
+    sessions.list.subscribe = listener => { listeners.add(listener); return () => { listeners.delete(listener) } }
+    const select = (id: string | undefined): void => {
+      byId = id === undefined ? {} : { [id]: { id, retainedBy: { mainView: 1 } } }
+      for (const listener of [...listeners]) listener()
+    }
+    // The client subscribes when it mounts, so the list double is wired first.
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const seat = tabSeat(strip)
+
+    ;(seat.selectChannel as (ref: string) => void)('channel:engineering')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
+
+    // The shell's own list opens a Session: the shell retains it as the main view.
+    select('session:plain')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
+
+    ;(seat.selectChannel as (ref: string) => void)('channel:engineering')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
+
+    // Re-selecting the same Session is not a change, and clearing the selection
+    // never ends the mode: only a Session the Human opened does.
+    select('session:plain')
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
+    select(undefined)
+    expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
+
+    // A Member view is the client's own session change and keeps the mode.
+    ctx.teamNavigation.actions().enterMemberSession('session:builder' as never)
+    select('session:builder')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder' })
 
     await fiber.dispose()
   })
