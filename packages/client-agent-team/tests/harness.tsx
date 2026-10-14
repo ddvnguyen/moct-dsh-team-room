@@ -1,7 +1,7 @@
 import { RemoteStream, RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import type { AgentTeamChangesRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import { afterEach, expect, vi } from 'vitest'
-import { cloneElement, isValidElement, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -71,18 +71,7 @@ function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作
  * renders every inserted tab under the baseline list the way the strip shows
  * the active one.
  */
-/**
- * The Team tab's body is the Channel list alone. Specs for the fuller browser
- * (Inbox card, Workspace picker, Agents) still need that component mounted, so
- * `fullBrowser` re-renders the same element with `channelsOnly` off. Production
- * never does this.
- */
-function fullTabBody(rendered: unknown): unknown {
-  const boundary = rendered as ReactElement<{ children: ReactElement<Record<string, unknown>> }>
-  if (!isValidElement(boundary) || !isValidElement(boundary.props.children)) return rendered
-  return cloneElement(boundary, undefined, cloneElement(boundary.props.children, { channelsOnly: false }))
-}
-function nativeTabStrip(fullBrowser = false) {
+function nativeTabStrip() {
   const tabs: Array<{ readonly id: string; readonly render: (props: never) => unknown }> = []
   const listeners = new Set<() => void>()
   let version = 0
@@ -100,7 +89,7 @@ function nativeTabStrip(fullBrowser = false) {
   // The strip hands each tab the shipped entry's own props, as the host does.
   function StripWorkspace(props: Record<string, unknown>) {
     useSyncExternalStore(registry.subscribe, () => version)
-    return <div data-baseline-workspaces>普通工作区{tabs.map(tab => <div key={tab.id} data-native-tab={tab.id}>{(fullBrowser ? fullTabBody(tab.render(props as never)) : tab.render(props as never)) as ReactNode}</div>)}</div>
+    return <div data-baseline-workspaces>普通工作区{tabs.map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
   }
   return Object.assign(StripWorkspace, { __dshNativeTabs: registry })
 }
@@ -144,7 +133,7 @@ interface SeededMessage {
   readonly replyToMessageRef?: string
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; fullBrowser?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[] }) {
+export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[] }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -744,7 +733,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // session-maybe seat's adoption semantics (remount on no-session) through
   // real element identity of the root's [data-phase] node.
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation })
-  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip(options?.fullBrowser === true)) as never)
+  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip()) as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()

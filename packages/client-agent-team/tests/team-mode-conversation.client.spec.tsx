@@ -15,7 +15,7 @@ beforeEach(() => { localStorage.clear() })
 
 describe('Team conversation surfaces', () => {
   it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, remainingUnreadCounts: [1] })
+    const b = await runtimeWithTeam({ remainingUnreadCounts: [1] })
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
@@ -486,7 +486,7 @@ describe('Team conversation surfaces', () => {
   })
 
   it('uploads composer attachments as chips, sends their ids, and renders the strip', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, initialChannels: true })
+    const b = await runtimeWithTeam({ initialChannels: true })
     // Let the browser's one-time workspace selection settle first; a late
     // selectWorkspace would strip the channel ref mid-test.
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
@@ -558,7 +558,7 @@ describe('Team conversation surfaces', () => {
   })
 
   it('turns pasted clipboard files into composer chips and sends their ids', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, initialChannels: true })
+    const b = await runtimeWithTeam({ initialChannels: true })
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
@@ -809,7 +809,7 @@ describe('Team conversation surfaces', () => {
   })
 
   it('states the current Workspace on one line and switches through its menu', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team' })
+    const b = await runtimeWithTeam({ mode: 'team' })
     expect(await b.view.findByRole('heading', { name: '频道' })).toBeTruthy()
     // The selector renders in the wide sidebar only, and collapsing the fixture
     // keeps that wide surface mounted for another 150ms (SidebarRoot's collapse
@@ -911,7 +911,7 @@ describe('Team conversation surfaces', () => {
   })
 
   it('drops the jump hint the moment the reader returns to the tail', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, initialChannels: true })
+    const b = await runtimeWithTeam({ initialChannels: true })
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
@@ -1009,7 +1009,7 @@ describe('Team conversation surfaces', () => {
 
   it('drains a multi-round unread backlog automatically with fresh request ids', async () => {
     const b = await runtimeWithTeam({
-      fullBrowser: true, initialChannels: true, remainingUnreadCounts: [25, 5, 0],
+      initialChannels: true, remainingUnreadCounts: [25, 5, 0],
       seededMessages: [{ body: '积压任务', occurredAt: '2026-08-21T09:00:00.000Z' }],
     })
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
@@ -1031,7 +1031,7 @@ describe('Team conversation surfaces', () => {
   })
 
   it('keeps the jump hint when the automatic acknowledgment read fails', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, initialChannels: true })
+    const b = await runtimeWithTeam({ initialChannels: true })
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
