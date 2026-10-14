@@ -139,12 +139,19 @@ import type {
   AgentTeamPromoteThreadResult,
   AgentTeamThreadRepliedOperation,
   AgentTeamUnreadRequired,
+  AgentTeamActor,
+  AgentTeamRoomActivityAgent,
+  AgentTeamRoomActivityEvent,
+  AgentTeamRoomActivityRequest,
+  AgentTeamRoomActivityResult,
+  AgentTeamRoomActivityTotals,
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateChannelResult,
   AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
+import type { SessionId as AgentTeamMemberSessionId } from '@deepseek-ai/dsh-session'
 import { formatTeamTimestamp } from './time-format.ts'
 import { resolveBodyMentions } from './mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
@@ -578,6 +585,107 @@ function emptyProjection(): Projection {
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
+}
+
+/**
+ * One row of the bounded room-activity event feed (contract §19.1): a committed operation reduced
+ * to a plain-text gist. Never a Message body, never a stack, never a key.
+ */
+type RoomActivityMemberTotals = {
+  messages: number
+  turns: number
+  tokensIn: number
+  tokensOut: number
+  cacheRead: number
+  cacheWrite: number
+  toolCalls: number
+  runMs: number
+  failedTurns: number
+  sessionIds: AgentTeamMemberSessionId[]
+}
+
+/** Session rows a room-activity read may return: the newest first, hard-bounded. */
+const ROOM_ACTIVITY_SESSION_LIMIT = 100
+
+/** Event rows a room-activity read returns when the request names no limit. */
+const ROOM_ACTIVITY_LIMIT_DEFAULT = 50
+
+/** Event rows a room-activity read may return per page: the contract's upper clamp. */
+const ROOM_ACTIVITY_EVENT_LIMIT = 200
+
+/** A cursor token is a plain run of digits — the shape `nextCursor` hands back. */
+const ROOM_ACTIVITY_SEQUENCE = /^\d+$/
+
+/** Character bound of one event summary; the first line wins, then the bound (contract §19.1). */
+const ROOM_ACTIVITY_SUMMARY_LIMIT = 200
+
+/**
+ * The four usage buckets of one Turn. Each row names the result field, the Turn-usage field it
+ * folds, and whether the Turn proved it: outputTokens is always reported, the other three may
+ * arrive null and then stick as null in every scope they reach (contract §3.2).
+ */
+const ROOM_ACTIVITY_BUCKETS: readonly { readonly field: RoomActivityBucket; readonly usage: keyof Pick<AgentTeamSessionTurnUsage, 'uncachedInputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'> }[] = [
+  { field: 'tokensIn', usage: 'uncachedInputTokens' },
+  { field: 'tokensOut', usage: 'outputTokens' },
+  { field: 'cacheRead', usage: 'cacheReadTokens' },
+  { field: 'cacheWrite', usage: 'cacheWriteTokens' },
+]
+
+/** One Member's proof state: which of its buckets stay null because a Turn never proved them. */
+type RoomActivityBuckets = Record<RoomActivityBucket, boolean>
+
+/** The neutral proof state: no bucket is known-unproven until a Turn proves otherwise. */
+const ROOM_ACTIVITY_BUCKET_PROVEN: RoomActivityBuckets = { tokensIn: false, tokensOut: false, cacheRead: false, cacheWrite: false }
+
+/** The name of one usage bucket, shared by the projection types and the result rows. */
+type RoomActivityBucket = 'tokensIn' | 'tokensOut' | 'cacheRead' | 'cacheWrite'
+
+/** Plain-text gist of an event: the opening line, trimmed, then bounded. Never a whole body. */
+function roomActivitySummary(text: string): string {
+  const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine.length > ROOM_ACTIVITY_SUMMARY_LIMIT ? `${firstLine.slice(0, ROOM_ACTIVITY_SUMMARY_LIMIT - 1)}…` : firstLine
+}
+
+/** One actor rendered as its handle: a Member's own handle, or the Human's. */
+function roomActivityActor(actor: AgentTeamActor): string {
+  return actor.handle
+}
+
+/** One Member-lifecycle operation reduced to a gist: the transition, then the Member's handle. */
+function roomActivityMemberSummary(kind: string, handle: string): string {
+  switch (kind) {
+    case 'team/channel-member-added': return `${handle} joined the Channel`
+    case 'team/channel-member-removed': return `${handle} left the Channel`
+    case 'team/member-added': return `${handle} was added to the Team`
+    case 'team/member-updated': return `${handle} was updated`
+    case 'team/member-suspended': return `${handle} was suspended`
+    case 'team/member-resumed': return `${handle} was resumed`
+    case 'team/member-archived': return `${handle} was archived`
+    case 'team/member-removed': return `${handle} was removed`
+    case 'team/member-session-renewed': return `${handle} moved to a fresh Session`
+    case 'team/member-session-rolled-over': return `${handle} rolled over its context`
+    case 'team/member-session-restarted': return `${handle} restarted its Session`
+    case 'team/member-context-cleared': return `${handle} cleared its context`
+    case 'team/member-workspace-joined': return `${handle} joined the Workspace`
+    case 'team/member-workspace-left': return `${handle} left the Workspace`
+    default: return ''
+  }
+}
+
+/** One Claim transition reduced to a gist: the state change, then the direction's opening line. */
+function roomActivityClaimSummary(kind: AgentTeamClaimActivity['kind'], direction: string): string {
+  const state = kind === 'claim' ? 'claimed' : kind === 'done' ? 'finished a claim on' : 'released a claim on'
+  return `${state} ${roomActivitySummary(direction)}`
+}
+
+/** One Task transition reduced to a gist: the transition, then the standing it left the Task in. */
+function roomActivityTaskSummary(kind: string, status: AgentTeamTask['status'], resolution: AgentTeamTask['resolution']): string {
+  return `task ${kind} → ${status}/${resolution}`
+}
+
+/** One session binding reduced to a gist naming the Session and why it was bound. */
+function roomActivitySessionSummary(data: AgentTeamThreadSessionBoundData): string {
+  return `turns bound to Session ${data.sessionId} (${data.reason})`
 }
 
 /** Exhaustiveness guard for the closed operation union: adding a kind must update every dispatch. */
@@ -2104,6 +2212,288 @@ export class AgentTeamLedger {
       turn: reply.turn,
       isLastOfTurn: lastSequenceByTurn.get(`${reply.turn.sessionId}\0${reply.turn.turn}`) === reply.sequence,
     })))
+  }
+
+  /**
+   * Room-activity read for one Channel or one Thread (contract §19.1). Derived only from the
+   * projection: Messages, SessionRun rows, Turn records, failure notices and the committed
+   * operations of the scope. Read-only — no receipt, no lock, no wake, no attention change.
+   *
+   * Scope resolution reuses the guards every other read uses. A Channel scope takes the Channel
+   * itself; a Thread scope resolves the Thread and then proves it belongs to the requested Channel,
+   * so a Thread paired with somebody else’s Channel is the same typed not-found as an unknown ref.
+   * An unknown Channel or Thread, a Thread outside the Workspace and an archived Channel all
+   * throw the ledger Error the host maps to that not-found. A Channel scope includes every
+   * Thread the Channel owns.
+   *
+   * Usage buckets are null while any contributing Turn left the bucket unproven (contract §3.2):
+   * null is sticky, per bucket, and never folded to 0. `turns` always counts recorded Turns;
+   * `unrecordedTurns` counts a Turn whose usage is not fully proven — any bucket null makes it
+   * unrecorded, not only the input split.
+   *
+   * Every field is a fold over the projection, so one call costs the operations, Turns and
+   * Messages of the scope: bounded by ledger size, never by the request.
+   */
+  roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
+    // A cursor is an opaque sequence token. Anything that cannot be one is rejected here as a
+    // typed bad-request rather than silently paging from the newest event, so a stale or mangled
+    // cursor is a visible failure instead of a duplicated page. `Number` is not the test: it reads
+    // an empty string and a whitespace-padded one as 0 and 12, which would replay a page the
+    // caller never asked for, so the token must be a plain run of digits to count at all.
+    const cursor = request.cursor === undefined ? null : ROOM_ACTIVITY_SEQUENCE.test(request.cursor) ? Number(request.cursor) : null
+    if (request.cursor !== undefined && cursor === null) throw new Error('room activity cursor must be a non-negative decimal sequence')
+    const limit = Math.min(Math.max(request.limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT)
+
+    const channelRef = this.requireChannel(request.workspaceId, request.channelRef).channelRef
+    const scope: 'channel' | 'thread' = request.threadRef === undefined ? 'channel' : 'thread'
+    const threadContext = request.threadRef === undefined ? undefined : this.threadContextFrom(this.state, request.workspaceId, { threadRef: request.threadRef })
+    // The Thread’s own Channel must be the requested one, and that Channel must still be active: a
+    // Thread paired with a foreign or archived Channel is not-found, never an empty success.
+    if (threadContext !== undefined && threadContext.channelRef !== channelRef) throw new Error(`Thread '${request.threadRef}' does not belong to Channel '${channelRef}'`)
+    if (threadContext === undefined && this.state.channels.get(channelRef)?.state === 'archived') throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
+    const threadRefs: ReadonlySet<AgentTeamThreadRef> = threadContext === undefined
+      ? this.channelThreadRefs(channelRef)
+      : new Set<AgentTeamThreadRef>([threadContext.thread.threadRef])
+    const inScope = (threadRef: AgentTeamThreadRef): boolean => threadRefs.has(threadRef)
+
+    const byMember = new Map<AgentTeamMemberId, RoomActivityMemberTotals>()
+    const bucketFor = (memberId: AgentTeamMemberId) => {
+      const existing = byMember.get(memberId)
+      if (existing !== undefined) return existing
+      const created: RoomActivityMemberTotals = { messages: 0, turns: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, toolCalls: 0, runMs: 0, failedTurns: 0, sessionIds: [] }
+      byMember.set(memberId, created)
+      return created
+    }
+
+    let messages = 0
+    for (const message of this.state.messagesByRef.values()) {
+      if (!inScope(message.threadRef)) continue
+      messages += 1
+      bucketFor(message.sender).messages += 1
+    }
+
+    // Turn records are the only source of every usage bucket. A Turn belongs to the scope when
+    // any of its `threadRefs` is in scope; a Turn naming no Thread belongs to no scope.
+    let turns = 0
+    let failedTurns = 0
+    let unrecordedTurns = 0
+    const unknownBuckets = new Map<AgentTeamMemberId, RoomActivityBuckets>()
+    const unknownFor = (memberId: AgentTeamMemberId) => {
+      const existing = unknownBuckets.get(memberId)
+      if (existing !== undefined) return existing
+      const created = { tokensIn: false, tokensOut: false, cacheRead: false, cacheWrite: false }
+      unknownBuckets.set(memberId, created)
+      return created
+    }
+    const sessionIdsInScope = new Set<SessionId>()
+    for (const operation of this.state.sessionTurns.values()) {
+      const turn = operation.data
+      if (!turn.threadRefs.some(inScope)) continue
+      turns += 1
+      sessionIdsInScope.add(turn.sessionId)
+      const bucket = bucketFor(turn.memberId)
+      const unknown = unknownFor(turn.memberId)
+      bucket.turns += 1
+      bucket.toolCalls += turn.toolCalls
+      bucket.runMs += turn.runMs
+      // Each bucket is proven independently: one null makes that bucket unproven for this Member
+      // and leaves the other buckets statable. `outputTokens` is never null, but the same
+      // accounting keeps the four buckets symmetric.
+      let proven = true
+      for (const { field, usage } of ROOM_ACTIVITY_BUCKETS) {
+        const value = turn.usage[usage]
+        if (value === null) { unknown[field] = true; proven = false } else bucket[field] += value
+      }
+      // A Turn with any unproven bucket is an unrecorded Turn, whatever the other buckets say.
+      if (!proven) unrecordedTurns += 1
+      if (!bucket.sessionIds.includes(turn.sessionId)) bucket.sessionIds.push(turn.sessionId)
+    }
+
+    for (const operation of this.state.ordered) {
+      if (operation.kind !== 'team/turn-failure-notice') continue
+      if (!inScope(operation.data.threadRef)) continue
+      failedTurns += 1
+      bucketFor(operation.data.memberId).failedTurns += 1
+    }
+
+    const sessions = [...sessionIdsInScope]
+      .map(sessionId => this.state.sessionRuns.get(sessionId))
+      .filter((run): run is AgentTeamSessionRun => run !== undefined)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+      .slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
+
+    // Sticky null, per bucket: a bucket is unproven for a Member once any of its Turns left that
+    // bucket unreported, and stays unproven in this scope — the signature of an unknown, never a 0.
+    const bucketState = (memberId: AgentTeamMemberId) => unknownBuckets.get(memberId) ?? ROOM_ACTIVITY_BUCKET_PROVEN
+    const perAgent: readonly AgentTeamRoomActivityAgent[] = [...byMember.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([memberId, bucket]) => {
+        const unknown = bucketState(memberId)
+        return Object.freeze({
+          memberId,
+          messages: bucket.messages,
+          turns: bucket.turns,
+          tokensIn: unknown.tokensIn ? null : bucket.tokensIn,
+          tokensOut: unknown.tokensOut ? null : bucket.tokensOut,
+          cacheRead: unknown.cacheRead ? null : bucket.cacheRead,
+          cacheWrite: unknown.cacheWrite ? null : bucket.cacheWrite,
+          toolCalls: bucket.toolCalls,
+          runMs: bucket.runMs,
+          failedTurns: bucket.failedTurns,
+          sessionIds: Object.freeze([...bucket.sessionIds].sort()),
+        })
+      })
+
+    const total = (pick: (agent: AgentTeamRoomActivityAgent) => number | null): number | null => {
+      let total = 0
+      for (const agent of perAgent) {
+        const value = pick(agent)
+        if (value === null) return null
+        total += value
+      }
+      return total
+    }
+    const totals: AgentTeamRoomActivityTotals = Object.freeze({
+      messages,
+      turns,
+      tokensIn: total(agent => agent.tokensIn),
+      tokensOut: total(agent => agent.tokensOut),
+      cacheRead: total(agent => agent.cacheRead),
+      cacheWrite: total(agent => agent.cacheWrite),
+      toolCalls: total(agent => agent.toolCalls),
+      runMs: total(agent => agent.runMs),
+      failedTurns,
+      unrecordedTurns,
+    })
+
+    const eventChannelRef = scope === 'thread' ? (threadContext?.channelRef ?? null) : channelRef
+    return Object.freeze(this.roomActivityEvents(request.workspaceId, eventChannelRef, threadRefs, scope, totals, perAgent, sessions, limit, cursor))
+  }
+
+
+  /**
+   * The bounded event feed of a room-activity scope: one row per committed operation that belongs
+   * to the scope, newest first, one page. Read-only; it walks `state.ordered` from the head, so a
+   * page costs the operations it scans, never a second index. A Message contributes an opening-line
+   * preview bounded to 200 characters — a body is never returned whole (contract §19.1).
+   */
+  private roomActivityEvents(
+    workspaceId: WorkspaceId,
+    channelRef: AgentTeamChannelRef | null,
+    threadRefs: ReadonlySet<AgentTeamThreadRef>,
+    scope: 'channel' | 'thread',
+    totals: AgentTeamRoomActivityTotals,
+    perAgent: readonly AgentTeamRoomActivityAgent[],
+    sessions: readonly AgentTeamSessionRun[],
+    limit: number,
+    cursor: number | null,
+  ): AgentTeamRoomActivityResult {
+    const fromSequence = cursor
+    const page: AgentTeamRoomActivityEvent[] = []
+    let nextCursor: string | undefined
+    for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
+      const event = this.roomActivityEvent(this.state.ordered[index]!, channelRef, threadRefs, workspaceId)
+      if (event === undefined) continue
+      if (fromSequence !== null && event.sequence >= fromSequence) continue
+      if (page.length < limit) page.push(event)
+      else { nextCursor = String(page[page.length - 1]!.sequence); break }
+    }
+    return Object.freeze({
+      scope,
+      totals,
+      perAgent,
+      sessions,
+      events: Object.freeze(page),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    })
+  }
+
+  /** One committed operation projected into an event row, or undefined when it is out of scope. */
+  private roomActivityEvent(operation: AgentTeamOperation, channelRef: AgentTeamChannelRef | null, threadRefs: ReadonlySet<AgentTeamThreadRef>, workspaceId: WorkspaceId): AgentTeamRoomActivityEvent | undefined {
+    const base = { sequence: operation.sequence, at: operation.occurredAt, actor: roomActivityActor(operation.actor) }
+    const event = (kind: string, summary: string, scope: { threadRef?: AgentTeamThreadRef | undefined; taskRef?: AgentTeamTaskRef | undefined; messageRef?: AgentTeamMessageRef | undefined }): AgentTeamRoomActivityEvent =>
+      Object.freeze({ ...base, kind, summary: roomActivitySummary(summary), ...(scope.threadRef === undefined ? {} : { threadRef: scope.threadRef }), ...(scope.taskRef === undefined ? {} : { taskRef: scope.taskRef }), ...(scope.messageRef === undefined ? {} : { messageRef: scope.messageRef }) })
+    switch (operation.kind) {
+      case 'team/message-sent':
+      case 'team/thread-replied': {
+        const message = operation.data.message
+        if (!threadRefs.has(message.threadRef)) return undefined
+        return event(operation.kind, message.body, { threadRef: message.threadRef, taskRef: message.taskRef, messageRef: message.messageRef })
+      }
+      case 'team/thread-promoted':
+      case 'team/claim-created':
+      case 'team/claim-done':
+      case 'team/claim-released':
+      case 'team/task-changed': {
+        const threadRef = operation.data.thread.threadRef
+        if (!threadRefs.has(threadRef)) return undefined
+        const taskRef = operation.data.task.taskRef
+        if (operation.kind === 'team/thread-promoted' || operation.kind === 'team/task-changed') {
+          return event(operation.kind, roomActivityTaskSummary(operation.data.activity.kind, operation.data.task.status, operation.data.task.resolution), { threadRef, taskRef })
+        }
+        const claim = operation.data.claim
+        return event(operation.kind, roomActivityClaimSummary(operation.data.activity.kind, claim.direction), { threadRef, taskRef })
+      }
+      case 'team/thread-session-bound': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, roomActivitySessionSummary(operation.data), { threadRef: operation.data.threadRef })
+      }
+      case 'team/thread-instance-bound': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, `bound to instance slot ${operation.data.slot}`, { threadRef: operation.data.threadRef })
+      }
+      case 'team/session-turn-recorded': {
+        const threadRef = operation.data.threadRefs.find(candidate => threadRefs.has(candidate))
+        if (threadRef === undefined) return undefined
+        return event(operation.kind, `turn ${operation.data.turn} recorded ${operation.data.toolCalls} tool calls`, { threadRef })
+      }
+      case 'team/turn-failure-notice': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, `turn ${operation.data.turn} failed: ${operation.data.reason}`, { threadRef: operation.data.threadRef })
+      }
+      case 'team/thread-summary-committed': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, `summary generation ${operation.data.generation} (${operation.data.trigger})`, { threadRef: operation.data.threadRef })
+      }
+      case 'team/channel-member-added':
+      case 'team/channel-member-removed':
+        if (operation.data.workspaceId !== workspaceId || channelRef === null || operation.data.channelRef !== channelRef) return undefined
+        return event(operation.kind, roomActivityMemberSummary(operation.kind, this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId), {})
+      case 'team/member-workspace-joined':
+      case 'team/member-workspace-left':
+        // Workspace participation is Team-wide, not Thread-scoped: it reaches only a Channel feed.
+        if (channelRef === null || operation.data.workspaceId !== workspaceId) return undefined
+        if (!this.isChannelMember(channelRef, operation.data.memberId)) return undefined
+        return event(operation.kind, roomActivityMemberSummary(operation.kind, this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId), {})
+      case 'team/member-added':
+      case 'team/member-updated':
+      case 'team/member-suspended':
+      case 'team/member-resumed':
+      case 'team/member-archived':
+      case 'team/member-removed':
+      case 'team/member-session-renewed':
+      case 'team/member-session-rolled-over':
+      case 'team/member-session-restarted':
+      case 'team/member-context-cleared':
+        // Member lifecycle is never Thread-scoped, so it belongs to the Channel feed only, and
+        // only when the Member still has a projection row in this Channel.
+        if (channelRef === null) return undefined
+        if (this.state.members.get(operation.data.member.memberId) === undefined) return undefined
+        if (!this.isChannelMember(channelRef, operation.data.member.memberId)) return undefined
+        return event(operation.kind, roomActivityMemberSummary(operation.kind, operation.data.member.handle), {})
+      case 'team/dm-sent':
+      case 'team/channel-created':
+      case 'team/channel-updated':
+      case 'team/channel-archived':
+      case 'team/initialized':
+      case 'team/thread-attention-changed':
+      case 'team/thread-read':
+        // Not room activity: a DM has no Channel, a read or attention change is private, and the
+        // rest is workspace or channel administration a room view does not narrate.
+        return undefined
+      default:
+        return undefined
+    }
   }
 
   /**
