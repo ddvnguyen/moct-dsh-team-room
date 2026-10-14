@@ -59,6 +59,24 @@ describe('Team mode and the shell main panel', () => {
     expect(b.view.container.querySelector('[data-baseline-workspaces]')).not.toBeNull()
   })
 
+  it('renders only the Channel list in the Team tab: no Inbox card, no Workspace picker, no Agents', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-native-tab="team"]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+
+    expect(await within(tab).findByRole('button', { name: '# engineering' })).toBeTruthy()
+    // The Channels list keeps its create action.
+    expect(within(tab).getByRole('button', { name: '新建频道' })).toBeTruthy()
+    // The Inbox card and the Workspace picker are the fuller browser's.
+    expect(within(tab).queryByRole('button', { name: /^收件箱/ })).toBeNull()
+    expect(tab.querySelector('[data-team-workspace-trigger]')).toBeNull()
+    expect(within(tab).queryByRole('button', { name: /^工作区/ })).toBeNull()
+    expect(within(tab).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+  })
+
   it('opens Team Settings from its rail row, then a Channel pick from the tab returns to the Team page', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
     expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
