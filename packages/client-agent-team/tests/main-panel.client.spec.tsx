@@ -79,44 +79,4 @@ describe('Team mode and the shell main panel', () => {
     await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
     expect(b.view.container.querySelector('[data-team-settings-page]')).toBeNull()
   })
-
-  it('shows the Inbox page when the native Team tab picks the Inbox from a plain conversation', async () => {
-    const b = await runtimeWithTeam({ nativeTabs: true, workspaceId: 'w1' })
-    expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
-    const tab = await waitFor(() => {
-      const found = b.view.container.querySelector('[data-native-tab="team"]')
-      expect(found).not.toBeNull()
-      return found as HTMLElement
-    })
-
-    // TEST-6: the card took the current-page mark while the column stayed on the
-    // conversation, because the tab only moved the Team navigation.
-    fireEvent.click(await within(tab).findByRole('button', { name: /^收件箱/ }))
-
-    await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
-    expect(b.runtime.ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', inbox: true })
-    expect(await b.view.findByRole('heading', { level: 1, name: '收件箱' })).toBeTruthy()
-    expect(b.view.container.querySelector('[data-team-inbox]')).not.toBeNull()
-  })
-
-  it('opens the picked Channel when the native Team tab picks it from a plain conversation', async () => {
-    // The Workspace selection starts unset here (a fresh load): the pick enters
-    // Team mode, the browser remounts in the section, and its default-Workspace
-    // adoption must not discard the Channel the click just chose.
-    const b = await runtimeWithTeam({ nativeTabs: true, workspaceId: 'w1', initialChannels: true })
-    expect(b.runtime.ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation' })
-    const tab = await waitFor(() => {
-      const found = b.view.container.querySelector('[data-native-tab="team"]')
-      expect(found).not.toBeNull()
-      return found as HTMLElement
-    })
-
-    fireEvent.click(await within(tab).findByRole('button', { name: '# engineering' }))
-
-    await waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team'))
-    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
-    expect(b.runtime.ctx.teamNavigation.getSnapshot().channelRef).toBeDefined()
-    expect(b.view.container.querySelector('[data-team-channel]')).not.toBeNull()
-    expect(b.view.queryByRole('textbox', { name: '消息内容' })).not.toBeNull()
-  })
 })

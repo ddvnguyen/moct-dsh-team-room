@@ -1,4 +1,3 @@
-import { createElement } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
@@ -67,8 +66,8 @@ import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import { TeamMembersAction } from './TeamMembersAction.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
-import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
-import { TeamSlotBoundary, withSlotBoundary } from './TeamSlotBoundary.tsx'
+import type { TeamConversationProps } from './slots.ts'
+import { withSlotBoundary } from './TeamSlotBoundary.tsx'
 
 // Every Team registration goes through one boundary. A crash then shows a
 // notice with Retry in that slot's place, keeps the entry mounted, and leaves
@@ -81,8 +80,6 @@ const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings'
 const GuardedMembersAction = withSlotBoundary('sidebar.settings', TeamMembersAction as never)
 const GuardedWorkspaceBrowser = withSlotBoundary('sidebar.sections:team', TeamWorkspaceBrowser as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
-import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
-import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
 
 export type { TeamMode, TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
@@ -673,7 +670,7 @@ function applyUi(ctx: ClientContext): void {
     return groups.filter(group => group.members.length > 0)
   }
 
-  const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
+  registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
 
   registerTeamSection(ctx, navigation, queries, reads, drafts, humanIdentity)
   registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
@@ -727,43 +724,6 @@ function applyUi(ctx: ClientContext): void {
       if (typeof document !== 'undefined') delete document.documentElement.dataset.agentTeamMode
     }
   }, 'agent-team: mode marker')
-
-  // The interim native tab (A10, ruling v0.6.1, TEST-3 only). It is the
-  // Channel view's home: this adds the third tab to the host's own strip
-  // while the automation plugin owns it. It is feature-detected inside the
-  // module — no registry means no tab and no throw — and it writes no
-  // persistence of its own, because the strip owns that key. Registered as an
-  // effect so the insert is disposed with the client rather than leaking a tab
-  // into a later generation.
-  //
-  // The tab body is a closure over this client's own state rather than a module
-  // function, because the strip renders it inside the host's tree: the seat
-  // share is built here once, from the same stable sources the registered
-  // `main` seat's inject reads, and every seat callback identity is therefore
-  // the one the rail seat already uses. The one field the seat does not carry
-  // across is `t` — the strip is not a locale-scoped slot — so it is bound per
-  // render from the dictionary rather than captured, and a language switch
-  // reaches the tab body too.
-  const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity), 'sidebar.workspaces')
-  const teamTabRender = (props: NativeTabRenderProps): unknown => {
-    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
-    // The strip calls `render` raw inside its own tree, so a throw here would
-    // unwind into the host's sidebar; the boundary keeps it inside the tab.
-    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
-      renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
-  }
-  // Once the tab is in the strip it is the Channel view's home, and the rail's
-  // fallback Team row stands down; a strip that never appears keeps the row.
-  ctx.effect(() => insertTeamTab(ctx, {
-    // A thunk, not the resolved string: the same shape the rail and settings
-    // registrations above use. The strip renders `tab.label` statically, so
-    // `insertTeamTab` resolves this on every insert and re-inserts on a
-    // language switch — the eager string this used to pass pinned the label to
-    // the language the client booted in.
-    label: () => ctx.locale.bind(NS)('team'),
-    render: teamTabRender,
-    onInserted: () => { dropTeamRow() },
-  }), 'agent-team: interim native tab')
 
   // The Team's settings page: one settings section, ordered between General (0)
   // and Models (10) so it sits near the top. It holds two groups that write

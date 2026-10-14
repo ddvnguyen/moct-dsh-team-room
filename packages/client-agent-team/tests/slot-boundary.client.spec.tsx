@@ -81,29 +81,6 @@ describe('Team slot boundary', () => {
     expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
   })
 
-  it('contains a crash in the native tab body inside the tab and recovers on Retry', async () => {
-    crash.browser = true
-    const b = await runtimeWithTeam({ nativeTabs: true })
-
-    const tab = await waitFor(() => {
-      const found = b.view.container.querySelector('[data-native-tab]')
-      expect(found).not.toBeNull()
-      return found as HTMLElement
-    })
-    const alert = await waitFor(() => {
-      const found = tab.querySelector('[role="alert"]')
-      expect(found).not.toBeNull()
-      return found as HTMLElement
-    })
-    expect(alert.getAttribute('data-team-slot-error')).toBe('native-tab')
-    // The strip itself, which is the host's, is still standing around the tab.
-    expect(b.view.container.querySelector('[data-baseline-workspaces]')).not.toBeNull()
-
-    crash.browser = false
-    fireEvent.click(b.view.getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(tab.querySelector('[role="alert"]')).toBeNull())
-  })
-
   it('shows an alert with Retry for the sidebar section occupant that throws, and the host boundary never fires', async (ctx) => {
     // The section seat (#45) is a Team registration like any other: a throw in
     // the browser it serves must land in the Team's boundary, named for the
