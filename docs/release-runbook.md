@@ -33,6 +33,7 @@ Run in this order; a failure stops the release, and a fix re-runs from the faile
 | `npm run build` | Build errors; also what `prepack` will run at publish time. |
 | `npm run lint` | Lint findings. |
 | `npm run test:browser` | Broken composition, Remote mounting, slot takeover, or ordinary-DSH restoration. Needs the adjacent `../deepseek-harness` checkout; browser acceptance is a local step and never runs in CI. |
+| `npm run smoke:install` | The packed tarball does not install, boot, answer the `agentTeam` Remote, or keep a Channel and Message across a restart (a `files` entry that drops a shipped file shows up here, not in unit tests). Packs the built tree into a throwaway `DSH_HOME` and boots the sibling checkout on port 0; no credentials, no backend. |
 | `npm pack --dry-run` | Nothing by itself — record the file count for the release report. |
 | `npm run check:artifact` | An artifact that would ship broken: stray `.ts`/`.tsx`, a missing `cordis.patch.yml`, or a runtime relative import whose target is not in the tarball. Run it *after* `npm run build`. |
 | `npm run check:public-baseline` | A public surface that drifted from the manifest's certified baseline (both READMEs and the pinned compatibility discussion). |
