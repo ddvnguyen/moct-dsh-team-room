@@ -68,7 +68,7 @@ import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation
 import type { TeamChangeListener, TeamChangeScope } from './team-changes.ts'
 import type { TeamDraftStore } from './drafts.ts'
 import type { TeamHumanIdentitySource } from './human-identity.ts'
-import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
+import type { TeamTriggerCatalogItem, TeamTriggerCatalogScope } from './trigger-catalog.ts'
 
 export interface TeamNavigationSource {
   getSnapshot: () => TeamNavigationSnapshot
@@ -149,8 +149,11 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   navigation: TeamNavigationSource
   /** Keyed composer draft cache; one store per Client context. */
   drafts: TeamDraftStore
-  /** Lazy read-only catalogs from the currently retained main Session. */
-  loadTriggerCatalog: (signal: AbortSignal) => Promise<readonly TeamTriggerCatalogItem[]>
+  /**
+   * Lazy read-only catalogs. Host commands come from the retained main
+   * Session; skills are scoped to the caller's selected Member session.
+   */
+  loadTriggerCatalog: (scope: TeamTriggerCatalogScope, signal: AbortSignal) => Promise<readonly TeamTriggerCatalogItem[]>
   /** The Human's own identity: the display name and avatar every seat that names or draws them reads. */
   humanIdentity: TeamHumanIdentitySource
   loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
