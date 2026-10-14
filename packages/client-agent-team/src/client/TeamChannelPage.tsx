@@ -411,6 +411,10 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
     <div className={css.surfaceHeader}>
       <header className={channelCss.slimHeader} data-team-slim-header="channel">
         <span className={channelCss.slimBack}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} aria-label={t('backToChannels')} onClick={backToChannels} /></span>
+        {/* The shell reopen control leads the row rather than trailing it: the far
+            right belongs to the Channel menu, and a collapsed column must not push
+            it off the edge. It shows only while the column is closed. */}
+        {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
         <h1 className={channelCss.slimTitle}>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
         {channel !== undefined && channel.description !== '' && <p className={channelCss.slimDesc} title={channel.description}>{channel.description}</p>}
         {channel !== undefined && channelMembers.length > 0 && <span className={channelCss.slimChips} role="img" aria-label={t('headerSeatsLabel', { names: channelMembers.map(status => `@${status.member.handle}`).join(', ') })}>
@@ -428,7 +432,6 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
           <span>{t('headerUnread', { count: unreadTotal })}</span>
         </div>}
         {channel !== undefined && <span ref={manageTriggerRef} className={channelCss.slimActions}>
-          {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
           <TeamRowMenu
             label={t('headerMenuLabel')}
             items={[

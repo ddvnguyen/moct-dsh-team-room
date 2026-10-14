@@ -37,6 +37,21 @@ describe('Team header open-sidebar control', () => {
     await b.runtime.dispose()
   })
 
+  it('leads the Channel header row rather than trailing inside its action group', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
+    await waitFor(() => expect(document.querySelector('[data-sidebar-collapsed]')).toBeTruthy())
+    const header = b.view.container.querySelector('[data-team-slim-header="channel"]') as HTMLElement
+    const back = (within(header).getByRole('button', { name: '返回频道列表' }) as HTMLElement).closest('span') as HTMLElement
+    const reopen = within(header).getByRole('button', { name: '打开侧边栏' }) as HTMLElement
+    // The reopen control follows the back control and precedes the title, so it
+    // shares the row's leading edge instead of crowding the menu at the far right.
+    expect(back.nextElementSibling).toBe(reopen)
+    const title = header.querySelector('h1') as HTMLElement
+    expect(reopen.nextElementSibling).toBe(title)
+    await b.runtime.dispose()
+  })
   it('shows the control on the Thread header only while the shell sidebar is collapsed', async () => {
     const b = await runtimeWithTeam({
       mode: 'team', workspaceId: 'w1', initialChannels: true,

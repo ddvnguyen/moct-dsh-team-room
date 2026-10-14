@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { cleanup, fireEvent, within } from '@testing-library/react'
+import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'
@@ -46,6 +46,39 @@ describe('Team Thread header actions', () => {
     await b.runtime.dispose()
   })
 
+  it('keeps Convert to Task as the last element of the Thread header while the shell sidebar is collapsed', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    // A taskless Thread is what Convert to Task serves, so start one: a plain
+    // send (not As task) opens a Thread the Host never promotes.
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: 'taskless opener' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await b.view.findByRole('button', { name: '打开讨论' })
+    fireEvent.click(b.view.getByRole('button', { name: '打开讨论' }))
+    const header0 = await waitFor(() => b.view.container.querySelector('[data-team-slim-header="thread"]') as HTMLElement)
+    expect(within(header0).getByRole('button', { name: '转为 Task' })).toBeTruthy()
+
+    fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
+    await waitFor(() => expect(document.querySelector('[data-sidebar-collapsed]')).toBeTruthy())
+    const header = b.view.container.querySelector('[data-team-slim-header="thread"]') as HTMLElement
+    const convert = within(header).getByRole('button', { name: '转为 Task' })
+    // The reopen control leads the row instead: while the column is collapsed
+    // the far-right slot still belongs to Convert to Task.
+    expect(header.lastElementChild).toBe(convert.parentElement)
+    const crumb = within(header).getByRole('button', { name: /返回/ })
+    expect(crumb.compareDocumentPosition(convert) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    // The reopen control is the crumb's previous sibling on the same row.
+    const crumbEl = crumb as HTMLElement
+    const reopen = crumbEl.previousElementSibling as HTMLElement
+    expect(reopen.getAttribute('aria-label')).toBe('打开侧边栏')
+    expect(reopen.compareDocumentPosition(convert) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    await b.runtime.dispose()
+  })
   it('gives the Thread header action group the trailing auto margin, and the Channel header none', () => {
     // jsdom applies no CSS modules, so the rule is asserted against the source
     // it ships in: the Thread row's group carries the auto margin that seats it

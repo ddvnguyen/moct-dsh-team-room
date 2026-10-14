@@ -97,6 +97,28 @@ describe('Team Thread roster', () => {
     await b.runtime.dispose()
   })
 
+  it('lists a Member the loaded facts only mention, so a woken seat is selectable before it posts', async () => {
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedRoster: [
+        { memberId: 'member:builder', workspaceId: 'w1', handle: 'builder' },
+        { memberId: 'member:reviewer', workspaceId: 'w1', handle: 'reviewer' },
+        { memberId: 'member:idle', workspaceId: 'w1', handle: 'idle' },
+      ],
+      seedChannelMembers: [],
+      seededMessages: [{ body: 'thread opener, cc @reviewer', occurredAt: '2026-08-21T09:00:00.000Z', sender: 'agent', mentions: ['member:reviewer'] }],
+    })
+    await openThread(b)
+    // The mention opens the roster to the named seat even though it holds no
+    // Message of its own, which is the woken-seat case: the composer can name a
+    // Member the Thread has only named.
+    const options = await openPicker()
+    expect(options.join('|')).toContain('@reviewer')
+    expect(options.join('|')).toContain('@builder')
+    // A seat the Thread neither names nor speaks through stays out.
+    expect(options.join('|')).not.toContain('@idle')
+    await b.runtime.dispose()
+  })
   it('falls back to the Channel members minus archived and inactive when the projection has no Thread facts', async () => {
     const b = await runtimeWithTeam({
       mode: 'team', workspaceId: 'w1', initialChannels: true,
