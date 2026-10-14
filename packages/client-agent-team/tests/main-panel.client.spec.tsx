@@ -27,39 +27,40 @@ describe('Team mode and the shell main panel', () => {
     expect(b.panelInfo.getSnapshot().activePanelId).toBe('plugins')
   })
 
-  it('takes the column back from a global panel when the rail row selects the Team', async () => {
-    const b = await runtimeWithTeam({})
+  it('takes the column back from a global panel when the Team tab picks a Channel', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     b.runtime.slots.register({ name: 'main', key: 'plugins' }, ShippedPluginPage as never)
     await act(async () => { b.selectPanel('plugins') })
     expect(await b.view.findByText('插件')).toBeTruthy()
 
-    // The rail row is the shell's own button: it selects the panel, and the mode
-    // is what follows.
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    // The pick is the Team's request for the column: the panel lets go of it
+    // and the mode follows. No Team panel is selected on the way.
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
 
-    await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
-    expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
+    await waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team'))
+    expect(b.panelInfo.getSnapshot().activePanelId).toBeNull()
     expect(b.view.container.querySelector('[data-shipped-plugins]')).toBeNull()
   })
 
-  it('keeps the Team panel selected while the mode navigates inside itself', async () => {
-    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
-    await act(async () => { b.selectPanel('agent-team') })
-    // The Team's own overview stands in the column while the panel is selected.
-    expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
+  it('opens a Channel from the tab with one sidebar: no Team panel selected, no Team section mounted', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
+    const sidebarBefore = b.view.container.querySelectorAll('[data-slot="sidebar"]').length
 
-    fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
 
-    // A Team destination is not a panel: the rail keeps saying which destination
-    // the column belongs to while the Team's own pages move underneath it.
-    await waitFor(() => expect(b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy())
-    expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    expect(b.panelInfo.getSnapshot().activePanelId).toBeNull()
     expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
+    // The shell's strip is still the only browsing surface: the Team tab stays
+    // in it, and no `sidebar.sections` occupant or second sidebar appears.
+    expect(b.runtime.slots.entries('sidebar.sections' as never)).toHaveLength(0)
+    expect(b.view.container.querySelectorAll('[data-slot="sidebar"]').length).toBe(sidebarBefore)
+    expect(b.view.container.querySelector('[data-native-tab="team"]')).not.toBeNull()
+    expect(b.view.container.querySelector('[data-baseline-workspaces]')).not.toBeNull()
   })
 
-  it('opens Team Settings from its rail row with the Agents config, then a Channel pick returns to the Team page', async () => {
+  it('opens Team Settings from its rail row, then a Channel pick from the tab returns to the Team page', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
-    await act(async () => { b.selectPanel('agent-team') })
     expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
 
     fireEvent.click(b.view.getByRole('button', { name: '团队设置' }))
@@ -76,7 +77,28 @@ describe('Team mode and the shell main panel', () => {
     expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
 
     fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
-    await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team'))
-    expect(b.view.container.querySelector('[data-team-settings-page]')).toBeNull()
+    await waitFor(() => expect(b.view.container.querySelector('[data-team-settings-page]')).toBeNull())
+    expect(b.panelInfo.getSnapshot().activePanelId).toBeNull()
+  })
+
+  it('opens the picked Channel when the native Team tab picks it from a plain conversation', async () => {
+    // The Workspace selection starts unset here (a fresh load): the pick enters
+    // Team mode, the browser remounts in the section, and its default-Workspace
+    // adoption must not discard the Channel the click just chose.
+    const b = await runtimeWithTeam({ nativeTabs: true, workspaceId: 'w1', initialChannels: true })
+    expect(b.runtime.ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation' })
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-native-tab="team"]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+
+    fireEvent.click(await within(tab).findByRole('button', { name: '# engineering' }))
+
+    await waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team'))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    expect(b.runtime.ctx.teamNavigation.getSnapshot().channelRef).toBeDefined()
+    expect(b.view.container.querySelector('[data-team-channel]')).not.toBeNull()
+    expect(b.view.queryByRole('textbox', { name: '消息内容' })).not.toBeNull()
   })
 })

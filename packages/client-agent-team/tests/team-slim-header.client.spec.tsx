@@ -24,7 +24,6 @@ async function pickChannelMember(view: RenderResult, pattern: RegExp): Promise<v
 describe('D1 slim conversation header', () => {
   it('renders the Channel header as one slim row: back, title, seats, counts, overflow', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API and workers' } })
@@ -68,7 +67,6 @@ describe('D1 slim conversation header', () => {
 
   it('renders the Thread header as one slim row: crumb, participants, status, actions', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
     fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: 'thread opener' } })

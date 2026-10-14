@@ -13,35 +13,9 @@ usePinnedBrowserLanguages('zh-CN')
 afterEach(cleanup)
 beforeEach(() => { localStorage.clear() })
 
-/**
- * Fold upstream-owned sidebar chrome onto one shape across the certified line.
- * Two cosmetic details of it moved between the 0.1.7-rc.1 and rc.2 cuts: the logo
- * row gained `data-window-drag`, and the new-session icon and label were rewrapped
- * in a mask/content pair. Both cuts sit inside the certified range, so the
- * container snapshot normalizes that rewrapping instead of pinning one cut.
- */
-function normalizeSidebarChrome(container: HTMLElement): HTMLElement {
-  const clone = container.cloneNode(true) as HTMLElement
-  for (const node of clone.querySelectorAll('[data-window-drag]')) node.removeAttribute('data-window-drag')
-  // Class names arrive CSS-module hashed, so these selectors match the stable part.
-  for (const mask of clone.querySelectorAll('[class*="newSessionLabelMask"]')) {
-    const content = mask.querySelector('[class*="newSessionContent"]') ?? mask
-    mask.replaceWith(...content.childNodes)
-  }
-  // The additive `sidebar.sections` seat renders the Team's section only on a
-  // harness that ships the seat (the fork); CI's upstream shell declares no
-  // such seat and its column has no such block. The seat's own rendering is
-  // pinned by sidebar-sections-seat.client.spec.ts and the slot-boundary spec,
-  // so keep it out of this chrome snapshot: the restore flow it captures must
-  // match on either harness.
-  for (const node of clone.querySelectorAll('[data-slot="sidebar.sections"]')) node.remove()
-  return clone
-}
-
 describe('Team conversation surfaces', () => {
   it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
     const b = await runtimeWithTeam({ remainingUnreadCounts: [1] })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
@@ -345,7 +319,6 @@ describe('Team conversation surfaces', () => {
 
   it('expands @all into every eligible channel member at pick time', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'standup' } })
     // builder, worker, and failed join; offline (unavailable) does not.
@@ -391,7 +364,6 @@ describe('Team conversation surfaces', () => {
 
   it('previews a hand-typed mention without turning it into an explicit recipient', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'review' } })
     fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
@@ -515,7 +487,6 @@ describe('Team conversation surfaces', () => {
 
   it('uploads composer attachments as chips, sends their ids, and renders the strip', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     // Let the browser's one-time workspace selection settle first; a late
     // selectWorkspace would strip the channel ref mid-test.
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
@@ -565,7 +536,6 @@ describe('Team conversation surfaces', () => {
 
   it('uploads thread reply attachments and passes their ids to reply', async () => {
     const b = await runtimeWithTeam({ initialChannels: true, remainingUnreadCounts: [1], seededMessages: [{ body: '开个任务', occurredAt: '2026-08-21T09:00:00.000Z' }] })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
@@ -589,7 +559,6 @@ describe('Team conversation surfaces', () => {
 
   it('turns pasted clipboard files into composer chips and sends their ids', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
@@ -624,7 +593,6 @@ describe('Team conversation surfaces', () => {
 
   it('caches composer drafts across view switches and clears them on committed sends', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     // A second Channel gives the draft somewhere to switch away to.
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
@@ -669,7 +637,6 @@ describe('Team conversation surfaces', () => {
 
   it('rehydrates drafts from localStorage and prunes stale recipients on restore', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     // Open the seeded Channel first so the browser's one-time workspace
     // selection settles before the new Channel row is clicked.
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
@@ -711,7 +678,6 @@ describe('Team conversation surfaces', () => {
 
   it('opens a Thread and performs one baseline catch-up without repeated reads', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
@@ -745,7 +711,10 @@ describe('Team conversation surfaces', () => {
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(b.readThread).toHaveBeenCalledTimes(1)
     expect(b.loadThreadHistory).toHaveBeenCalledTimes(2)
-    expect(b.members).toHaveBeenCalledTimes(1)
+    // Two consumers read the roster now that the sidebar is the tab's Channel
+    // list alone (the Agents panel is not mounted): that list and the Thread
+    // page. Neither repeats.
+    expect(b.members).toHaveBeenCalledTimes(2)
     expect(b.viewChannels).toHaveBeenCalledTimes(1)
 
     // The page waits on its own thread scope. The workspace presence scope
@@ -827,10 +796,7 @@ describe('Team conversation surfaces', () => {
 
     fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
     await waitFor(() => { expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy() })
-    expect(b.view.getByRole('button', { name: '对话' })).toBeTruthy()
-    expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy()
     expect(b.view.queryByRole('button', { name: '新建工作区' })).toBeNull()
-    expect(normalizeSidebarChrome(b.view.container)).toMatchSnapshot()
 
     await b.team.dispose()
     expect(await b.view.findByText('普通工作区')).toBeTruthy()
@@ -885,7 +851,6 @@ describe('Team conversation surfaces', () => {
 
   it('acknowledges off-screen arrivals automatically and keeps only a pure jump hint', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
@@ -947,7 +912,6 @@ describe('Team conversation surfaces', () => {
 
   it('drops the jump hint the moment the reader returns to the tail', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
@@ -1002,7 +966,6 @@ describe('Team conversation surfaces', () => {
 
   it('acknowledges arrivals a bottom-pinned reader is watching instead of prompting a manual read', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
@@ -1049,7 +1012,6 @@ describe('Team conversation surfaces', () => {
       initialChannels: true, remainingUnreadCounts: [25, 5, 0],
       seededMessages: [{ body: '积压任务', occurredAt: '2026-08-21T09:00:00.000Z' }],
     })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
@@ -1070,7 +1032,6 @@ describe('Team conversation surfaces', () => {
 
   it('keeps the jump hint when the automatic acknowledgment read fails', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-workspace-trigger][aria-current="page"]')?.textContent).toContain('Alpha') })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
@@ -1183,7 +1144,6 @@ describe('Team conversation surfaces', () => {
 
   it('sends a Channel message as a taskless Thread unless As task is pressed', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
@@ -1213,7 +1173,6 @@ describe('Team conversation surfaces', () => {
 
   it('resets As task after a committed Task send and keeps it after a failed send', async () => {
     const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
