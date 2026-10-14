@@ -63,7 +63,7 @@ function actorOf(row: HTMLElement): HTMLElement | null {
 
 describe('Team Inbox surfaces', () => {
   it('marks the cross-Workspace unread on the wide card with a dot and hides it at zero', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     expect(card.getAttribute('aria-current')).toBeNull()
     // Zero is the absence of a mark rather than a mark standing there empty, and
@@ -81,7 +81,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('opens the Inbox page from the card with rows and marks the card as the current page', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     b.seedInbox([inboxRow('w2', 'thread:w2')])
     b.seedInbox([inboxRow('w2', 'thread:w2')])
@@ -120,7 +120,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it("draws each Task's own standing behind its number, and nothing on a Thread that is only a discussion", async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const standing = [
       ['待处理', 'todo'],
@@ -159,7 +159,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('drops the header count line while the queue is empty', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     fireEvent.click(await b.view.findByRole('button', { name: '收件箱' }))
     expect(await b.view.findByText('收件箱是空的')).toBeTruthy()
     expect(b.view.getByRole('heading', { name: '收件箱' })).toBeTruthy()
@@ -174,7 +174,7 @@ describe('Team Inbox surfaces', () => {
     // does not hold them. The Client's identity projection is what every other
     // seat draws the Human from, so the row reads it too — the same face the
     // timeline shows, and the profile's own initial when those bytes fail.
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1', humanProfile: { name: 'Ada', avatarRef: 'avatar:1' } })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', humanProfile: { name: 'Ada', avatarRef: 'avatar:1' } })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const rows = [inboxRow('w1', 'thread:human', { newestActor: { memberId: 'member:human', name: 'member:human' } })]
     b.seedInbox(rows)
@@ -198,7 +198,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('marks the Thread that named the reader with the shared capsule, and one that merely moved with a hairline', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const rows = [
       inboxRow('w1', 'thread:named', { previewText: 'named row' }),
@@ -232,7 +232,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('leads a row with the Task\'s live owners in the Channel feed\'s own words, and with its newest actor when there are none', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const rows = [
       inboxRow('w1', 'thread:owned', { previewText: 'owner stack row', claimOwners: [
@@ -265,7 +265,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('drops the mention segment from the header when no row names the reader', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const rows = [inboxRow('w1', 'thread:ambient', { directCount: 0, unreadCount: 2 })]
     b.seedInbox(rows)
@@ -279,7 +279,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('renders the unread queue and the recently-active tail as two sections, and a read row carries no count', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const rows = [
       inboxRow('w1', 'thread:open', { previewText: 'still waiting' }),
@@ -313,7 +313,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('keeps the tail at five rows across Workspaces', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     fireEvent.click(await b.view.findByRole('button', { name: '收件箱' }))
     const tailRows = (workspaceId: string, prefix: string) => Array.from({ length: 6 }, (_, index) =>
       inboxRow(workspaceId, `thread:${prefix}${index}`, { channelName: prefix, previewText: `${prefix} ${index}`, taskNumber: undefined, directCount: 0, unreadCount: 0,
@@ -333,7 +333,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('names the Workspace on a row only while the rows on screen span more than one', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const one = [inboxRow('w1', 'thread:only', { previewText: 'only workspace' })]
     b.seedInbox(one)
@@ -360,7 +360,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('shows the empty state while nothing needs the Human', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     fireEvent.click(await b.view.findByRole('button', { name: '收件箱' }))
     expect(await b.view.findByText('收件箱是空的')).toBeTruthy()
     expect(b.view.getByText('你参与的 Thread 有新活动、或有人提到你时，会出现在这里')).toBeTruthy()
@@ -368,7 +368,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('says the unread queue continues past a capped page, and stays quiet on a complete one', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     fireEvent.click(await b.view.findByRole('button', { name: '收件箱' }))
     // The Host caps the queue and says so; a capped page must not read as all
     // of it — the rows above are the newest unread Threads, nothing more.
@@ -378,7 +378,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('opens the row Thread through selectWorkspace + selectThread, drops the unread dot, and lands Back on its Channel', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1', seededMessages: [{ body: 'Thread opener', occurredAt: '2026-09-13T03:00:00.000Z' }], remainingUnreadCounts: [0], initialChannels: true, seedThreadRef: 'thread:w2' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', seededMessages: [{ body: 'Thread opener', occurredAt: '2026-09-13T03:00:00.000Z' }], remainingUnreadCounts: [0], initialChannels: true, seedThreadRef: 'thread:w2' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     b.seedInbox([inboxRow('w2', 'thread:w2')])
     b.seedInbox([inboxRow('w2', 'thread:w2')])
@@ -403,7 +403,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('reads the whole unread slice — no mention-only flag — for the dot and the Inbox page', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     b.seedInbox([inboxRow('w1', 'thread:w1')])
     b.seedInbox([inboxRow('w1', 'thread:w1')])
@@ -422,7 +422,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('merges the Workspace slices in the Host order, mentions before merely newer rows', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     // The mentioned row is the oldest of the three, so a recency merge would
     // sink it to the bottom; it also sits in w1 with another row, so a
@@ -446,7 +446,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('names today and yesterday on a row and dates older mentions', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const today = new Date()
     const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1, 14, 5)
@@ -476,7 +476,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('keeps the last successful unread total when a background refresh fails', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const seeded = (): ReturnType<typeof inboxRow>[] => [
       inboxRow('w1', 'thread:w1', { unreadCount: 2 }),
@@ -519,7 +519,7 @@ describe('Team Inbox surfaces', () => {
   })
 
   it('keeps a failed Workspace slice on the Inbox page instead of dropping it', async () => {
-    const b = await runtimeWithTeam({ fullBrowser: true, mode: 'team', workspaceId: 'w1' })
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     const seeded = (): ReturnType<typeof inboxRow>[] => [
       inboxRow('w1', 'thread:w1', { previewText: 'w1 waiting' }),

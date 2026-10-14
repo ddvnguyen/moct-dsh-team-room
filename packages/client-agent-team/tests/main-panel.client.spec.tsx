@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
+import { readFileSync } from 'node:fs'
 import { runtimeWithTeam } from './harness.tsx'
 
 usePinnedBrowserLanguages('zh-CN')
@@ -59,22 +60,29 @@ describe('Team mode and the shell main panel', () => {
     expect(b.view.container.querySelector('[data-baseline-workspaces]')).not.toBeNull()
   })
 
-  it('renders only the Channel list in the Team tab: no Inbox card, no Workspace picker, no Agents', async () => {
+  it('shows the Inbox, the Workspace picker and the Channels in the Team tab, without the Agents group', async () => {
     const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
-      const found = b.view.container.querySelector('[data-native-tab="team"]')
+      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')
       expect(found).not.toBeNull()
-      return found as HTMLElement
+      return found!
     })
-
     expect(await within(tab).findByRole('button', { name: '# engineering' })).toBeTruthy()
-    // The Channels list keeps its create action.
-    expect(within(tab).getByRole('button', { name: '新建频道' })).toBeTruthy()
-    // The Inbox card and the Workspace picker are the fuller browser's.
-    expect(within(tab).queryByRole('button', { name: /^收件箱/ })).toBeNull()
-    expect(tab.querySelector('[data-team-workspace-trigger]')).toBeNull()
-    expect(within(tab).queryByRole('button', { name: /^工作区/ })).toBeNull()
+    expect(within(tab).getByRole('button', { name: /^收件箱/ })).toBeTruthy()
+    expect(tab.querySelector('[data-team-workspace-trigger]')).not.toBeNull()
     expect(within(tab).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+  })
+
+  it('does not rewrite the shell sidebar in Team mode: no mode marker, no rule hiding New Session or the rail', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    await waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team'))
+    // The Team adds its tab and nothing else: it neither marks the document nor
+    // ships a rule keyed on a mode marker that stands the host's rows down.
+    expect(document.documentElement.dataset.agentTeamMode).toBeUndefined()
+    const css = readFileSync(`${process.cwd()}/packages/client-agent-team/src/client/sidebar.module.css`, 'utf8')
+    expect(css).not.toContain('data-agent-team-mode')
+    expect(css).not.toMatch(/newSession|panelList/u)
   })
 
   it('opens Team Settings from its rail row, then a Channel pick from the tab returns to the Team page', async () => {

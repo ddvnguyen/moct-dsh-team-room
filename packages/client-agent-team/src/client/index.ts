@@ -643,23 +643,6 @@ function applyUi(ctx: ClientContext): void {
     })
   }, 'agent-team: leave on session open')
 
-  // Team mode's own marker on the document: the Team sidebar's CSS keys off it
-  // (the shell's New Session button stands down), and it is the one place that
-  // says the mode rather than the selection.
-  ctx.effect(() => {
-    const apply = (): void => {
-      if (typeof document === 'undefined') return
-      if (navigation.getSnapshot().mode === 'team') document.documentElement.dataset.agentTeamMode = 'team'
-      else delete document.documentElement.dataset.agentTeamMode
-    }
-    const unsubscribe = navigation.subscribe(apply)
-    apply()
-    return () => {
-      unsubscribe()
-      if (typeof document !== 'undefined') delete document.documentElement.dataset.agentTeamMode
-    }
-  }, 'agent-team: mode marker')
-
   // The interim native tab (A10, ruling v0.6.1, TEST-3 only). It is the
   // Channel view's home: this adds the third tab to the host's own strip
   // while the automation plugin owns it. It is feature-detected inside the

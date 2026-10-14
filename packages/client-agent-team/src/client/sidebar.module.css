@@ -1,15 +1,3 @@
-/* Team mode stands the shell's global chrome down: the New Session button and
-   the global panel rail both address the profile rather than the Team, so both
-   hide while the mode stands. The rail's own Team row goes with it — the reader
-   is already there, and the mode's exit is the foot row, not a rail row — so the
-   rail is what an ordinary conversation offers, and it comes back the moment the
-   mode is left. Both sides key off the html attribute the Team client owns,
-   never off a localized label. */
-:global(html[data-agent-team-mode='team']) button[class*='newSession'],
-:global(html[data-agent-team-mode='team']) nav[class*='panelList'] {
-  display: none;
-}
-
 .workspaceBrowser {
   display: flex;
   flex-direction: column;
