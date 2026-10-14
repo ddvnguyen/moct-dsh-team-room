@@ -18,7 +18,7 @@
 // fact, not a repo dependency.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HOST_CONTRACT, discoverRegistry, insertTeamTab, readRegistry } from '../src/client/team-tab.ts'
+import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, HOST_CONTRACT, discoverRegistry, insertTeamTab, readRegistry } from '../src/client/team-tab.ts'
 import type { NativeTabDescriptor, NativeTabRegistry } from '../src/client/team-tab.ts'
 
 /** One recorded insert, in the shape this module hands the host. */
@@ -211,6 +211,24 @@ describe('insertTeamTab — the insert itself', () => {
     // insert happened.
     dispose()
     expect(registry.inserted).toHaveLength(0)
+  })
+
+  it('inserts the Agents tab beside Team: Tasks | Team | Agents | Scheduled', () => {
+    const registry = fakeRegistry()
+    const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] })
+
+    const disposeTeam = insertTeamTab(ctx, { label: 'Team', render: () => null })
+    const disposeAgents = insertTeamTab(ctx, { id: AGENTS_TAB_ID, order: AGENTS_TAB_ORDER, label: 'Agents', render: () => null })
+
+    expect(registry.inserted.map(tab => tab.id)).toEqual(['team', 'agents'])
+    // After Team (3), before the owner's `schedule` (30): the strip sorts by `order`.
+    expect(AGENTS_TAB_ORDER).toBeGreaterThan(HOST_CONTRACT.tabOrder)
+    expect(AGENTS_TAB_ORDER).toBeLessThan(30)
+    expect(registry.inserted[1]).toMatchObject({ id: 'agents', label: 'Agents', order: 4 })
+
+    disposeAgents()
+    expect(registry.inserted.map(tab => tab.id)).toEqual(['team'])
+    disposeTeam()
   })
 
   it('reads the registry off the entry\'s component when the entry has none', () => {

@@ -86,6 +86,13 @@ export const PARENT_SLOT = 'sidebar'
 export const TAB_ID = 'team'
 export const TAB_ORDER = 3
 
+/**
+ * The Agents tab, beside Team: the strip reads `Tasks | Team | Agents | Scheduled`.
+ * Order 4 sorts it right after Team (3) and before the owner's `schedule` (30).
+ */
+export const AGENTS_TAB_ID = 'agents'
+export const AGENTS_TAB_ORDER = 4
+
 /** Retry budget, mirroring the owner plugin's own 20 × 250 ms schedule. */
 const RETRY_INTERVAL_MS = 250
 const RETRY_LIMIT = 20
@@ -218,6 +225,10 @@ export interface TeamTabOptions {
    * `tab.label` as a static string and never calls it.
    */
   readonly label: string | (() => string)
+  /** The tab's id; defaults to the Team tab's. The registry is keyed by it, so one call manages one tab. */
+  readonly id?: string
+  /** The tab's slot in the strip; defaults to the Team tab's. */
+  readonly order?: number
   /** Renders the tab body from the host's render props. */
   readonly render: (props: never) => unknown
   /** Test seam: replaces `setInterval`, so the retry budget is deterministic. */
@@ -267,9 +278,9 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
     host = registry
     currentLabel = resolveLabel()
     dispose = registry.insert({
-      id: TAB_ID,
+      id: options.id ?? TAB_ID,
       label: currentLabel,
-      order: TAB_ORDER,
+      order: options.order ?? TAB_ORDER,
       matchSession: () => false,
       render: options.render,
     })

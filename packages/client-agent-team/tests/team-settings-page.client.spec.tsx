@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
+import { createAgentsTabState } from '../src/client/agents-tab-state.ts'
 import { TeamSettingsPage, type TeamSettingsPageProps } from '../src/client/TeamSettingsPage.tsx'
 
 afterEach(cleanup)
@@ -19,6 +20,7 @@ describe('Team settings page workspace subscription', () => {
     const props = {
       workspaceList: store,
       initialWorkspaceId: () => undefined,
+      agentsTab: createAgentsTabState(),
       t: (key: string) => key,
     } as unknown as TeamSettingsPageProps
 

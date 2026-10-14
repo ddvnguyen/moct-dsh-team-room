@@ -77,7 +77,9 @@ const GuardedSettingsPanelIcon = withSlotBoundary('sidebar.panellist:team-settin
 const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsPage as never)
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
-import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
+import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
+import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
+import { renderAgentsTabBody } from './agents-tab-body.tsx'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
 
@@ -165,6 +167,7 @@ function registerTeamPanel(
   reads: TeamReadStream,
   drafts: TeamDraftStore,
   humanIdentity: TeamHumanIdentity,
+  agentsTab: AgentsTabState,
 ): () => void {
   const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
   const dropTeamRow = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
@@ -199,6 +202,7 @@ function registerTeamPanel(
       workspaceList: ctx.workspaces.list,
       initialWorkspaceId: () => navigation.getSnapshot().workspaceId,
       memory: teamMemoryRemotes(ctx),
+      agentsTab,
     }),
   }, GuardedSettingsPage as never))
   return dropTeamRow
@@ -590,7 +594,8 @@ function applyUi(ctx: ClientContext): void {
   ctx.on('connection/reset', () => { changes.recover(); queries.newGeneration() })
   const reads = new TeamReadStream()
 
-  const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
+  const agentsTab = createAgentsTabState()
+  const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity, agentsTab)
 
   registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
 
@@ -679,6 +684,25 @@ function applyUi(ctx: ClientContext): void {
     render: teamTabRender,
     onInserted: () => { dropTeamRow() },
   }), 'agent-team: interim native tab')
+
+  // The Agents tab beside it: `Tasks | Team | Agents | Scheduled`. The Agents
+  // list lives here once the tab is in the strip, and on the Team Settings page
+  // until then.
+  const agentsTabRender = (props: NativeTabRenderProps): unknown => {
+    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
+    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
+      renderAgentsTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+  }
+  ctx.effect(() => {
+    const dispose = insertTeamTab(ctx, {
+      id: AGENTS_TAB_ID,
+      order: AGENTS_TAB_ORDER,
+      label: () => ctx.locale.bind(NS)('agents'),
+      render: agentsTabRender,
+      onInserted: () => { agentsTab.set(true) },
+    })
+    return () => { dispose(); agentsTab.set(false) }
+  }, 'agent-team: agents native tab')
 
   // The Team's settings page: one settings section, ordered between General (0)
   // and Models (10) so it sits near the top. It holds two groups that write
