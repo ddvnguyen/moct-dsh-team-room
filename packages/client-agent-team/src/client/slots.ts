@@ -145,7 +145,7 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     /** Names the Threads a Session run touched, for the Agent detail's Session rows. */
     resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
     /** Team memory read for Agent detail's Memory tab (the Human memory list; the Host adds the actor). */
-    loadMemory: (request: AgentTeamMemoryListRequest) => Promise<AgentTeamMemoryListResult>
+    loadMemory: (request: AgentTeamMemoryListRequest) => Promise<RemoteResult<AgentTeamMemoryListResult>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
     selectedChannelRef?: AgentTeamChannelRef
