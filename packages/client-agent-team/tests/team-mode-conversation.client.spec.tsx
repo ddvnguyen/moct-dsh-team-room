@@ -1191,4 +1191,38 @@ describe('Team conversation surfaces', () => {
     await waitFor(() => expect(toggle().getAttribute('aria-pressed')).toBe('false'))
     await b.runtime.dispose()
   })
+
+  it('shows the composer agent selector and the indicator for the picked Channel', async () => {
+    const b = await runtimeWithTeam({ remainingUnreadCounts: [1] })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /worker/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
+    await b.view.findByRole('heading', { name: '# backend' })
+    const composer = await b.view.findByLabelText('消息内容')
+    expect(composer).toBeTruthy()
+
+    // The selected agent is visible before anything is opened, and it is the
+    // Channel's first agent by default (not persisted across reloads).
+    const indicator = b.view.container.querySelector('[data-team-agent-indicator]')
+    expect(indicator).not.toBeNull()
+    expect(indicator?.textContent).toContain('@')
+    // The picker lists this Channel's members and can change the selection.
+    fireEvent.click(b.view.getByRole('button', { name: '选择 Agent' }))
+    const options = await b.view.findAllByRole('option')
+    expect(options).toHaveLength(2)
+    const [first, second] = options
+    // The first row is the default and carries the selected state.
+    expect(first?.getAttribute('aria-selected')).toBe('true')
+    expect(second?.getAttribute('aria-selected')).toBe('false')
+    fireEvent.click(second!)
+    await waitFor(() => expect(b.view.container.querySelector('[data-team-agent-indicator]')?.textContent)
+      .toContain('@worker'))
+  })
+
 })
