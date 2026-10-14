@@ -21,7 +21,7 @@ export interface ThreadSummaryPolicy {
 
 export const DEFAULT_THREAD_SUMMARY_POLICY: ThreadSummaryPolicy = Object.freeze({
   enabled: true,
-  model: Object.freeze({ provider: 'opencode-go', model: 'mimo-v2.6-flash' }),
+  model: Object.freeze({ provider: 'dsh-opencode-go', model: 'mimo-v2.6-flash' }),
   everyTurns: 20,
   everyTokens: 100_000,
 })
