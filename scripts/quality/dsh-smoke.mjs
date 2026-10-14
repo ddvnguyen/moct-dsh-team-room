@@ -6,12 +6,15 @@
 //   3. `--dump-config` lists this bundle
 //   4. boot on port 0; the agentTeam Remote answers
 //   5. one Channel + one Message survive a restart of the host
+//   6. in a real browser, the shell's own sidebar rows stay visible in every Team-tab state
+//      (dsh-browser-check.mjs; needs Playwright, see there)
 //
 // Usage:  npm run smoke:install      (builds first)   or   node scripts/quality/dsh-smoke.mjs
 // Exit:   0 = the tarball installs, boots, answers and persists; 1 = it does not.
 import { mkdirSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkTeamTabSidebar } from './dsh-browser-check.mjs'
 import {
   bootProfile, createSmokeRoot, packTarball, redact, runDsh, writePortZeroOverlay,
 } from './dsh-fixture.mjs'
@@ -68,6 +71,17 @@ try {
   const view = await host.rpc('agentTeam/view', { request: { workspaceId, channelRef } })
   assert(view.channels.some(item => item.channelRef === channelRef && item.name === 'smoke'), 'the Channel did not survive the restart')
   assert(view.items.some(item => item.message?.body === MESSAGE_BODY), 'the Message did not survive the restart')
+
+  step('browser: the shell sidebar survives the Team tab')
+  const second = await host.rpc('agentTeam/createChannel', {
+    request: { requestId: 'smoke-channel-2', workspaceId, name: 'smoke-two', description: 'install smoke' },
+  })
+  assert(second.channel.channelRef !== channelRef, 'the second Channel was not created')
+  const browserResult = await checkTeamTabSidebar({ origin: host.origin, cookie: host.cookie, channels: ['smoke', 'smoke-two'] })
+  step(browserResult.skipped === undefined
+    ? `browser checked ${String(browserResult.states)} states${browserResult.stripTab ? '' : ' (no Team tab in this profile: entered through the rail row, Channels not pressed)'}`
+    : `browser check SKIPPED: ${browserResult.skipped}`)
+
   await host.stop()
   host = undefined
 
