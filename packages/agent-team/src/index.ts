@@ -1,4 +1,3 @@
-import { buildThreadContextSeed } from './thread-context-seed.ts'
 /**
  * Durable Agent Team Host capability.
  *
@@ -15,6 +14,7 @@ import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, THREAD_SEED_TOKEN_BUDGET, buildThreadSeed, estimateTokens, selectSummaryWindow, summaryDue, type SummaryMessageLine, type ThreadSeed, type ThreadSummaryPolicy } from './thread-summary.ts'
+import { buildThreadContextSeed } from './thread-context-seed.ts'
 import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
@@ -1956,7 +1956,7 @@ export default class AgentTeam extends TypertRemoteService {
     const tail = ledger.threadMessagesAfter(threadRef, 0).slice(-10)
     const seed = buildThreadContextSeed({
       ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
-      messages: tail.map(message => ({ messageRef: message.messageRef, sender: String(message.sender), body: message.body })),
+      messages: tail.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
     })
     const handle = this.handles.get(memberId)
     if (handle !== undefined && typeof handle.agent.steer === 'function') {
