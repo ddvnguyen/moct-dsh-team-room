@@ -769,18 +769,24 @@ describe('Team conversation surfaces', () => {
       const replyInput = await b.view.findByRole('textbox', { name: '消息内容' })
       fireEvent.change(replyInput, { target: { value: '@' } })
       const replyMenu = await b.view.findByRole('listbox')
-      // The seeded Channel has no membership rows, so the Thread composer sees
-      // the whole roster; the follower ranks above that roster order once the
-      // observation read from the first paint round lands.
+      // The Thread's roster is its participants — here the Human alone,
+      // because no agent seat holds a Message in this Thread. The Human is
+      // excluded from the @all row, and a one-member roster offers nothing to
+      // rank, so the menu carries that single row. The ranking rule itself is
+      // pinned by the mention-candidate bench in the roster suite; this row
+      // pins the roster the ranking receives.
+      // The Thread's roster is its participants — here only the Human, who
+      // writes through this composer and is therefore never a mention
+      // candidate. The @all row stays (it names zero Members), which is the
+      // roster the ranking receives: no agent seat is in this Thread, so
+      // nothing can rank above it. The ranking rule itself is pinned by the
+      // mention-candidate bench in the roster suite.
       await waitFor(() => expect(within(replyMenu).getAllByRole('option').map(option => option.textContent)).toEqual([
         expect.stringContaining('@all'),
-        expect.stringContaining('@worker'),
-        expect.stringContaining('@builder'),
-        expect.stringContaining('@failed'),
       ]))
+      expect(within(replyMenu).getAllByRole('option')[0]?.getAttribute('aria-selected')).toBe('true')
       fireEvent.keyDown(replyInput, { key: 'ArrowDown' })
-      fireEvent.keyDown(replyInput, { key: 'ArrowDown' })
-      expect(within(replyMenu).getAllByRole('option')[2]?.getAttribute('aria-selected')).toBe('true')
+      expect(within(replyMenu).getAllByRole('option')[0]?.getAttribute('aria-selected')).toBe('true')
       expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
     } finally {
       if (originalScrollIntoView === undefined) delete prototype.scrollIntoView

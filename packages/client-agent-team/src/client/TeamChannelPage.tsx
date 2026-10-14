@@ -3,7 +3,7 @@ import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamInbox, 
   AgentTeamTaskRef, AgentTeamThreadRef,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconArchiveOutlineRegular, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconPanelLeftOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
@@ -54,6 +54,10 @@ interface TeamChannelPageProps {
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   readonly backToChannels: TeamConversationProps['backToChannels']
+  /** Whether the shell's left column is closed; the header offers the open control while it is. */
+  readonly sidebarCollapsed: boolean
+  /** Reopen the shell's left column through the shell's own action. */
+  readonly openSidebar: () => void
   readonly t: TeamConversationProps['t']
 }
 
@@ -110,7 +114,7 @@ function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, nu
   return new Map(inbox.items.filter(item => item.unreadCount > 0).map(item => [item.thread.threadRef, item.unreadCount]))
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, sidebarCollapsed, openSidebar, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
@@ -407,6 +411,10 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
     <div className={css.surfaceHeader}>
       <header className={channelCss.slimHeader} data-team-slim-header="channel">
         <span className={channelCss.slimBack}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} aria-label={t('backToChannels')} onClick={backToChannels} /></span>
+        {/* The shell reopen control leads the row rather than trailing it: the far
+            right belongs to the Channel menu, and a collapsed column must not push
+            it off the edge. It shows only while the column is closed. */}
+        {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
         <h1 className={channelCss.slimTitle}>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
         {channel !== undefined && channel.description !== '' && <p className={channelCss.slimDesc} title={channel.description}>{channel.description}</p>}
         {channel !== undefined && channelMembers.length > 0 && <span className={channelCss.slimChips} role="img" aria-label={t('headerSeatsLabel', { names: channelMembers.map(status => `@${status.member.handle}`).join(', ') })}>

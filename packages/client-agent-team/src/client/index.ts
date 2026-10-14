@@ -67,6 +67,7 @@ import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
 import { TeamSlotBoundary, withSlotBoundary } from './TeamSlotBoundary.tsx'
+import { useShellSidebarCollapsed } from './shell-sidebar.ts'
 
 // Every Team registration goes through one boundary. A crash then shows a
 // notice with Retry in that slot's place, keeps the entry mounted, and leaves
@@ -370,6 +371,13 @@ function teamSharedRemotes(
     /** Agent detail names the Threads a Session run touched. */
     resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => ctx.remote.agentTeam.resolveThreadRefs(request),
     loadMemory: (request: AgentTeamMemoryListRequest) => ctx.remote.agentTeam.memoryList(request),
+    // L1 (issue 57): the shell column's collapse state and its reopen action.
+    // The frame publishes the state on its element and hands the main seat no
+    // owner props, so a central panel reads it from the DOM and reaches the
+    // column through the same ctx.layout.toggleSidebar() the sidebar rail
+    // itself calls — never a local copy of the column's state.
+    useSidebarCollapsed: () => useShellSidebarCollapsed(),
+    openSidebar: () => { ctx.layout.toggleSidebar() },
   }
 }
 

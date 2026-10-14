@@ -94,6 +94,15 @@
   gap: 6px;
 }
 
+/* L1: on the Thread row the action group seats itself at the far right of the
+   header. The crumb, the participant stack and the status pill share the left;
+   the header has no free-space consumer of its own (the Channel row's
+   description takes it), so the group carries the auto margin itself. Scoped to
+   the Thread row so the Channel header keeps its own layout untouched. */
+.slimHeader[data-team-slim-header="thread"] .slimActions {
+  margin-left: auto;
+}
+
 /* The row's page title for assistive technology: the visible crumb carries
    the Channel-qualified title, while the heading keeps the short Thread/Task
    name the entry rows cross-reference. It takes no space on the row. */
