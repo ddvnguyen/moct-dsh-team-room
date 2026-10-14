@@ -78,7 +78,8 @@ async function bench(persisted: string | null = null, strip?: Record<string, unk
     'sidebar.panellist': { kind: 'list', scope: 'root' },
   } } as never, root)
   // The automation plugin's native tab strip, when present, hangs its registry
-  // off the shipped workspace entry's component (see team-tab.ts).
+  // off the shipped workspace entry's component (the two-step discovery: the
+  // entry first, then its component).
   const shippedWorkspaces = Object.assign(() => null, strip === undefined ? {} : { __dshNativeTabs: strip })
   slots.register({ name: 'sidebar.workspaces', priority: 0 }, shippedWorkspaces)
   slots.register({ name: 'sidebar.settings', priority: 0 }, root)
@@ -309,17 +310,21 @@ describe('Team Settings rail row', () => {
   }
 
   it('registers the rail row as Team Settings with a locale thunk, and its page as a main seat', async () => {
-    const { registry } = nativeStrip()
-    const { ctx, slots } = await bench(null, registry)
+    const strip = nativeStrip()
+    const { ctx, slots } = await bench(null, strip.registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
 
     const rows = panelRows(slots)
-    expect(rows.map(row => row.options.id)).toEqual(['agent-team-settings'])
+    // A strip registry being present changes nothing: the legacy insert is
+    // gone, so the rail keeps both Team rows instead of standing one down.
+    expect(strip.inserted).toHaveLength(0)
+    expect(rows.map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-settings'])
     // A thunk, not a captured string: a language switch relabels the row.
-    expect(typeof rows[0]!.options.label).toBe('function')
+    const settings = rows.find(row => row.options.id === 'agent-team-settings')!
+    expect(typeof settings.options.label).toBe('function')
     const locale = ctx.get('locale') as LocaleRuntime
-    expect(rows[0]!.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
+    expect(settings.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
     expect(slots.entriesOfSlot('main').map(entry => (entry.options as { key?: string }).key))
       .toEqual(expect.arrayContaining(['agent-team', 'agent-team-settings', 'conversation']))
 
@@ -327,7 +332,7 @@ describe('Team Settings rail row', () => {
     expect(slots.entries('sidebar.panellist')).toHaveLength(0)
   })
 
-  it('keeps the fallback Team row while no native tab strip is there, and drops it once the tab is inserted', async () => {
+  it('keeps the fallback Team row whether or not a native tab strip is there', async () => {
     const without = await bench()
     const plain = without.ctx.plugin({ inject: [...inject], apply })
     await plain.await()
@@ -338,8 +343,9 @@ describe('Team Settings rail row', () => {
     const withStrip = await bench(null, strip.registry)
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(strip.inserted).toHaveLength(1)
-    expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
+    // Nothing inserts into the strip anymore, so the row never stands down.
+    expect(strip.inserted).toHaveLength(0)
+    expect(panelRows(withStrip.slots).map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-settings'])
     await fiber.dispose()
   })
 
@@ -365,32 +371,6 @@ describe('Team Settings rail row', () => {
     ;(injected.selectChannel as (ref: string) => void)('channel:engineering')
     expect(layout.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
 
-    await fiber.dispose()
-  })
-
-  it('enters Team mode from a plain conversation when the tab picks a Channel', async () => {
-    const strip = nativeStrip()
-    const { ctx } = await bench(null, strip.registry)
-    const fiber = ctx.plugin({ inject: [...inject], apply })
-    await fiber.await()
-    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
-
-    // The strip calls the tab's render; the element it returns is the slot
-    // boundary around the body, and the body carries the seat the Channel view
-    // picks through.
-    const guarded = strip.renders[0]!({}) as { props: { slot: string; children: { props: Record<string, unknown> } } }
-    expect(guarded.props.slot).toBe('native-tab')
-    const element = guarded.props.children
-    expect(element.props.channelsOnly).toBe(true)
-    ;(element.props.selectChannel as (ref: string) => void)('channel:engineering')
-    expect(panel(ctx).panelInfo.getSnapshot().activePanelId).toBe('agent-team')
-    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
-
-    // A Workspace switch from a plain conversation only rescopes the list.
-    ;(element.props.leaveTeam as () => void)()
-    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
-    ;(element.props.selectWorkspace as (id: string) => void)('workspace:one')
-    expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
     await fiber.dispose()
   })
 })
