@@ -112,6 +112,13 @@ export async function checkTeamTabSidebar({ origin, cookie, channels }) {
       await page.waitForTimeout(SETTLE_MS)
       await check(`after Channel # ${channel}`)
     }
+    // The Agents tab, when the build has one: the shell rows must survive it too.
+    const agentsTab = page.locator('[data-slot="sidebar.workspaces"] button', { hasText: /^Agents$/u }).first()
+    if (hasStripTab && await agentsTab.count() > 0) {
+      await agentsTab.click({ timeout: 15_000 })
+      await page.waitForTimeout(SETTLE_MS)
+      await check('Agents tab')
+    }
     if (pageErrors.length > 0) failures.push(`page errors: ${pageErrors.slice(0, 3).join(' | ')}`)
     if (failures.length > 0) throw new Error(`Team-tab sidebar check failed:\n- ${failures.join('\n- ')}`)
     return { states, stripTab: hasStripTab }

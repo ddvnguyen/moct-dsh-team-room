@@ -85,6 +85,31 @@ describe('Team mode and the shell main panel', () => {
     expect(css).not.toMatch(/newSession|panelList/u)
   })
 
+  it('lists the Agents in the Agents tab, not on Team Settings', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true, agentsTab: true })
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="agents"]')
+      expect(found).not.toBeNull()
+      return found!
+    })
+    expect(await within(tab).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
+    // The Team tab keeps Channels and no Agents group.
+    const team = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')!
+    expect(within(team).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+  })
+
+  it('keeps the Agents list on Team Settings while the strip has no Agents tab', async () => {
+    const b = await runtimeWithTeam({ nativeTabs: false, mode: 'team', workspaceId: 'w1', initialChannels: true })
+    fireEvent.click(await b.view.findByRole('button', { name: '团队设置' }))
+    const page = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-team-settings-page]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    expect(await within(page).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
+    expect(page.querySelector('[data-team-agents-moved]')).toBeNull()
+  })
+
   it('opens Team Settings from its rail row, then a Channel pick from the tab returns to the Team page', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
     expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
@@ -98,8 +123,10 @@ describe('Team mode and the shell main panel', () => {
       return found as HTMLElement
     })
     expect(page.querySelector('h2')?.textContent).toBe('团队设置')
-    // The Agents config is on the page; the Team mode it was opened from stays.
-    expect(await within(page).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
+    // The Agents list moved to its tab, so the page says so instead of listing
+    // it; the Team mode it was opened from stays.
+    expect(page.querySelector('[data-team-agents-moved]')).not.toBeNull()
+    expect(within(page).queryByRole('button', { name: '添加 Agent' })).toBeNull()
     expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
 
     fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
