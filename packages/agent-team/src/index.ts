@@ -181,6 +181,8 @@ import type {
   AgentTeamThreadTurnFailure,
   AgentTeamThreadSessionRuns,
   AgentTeamThreadSummaryCommittedData,
+  AgentTeamRoomActivityRequest,
+  AgentTeamRoomActivityResult,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -2515,6 +2517,22 @@ export default class AgentTeam extends TypertRemoteService {
   threadReplyStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadReplyStat[] {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().threadReplyStats(request.threadRef)
+  }
+
+  /**
+   * Room-activity read: one Channel's or one Thread's derived activity (contract §19.1). Read-only —
+   * no receipt, no unread change, no wake, no new operation. The scope is resolved by the ledger,
+   * so an unknown Channel or Thread and an archived Channel all reject with the same typed
+   * not-found every other read uses.
+   */
+  @Remote('roomActivity')
+  roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
+    this.requireWorkspace(request.workspaceId)
+    try {
+      return this.requireLedger().roomActivity(request)
+    } catch (error) {
+      throw new RemoteError('team/room-activity-not-found', error instanceof Error ? error.message : String(error), request.threadRef === undefined ? { channelRef: request.channelRef } : { channelRef: request.channelRef, threadRef: request.threadRef })
+    }
   }
 
   /** Errored-Turn notices of one Thread for the human view, every notice kept; read-only (no receipt, no unread change, no wake). */
