@@ -93,7 +93,7 @@ describe('Team trigger catalog loader', () => {
     expect(remotes.skills.list).not.toHaveBeenCalled()
   })
 
-  it('rejects the whole catalog when the Member skill read fails instead of returning commands only', async () => {
+  it('keeps the Host commands and adds a notice row when the Member skill read fails', async () => {
     const { sessions, remotes } = retainedSessionMocks({
       sessionId: 'session:main',
       memberSessionId: 'session:builder',
@@ -101,10 +101,31 @@ describe('Team trigger catalog loader', () => {
     })
     const loader = createTeamTriggerCatalogLoader({ getSessionId: () => 'session:main' as never, sessions: sessions as never, remotes: remotes as never })
 
-    await expect(loader({ sessionId: 'session:builder' as never, memberHandle: 'builder' }, new AbortController().signal)).rejects.toThrow('skills/list failed: skills offline')
-    // Fail closed: one unreadable catalog takes the whole popup, so a reader
-    // never mistakes a half list for the full offer set.
-    expect(remotes.skills.list).toHaveBeenCalledOnce()
+    await expect(loader({ sessionId: 'session:builder' as never, memberHandle: 'builder' }, new AbortController().signal)).resolves.toEqual([
+      { kind: 'command', name: 'compact', description: 'Compact context', leadingOnly: true },
+      { kind: 'notice', name: 'skills-unavailable', description: '@builder', memberHandle: 'builder' },
+    ])
+  })
+
+  it('reads a Member Session this client does not retain instead of taking the Host commands down', async () => {
+    // Only the main Session is retained here; the Member's is not.
+    const { sessions, remotes } = retainedSessionMocks({ sessionId: 'session:main', memberSessionId: 'session:other' })
+    const loader = createTeamTriggerCatalogLoader({ getSessionId: () => 'session:main' as never, sessions: sessions as never, remotes: remotes as never })
+
+    const items = await loader({ sessionId: 'session:unretained' as never, memberHandle: 'builder' }, new AbortController().signal)
+    expect(items.map(item => item.kind + ':' + item.name)).toEqual(['command:compact', 'skill:review'])
+    expect(remotes.skills.list).toHaveBeenCalledWith({ sessionId: 'session:unretained' }, expect.anything())
+  })
+
+  it('falls back to the notice row when an unretained Member Session cannot be read either', async () => {
+    const { sessions, remotes } = retainedSessionMocks({
+      sessionId: 'session:main',
+      skillResult: { ok: false as const, error: { message: 'no such session' } },
+    })
+    const loader = createTeamTriggerCatalogLoader({ getSessionId: () => 'session:main' as never, sessions: sessions as never, remotes: remotes as never })
+
+    const items = await loader({ sessionId: 'session:unretained' as never, memberHandle: 'builder' }, new AbortController().signal)
+    expect(items.map(item => item.kind + ':' + item.name)).toEqual(['command:compact', 'notice:skills-unavailable'])
   })
 
   it('rejects when the Host command catalog fails even though the Member skills read cleanly', async () => {

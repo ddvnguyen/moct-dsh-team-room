@@ -512,7 +512,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                   <div className={css.triggerGroupHeading}>{t('triggerSkills')}</div>
                   {triggerGroups.skills.map((option, index) => renderTriggerOption(option, triggerGroups.commands.length + index))}
                   {triggerGroups.notices.map(notice => <p key={notice.name} className={css.triggerNotice} data-trigger-notice={notice.name}>
-                    {t('triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
+                    {t(notice.name === 'skills-unavailable' ? 'triggerSkillsUnavailable' : 'triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
                   </p>)}
                 </div>}
               </>}

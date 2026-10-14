@@ -93,9 +93,18 @@ export function createTeamTriggerCatalogLoader({
       // The Member's own skills ride its own Session. Without one, the Host
       // commands still load and the skill list carries the reason instead of
       // silently borrowing the Host catalog.
-      const memberSkills = scope.sessionId === undefined
-        ? []
-        : await listMemberSkills(sessions, remotes, scope.sessionId, scope.memberHandle, signal)
+      // A Member skill read that fails never takes the Host commands with it:
+      // it degrades to an explicit notice row for that Member.
+      let memberSkillsFailed = false
+      let memberSkills: readonly TeamTriggerCatalogItem[] = []
+      if (scope.sessionId !== undefined) {
+        try {
+          memberSkills = await listMemberSkills(sessions, remotes, scope.sessionId, scope.memberHandle, signal)
+        } catch (error) {
+          signal.throwIfAborted()
+          memberSkillsFailed = true
+        }
+      }
       // Host commands come from the retained main Session, exactly where they
       // came from before the selector existed.
       const commandResult = await remotes.commands.list(sessionId)
@@ -115,7 +124,14 @@ export function createTeamTriggerCatalogLoader({
             description: '@' + scope.memberHandle,
             memberHandle: scope.memberHandle,
           }]
-          : memberSkills),
+          : memberSkillsFailed
+            ? [{
+              kind: 'notice' as const,
+              name: 'skills-unavailable',
+              description: '@' + scope.memberHandle,
+              memberHandle: scope.memberHandle,
+            }]
+            : memberSkills),
       ]
     })
   }
@@ -137,25 +153,34 @@ async function listMemberSkills(
   memberHandle: string,
   signal: AbortSignal,
 ): Promise<readonly TeamTriggerCatalogItem[]> {
-  if (sessions.binding(memberSessionId) === undefined) {
-    throw new Error('Member "' + memberSessionId + '" has no retained Session')
-  }
+  // The Host resolves the catalog from the sessionId alone, so a Member whose
+  // Session this client does not retain is read directly instead of failing.
+  if (sessions.binding(memberSessionId) === undefined) return readMemberSkills(remotes, memberSessionId, memberHandle, signal)
   return sessions.using(memberSessionId, { source: 'teamTriggerCatalog', signal }, async (memberReference) => {
     const state = memberReference.binding.session.getSnapshot()
     if (state.openState !== 'open') {
       throw state.openError ?? new Error('Session "' + memberSessionId + '" is not open')
     }
     signal.throwIfAborted()
-    const result = await remotes.skills.list({ sessionId: memberSessionId }, signal)
-    signal.throwIfAborted()
-    if (!result.ok) throw new Error('skills/list failed: ' + result.error.message)
-    return result.value.skills.map(skill => ({
-      kind: 'skill' as const,
-      name: skill.name,
-      description: skill.description,
-      memberHandle,
-    }))
+    return readMemberSkills(remotes, memberSessionId, memberHandle, signal)
   })
+}
+
+async function readMemberSkills(
+  remotes: TeamTriggerCatalogRemotes,
+  memberSessionId: SessionId,
+  memberHandle: string,
+  signal: AbortSignal,
+): Promise<readonly TeamTriggerCatalogItem[]> {
+  const result = await remotes.skills.list({ sessionId: memberSessionId }, signal)
+  signal.throwIfAborted()
+  if (!result.ok) throw new Error('skills/list failed: ' + result.error.message)
+  return result.value.skills.map(skill => ({
+    kind: 'skill' as const,
+    name: skill.name,
+    description: skill.description,
+    memberHandle,
+  }))
 }
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
