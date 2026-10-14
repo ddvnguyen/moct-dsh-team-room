@@ -378,11 +378,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   return (
     <>
       <div className={css.agentRow} data-agent-row data-menu-open={menuOpen || undefined}>
-        <button type="button" className={css.agentSelect} aria-label={t('openAgentSession', { name: status.member.handle })} aria-current={current ? 'page' : undefined} disabled={status.availability !== 'active'} onClick={() => {
-          openMemberSession(status.member.sessionId, message => {
-            setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
-          })
-        }}>
+        <button type="button" className={css.agentSelect} aria-label={t('openAgentDetail', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { setDetailsOpen(true) }}>
           <TeamMemberIdentity status={status} name={status.member.handle.replace(/^@/, '')} className={css.agentCopy} t={t} />
         </button>
         <span className={css.rowMenu}>
@@ -392,6 +388,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutlineRegular /> },
               { id: 'copySession', label: t('copySessionId'), icon: <IconCopyOutlineRegular /> },
               { id: 'details', label: t('agentDetails'), icon: <IconClockOutlineRegular /> },
+              { id: 'openSession', label: t('openCurrentSession'), icon: <IconPlayOutlineRegular />, disabled: status.availability !== 'active' },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutlineRegular /> }] : []),
               ...(status.availability === 'unavailable' && restartOffered(status) ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutlineRegular /> }] : []),
               { id: 'archive', label: t(withdrawing ? 'withdrawAgent' : 'archiveAgent'), icon: <IconArchiveOutlineRegular size={16} />, danger: true },
@@ -400,6 +397,11 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
               if (id === 'edit') setEditing(true)
               else if (id === 'copySession') void copySessionId()
               else if (id === 'details') setDetailsOpen(true)
+              else if (id === 'openSession') {
+                openMemberSession(status.member.sessionId, message => {
+                  setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
+                })
+              }
               else if (id === 'archive') setArchiving(true)
               else void recover()
             }}
