@@ -3084,7 +3084,7 @@ describe('AgentTeam thread summary (§3.3)', () => {
     const stub = stubModel(`Decided: first decision [${message.messageRef}]`)
     host.configureThreadSummary({ model: stub.model })
     const summary = await host.runThreadSummary(alpha, message.threadRef, 'rolling')
-    expect(summary).toMatchObject({ generation: 1, trigger: 'rolling', coversThroughSequence: message.sequence, model: { provider: 'opencode-go', model: 'mimo-v2.6-flash' }, usage: { inputTokens: 0, outputTokens: 0 } })
+    expect(summary).toMatchObject({ generation: 1, trigger: 'rolling', coversThroughSequence: message.sequence, model: { provider: 'dsh-opencode-go', model: 'mimo-v2.6-flash' }, usage: { inputTokens: 0, outputTokens: 0 } })
     expect(stub.calls).toHaveLength(1)
     expect(stub.calls[0]!.transcript).toContain(`[${message.messageRef}] ${seatA.handle}: first decision`)
     expect(stub.calls[0]!.maxTokens).toBe(SUMMARY_OUTPUT_TOKEN_CAP)
