@@ -236,6 +236,11 @@
   .toolbar {
     gap: 8px;
   }
+  /* The agent picker keeps only its current handle on a narrow card; the
+     aria-label still names the control. */
+  .agentPickerLabel {
+    display: none;
+  }
 }
 
 /* Attach circle — mirrors the base composer's 28px "+" control so both
@@ -462,21 +467,15 @@
 }
 .replyBannerCancel:hover { color: var(--dsw-alias-label-primary); }
 
-/* Agent selector row (Task 8 slice): the always-visible indicator for the
+/* Agent selector (Task 8 slice), seated on the toolbar's bottom line beside the
+   attach and mode controls: the always-visible indicator for the
    selected agent plus the picker that changes it. The indicator is a chip, not
    chrome: it answers "whose skills is the slash menu listing" at a glance,
-   including when only one agent exists. It reads as one row with the toolbar
-   below it rather than a second control bar. */
-.agentRow {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 16px 2px;
-}
-
+   including when only one agent exists. It shares the toolbar line instead of
+   adding a second control bar above it. */
 .agentIndicator {
   align-items: center;
+  min-width: 0;
   background: var(--dsw-alias-interactive-bg-hover);
   border-radius: var(--dsw-radius-sm, 8px);
   color: var(--dsw-alias-label-secondary);
@@ -497,7 +496,7 @@
 
 .agentPicker {
   position: relative;
-  margin-left: auto;
+  min-width: 0;
 }
 
 .agentPickerButton {

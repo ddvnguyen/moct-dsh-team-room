@@ -595,7 +595,37 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
           })}
         </ul>
       )}
-      <div className={css.agentRow}>
+      <div className={css.toolbar}>
+        {onFilesChange !== undefined && (
+          <>
+            <input ref={fileInputRef} type="file" multiple className={css.fileInput} aria-hidden="true" tabIndex={-1}
+              onChange={event => {
+                const chosen = [...event.target.files ?? []]
+                if (chosen.length > 0 && pendingFiles !== undefined) onFilesChange([...pendingFiles, ...chosen])
+                event.target.value = ''
+              }} />
+            <Tooltip label={t('attachFiles')} side="top" delayMs={500}>
+              <button type="button" className={css.attachButton} aria-label={t('attachFiles')}
+                disabled={pending} onClick={() => { fileInputRef.current?.click() }}>
+                <IconPaperclipOutlineMedium size={14} />
+              </button>
+            </Tooltip>
+          </>
+        )}
+        {onAsTaskChange !== undefined && (
+          <button
+            type="button"
+            className={asTask === true ? `${css.asTaskPill} ${css.asTaskPillOn}` : css.asTaskPill}
+            aria-label={t('asTask')}
+            aria-pressed={asTask === true}
+            title={t('asTask')}
+            disabled={pending}
+            onClick={() => { onAsTaskChange(asTask !== true) }}
+          >
+            <IconChecklistOutlineMedium size={14} />
+            <span className={css.asTaskLabel}>{t('asTask')}</span>
+          </button>
+        )}
         {/* The selected agent is always on screen — with one agent in scope
             too, so a reader never has to guess whose skills the slash menu
             lists. The picker behind it lists this Channel/Thread's members. */}
@@ -643,38 +673,6 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
             })}
           </div>}
         </div>}
-      </div>
-      <div className={css.toolbar}>
-        {onFilesChange !== undefined && (
-          <>
-            <input ref={fileInputRef} type="file" multiple className={css.fileInput} aria-hidden="true" tabIndex={-1}
-              onChange={event => {
-                const chosen = [...event.target.files ?? []]
-                if (chosen.length > 0 && pendingFiles !== undefined) onFilesChange([...pendingFiles, ...chosen])
-                event.target.value = ''
-              }} />
-            <Tooltip label={t('attachFiles')} side="top" delayMs={500}>
-              <button type="button" className={css.attachButton} aria-label={t('attachFiles')}
-                disabled={pending} onClick={() => { fileInputRef.current?.click() }}>
-                <IconPaperclipOutlineMedium size={14} />
-              </button>
-            </Tooltip>
-          </>
-        )}
-        {onAsTaskChange !== undefined && (
-          <button
-            type="button"
-            className={asTask === true ? `${css.asTaskPill} ${css.asTaskPillOn}` : css.asTaskPill}
-            aria-label={t('asTask')}
-            aria-pressed={asTask === true}
-            title={t('asTask')}
-            disabled={pending}
-            onClick={() => { onAsTaskChange(asTask !== true) }}
-          >
-            <IconChecklistOutlineMedium size={14} />
-            <span className={css.asTaskLabel}>{t('asTask')}</span>
-          </button>
-        )}
         <button
           type="submit"
           className={css.sendButton}

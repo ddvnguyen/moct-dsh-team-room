@@ -251,6 +251,16 @@ describe('Team composer agent selector', () => {
     void b
   })
 
+  it('seats the indicator and the picker on the toolbar line with the send control', () => {
+    renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
+
+    // Human review 3690: the agent controls live on the bottom line with attach
+    // and send, not on a row of their own above it.
+    const toolbar = screen.getByRole('button', { name: 'Send' }).parentElement as HTMLElement
+    expect(toolbar.querySelector('[data-team-agent-indicator]')).toBeTruthy()
+    expect(toolbar.contains(screen.getByRole('button', { name: 'Select Agent' }))).toBe(true)
+  })
+
   it('changes the indicator and the scoped slash catalog when a second agent is picked', async () => {
     const scopes: string[] = []
     const loadTriggerCatalog = vi.fn(async (scope: { memberHandle: string }) => {
