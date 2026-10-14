@@ -465,7 +465,7 @@ function registerModeShadow<T extends object>(
   entryKey?: string,
 ): void {
   const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
-  ctx.slots.inject(name, () => {
+  ctx.slots.inject(name as never, () => {
     let dispose: (() => void) | undefined
     const reconcile = (): void => {
       const snapshot = navigation.getSnapshot()
@@ -529,7 +529,7 @@ function registerTeamSection(
   humanIdentity: TeamHumanIdentity,
 ): void {
   const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
-  ctx.slots.inject('sidebar.sections', () => {
+  ctx.slots.inject('sidebar.sections' as never, () => {
     let dispose: (() => void) | undefined
     const reconcile = (): void => {
       // The Team's browsing surface stands exactly while Team mode does: the
