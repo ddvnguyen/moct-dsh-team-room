@@ -304,3 +304,28 @@
   .activityRow { padding-inline: 0; }
   .newUpdates { max-width: calc(100% - 16px); }
 }
+
+/* L1 (issue 57, item 3): the Thread member dialog reuses the shared Member row,
+   so it borrows the Channel roster's scroll window and adds its own foot line
+   and the one-shot notice under it. */
+.memberList {
+  display: grid;
+  gap: 2px;
+  margin: 0 -6px;
+}
+
+.modalBody {
+  max-height: min(65vh, 520px);
+  overflow-y: auto;
+}
+
+.memberFoot {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  display: flex;
+  gap: 14px;
+  margin: 10px 0 0;
+}
+
+.inviteNote {
+  margin: 8px 0 0;
+}

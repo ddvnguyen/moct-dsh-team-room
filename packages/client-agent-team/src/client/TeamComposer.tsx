@@ -57,9 +57,16 @@ function matchingTriggerGroups(catalog: readonly TeamTriggerCatalogItem[], match
   }
 }
 
-function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], query: string): readonly AgentTeamClientMemberStatus[] {
+/**
+ * Mention candidates: every seat this composer can name, minus the writing
+ * Human. The Human writes through this composer, so notifying themselves is
+ * never offered — a roster that serves the Human seat therefore does not grow
+ * a pointless @human candidate.
+ */
+function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], query: string, humanMemberId?: AgentTeamMemberId): readonly AgentTeamClientMemberStatus[] {
   const normalized = query.toLocaleLowerCase()
-  return members.filter(status => status.presence !== 'unavailable'
+  return members.filter(status => status.member.memberId !== humanMemberId
+    && status.presence !== 'unavailable'
     && status.member.state !== 'inactive'
     && status.member.state !== 'archived'
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
@@ -165,7 +172,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const [triggerHighlight, setTriggerHighlight] = useState(0)
   // @all is a composer-layer expansion of the same eligibility filter a
   // handle pick uses; the fixed row stays on top of the matching members.
-  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query), followerMemberIds)
+  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query, humanMemberId), followerMemberIds)
   const options: readonly MentionOption[] = mention !== undefined && 'all'.startsWith(mention.query.toLocaleLowerCase())
     ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status }))]
     : memberCandidates.map(status => ({ kind: 'member' as const, status }))

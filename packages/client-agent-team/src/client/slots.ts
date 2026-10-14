@@ -47,6 +47,8 @@ import type {
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadObservations,
   AgentTeamThreadObservationsRequest,
+  AgentTeamThreadAttentionRequest,
+  AgentTeamThreadAttentionResult,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
   AgentTeamThreadReplyStat,
@@ -175,6 +177,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   archiveChannel: (request: AgentTeamArchiveChannelRequest) => Promise<RemoteResult<AgentTeamArchiveChannelResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>
   changeTask: (request: AgentTeamTaskRequest) => Promise<RemoteResult<AgentTeamTaskResult>>
+  /** Human's own Thread Attention: follow/unfollow of this Thread as the reading Human. */
+  changeAttention: (request: AgentTeamThreadAttentionRequest) => Promise<RemoteResult<AgentTeamThreadAttentionResult>>
   promoteThread: (request: AgentTeamPromoteThreadRequest) => Promise<RemoteResult<AgentTeamPromoteThreadResult>>
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>
   resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>

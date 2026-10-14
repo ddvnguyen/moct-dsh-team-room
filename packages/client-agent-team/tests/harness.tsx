@@ -281,7 +281,12 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // needs a Thread-only participant, extra Workspace members, and
   // archived/inactive states the default bench does not carry.
   if (options?.seedRoster !== undefined) memberRows = options.seedRoster.map(entry => status(entry.memberId, entry.workspaceId, entry.handle, entry.presence ?? 'available', entry.diagnostic, entry.state))
-  const members = vi.fn(async ({ workspaceId }: { workspaceId?: string }) => ({ ok: true, value: memberRows.filter(entry => workspaceId === undefined || entry.workspaceIds.includes(workspaceId)) }))
+  // The writing Human is a Workspace seat too: the roster the bench serves carries
+  // them alongside the seeded Agents, so a surface that renders the Human by their
+  // own id (the Thread member dialog's follow row) has a row to draw. Seats that
+  // never select the Human — the mention roster — filter by id, not by presence.
+  const humanStatusRow = () => status('member:human', 'w1', 'human', 'available')
+  const members = vi.fn(async ({ workspaceId }: { workspaceId?: string }) => ({ ok: true, value: [...memberRows, humanStatusRow()].filter(entry => workspaceId === undefined || entry.workspaceIds.includes(workspaceId)) }))
   const joinWorkspace = vi.fn(async (request: { memberId: string; workspaceId: string }) => {
     const member = memberRows.find(entry => entry.member.memberId === request.memberId)!
     if (!member.workspaceIds.includes(request.workspaceId)) member.workspaceIds.push(request.workspaceId)
@@ -520,8 +525,24 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   /** One-shot history-read failure; cleared by the next successful read. */
   let threadHistoryFailure: string | undefined
   // The Human author follows every seeded Thread; tests override the set to
-  // drive the mention-candidate ranking.
+  // drive the mention-candidate ranking. `changeAttention` mutates it like the
+  // Host ledger does, so a follow/unfollow round-trip is observable.
+  // L1 item 3: the Human's own Thread Attention op double. It mirrors the Host
+  // contract exactly — the request carries no memberId and the double asserts the
+  // Human as the actor, so a client can never address another seat through it.
   const threadFollowers = [...(options?.seedFollowers ?? ['member:human'])]
+  const changeAttention = vi.fn(async (request: { requestId: string; workspaceId: string; threadRef?: string; taskRef?: string; action: 'follow' | 'unfollow' }) => {
+    if (request.action === 'follow') {
+      if (threadFollowers.includes('member:human')) throw new Error('Member is already following Thread')
+      threadFollowers.push('member:human')
+      return { ok: true as const, value: { receipt: { operationId: 'op:attention', sequence: 30, occurredAt: '2026-08-21T12:00:00.000Z' }, thread: { threadRef: 'thread:1', revision: 3 }, attention: { memberId: 'member:human', threadRef: 'thread:1', followedAtSequence: 30 } } }
+    }
+    if (!threadFollowers.includes('member:human')) throw new Error('Member is already unfollowed from Thread')
+    const kept = threadFollowers.filter(id => id !== 'member:human')
+    threadFollowers.length = 0
+    threadFollowers.push(...kept)
+    return { ok: true as const, value: { receipt: { operationId: 'op:attention', sequence: 31, occurredAt: '2026-08-21T12:00:00.000Z' }, thread: { threadRef: 'thread:1', revision: 4 } } }
+  })
   const threadObservations = vi.fn(async ({ taskRef, threadRef }: { taskRef?: string; threadRef?: string }) => {
     void taskRef
     void threadRef
@@ -741,7 +762,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -796,5 +817,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }
