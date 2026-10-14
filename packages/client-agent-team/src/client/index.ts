@@ -367,6 +367,8 @@ function teamSharedRemotes(
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => {
       openMemberSessionImpl(ctx, navigation, sessionId, reportFailure)
     },
+    /** Agent detail names the Threads a Session run touched. */
+    resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => ctx.remote.agentTeam.resolveThreadRefs(request),
   }
 }
 
@@ -413,7 +415,6 @@ function teamSeatInject(
       changeTask: (request: AgentTeamTaskRequest) => ctx.remote.agentTeam.changeTask(request),
       promoteThread: (request: AgentTeamPromoteThreadRequest) => ctx.remote.agentTeam.promoteThread(request),
       resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => ctx.remote.agentTeam.resolveTaskRefs(request),
-      resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => ctx.remote.agentTeam.resolveThreadRefs(request),
       resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => ctx.remote.agentTeam.resolveMessageRefs(request),
     } : {}),
     ...(name === 'sidebar.workspaces' ? {

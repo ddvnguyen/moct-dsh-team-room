@@ -4,6 +4,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+- Agent detail opens on a Sessions tab (Overview is the second): every run of the Member, newest first, with its Channel and Thread names (`+N` for more Threads), times, turns, tokens and model. Opening a Session the Client cannot open now says so on its row.
 - The shell's tab strip gets an Agents tab beside Team: `Tasks | Team | Agents | Scheduled`. The Agents list (add, edit, archive, open a Member's Session, Agent details) moves there from the Team Settings page, with its own Workspace selector; Team Settings keeps the Team memory and says where the list went. A profile without the strip keeps the Agents list on Team Settings.
 - `npm run smoke:install` also opens the installed app in a real browser (Playwright, found through `PLAYWRIGHT_DIR`, the package root or the harness checkout; `SMOKE_REQUIRE_BROWSER=1` fails instead of skipping when it is missing) and fails if New Session, Plugins, Automation tasks or Team Settings disappear after the Team is entered. `node scripts/quality/dsh-browser-check.mjs --url <origin> --channels a,b` runs the same walk, including pressing two Channels, against a running TEST-style host. This guards the rail the Team once hid, which every spec passed.
 - The composer's selected-agent chip and the Select Agent control move onto the toolbar's bottom line, beside the attach, as-task and send controls, instead of a row of their own above it. On a narrow card the picker keeps only the current handle.

@@ -140,6 +140,8 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
     /** A14: the Member's Session runs, newest first, plus the seat's current Session. */
     loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => Promise<RemoteResult<{ readonly current: AgentTeamClientMemberStatus['member']['sessionId'] | null; readonly runs: readonly AgentTeamSessionRun[] }>>
+    /** Names the Threads a Session run touched, for the Agent detail's Session rows. */
+    resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
     selectedChannelRef?: AgentTeamChannelRef
