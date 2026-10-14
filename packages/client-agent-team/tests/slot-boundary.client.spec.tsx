@@ -103,4 +103,37 @@ describe('Team slot boundary', () => {
     fireEvent.click(b.view.getByRole('button', { name: '重试' }))
     await waitFor(() => expect(tab.querySelector('[role="alert"]')).toBeNull())
   })
+
+  it('shows an alert with Retry for the sidebar section occupant that throws, and the host boundary never fires', async (ctx) => {
+    // The section seat (#45) is a Team registration like any other: a throw in
+    // the browser it serves must land in the Team's boundary, named for the
+    // seat it occupies — not in the host's own, which would retire the entry
+    // and vanish the Team sidebar without a Retry.
+    crash.browser = true
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
+    // A shell that ships no `sidebar.sections` seat (CI's upstream tag) never
+    // declares the spec, so the Team's inject is inert, the occupant never
+    // mounts, and there is no boundary to exercise: skip rather than fail on
+    // a seat the harness under test does not carry. The registration
+    // invariant itself is pinned by sidebar-sections-seat.client.spec.ts,
+    // which declares the seat itself on any harness.
+    if (b.runtime.slots.spec('sidebar.sections' as never) === undefined) {
+      ctx.skip()
+      return
+    }
+    await act(async () => { b.selectPanel('agent-team') })
+
+    const alert = await b.view.findByRole('alert')
+    expect(alert.getAttribute('data-team-slot-error')).toBe('sidebar.sections:team')
+    expect(alert.textContent).toContain('这一块没能显示出来。')
+    // The host's own boundary never fired: this alert is the Team's.
+    expect(b.view.container.querySelector('[data-slot-error]')).toBeNull()
+    // Siblings stay mounted while the section is in its alerted state.
+    expect(b.view.getByRole('button', { name: '团队设置' })).toBeTruthy()
+
+    // Recovery: clear the cause, Retry remounts the occupant for real.
+    crash.browser = false
+    fireEvent.click(b.view.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(b.view.queryByRole('alert')).toBeNull())
+  })
 })

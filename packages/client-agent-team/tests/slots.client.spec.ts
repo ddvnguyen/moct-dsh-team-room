@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { apply, inject } from '../src/client/index.ts'
+/**
+ * The shell's section seat, widened the way the client widens it: a harness
+ * that ships no seat (CI's upstream tag) has no `sidebar.sections` in its
+ * SlotMap, and this bench declares the seat itself, so the name is portable.
+ */
+const SECTIONS = 'sidebar.sections' as never
+/** The Team's browsing-surface entry: the shell's own section seat. */
+const teamSection = (slots: SlotRegistry) => slots.entriesOfSlot(SECTIONS)[0]
 
 function workspaceFeed() {
   return {
@@ -65,6 +73,7 @@ async function bench(persisted: string | null = null, strip?: Record<string, unk
   } } as never, root)
   slots.register({ name: 'sidebar', children: {
     'sidebar.workspaces': { kind: 'single', scope: 'root' },
+    'sidebar.sections': { kind: 'list', scope: 'root' },
     'sidebar.settings': { kind: 'single', scope: 'root' },
     'sidebar.panellist': { kind: 'list', scope: 'root' },
   } } as never, root)
@@ -87,12 +96,16 @@ async function bench(persisted: string | null = null, strip?: Record<string, unk
 }
 
 describe('Team Client slot takeover', () => {
-  it('enters and leaves Team mode by shadowing and restoring the three primary seats', async () => {
+  it('enters and leaves Team mode by rendering the Team section beside the shipped browser', async () => {
     const { ctx, slots } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
 
     expect(slots.entriesOfSlot('sidebar.workspaces')).toHaveLength(1)
+    // The Team's browsing surface is a section of the shell's own column,
+    // not a shadow over the shipped browser, so its seat is empty while
+    // Team mode stands down.
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     // The Team page and Team Settings main seats are registered for the life of
     // the client, beside the shipped conversation seat the mode shadows when it
     // opens. With no native tab strip, the rail keeps the fallback Team row
@@ -102,19 +115,24 @@ describe('Team Client slot takeover', () => {
     expect(slots.entries('sidebar.panellist')).toHaveLength(2)
 
     ctx.teamNavigation.actions().enterTeam()
-    expect(slots.entries('sidebar.workspaces')).toHaveLength(2)
+    // The section stands BESIDE the shipped browser: the shipped entry keeps its
+    // row, and the Team never shadows it — it adds a section of its own instead.
+    expect(slots.entriesOfSlot(SECTIONS)[0]!.options.id).toBe('team')
+    expect(slots.entriesOfSlot(SECTIONS)[0]!.options.priority).toBe(-100)
+    expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
+    expect(slots.entries('sidebar.workspaces.session.row.action')).toHaveLength(0)
+    expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(0)
     expect(slots.entries('main')).toHaveLength(4)
     expect(slots.entries('sidebar.settings')).toHaveLength(2)
-    expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
-    expect(slots.spec('sidebar.workspaces.directoryFlow')).toBeUndefined()
 
     ctx.teamNavigation.actions().leaveTeam()
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
     expect(slots.entries('main')).toHaveLength(3)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
     await fiber.dispose()
-    expect(slots.entries('sidebar.panellist')).toHaveLength(0)
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.spec('sidebar.workspaces.directoryFlow')).toBeUndefined()
   })
 
@@ -172,11 +190,11 @@ describe('Team Client slot takeover', () => {
     ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
     ctx.teamNavigation.actions().enterTeam()
 
-    // Drive the real wiring through the workspaces shadow's injected remotes —
+    // Drive the real wiring through the section seat's injected remotes —
     // the same payload the Agent card button consumes.
-    const shadow = slots.entriesOfSlot('sidebar.workspaces').find(entry => entry.options.priority === -100)
-    expect(shadow).toBeDefined()
-    const injected = (shadow!.inject as () => Record<string, unknown>)()
+    const section = teamSection(slots)
+    expect(section).toBeDefined()
+    const injected = (section!.inject as () => Record<string, unknown>)()
     ;(injected.openMemberSession as (sessionId: string) => void)('session:builder')
 
     expect(uiWorkspace.openSession).toHaveBeenCalledWith('session:builder')
@@ -193,8 +211,8 @@ describe('Team Client slot takeover', () => {
     sessions.list.getSnapshot = () => ({ byId: { 'session:reviewer': { id: 'session:reviewer', retainedBy: { mainView: 1 } }, 'session:human-origin': {} } })
     ctx.teamNavigation.actions().enterMemberSession('session:reviewer' as never)
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
-    expect(slots.entries('sidebar.workspaces')).toHaveLength(2)
-    expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
+    expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
+    expect(slots.entries(SECTIONS)).toHaveLength(1)
     expect(slots.entriesOfSlot('sidebar.settings')[0]!.options.priority).toBe(-100)
 
     // The Team foot's wrapped leave closes the Member view, clears the panel,
@@ -221,9 +239,8 @@ describe('Team Client slot takeover', () => {
     }
     ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
     ctx.teamNavigation.actions().enterTeam()
-    const shadow = slots.entriesOfSlot('sidebar.workspaces').find(entry => entry.options.priority === -100)
-    const injected = (shadow!.inject as () => Record<string, unknown>)()
-
+    const section = teamSection(slots)
+    const injected = (section!.inject as () => Record<string, unknown>)()
     // Nothing is retained yet, so this first entry has no return target at all.
     ;(injected.openMemberSession as (sessionId: string) => void)('session:builder')
     expect(uiWorkspace.openSession).toHaveBeenCalledWith('session:builder')
@@ -337,8 +354,8 @@ describe('Team Settings rail row', () => {
     layout.selectPanel('agent-team-settings')
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
 
-    const shadow = slots.entriesOfSlot('sidebar.workspaces').find(entry => entry.options.priority === -100)
-    const injected = (shadow!.inject as () => Record<string, unknown>)()
+    const section = teamSection(slots)
+    const injected = (section!.inject as () => Record<string, unknown>)()
     ;(injected.selectChannel as (ref: string) => void)('channel:engineering')
     expect(layout.panelInfo.getSnapshot().activePanelId).toBe('agent-team')
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })

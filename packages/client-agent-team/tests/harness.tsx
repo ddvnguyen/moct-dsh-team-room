@@ -94,6 +94,18 @@ function nativeTabStrip() {
   return Object.assign(StripWorkspace, { __dshNativeTabs: registry })
 }
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
+/**
+ * The missing seat, served the way a seat-carrying shell serves it. The entry
+ * declares `sidebar.sections` as its own child — the ownership rule every
+ * outlet obeys — and renders it through the props-face renderSlot, so the
+ * Team's occupant mounts with the same outlet machinery, boundaries and all,
+ * as it does in a column whose shell carries the seat.
+ */
+function SectionsFootOutlet({ renderSlot, wide }: { renderSlot: (key: never, owner: object) => ReactNode; wide?: boolean }) {
+  // The shell hands its foot seat the same `wide` it hands the real seat, so
+  // the section picks the same presentation a column shell would give it.
+  return renderSlot('sidebar.sections' as never, { wide })
+}
 interface HumanProfileSeed {
   readonly name?: string
   readonly avatarRef?: string
@@ -705,6 +717,17 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     runtime.panelInfo.set({ activePanelId: options.mainPanelId as never })
   }
   await runtime.mount({ inject: [...injectSidebar], apply: applySidebar })
+  // A shell that ships the additive `sidebar.sections` seat serves it from its
+  // own column. CI's upstream tag does not carry the seat, and the Team's
+  // section registration is inert without a declared spec — the whole sidebar
+  // suite would otherwise exercise a sidebar that cannot mount. Stand in for
+  // the missing seat the way production declares it: a foot entry that owns
+  // the seat and renders it through the same outlet face, registered before
+  // the Team mounts. A seat-carrying shell declares it first, so this never
+  // registers there.
+  if (runtime.slots.spec('sidebar.sections' as never) === undefined) {
+    runtime.slots.register({ name: 'sidebar.footer.action', id: 'bench-sections', priority: 1000, children: { 'sidebar.sections': { kind: 'list', scope: 'root' } } } as never, SectionsFootOutlet as never)
+  }
   // The shipped ConversationRoot occupies the conversation seat — the same
   // surface production mounts — so member-session specs assert the
   // session-maybe seat's adoption semantics (remount on no-session) through
