@@ -3371,3 +3371,59 @@ describe('AgentTeam records a completed Turn with a null uncached input (§3.2, 
     expect(run).toMatchObject({ turns: 1, tokensIn: 0, tokensOut: 297, unknownInputTurns: 1 })
   })
 })
+describe('AgentTeam cold-restart context seed (A7b)', () => {
+  // A stub model for summaries; usage zero so nothing else changes.
+  function stubModel(text: (index: number) => string) {
+    let n = 0
+    return { model: async (call: ThreadSummaryModelCall) => ({ text: text(++n), model: call.model, usage: { inputTokens: 0, outputTokens: 0 } }) }
+  }
+    it('a cold-restart binding steers the seed with the latest summary and tail Messages, and the binding records the summary generation', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    // A Thread with three Messages and a committed summary generation 1.
+    const first = await host.sendMessageForAgent(agentB as never, { requestId: requestId('seedTail-post-1'), workspaceId: alpha, channelRef, body: 'seedTail: alpha', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    const reply = await host.replyForAgent(agentB as never, { requestId: requestId('seedTail-post-2'), workspaceId: alpha, threadRef, body: 'seedTail: beta', baseRevision: first.thread.revision } as never) as AgentTeamReplyCommittedResult
+    await host.replyForAgent(agentB as never, { requestId: requestId('seedTail-post-3'), workspaceId: alpha, threadRef, body: 'seedTail: gamma', baseRevision: reply.thread.revision } as never) as AgentTeamReplyCommittedResult
+    function stubModel(text: (index: number) => string) {
+      let n = 0
+      return { model: async (call: ThreadSummaryModelCall) => ({ text: text(++n), model: call.model, usage: { inputTokens: 0, outputTokens: 0 } }) }
+    }
+    host.configureThreadSummary({ model: stubModel(index => `seed summary gen ${index}`).model })
+    const summary = await host.runThreadSummary(alpha, threadRef, 'rolling')
+    expect(summary).toMatchObject({ generation: 1 })
+    // The seat handle records what the seed steered into it.
+    const steered: string[] = []
+    const internals = host as unknown as { handles: Map<unknown, { readonly agent: Record<string, unknown> }> }
+    const old = internals.handles.get(seatB.memberId)!
+    ;(old.agent as unknown as { steer: (message: { content: readonly { readonly text?: string }[] }) => void }).steer = (message) => { steered.push(String(message.content[0]?.text)) }
+    const binding = await host.bindThreadSessionForAgent(agentB as never, { requestId: requestId('seedTail-bind'), workspaceId: alpha, threadRef, sessionId: seatB.sessionId, reason: 'cold-restart' } as never)
+    expect(binding).toMatchObject({ sessionId: seatB.sessionId, threadRef })
+    const seed = steered.find(text => text.includes('Thread context seed (A7b)'))
+    expect(seed).toBeDefined()
+    expect(seed).toContain('Latest summary (generation 1):')
+    expect(seed).toContain('seed summary gen 1')
+    expect(seed).toContain('seedTail: alpha')
+    expect(seed).toContain('seedTail: gamma')
+    expect(seed).toContain('Recent messages (last 10):')
+    // The binding cites the summary generation the seed used, so an op-log check can verify the seed source.
+    const sqlite = replayLedger(test)
+    const bindings = sqlite.threadSessionsOf(threadRef, seatB.memberId)
+    expect(bindings.at(-1)).toMatchObject({ sessionId: seatB.sessionId, summaryGeneration: 1 })
+  })
+
+it('a fresh start binding (reason start) steers the seed too, and the binding records the summary generation', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const first = await host.sendMessageForAgent(agentB as never, { requestId: requestId('seed2-post'), workspaceId: alpha, channelRef, body: 'seed2: alpha', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    host.configureThreadSummary({ model: stubModel(() => 'seed2 summary').model })
+    await expect(host.runThreadSummary(alpha, first.message.threadRef, 'rolling')).resolves.toMatchObject({ generation: 1 })
+    const steered: string[] = []
+    const internals = host as unknown as { handles: Map<unknown, { readonly agent: Record<string, unknown> }> }
+    const old = internals.handles.get(seatB.memberId)!
+    ;(old.agent as unknown as { steer: (message: { content: readonly { readonly text?: string }[] }) => void }).steer = (message) => { steered.push(String(message.content[0]?.text)) }
+    await host.bindThreadSessionForAgent(agentB as never, { requestId: requestId('seed2-bind'), workspaceId: alpha, threadRef: first.message.threadRef, sessionId: seatB.sessionId, reason: 'start' } as never)
+    const seed = steered.find(text => text.includes('Thread context seed (A7b)'))
+    expect(seed).toBeDefined()
+    expect(seed).toContain('seed2 summary')
+    expect(seed).toContain('seed2: alpha')
+  })
+})

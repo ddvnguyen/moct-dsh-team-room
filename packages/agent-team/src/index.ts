@@ -1,3 +1,4 @@
+import { buildThreadContextSeed } from './thread-context-seed.ts'
 /**
  * Durable Agent Team Host capability.
  *
@@ -1580,10 +1581,14 @@ export default class AgentTeam extends TypertRemoteService {
     const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
     const sessionId = cleared.status.member.sessionId
     if (request.threadRef !== undefined) {
+      const latest = ledger.latestThreadSummary(request.threadRef)
       await ledger.bindThreadSession({
         requestId: `${request.requestId}:bind` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef: request.threadRef, sessionId, reason: 'cold-restart',
+        ...(latest === undefined ? {} : { summaryGeneration: latest.generation }),
         actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
       })
+      // A7b: seed the next prompt with the latest summary and the tail-10 messages.
+      await this.steerAgentFromThread(member.memberId, request.threadRef)
     }
     return { sessionId, cache: 'cold', action: 'seeded-new' }
   }
@@ -1942,6 +1947,23 @@ export default class AgentTeam extends TypertRemoteService {
         }, carriedInput.length > 0)
       }
     })
+  }
+
+  /** A7b: steer the next prompt with the latest summary and the last 10 messages of a Thread, on a fresh start or cold restart. */
+  private async steerAgentFromThread(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): Promise<void> {
+    const ledger = this.requireLedger()
+    const latest = ledger.latestThreadSummary(threadRef)
+    const tail = ledger.threadMessagesAfter(threadRef, 0).slice(-10)
+    const seed = buildThreadContextSeed({
+      ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
+      messages: tail.map(message => ({ messageRef: message.messageRef, sender: String(message.sender), body: message.body })),
+    })
+    const handle = this.handles.get(memberId)
+    if (handle !== undefined && typeof handle.agent.steer === 'function') {
+      const hint = createUserMessage({ content: [{ type: 'text', text: seed }], source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'A7b thread context seed' } })
+      const result = handle.agent.steer(hint)
+      if ((result as unknown) instanceof Promise) await result
+    }
   }
 
   /** Ledger handle for log lines; falls back to the raw id when unknown. */
@@ -2525,8 +2547,16 @@ export default class AgentTeam extends TypertRemoteService {
    */
   async bindThreadSessionForAgent(agent: Agent, request: Omit<AgentTeamBindThreadSessionRequest, 'actor'>): Promise<AgentTeamThreadSessionBinding> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().bindThreadSession({ ...request, actor })
+    const ledger = this.requireLedger()
+    // A7b: record which summary generation seeded this binding when starting fresh.
+    const summaryGeneration = request.reason === 'start' || request.reason === 'cold-restart'
+      ? (ledger.latestThreadSummary(request.threadRef)?.generation ?? request.summaryGeneration)
+      : request.summaryGeneration
+    const result = await ledger.bindThreadSession({ ...request, ...(summaryGeneration === undefined ? {} : { summaryGeneration }), actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
+    if (request.reason === 'start' || request.reason === 'cold-restart') {
+      await this.steerAgentFromThread(actor.memberId, request.threadRef)
+    }
     return result.value.binding
   }
 
