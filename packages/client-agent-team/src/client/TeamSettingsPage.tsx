@@ -34,7 +34,7 @@ export interface TeamWorkspaceListSource {
 
 export type TeamSettingsPageProps = Pick<TeamSidebarProps,
   'loadMembers' | 'subscribeChanges' | 'addMember' | 'updateMember' | 'recoverMember' | 'archiveMember'
-  | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadChannels' | 'openMemberSession' | 't'> & {
+  | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 't'> & {
   readonly workspaceList: TeamWorkspaceListSource
   /** The Workspace the Team navigation last selected; read once, when the page mounts. */
   readonly initialWorkspaceId: () => WorkspaceId | undefined

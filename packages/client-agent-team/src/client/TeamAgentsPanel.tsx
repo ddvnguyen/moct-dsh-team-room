@@ -36,13 +36,14 @@ interface TeamAgentsPanelProps {
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
   readonly resolveThreadRefs: TeamSidebarProps['resolveThreadRefs']
+  readonly loadMemory: TeamSidebarProps['loadMemory']
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, loadMemberSessions, resolveThreadRefs, loadChannels, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -277,7 +278,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadChannels={loadChannels} openMemberSession={openMemberSession} onUpdated={refresh} t={t} />
+              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadMemory={loadMemory} loadChannels={loadChannels} openMemberSession={openMemberSession} onUpdated={refresh} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -297,7 +298,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, loadMemberSessions, resolveThreadRefs, loadChannels, openMemberSession, onUpdated, t }: {
+function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onUpdated, t }: {
   readonly workspaceId: WorkspaceId
   readonly leaveWorkspace: TeamSidebarProps['leaveWorkspace']
   readonly status: AgentTeamClientMemberStatus
@@ -309,6 +310,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
   readonly resolveThreadRefs: TeamSidebarProps['resolveThreadRefs']
+  readonly loadMemory: TeamSidebarProps['loadMemory']
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onUpdated: () => Promise<void> | void
@@ -427,7 +429,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
           {rowAlert !== undefined && <p className={createCss.error} role="alert">{rowAlert}</p>}
         </Modal>
       )}
-      {detailsOpen && <TeamAgentDetail workspaceId={workspaceId} status={status} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadChannels={loadChannels} openMemberSession={openMemberSession} onClose={() => { setDetailsOpen(false) }} t={t} />}
+      {detailsOpen && <TeamAgentDetail workspaceId={workspaceId} status={status} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadMemory={loadMemory} loadChannels={loadChannels} openMemberSession={openMemberSession} onClose={() => { setDetailsOpen(false) }} t={t} />}
       {editing && (
         <AgentEditorDialog
           status={status}
