@@ -117,7 +117,10 @@ export function createTeamTriggerCatalogLoader({
           description: command.description,
           ...(command.input?.hint === undefined ? {} : { leadingOnly: true }),
         })),
-        ...(scope.sessionId === undefined
+        // No selected Member (a Channel without agents): Host commands only.
+        ...(scope.sessionId === undefined && scope.memberHandle === ''
+          ? []
+          : scope.sessionId === undefined
           ? [{
             kind: 'notice' as const,
             name: 'no-active-session',

@@ -107,6 +107,15 @@ describe('Team trigger catalog loader', () => {
     ])
   })
 
+  it('emits no Member notice when no Member is selected, such as a Channel without agents', async () => {
+    const { sessions, remotes } = retainedSessionMocks({ sessionId: 'session:main' })
+    const loader = createTeamTriggerCatalogLoader({ getSessionId: () => 'session:main' as never, sessions: sessions as never, remotes: remotes as never })
+
+    const items = await loader({ memberHandle: '' }, new AbortController().signal)
+    expect(items.map(item => item.kind + ':' + item.name)).toEqual(['command:compact'])
+    expect(remotes.skills.list).not.toHaveBeenCalled()
+  })
+
   it('reads a Member Session this client does not retain instead of taking the Host commands down', async () => {
     // Only the main Session is retained here; the Member's is not.
     const { sessions, remotes } = retainedSessionMocks({ sessionId: 'session:main', memberSessionId: 'session:other' })
