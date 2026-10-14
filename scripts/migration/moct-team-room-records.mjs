@@ -3,7 +3,8 @@
 // lane Tasks. Nothing here comes from another project. A re-run is keyed by
 // (home, type, exact title): the title is the stable key.
 
-export const WORKSPACE_ID = 'eda6b45f-66d5-49da-864b-6079e4b50e9f'
+// The LEDGER Workspace id the plugin reports (what the Memory tab queries), not the Team Workspace ref.
+export const WORKSPACE_ID = 'cf4817d4-c9d6-42b0-9a44-271db6d259ca'
 export const CHANNEL_REF = 'channel:7ebe3ec3-32c0-45b4-bed6-86e198e14d93'
 const SRC = 'contract'
 
