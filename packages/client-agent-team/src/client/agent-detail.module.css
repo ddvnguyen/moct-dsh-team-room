@@ -112,3 +112,20 @@
   min-width: 0;
   font-size: 13px;
 }
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.facts dt {
+  color: var(--dsw-alias-label-secondary, inherit);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

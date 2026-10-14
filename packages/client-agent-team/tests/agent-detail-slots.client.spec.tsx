@@ -22,6 +22,8 @@ const renderDetail = (status: AgentTeamClientMemberStatus, openMemberSession = v
     workspaceId={'w1' as never}
     status={status}
     loadMemberSessions={loadMemberSessions as never}
+    resolveThreadRefs={vi.fn(async () => ({ ok: true, value: [] })) as never}
+    loadChannels={vi.fn(async () => ({ ok: true, value: { channels: [] } })) as never}
     openMemberSession={openMemberSession as never}
     onClose={() => undefined}
     t={t}
