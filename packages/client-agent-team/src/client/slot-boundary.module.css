@@ -1,0 +1,30 @@
+/* The fallback a crashed Team slot leaves in its place: a quiet inline notice
+ * that fits any column, so the slots around it keep their layout. */
+
+.alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 13px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.message {
+  margin: 0;
+}
+
+.retry {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  padding: 2px 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}

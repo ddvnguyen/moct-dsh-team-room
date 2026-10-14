@@ -1,3 +1,4 @@
+import { createElement } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
@@ -67,6 +68,19 @@ import { TeamMembersAction } from './TeamMembersAction.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
 import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
+import { TeamSlotBoundary, withSlotBoundary } from './TeamSlotBoundary.tsx'
+
+// Every Team registration goes through one boundary. A crash then shows a
+// notice with Retry in that slot's place, keeps the entry mounted, and leaves
+// every sibling slot alone; the host's own boundary renders nothing and, for a
+// single-winner slot, retires the entry.
+const GuardedPanelIcon = withSlotBoundary('sidebar.panellist:team', TeamPanelIcon as never, { quiet: true })
+const GuardedSettingsPanelIcon = withSlotBoundary('sidebar.panellist:team-settings', TeamSettingsPanelIcon as never, { quiet: true })
+const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsPage as never)
+const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
+const GuardedMembersAction = withSlotBoundary('sidebar.settings', TeamMembersAction as never)
+const GuardedWorkspaceBrowser = withSlotBoundary('sidebar.workspaces', TeamWorkspaceBrowser as never)
+const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
@@ -163,21 +177,21 @@ function registerTeamPanel(
     order: 19,
     label: () => ctx.locale.bind(NS)('team'),
     locale: NS,
-  }, TeamPanelIcon))
+  }, GuardedPanelIcon as never))
   ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main',
     key: TEAM_PANEL_ID,
     priority: -100,
     locale: NS,
     inject: () => teamSeatInject(ctx, navigation, reads, sharedRemotes, 'main'),
-  }, TeamConversation as never))
+  }, GuardedConversation as never))
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',
     id: TEAM_SETTINGS_PANEL_ID,
     order: 20,
     label: () => ctx.locale.bind(NS)('teamSettingsGroup'),
     locale: NS,
-  }, TeamSettingsPanelIcon))
+  }, GuardedSettingsPanelIcon as never))
   ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main',
     key: TEAM_SETTINGS_PANEL_ID,
@@ -190,7 +204,7 @@ function registerTeamPanel(
       initialWorkspaceId: () => navigation.getSnapshot().workspaceId,
       memory: teamMemoryRemotes(ctx),
     }),
-  }, TeamSettingsPage as never))
+  }, GuardedSettingsPage as never))
   return dropTeamRow
 }
 
@@ -594,9 +608,9 @@ function applyUi(ctx: ClientContext): void {
 
   const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
 
-  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
-  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', TeamConversation as never, undefined, 'conversation')
-  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'sidebar.settings', TeamMembersAction as never, () => ({ loadMemberGroups }))
+  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'sidebar.workspaces', GuardedWorkspaceBrowser as never)
+  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
+  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'sidebar.settings', GuardedMembersAction as never, () => ({ loadMemberGroups }))
 
   // The Team page is a global panel beside the shipped Plugins and
   // scheduled-task entries, so the panel selection and Team mode are one fact:
@@ -666,7 +680,10 @@ function applyUi(ctx: ClientContext): void {
   const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity), 'sidebar.workspaces')
   const teamTabRender = (props: NativeTabRenderProps): unknown => {
     const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
-    return renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props)
+    // The strip calls `render` raw inside its own tree, so a throw here would
+    // unwind into the host's sidebar; the boundary keeps it inside the tab.
+    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
+      renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
   }
   // Once the tab is in the strip it is the Channel view's home, and the rail's
   // fallback Team row stands down; a strip that never appears keeps the row.
@@ -748,7 +765,7 @@ function applyUi(ctx: ClientContext): void {
         return undefined
       },
     }),
-  }, TeamSettingsSection as never))
+  }, GuardedSettingsSection as never))
 }
 
 export async function apply(ctx: ClientContext): Promise<void> {

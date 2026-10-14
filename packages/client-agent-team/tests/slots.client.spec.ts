@@ -358,9 +358,12 @@ describe('Team Settings rail row', () => {
     await fiber.await()
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
 
-    // The strip calls the tab's render; the element it returns carries the
-    // seat the Channel view picks through.
-    const element = strip.renders[0]!({}) as { props: Record<string, unknown> }
+    // The strip calls the tab's render; the element it returns is the slot
+    // boundary around the body, and the body carries the seat the Channel view
+    // picks through.
+    const guarded = strip.renders[0]!({}) as { props: { slot: string; children: { props: Record<string, unknown> } } }
+    expect(guarded.props.slot).toBe('native-tab')
+    const element = guarded.props.children
     expect(element.props.channelsOnly).toBe(true)
     ;(element.props.selectChannel as (ref: string) => void)('channel:engineering')
     expect(panel(ctx).panelInfo.getSnapshot().activePanelId).toBe('agent-team')
