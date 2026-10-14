@@ -97,7 +97,7 @@ function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], store
   return members[0]!.member.memberId
 }
 
-export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
+export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, onManageMembers, activity, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
@@ -133,6 +133,8 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   /** Channel-only: create a real Task with the top-level Message. Default off. */
   readonly asTask?: boolean
   readonly onAsTaskChange?: (asTask: boolean) => void
+  /** Channel-only: opens Manage members, so an agent-less composer can offer the way to add one. */
+  readonly onManageMembers?: () => void
   /** A13 activity line, overlaid directly above the card (see TeamActivityLine). */
   readonly activity?: ReactNode
   readonly t: TeamConversationProps['t']
@@ -508,12 +510,13 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                   <div className={css.triggerGroupHeading}>{t('triggerCommands')}</div>
                   {triggerGroups.commands.map((option, index) => renderTriggerOption(option, index))}
                 </div>}
-                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0) && <div role="group" aria-label={t('triggerSkills')}>
+                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0 || members.length === 0) && <div role="group" aria-label={t('triggerSkills')}>
                   <div className={css.triggerGroupHeading}>{t('triggerSkills')}</div>
                   {triggerGroups.skills.map((option, index) => renderTriggerOption(option, triggerGroups.commands.length + index))}
                   {triggerGroups.notices.map(notice => <p key={notice.name} className={css.triggerNotice} data-trigger-notice={notice.name}>
                     {t(notice.name === 'skills-unavailable' ? 'triggerSkillsUnavailable' : 'triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
                   </p>)}
+                  {members.length === 0 && <p className={css.triggerNotice} data-trigger-notice="no-agents">{t('triggerNoAgents')}</p>}
                 </div>}
               </>}
         </div>}
@@ -629,6 +632,9 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
         {/* The selected agent is always on screen — with one agent in scope
             too, so a reader never has to guess whose skills the slash menu
             lists. The picker behind it lists this Channel/Thread's members. */}
+        {selectedMember === undefined && (onManageMembers === undefined
+          ? <span className={css.agentIndicator} data-team-no-agent>{t('noAgentChip')}</span>
+          : <button type="button" className={css.agentIndicator} data-team-no-agent aria-label={t('noAgentChipAction')} disabled={pending} onClick={onManageMembers}>{t('noAgentChip')}</button>)}
         {selectedMember !== undefined && <span className={css.agentIndicator} role="status" data-team-agent-indicator={selectedMember.member.memberId} aria-label={t('agentIndicatorLabel', { handle: selectedMember.member.handle.replace(/^@/, '') })}>
           <TeamPresenceDot status={selectedMember} t={t} />
           <span className={css.agentIndicatorName}>@{selectedMember.member.handle.replace(/^@/, '')}</span>

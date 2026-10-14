@@ -488,6 +488,25 @@
   padding: 2px 8px 2px 4px;
 }
 
+/* A Channel with no agent keeps the slot, muted, so the composer does not read
+   as broken; with a Manage members action it is a button. */
+button.agentIndicator {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+button.agentIndicator:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+button.agentIndicator:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+.agentIndicator[data-team-no-agent] {
+  color: var(--dsw-alias-label-tertiary);
+  padding-left: 8px;
+}
+
 .agentIndicatorName {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -559,6 +559,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
       onFilesChange={setPendingFiles}
       asTask={asTask}
       onAsTaskChange={setAsTask}
+      onManageMembers={() => { setManagingMembers(true) }}
       activity={<TeamActivityLine workspaceId={workspaceId} members={channelMembers} loadMemberActivity={loadMemberActivity} subscribeChanges={subscribeChanges} t={t} />}
       t={t}
     /> : <div />}
