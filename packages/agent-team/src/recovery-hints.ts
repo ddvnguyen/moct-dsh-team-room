@@ -35,6 +35,10 @@ export interface RecoveryContext {
   readonly taskRef?: string | undefined
   /** The tool action whose parameter shape was wrong, when the fault is a shape. */
   readonly action?: string | undefined
+  /** The parameter that belongs to another action, when the fault is that one. */
+  readonly parameter?: string | undefined
+  /** The action that parameter does belong to, when the fault is that one. */
+  readonly owner?: string | undefined
 }
 
 /** One registered way out: a stable id, the situations it answers, and its words. */
@@ -91,6 +95,14 @@ export const RECOVERY_REGISTRY: readonly RecoveryEntry[] = Object.freeze([
     id: 'history_only_arguments',
     kinds: ['history_only_arguments'],
     sentence: ({ action }: RecoveryContext) => `${action ?? 'read'} drains unread and cannot page — drop beforeSequence and limit, or call action: history to page older facts.`,
+  },
+  {
+    id: 'action_only_arguments',
+    kinds: ['action_only_arguments'],
+    // The same fault class as `history_only_arguments`, named by the parameter
+    // rather than hard-coded: `messageRef` belongs to `message` alone, and a
+    // read that carried it would otherwise drop it in silence.
+    sentence: ({ action, parameter, owner }: RecoveryContext) => `${action ?? 'read'} does not accept ${parameter ?? 'that parameter'} — drop it, or call action: ${owner ?? 'message'} where it belongs.`,
   },
   {
     id: 'missing_write_token',

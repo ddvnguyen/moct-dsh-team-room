@@ -443,6 +443,21 @@ describe('Agent Team Member lifecycle', () => {
     const historyArgs = await rejected('team_thread', { action: 'read', threadRef, beforeSequence: 1, limit: 5 })
     expect(historyArgs).toContain('action: history')
     expect(historyArgs).toMatch(/read .*(drain|unread)/i)
+    // messageRef belongs to `message` alone. The parameter schema is implicitly
+    // open, so nothing but this guard refuses it — and a silent drop would tell
+    // a model that reached for it nothing at all. One guard covers every action
+    // that is not `message`, so each of them is asserted: a new read action must
+    // not be able to reopen the hole by omission.
+    for (const action of ['read', 'history'] as const) {
+      const strayRef = await rejected('team_thread', { action, threadRef, messageRef: 'message:23011' })
+      expect(strayRef, `${action} silently dropped messageRef`).toContain('does not accept messageRef')
+      expect(strayRef).toContain('action: message')
+    }
+    // The action that does own it is not caught by the same guard: a `message`
+    // call missing its ref is refused for the missing ref, never for owning one.
+    const owned = await rejected('team_thread', { action: 'message', threadRef })
+    expect(owned).toContain('messageRef')
+    expect(owned).not.toContain('does not accept')
     // A missing mutation basis says which token to copy and where from. Both
     // tools refuse it on their own argument shape, before the Host ever sees
     // the call, and both name the same drain-and-copy route.
