@@ -23,6 +23,13 @@ import { apply, inject } from '../src/client/index.ts'
  *    that actually expands a collapsed column.
  */
 
+/**
+ * The shell's section seat, widened the way the client widens it: a harness
+ * that ships no seat (CI's upstream tag) has no `sidebar.sections` in its
+ * SlotMap, and this bench declares the seat itself, so the name is portable.
+ */
+const SECTIONS = 'sidebar.sections' as never
+
 function layoutFace() {
   const listeners = new Set<() => void>()
   let sidebar = 0
@@ -86,7 +93,7 @@ describe('Team section seat (native sidebar, no shadow)', () => {
     await fiber.await()
 
     // Team mode down: the section seat is empty and the shipped browser is alone.
-    expect(slots.entries('sidebar.sections')).toHaveLength(0)
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entriesOfSlot('sidebar.workspaces')).toHaveLength(1)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(0)
     // The browser's own children exist before Team mode too.
@@ -96,9 +103,9 @@ describe('Team section seat (native sidebar, no shadow)', () => {
 
     // Team mode up: the Team section is ADDED, and the shipped browser is still
     // there at its own priority — no shadow replaces it.
-    expect(slots.entries('sidebar.sections')).toHaveLength(1)
-    expect(slots.entriesOfSlot('sidebar.sections')[0]!.options.id).toBe('team')
-    expect(slots.entriesOfSlot('sidebar.sections')[0]!.options.priority).toBe(-100)
+    expect(slots.entries(SECTIONS)).toHaveLength(1)
+    expect(slots.entriesOfSlot(SECTIONS)[0]!.options.id).toBe('team')
+    expect(slots.entriesOfSlot(SECTIONS)[0]!.options.priority).toBe(-100)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(0)
     // The browser's declarations were never displaced, so its rows keep standing.
@@ -106,11 +113,11 @@ describe('Team section seat (native sidebar, no shadow)', () => {
     expect(slots.spec('sidebar.workspaces.session.row.action')).toEqual({ kind: 'list', scope: 'root' })
 
     ctx.teamNavigation.actions().leaveTeam()
-    expect(slots.entries('sidebar.sections')).toHaveLength(0)
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
 
     await fiber.dispose()
-    expect(slots.entries('sidebar.sections')).toHaveLength(0)
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
   })
 
@@ -123,7 +130,7 @@ describe('Team section seat (native sidebar, no shadow)', () => {
     // The collapsed rail's Inbox icon asks for expansion. The section seat's
     // owner share is only { wide } — the shell passes its guarded expandSidebar
     // to the browser, never here — so the section must carry its own.
-    const section = slots.entriesOfSlot('sidebar.sections')[0]
+    const section = slots.entriesOfSlot(SECTIONS)[0]
     expect(section).toBeDefined()
     const injected = (section!.inject as () => Record<string, unknown>)()
     expect(typeof injected.expandSidebar).toBe('function')
@@ -141,10 +148,10 @@ describe('Team section seat (native sidebar, no shadow)', () => {
     await fiber.await()
     ctx.teamNavigation.actions().enterTeam()
     ctx.teamNavigation.actions().enterMemberSession('session:builder' as never)
-    expect(slots.entries('sidebar.sections')).toHaveLength(1)
+    expect(slots.entries(SECTIONS)).toHaveLength(1)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
 
     await fiber.dispose()
-    expect(slots.entries('sidebar.sections')).toHaveLength(0)
+    expect(slots.entries(SECTIONS)).toHaveLength(0)
   })
 })

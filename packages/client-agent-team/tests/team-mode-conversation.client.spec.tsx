@@ -28,6 +28,13 @@ function normalizeSidebarChrome(container: HTMLElement): HTMLElement {
     const content = mask.querySelector('[class*="newSessionContent"]') ?? mask
     mask.replaceWith(...content.childNodes)
   }
+  // The additive `sidebar.sections` seat renders the Team's section only on a
+  // harness that ships the seat (the fork); CI's upstream shell declares no
+  // such seat and its column has no such block. The seat's own rendering is
+  // pinned by sidebar-sections-seat.client.spec.ts and the slot-boundary spec,
+  // so keep it out of this chrome snapshot: the restore flow it captures must
+  // match on either harness.
+  for (const node of clone.querySelectorAll('[data-slot="sidebar.sections"]')) node.remove()
   return clone
 }
 
