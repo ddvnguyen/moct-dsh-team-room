@@ -453,6 +453,52 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     changeVersion += 1
     for (const waiter of changeWaiters) if (waiter.request.scope === undefined || (waiter.request.scope.kind === 'thread' && waiter.request.scope.threadRef === threadRef)) waiter.wake()
   }
+  // L1 item 4: the running-Turn feed double (A13 v2). Mutable, so a spec can
+  // start a Turn, advance it, and end it the way the Host folds session events.
+  // `revision` mirrors the Host's process-local activity epoch, which is what the
+  // client's activity query keys on.
+  let activityRowsNow: readonly {
+    readonly memberId: string
+    readonly handle: string
+    readonly threadRef?: string
+    readonly turnStartedAt: string
+    readonly stepCount: number
+    readonly toolCount: number
+    readonly current?: { readonly tool: string; readonly label: string }
+    readonly updatedAt: string
+  }[] = []
+  let activityRevisionValue = 0
+  const memberActivity = vi.fn(async (request: { workspaceId: string; threadRef?: string }) => ({
+    ok: true as const,
+    value: {
+      revision: activityRevisionValue,
+      activities: activityRowsNow
+        .filter(row => request.threadRef === undefined || row.threadRef === request.threadRef)
+        .map(row => ({ ...row, threadRef: row.threadRef })),
+    },
+  }))
+  /** Start (or replace) a seat's running Turn on one Thread; mirrors the Host's entryFor. */
+  const publishActivity = (row: { readonly memberId: string; readonly handle: string; readonly threadRef?: string; readonly stepCount?: number; readonly toolCount?: number; readonly current?: { readonly tool: string; readonly label: string } }): void => {
+    const time = new Date().toISOString()
+    activityRowsNow = [...activityRowsNow.filter(entry => entry.memberId !== row.memberId), {
+      memberId: row.memberId,
+      handle: row.handle,
+      ...(row.threadRef === undefined ? {} : { threadRef: row.threadRef }),
+      turnStartedAt: time,
+      stepCount: row.stepCount ?? 1,
+      toolCount: row.toolCount ?? 0,
+      ...(row.current === undefined ? {} : { current: row.current }),
+      updatedAt: time,
+    }]
+    activityRevisionValue += 1
+    for (const waiter of changeWaiters) if (waiter.request.scope?.kind === 'activity') waiter.wake()
+  }
+  /** End the seat's running Turn, as `agent/status` idle and `agent/error` do on the Host. */
+  const endActivity = (memberId: string): void => {
+    activityRowsNow = activityRowsNow.filter(entry => entry.memberId !== memberId)
+    activityRevisionValue += 1
+    for (const waiter of changeWaiters) if (waiter.request.scope?.kind === 'activity') waiter.wake()
+  }
   const addTurnFailure = (failure: AgentTeamThreadTurnFailure): void => {
     turnFailureRows = [...turnFailureRows, failure]
     publishThreadUpdate(failure.threadRef)
@@ -762,7 +808,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -817,5 +863,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }
