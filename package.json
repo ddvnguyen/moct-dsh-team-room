@@ -31,6 +31,7 @@
     "check:versions": "node scripts/check-version-consistency.mjs",
     "check:facades": "node scripts/sync-paths.mjs --check",
     "check:artifact": "node scripts/check-artifact.mjs .",
+    "smoke:install": "npm run build && node scripts/quality/dsh-smoke.mjs",
     "check:public-baseline": "node scripts/check-public-baseline.mjs .",
     "test": "npm run generate:typert && npm run check:facades && npm run check:docs && npm run check:core-skills && npm run check:boundaries && npm run check:versions && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
