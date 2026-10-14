@@ -380,14 +380,14 @@ function teamSeatInject(
   navigation: TeamNavigation,
   reads: TeamReadStream,
   sharedRemotes: Record<string, unknown>,
-  name: 'sidebar.workspaces' | 'main' | 'sidebar.settings',
+  name: 'sidebar.workspaces' | 'sidebar.sections' | 'main' | 'sidebar.settings',
   extraInject?: () => Record<string, unknown>,
 ): Record<string, unknown> {
   return {
     navigation,
     ...extraInject?.(),
     ...navigation.actions(),
-    ...(name === 'sidebar.workspaces' ? teamPageActions(ctx, navigation) : {}),
+    ...(name === 'sidebar.workspaces' || name === 'sidebar.sections' ? teamPageActions(ctx, navigation) : {}),
     // Leaving Team mode is also leaving its panel: the rail row is a
     // destination, and the mode's own exit row hands the column back to the
     // conversation instead of leaving the Team panel selected behind it.
@@ -416,7 +416,7 @@ function teamSeatInject(
       resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => ctx.remote.agentTeam.resolveThreadRefs(request),
       resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => ctx.remote.agentTeam.resolveMessageRefs(request),
     } : {}),
-    ...(name === 'sidebar.workspaces' ? {
+    ...(name === 'sidebar.workspaces' || name === 'sidebar.sections' ? {
       addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
       createChannel: (request: AgentTeamCreateChannelRequest) => ctx.remote.agentTeam.createChannel(request),
     } : {}),
@@ -456,7 +456,7 @@ function registerModeShadow<T extends object>(
   reads: TeamReadStream,
   drafts: TeamDraftStore,
   humanIdentity: TeamHumanIdentity,
-  name: 'sidebar.workspaces' | 'main' | 'sidebar.settings',
+  name: 'sidebar.workspaces' | 'sidebar.sections' | 'main' | 'sidebar.settings',
   component: T,
   extraInject?: () => Record<string, unknown>,
   // Keyed seats (`main`) address one panel by key; the reserved 'conversation'
@@ -482,6 +482,73 @@ function registerModeShadow<T extends object>(
           inject: () => teamSeatInject(ctx, navigation, reads, sharedRemotes, name, extraInject),
         } as never, component as never)
       } else if (!active && dispose !== undefined) {
+        dispose()
+        dispose = undefined
+      }
+    }
+    const unsubscribe = navigation.subscribe(reconcile)
+    reconcile()
+    return () => {
+      unsubscribe()
+      dispose?.()
+      dispose = undefined
+    }
+  })
+}
+
+/**
+ * Register the Team's browsing surface into the shell's own browsing region.
+ *
+ * The shell declares an additive `sidebar.sections` list seat above its
+ * `sidebar.workspaces` browser, and this is the Team's occupant of it: the same
+ * `TeamWorkspaceBrowser` the Team rail seat used to render, now standing in the
+ * shell's own column instead of shadowing the shipped browser. Entering Team mode
+ * registers the entry; leaving it, and unloading the client, removes it — so the
+ * shipped browser, its directory-flow child and its row actions come back the
+ * moment the mode stands down, with nothing else about the shell displaced.
+ *
+ * The seat is a list, so it needs an `id`, and it owns no children of its own.
+ * `priority: -100` mirrors the other Team seats so this entry orders with them
+ * rather than with a hypothetical later registrant's default 0.
+ *
+ * One fact the seat does not carry: its owner share is the column's fold state
+ * only. The rail icons in `TeamWorkspaceBrowser` request expansion through an
+ * `expandSidebar` callback, which the shell passes to the `sidebar.workspaces`
+ * browser (guarding the flip with the collapsed state) but not to this seat, so
+ * the registrant supplies one itself out of the layout service. That is the same
+ * `toggleSidebar` the shell's own control calls — and here the toggle is exactly
+ * right, because this surface only ever asks to expand: a rail icon is only
+ * clickable while the column is collapsed.
+ */
+function registerTeamSection(
+  ctx: ClientContext,
+  navigation: TeamNavigation,
+  queries: TeamQueries,
+  reads: TeamReadStream,
+  drafts: TeamDraftStore,
+  humanIdentity: TeamHumanIdentity,
+): void {
+  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
+  ctx.slots.inject('sidebar.sections', () => {
+    let dispose: (() => void) | undefined
+    const reconcile = (): void => {
+      // The Team's browsing surface stands exactly while Team mode does: the
+      // embedded Member Session view keeps it (the mode keeps the shell's Team
+      // chrome), and leaving the mode takes the section with it.
+      if (navigation.getSnapshot().mode === 'team' && dispose === undefined) {
+        dispose = ctx.slots.register({
+          name: 'sidebar.sections',
+          id: 'team',
+          priority: -100,
+          locale: NS,
+          inject: () => ({
+            ...teamSeatInject(ctx, navigation, reads, sharedRemotes, 'sidebar.sections'),
+            // Not the shell's guarded expand: this seat's owner share is only
+            // the column state, so the section carries its own expand source.
+            expandSidebar: () => { ctx.layout.toggleSidebar() },
+          }),
+        } as never, TeamWorkspaceBrowser as never)
+      } else if (navigation.getSnapshot().mode !== 'team' && dispose !== undefined) {
         dispose()
         dispose = undefined
       }
@@ -608,7 +675,7 @@ function applyUi(ctx: ClientContext): void {
 
   const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
 
-  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'sidebar.workspaces', GuardedWorkspaceBrowser as never)
+  registerTeamSection(ctx, navigation, queries, reads, drafts, humanIdentity)
   registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
   registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'sidebar.settings', GuardedMembersAction as never, () => ({ loadMemberGroups }))
 

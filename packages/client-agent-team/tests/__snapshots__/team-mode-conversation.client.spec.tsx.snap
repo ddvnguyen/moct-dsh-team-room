@@ -176,7 +176,7 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
           class="regionArea"
         >
           <div
-            data-slot="sidebar.workspaces"
+            data-slot="sidebar.sections"
             style="display: contents;"
           >
             <section
@@ -671,6 +671,16 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                 </div>
               </div>
             </section>
+          </div>
+          <div
+            data-slot="sidebar.workspaces"
+            style="display: contents;"
+          >
+            <div
+              data-baseline-workspaces="true"
+            >
+              普通工作区
+            </div>
           </div>
         </div>
         <div
