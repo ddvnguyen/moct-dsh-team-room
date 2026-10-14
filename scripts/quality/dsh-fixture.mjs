@@ -122,6 +122,8 @@ export function bootProfile(smoke, profile, overlay) {
     let serial = 0
     return {
       origin,
+      /** The session cookie the launch URL exchange granted, as `name=value`; a browser context adds it to act as this Human. */
+      cookie,
       /** Call one /api Remote; resolves its `value`, throws its error. */
       async rpc(method, args) {
         const response = await fetch(`${origin}/api/${method}`, {
