@@ -1,4 +1,4 @@
-import { estimateTokens } from './thread-summary'
+import { estimateTokens } from './thread-summary.ts'
 
 export interface ThreadContextSeedSummary {
   generation: number
