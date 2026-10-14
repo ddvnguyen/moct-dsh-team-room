@@ -161,6 +161,16 @@ export class TeamNavigation {
 
   private setWorkspace(workspaceId: WorkspaceId): void {
     if (this.snapshot.workspaceId === workspaceId && this.snapshot.inbox !== true) return
+    // With no Workspace selected yet this is the browser adopting the default it
+    // is already showing, not a switch: a Channel picked before the adoption (the
+    // one-gesture landing from a plain conversation) belongs to that Workspace
+    // and must survive it. Only a real switch to another Workspace clears.
+    if (this.snapshot.workspaceId === undefined && this.snapshot.channelRef !== undefined) {
+      const { inbox: _inbox, ...base } = this.snapshot
+      this.snapshot = { ...base, workspaceId }
+      this.commit()
+      return
+    }
     const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, inbox: _inbox, ...base } = this.snapshot
     this.snapshot = { ...base, workspaceId }
     this.commit()
