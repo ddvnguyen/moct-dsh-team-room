@@ -119,6 +119,19 @@ describe('Team mode and the shell main panel', () => {
     await waitFor(() => expect(agentTabs()).toEqual([]))
   })
 
+  it('A14: opening another conversation after a Member Session removes the Agent tabs', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true, agentsTab: true })
+    const agentTabs = (): string[] => b.runtime.slots.entries('conversation.view').flatMap(entry => entry.options.id?.startsWith('agent-') === true ? [entry.options.id] : [])
+    act(() => { b.runtime.ctx.teamNavigation.actions().selectWorkspace('w1' as never) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)) })
+    act(() => { b.runtime.ctx.teamNavigation.actions().enterMemberSession('ordinary-session' as never) })
+    await waitFor(() => expect(agentTabs()).toHaveLength(3))
+    await act(async () => { await b.runtime.sessions.add({ id: 'other-session', summary: { title: 'Other', cwd: '/work/alpha' } }) })
+    act(() => { b.openSession('other-session') })
+    await waitFor(() => expect(agentTabs()).toEqual([]))
+    expect(b.runtime.ctx.teamNavigation.getSnapshot().memberSessionId).toBeUndefined()
+  })
+
   it('keeps the Agents list on Team Settings while the strip has no Agents tab', async () => {
     const b = await runtimeWithTeam({ nativeTabs: false, mode: 'team', workspaceId: 'w1', initialChannels: true })
     fireEvent.click(await b.view.findByRole('button', { name: '团队设置' }))

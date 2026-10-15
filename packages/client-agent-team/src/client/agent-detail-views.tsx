@@ -23,12 +23,21 @@ interface AgentRef { readonly workspaceId: WorkspaceId; readonly memberId: strin
 
 /** Which Agent a Member Session belongs to, noted when the Client opens it from an Agent surface. */
 const agentOfSession = new Map<string, AgentRef>()
-/** Sessions just opened from a Session row: they land on Chat even if last left on one of these tabs. */
-const chatLanding = new Set<string>()
+/** How long a Session row press may wait for the opened session's tab to mount before the marker is dropped. */
+const CHAT_LANDING_TTL_MS = 10_000
+/** Sessions just opened from a Session row (with the press time): they land on Chat even if last left on one of these tabs. */
+const chatLanding = new Map<string, number>()
+/** Consumes the marker: true only for a press recent enough that this mount is its landing. */
+function takeChatLanding(sessionId: string, now: number = Date.now()): boolean {
+  const pressed = chatLanding.get(sessionId)
+  chatLanding.delete(sessionId)
+  return pressed !== undefined && now - pressed <= CHAT_LANDING_TTL_MS
+}
 
 export function noteAgentSession(sessionId: string, agent: AgentRef): void { agentOfSession.set(sessionId, agent) }
 export function agentOfSessionFor(sessionId: string): AgentRef | undefined { return agentOfSession.get(sessionId) }
-export function markChatLanding(sessionId: string): void { chatLanding.add(sessionId) }
+export function markChatLanding(sessionId: string, now: number = Date.now()): void { chatLanding.set(sessionId, now) }
+export function dropChatLanding(sessionId: string): void { chatLanding.delete(sessionId) }
 export function resetAgentSessions(): void { agentOfSession.clear(); chatLanding.clear() }
 
 type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession'>
@@ -66,7 +75,7 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
   // these tabs, the tab sends the conversation to Chat through the host's own
   // `openView`, on its own session.
   useEffect(() => {
-    if (chatLanding.delete(sessionId)) openView?.('chat', '')
+    if (takeChatLanding(sessionId)) openView?.('chat', '')
   }, [sessionId])
   useEffect(() => {
     let live = true
@@ -85,7 +94,8 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
     const open: TeamSidebarProps['openMemberSession'] = (target, reportFailure) => {
       noteAgentSession(target, { workspaceId, memberId: status.member.memberId })
       markChatLanding(target)
-      remotes.openMemberSession(target, reportFailure)
+      // A session the host cannot open never mounts a tab: drop its marker.
+      remotes.openMemberSession(target, message => { dropChatLanding(target); reportFailure?.(message) })
     }
     return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} t={t} />
   }
