@@ -1,3 +1,4 @@
+import { agentOfSessionFor } from '../src/client/agent-detail-views.tsx'
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -289,6 +290,21 @@ describe('Team Client slot takeover', () => {
     expect(ctx.teamNavigation.getSnapshot().returnToSessionId).toBeUndefined()
     expect(uiWorkspace.openSession).toHaveBeenLastCalledWith('session:reviewer')
 
+    await fiber.dispose()
+  })
+
+  it('A14: opening an Agent from its row opens the Session natively and notes which Agent it belongs to', async () => {
+    const strip = nativeStrip()
+    const { ctx, uiWorkspace } = await bench(null, strip.registry)
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
+    ctx.teamNavigation.actions().enterTeam()
+    const injected = tabSeat(strip)
+    ;(injected.openAgentDetail as (workspaceId: string, memberId: string, sessionId: string) => void)('workspace:one', 'member:builder', 'session:builder')
+    expect(uiWorkspace.openSession).toHaveBeenCalledWith('session:builder')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder' })
+    expect(agentOfSessionFor('session:builder')).toEqual({ workspaceId: 'workspace:one', memberId: 'member:builder' })
     await fiber.dispose()
   })
 

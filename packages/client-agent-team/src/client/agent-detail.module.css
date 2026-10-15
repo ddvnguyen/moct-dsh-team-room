@@ -135,3 +135,14 @@
   font-size: 13px;
   font-weight: 600;
 }
+
+/* A tab body inside the host's conversation view area scrolls on its own. */
+.viewBody {
+  box-sizing: border-box;
+  height: 100%;
+  margin: 0 auto;
+  max-width: 880px;
+  overflow-y: auto;
+  padding: 16px clamp(18px, 3vw, 36px);
+  width: 100%;
+}

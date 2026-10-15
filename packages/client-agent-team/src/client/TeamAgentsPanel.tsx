@@ -17,7 +17,6 @@ import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { AgentEditorDialog, ModelPickerField, sameModel, warmModelCatalog } from './TeamMemberEditor.tsx'
 import { TeamAgentImport } from './TeamAgentImport.tsx'
-import { TeamAgentDetail } from './TeamAgentDetail.tsx'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -34,16 +33,13 @@ interface TeamAgentsPanelProps {
   readonly loadModels: TeamSidebarProps['loadModels']
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
-  readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
-  readonly resolveThreadRefs: TeamSidebarProps['resolveThreadRefs']
-  readonly loadMemory: TeamSidebarProps['loadMemory']
-  readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  readonly openAgentDetail: TeamSidebarProps['openAgentDetail']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, openMemberSession, openAgentDetail, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -278,7 +274,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadMemory={loadMemory} loadChannels={loadChannels} openMemberSession={openMemberSession} onUpdated={refresh} t={t} />
+              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} openAgentDetail={openAgentDetail} onUpdated={refresh} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -298,7 +294,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onUpdated, t }: {
+function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, openMemberSession, openAgentDetail, onUpdated, t }: {
   readonly workspaceId: WorkspaceId
   readonly leaveWorkspace: TeamSidebarProps['leaveWorkspace']
   readonly status: AgentTeamClientMemberStatus
@@ -308,17 +304,13 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly archiveMember: TeamSidebarProps['archiveMember']
   readonly loadModels: TeamSidebarProps['loadModels']
-  readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
-  readonly resolveThreadRefs: TeamSidebarProps['resolveThreadRefs']
-  readonly loadMemory: TeamSidebarProps['loadMemory']
-  readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  readonly openAgentDetail: TeamSidebarProps['openAgentDetail']
   readonly onUpdated: () => Promise<void> | void
   readonly t: TeamSidebarProps['t']
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
-  const [detailsOpen, setDetailsOpen] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [rowAlert, setRowAlert] = useState<string>()
   const [archivePending, setArchivePending] = useState(false)
@@ -327,6 +319,11 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   // Both row actions ride the same runtime remote: the Host steers a live
   // session, rebuilds an orphaned composition, or re-runs a failed activation.
   // Copy the seat's Session id; the clipboard is optional in some hosts, so a refusal is shown, not thrown.
+  const openDetail = (): void => {
+    openAgentDetail(workspaceId, status.member.memberId, status.member.sessionId, message => {
+      setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
+    })
+  }
   const copySessionId = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(status.member.sessionId)
@@ -380,7 +377,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   return (
     <>
       <div className={css.agentRow} data-agent-row data-menu-open={menuOpen || undefined}>
-        <button type="button" className={css.agentSelect} aria-label={t('openAgentDetail', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { setDetailsOpen(true) }}>
+        <button type="button" className={css.agentSelect} aria-label={t('openAgentDetail', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { openDetail() }}>
           <TeamMemberIdentity status={status} name={status.member.handle.replace(/^@/, '')} className={css.agentCopy} t={t} />
         </button>
         <span className={css.rowMenu}>
@@ -398,7 +395,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)
               else if (id === 'copySession') void copySessionId()
-              else if (id === 'details') setDetailsOpen(true)
+              else if (id === 'details') openDetail()
               else if (id === 'openSession') {
                 openMemberSession(status.member.sessionId, message => {
                   setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
@@ -429,7 +426,6 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
           {rowAlert !== undefined && <p className={createCss.error} role="alert">{rowAlert}</p>}
         </Modal>
       )}
-      {detailsOpen && <TeamAgentDetail workspaceId={workspaceId} status={status} loadMemberSessions={loadMemberSessions} resolveThreadRefs={resolveThreadRefs} loadMemory={loadMemory} loadChannels={loadChannels} openMemberSession={openMemberSession} onClose={() => { setDetailsOpen(false) }} t={t} />}
       {editing && (
         <AgentEditorDialog
           status={status}
