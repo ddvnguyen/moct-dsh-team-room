@@ -1,4 +1,4 @@
-# CI gate: typecheck + full tests on clean Linux and Windows runners.
+# CI gate: typecheck + full tests on a clean Linux runner.
 #
 # The environment contract lives in
 # docs/development/environments-and-install.md § "Sandbox and CI environments" — the same six-step contract as the hoplite sandbox setup in
@@ -7,10 +7,10 @@
 # .hoplite/settings.json
 # together; keep the three in sync by hand, there is no generator on purpose.
 #
-# Scope guard: one workflow, two jobs (linux + windows). No coverage matrix,
+# Scope guard: one workflow, one job (linux). No coverage matrix,
 # no release automation, no test:browser (that stays a local acceptance step).
-# The windows lane is the regression fence for filesystem-identifier bugs
-# (issues #7/#8): string-level sanitizing must hold on a real Windows FS.
+# The Windows lane (the former regression fence for issues #7/#8) was retired
+# in a1f4ffc; string-level sanitizing is covered by the linux specs.
 name: ci
 
 on:
@@ -67,7 +67,7 @@ jobs:
         # runs Vitest directly against that checkout. Without it Member
         # activation fails (`Agent is not an active Team Member`) and 85
         # agent-team tests error or hang. The script exits without building off
-        # Linux/macOS, so both lanes run the same step.
+        # Linux/macOS, so the step is the same everywhere.
         run: |
           cd ../deepseek-harness
           corepack pnpm install
