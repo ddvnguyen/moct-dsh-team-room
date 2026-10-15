@@ -59,14 +59,27 @@ describe('Agent Sessions rows (A14 d)', () => {
     expect(open).not.toHaveBeenCalled()
   })
 
-  it('shows the Thread as a link that opens it, +N for more, and "no thread" for none', async () => {
+  it('shows only the first Thread as a link (others in its tooltip, no +N disclosure), and "no thread" for none', async () => {
     const resolved = [{ threadRef: 'thread:1', channelRef: 'channel:1', title: 'Fix login' }, { threadRef: 'thread:2', channelRef: 'channel:1', title: 'Other' }]
     render(<AgentViewBody tab="sessions" sessionId="session:current" remotes={remotes([run('session:current', { threadRefs: ['thread:1', 'thread:2'] }), run('session:old')], vi.fn(), resolved)} navigation={navigation} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-run-thread="thread:1"]')).not.toBeNull())
-    expect(document.querySelector('[data-run-more-threads] summary')!.textContent).toBe('+1')
+    expect(document.querySelector('[data-run-more-threads]')).toBeNull()
+    expect(document.querySelectorAll('[data-run-thread]')).toHaveLength(1)
+    expect(document.querySelector('[data-run-thread="thread:1"]')!.getAttribute('title')).toContain('Other')
     expect(document.querySelector('[data-session-id="session:old"] [data-run-no-thread]')!.textContent).toBe('agentDetailsNoThread')
     fireEvent.click(document.querySelector('[data-run-thread="thread:1"]')!)
     expect(selectThread).toHaveBeenCalledWith('thread:1', 'channel:1', undefined, undefined)
+  })
+
+  it('shows the full Session id on every row (ids sharing a prefix stay distinguishable) and one start time', async () => {
+    const a = 'agent-team-11111111-aaaa-bbbb-cccc-000000000001'
+    const b = 'agent-team-22222222-aaaa-bbbb-cccc-000000000002'
+    render(<AgentViewBody tab="sessions" sessionId="session:current" remotes={remotes([run(a), run(b)])} navigation={navigation} t={t} />)
+    await waitFor(() => expect(document.querySelectorAll('[data-session-id-label]')).toHaveLength(2))
+    const labels = [...document.querySelectorAll('[data-session-id-label]')]
+    expect(labels.map(label => label.textContent)).toEqual([a, b])
+    expect(labels.map(label => label.getAttribute('title'))).toEqual([a, b])
+    expect(document.querySelector(`[data-session-id="${a}"] [data-run-place]`)!.textContent).not.toContain('→')
   })
 
   it('lists tokens in/out, cache hit, run time, tools and turns, with em dash for null and the partial marker kept', async () => {
