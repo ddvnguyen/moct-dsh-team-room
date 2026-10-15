@@ -50,7 +50,7 @@ import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type 
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime } from './member-runtime.ts'
 import { memberInstances } from './member-instances.ts'
 import { routeThreads } from './instance-router.ts'
-import { DEFAULT_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit.ts'
+import { UNLIMITED_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit.ts'
 import { MEMORY_READ_ONLY_TOOLS, memoryRevision, seatMemoryGuard, seatMemoryStaleReason, type SeatMemoryStaleRefusal } from './seat-memory.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
@@ -747,7 +747,9 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly warmStartsByMember = new Map<AgentTeamMemberId, number[]>()
   private readonly warmDeferTimers = new Map<AgentTeamMemberId, ReturnType<typeof setTimeout>>()
   /** The warm limit in force; the contract default until a per-seat setting is wired. */
-  private warmLimit: WarmLimit = DEFAULT_WARM_LIMIT
+  // Unlimited until configured: a wake to an idle seat starts at once, as it always has. `DEFAULT_WARM_LIMIT`
+  // (1 per 60 s, contract §4.2) is applied by `configureWarmLimit`.
+  private warmLimit: WarmLimit = UNLIMITED_WARM_LIMIT
   /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
   private readonly slotErrors = new Set<string>()
 
@@ -4557,6 +4559,11 @@ export default class AgentTeam extends TypertRemoteService {
     })
     for (const [slot, entries] of bySlot) if (slot !== 0) this.deliverToSlot(member, slot, entries)
     return bySlot.get(0) ?? []
+  }
+
+  /** Set the per-seat warm-start limit (contract §4.2); pass `UNLIMITED_WARM_LIMIT` to lift it. */
+  configureWarmLimit(limit: WarmLimit): void {
+    this.warmLimit = limit
   }
 
   /** Re-run the seat's delivery once the warm window frees; one timer per seat, so a burst coalesces. */

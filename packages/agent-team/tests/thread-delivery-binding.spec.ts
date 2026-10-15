@@ -7,6 +7,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { changeBaseline, nextChange } from './helpers/change-stream.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { DEFAULT_WARM_LIMIT } from '../src/warm-limit.ts'
 import AgentTeam from '../src/index.ts'
 import { agentTeamHumanActor } from '../src/ledger.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
@@ -142,19 +143,31 @@ describe('per-Thread binding on delivery (task-16)', () => {
     info.mockRestore()
   })
 
+  // One Thread, so every delivery goes to slot 0 (a second Thread would route to the seat's other instance).
+  async function oneThread(ctx: Awaited<ReturnType<typeof harness>>['ctx'], seam: SeamAgent) {
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId(`o-channel-${seam.agent.id}`), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const member = await addLiveMember(ctx, channel.channel.channelRef)
+    ctx.agentTeam['handles'].set(member.memberId, { agent: seam.agent, dispose: async () => {} })
+    const first = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId(`o-first-${seam.agent.id}`), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'First', recipients: [member.memberId] })
+    if (first.kind !== 'committed') throw new Error('not committed')
+    let revision = first.thread.revision
+    const reply = async (id: string, body: string) => {
+      const sent = await ctx.agentTeam.reply({ requestId: requestId(id), workspaceId: alpha, threadRef: first.thread.threadRef, body, recipients: [member.memberId], baseRevision: revision })
+      if (sent.kind !== 'committed') throw new Error('not committed')
+      revision = sent.thread.revision
+    }
+    return { reply }
+  }
+
   it('coalesces a second warm start inside the window into one deferred delivery', async () => {
     const { ctx } = await harness()
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('w-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
-    const member = await addLiveMember(ctx, channel.channel.channelRef)
-    const seam = liveAgent('session:live-1')
-    ctx.agentTeam['handles'].set(member.memberId, { agent: seam.agent, dispose: async () => {} })
-    const send = (id: string, body: string) => ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId(id), workspaceId: alpha, channelRef: channel.channel.channelRef, body, recipients: [member.memberId] })
-    await send('w-one', 'First')
+    ctx.agentTeam.configureWarmLimit(DEFAULT_WARM_LIMIT)
+    const seam = liveAgent('session:live-w')
+    const { reply } = await oneThread(ctx, seam)
     expect(seam.calls).toHaveLength(1)
-    // The seat goes idle again; a second Thread arrives inside the 60 s window: no second warm Turn yet.
-    seam.status = 'idle'
-    await send('w-two', 'Second')
-    await send('w-three', 'Third')
+    // The seat goes idle again; more facts arrive inside the 60 s window: no second warm Turn yet.
+    await reply('w-two', 'Second')
+    await reply('w-three', 'Third')
     expect(seam.calls).toHaveLength(1)
     // When the window frees, one delivery carries everything that arrived meanwhile.
     await vi.advanceTimersByTimeAsync(61_000)
@@ -162,7 +175,15 @@ describe('per-Thread binding on delivery (task-16)', () => {
     expect(JSON.stringify(seam.calls[1]!.content)).toContain('3')
     // A busy seat is not a warm start: a steer goes through at once.
     seam.status = 'running'
-    await send('w-four', 'Fourth')
+    await reply('w-four', 'Fourth')
     expect(seam.calls).toHaveLength(3)
+  })
+
+  it('wakes an idle seat at once while no limit is configured', async () => {
+    const { ctx } = await harness()
+    const seam = liveAgent('session:live-u')
+    const { reply } = await oneThread(ctx, seam)
+    await reply('u-two', 'Second')
+    expect(seam.calls).toHaveLength(2)
   })
 })

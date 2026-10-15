@@ -14,7 +14,7 @@ export interface WarmLimit {
   readonly windowMs: number
 }
 
-/** The contract default: one warm Turn per minute per seat. */
+/** The contract's stated limit: one warm Turn per minute per seat. A host opts in with `configureWarmLimit`. */
 export const DEFAULT_WARM_LIMIT: WarmLimit = Object.freeze({ perWindow: 1, windowMs: 60_000 })
 
 export interface WarmDecisionInput {
@@ -42,3 +42,6 @@ export function warmDecision(input: WarmDecisionInput): WarmDecision {
   const inWindow = recentWarmStarts.filter(started => started > windowStart)
   return inWindow.length >= limit.perWindow ? { kind: 'coalesce', at: nowMs } : { kind: 'start', at: nowMs }
 }
+
+/** No limit: every wake starts at once. The host's behavior until a limit is configured. */
+export const UNLIMITED_WARM_LIMIT: WarmLimit = Object.freeze({ perWindow: 0, windowMs: 0 })
