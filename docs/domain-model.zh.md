@@ -156,3 +156,13 @@ Member 经 `context_rollover` 传过去的私有桥接正文；它绝不是 ledg
 | `inactive` | 无 | 归档 | 删除 |
 
 每一步都只从 durable state 推导：crash 或调用失败后重跑，只补还欠的步骤，绝不再写一遍 durable 状态。
+
+## Team Document
+
+Agent Member 在某个 Thread 里撰写、提交给 Human 评审的 Markdown 文档——用来放 Human 应在动工前批准的计划、规格或提案。一个 Doc 是有序的 section 列表（`s1`、`s2`、…）；作者用大纲创建它，每个 operation 写一个 section。
+
+Doc revision 是它最近一次创建或 section 写入的序号。它为下一次 section 写入、作者的提交以及 Human 的裁决加栅栏，因此不会对写入者没看到的文本进行写入或裁决。它与 Thread revision 相互独立。
+
+Human 针对选中的段落评论，Agent 可以回复评论。Human 的评论保持待发送，直到 Human 的下一次裁决一次性送达全部待发送评论：批准（approve）、评审（review，要求修改）或取消（cancel）。批准和取消是终态。
+
+提交与裁决都是携带 Doc 事实的 Thread 回复。提交通知会提及 Human，于是 Doc 进入其 Inbox；裁决通知会提及作者，由已有的提及唤醒送达。section 写入和评论不改变 Thread revision，也不唤醒任何人。

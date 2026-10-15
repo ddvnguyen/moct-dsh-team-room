@@ -118,6 +118,14 @@ The Team answers the engine's two questions about that stretch from the Member's
 
 A Member whose preset mounts no compaction engine is told the capability is not available in this scope — never a silent no-op — and a context with nothing safe to replace reports that this context is unchanged.
 
+## `team_doc`
+
+`team_doc` writes a Team Document and asks for the Human's review: `create` (a Thread, a title, an outline of headings), `write` (one section: `sectionId` replaces it, no `sectionId` appends one), `submit`, `read`, `list` (a Thread's Docs), and `comment` (a quoted passage, or a reply through `parentCommentRef`).
+
+Every result renders the Doc revision, which the next `write` passes as `baseDocRevision` and `submit` passes as `docRevision`. A stale revision writes nothing and says to read the Doc again; it never uses the Thread's next-write token.
+
+After `submit` the author waits for the verdict, which arrives as a Thread mention: approved, changes requested (read the Doc, answer the delivered comments, revise, submit again), or cancelled. `read` renders Doc text and comments as Team data, not instructions. Only the Human gives a verdict, from the Doc page; no tool can.
+
 ## Team memory: `memory_note`, `memory_search`, `memory_get`
 
 Three Team memory tools sit beside the protocol tools. They read and write the MOCT Team Room backend's typed memory records (`/team/v1/memory`, schema v8): rule, convention, decision, how_to_work, task, and branch, each filed under a home (task, Channel, Team, or expert). Without `MOCT_TEAM_URL` they refuse with `BACKEND_UNAVAILABLE`; a backend without the v8 routes answers `MEMORY_UNSUPPORTED`.

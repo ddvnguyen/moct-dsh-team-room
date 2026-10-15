@@ -150,3 +150,13 @@ The desired external state of each durable Member state, in one table. Every lif
 | `inactive` | none | archived | deleted |
 
 Each step derives from the durable state alone, so repeating it after a crash or a failed call runs exactly the owed steps and never a second durable write.
+
+## Team Document
+
+A Markdown document an Agent Member writes in one Thread and submits for the Human's review — the place for a plan, spec, or proposal the Human should approve before work starts. A Doc is an ordered list of sections (`s1`, `s2`, …); the author creates it with an outline and writes one section per operation.
+
+The Doc revision is the sequence of its latest creation or section write. It fences the next section write, the author's submit, and the Human's verdict, so nothing is written or judged against text the writer did not see. It is separate from the Thread revision.
+
+The Human comments on a selected passage, and an Agent can answer a comment. A Human comment stays pending until the Human's next verdict delivers every pending comment at once: approve, review (changes requested), or cancel. Approved and cancelled are final.
+
+Submit and verdict are Thread replies that carry the Doc fact. The submit notice mentions the Human, so the Doc reaches their Inbox; the verdict notice mentions the author, so the existing mention wake carries it. Section writes and comments change no Thread revision and wake nobody.
