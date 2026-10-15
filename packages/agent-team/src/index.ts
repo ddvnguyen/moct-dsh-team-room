@@ -45,11 +45,13 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
-import { cacheVerdict } from './cache-verdict.ts'
+import { cacheVerdict, type CacheVerdict } from './cache-verdict.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime } from './member-runtime.ts'
 import { memberInstances } from './member-instances.ts'
-import { memoryWriteRefusal, routeThreads } from './instance-router.ts'
+import { routeThreads } from './instance-router.ts'
+import { DEFAULT_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit.ts'
+import { MEMORY_READ_ONLY_TOOLS, seatMemoryGuard, seatMemoryStaleReason, type SeatMemoryStaleRefusal } from './seat-memory.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
@@ -318,6 +320,25 @@ export function teamPresetScopeMismatchMessage(tsxDevMode: boolean): string {
   return 'selected preset is not team-enabled: this bundle and the harness resolved different physical copies of @deepseek-ai/dsh-scope; run pnpm install in the profile directory so node_modules matches the lockfile, then restart'
 }
 
+/**
+ * Why a delivery took the cold fallback (task-16, ruling 3472: one try per Turn, then the
+ * Turn fails). The cause rides this field and a log line, never the ledger op, because the
+ * `thread.session.bind` data object is `.strict()` with a closed reason enum.
+ */
+export interface AgentTeamColdFallback {
+  readonly cause: 'no-handle' | 'cache-cold' | 'resume-failed' | 'stale-binding'
+  /** Whether the warm resume was attempted before the fallback was taken. */
+  readonly triedWarm: boolean
+}
+
+/** `resumeMemberSession` result: the Session the Member now runs, plus any fallback taken. */
+export interface AgentTeamResumeMemberSessionResult {
+  readonly sessionId: SessionId
+  readonly cache: 'warm' | 'cold'
+  readonly action: 'resumed' | 'seeded-new'
+  /** Present only when this delivery took the cold fallback instead of the warm path. */
+  readonly coldFallback?: AgentTeamColdFallback
+}
 export interface AgentTeamCommitted {
   readonly receipt: AgentTeamOperationReceipt
 }
@@ -739,6 +760,10 @@ export default class AgentTeam extends TypertRemoteService {
    * recorder reports no poison. Kept across an idle end, so a respawned slot keeps its counts.
    */
   private readonly slotRecorders = new Map<string, AgentTeamTurnRecorder>()
+  /** Warm starts per seat in the current warm-limit window, oldest first (contract §4.2). */
+  private readonly warmStartsByMember = new Map<AgentTeamMemberId, number[]>()
+  /** The warm limit in force; the contract default until a per-seat setting is wired. */
+  private warmLimit: WarmLimit = DEFAULT_WARM_LIMIT
   /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
   private readonly slotErrors = new Set<string>()
 
@@ -1544,15 +1569,8 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /**
-   * Operator nudge for a Member that stopped making progress: steer a
-   * continuation prompt into its live session, rebuild it after an orphaned
-   * preset composition, or re-run activation when no live session exists.
-   * Runtime-only — no ledger operation, no suspend. Taking over manually also
-   * cancels any pending automatic recovery episode. A non-enabled Member
-   * still holding a live handle is an interrupted suspend/archive/remove,
-   * not a stalled one; recovery finishes that cleanup instead of nudging it.
-   */
+
+
   /**
    * Human resume of a Member's home Session (contract §4, TEST scope). Warm (the Session is
    * still held by the provider and inside its cache TTL) resumes it in place. Cold starts a
@@ -1561,7 +1579,7 @@ export default class AgentTeam extends TypertRemoteService {
    * per-Thread sessions are not supported yet.
    */
   @Remote('resumeMemberSession')
-  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<{ sessionId: SessionId; cache: 'warm' | 'cold'; action: 'resumed' | 'seeded-new' }> {
+  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<AgentTeamResumeMemberSessionResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const ledger = this.requireLedger()
@@ -1578,7 +1596,13 @@ export default class AgentTeam extends TypertRemoteService {
       })
       return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
     }
-    if (!this.handles.has(member.memberId)) throw new Error(`Agent Member '${member.handle}' has no live Session to start a fresh context from; resume it before continuing`)
+    if (!this.handles.has(member.memberId)) {
+      // No live Session to start a fresh context from: resume the Member first, then
+      // this Thread resumes warm or falls back to cold on its next delivery (one try).
+      const fallback = { cause: 'no-handle' as const, triedWarm: true }
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold fallback for Thread '${request.threadRef ?? 'none'}' cause ${fallback.cause}: the Member has no live Session; resume it before continuing`)
+      return { sessionId: member.sessionId, cache: 'cold', action: 'seeded-new', coldFallback: fallback }
+    }
     // The renewal takes the Member's lifecycle lock itself, so it runs outside any lock held here.
     const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
     const sessionId = cleared.status.member.sessionId
@@ -2576,6 +2600,43 @@ export default class AgentTeam extends TypertRemoteService {
       await this.steerAgentFromThread(actor.memberId, request.threadRef)
     }
     return result.value.binding
+  }
+
+  /**
+   * Task-16: bind one delivered Thread to the Session this seat now runs, from the cache verdict.
+   *
+   * A warm verdict re-binds the same Session (reason `resumed`) so the Thread's later turns keep
+   * the provider cache; a cold verdict records `cold-restart` and the seed rides the caller's
+   * fresh Session. Exactly one fallback is allowed per Turn: when the warm resume itself fails
+   * (no live Session, or a resume that throws), the cause is reported as `coldFallback` and the
+   * caller takes its single cold start; a cold start that also fails is the Turn's failure, which
+   * the existing failed-seat notice carries — no second retry, no loop.
+   *
+   * The bind op and its closed reason enum are untouched, so the cause never reaches the ledger:
+   * it rides this return value and one log line.
+   */
+  private async bindThreadForDelivery(request: {
+    readonly member: AgentTeamAgentMember
+    readonly workspaceId: WorkspaceId
+    readonly threadRef: AgentTeamThreadRef
+    readonly sessionId: SessionId
+    readonly verdict: CacheVerdict
+    readonly attemptWarm: () => Promise<AgentTeamColdFallback | undefined>
+  }): Promise<{ readonly coldFallback: AgentTeamColdFallback | undefined; readonly cache: 'warm' | 'cold' }> {
+    const ledger = this.requireLedger()
+    const reason: AgentTeamBindThreadSessionRequest['reason'] = request.verdict.cache === 'warm' ? 'resume' : 'cold-restart'
+    const latest = ledger.latestThreadSummary(request.threadRef)
+    await ledger.bindThreadSession({
+      requestId: `deliver-bind:${request.member.memberId}:${request.threadRef}:${request.sessionId}` as AgentTeamRequestId,
+      workspaceId: request.workspaceId, threadRef: request.threadRef, sessionId: request.sessionId, reason,
+      ...(request.verdict.cache === 'warm' ? {} : { ...(latest === undefined ? {} : { summaryGeneration: latest.generation }) }),
+      actor: { kind: 'member', memberId: request.member.memberId, handle: request.member.handle },
+    })
+    const fallback = request.verdict.cache === 'warm' ? await request.attemptWarm() : undefined
+    if (fallback !== undefined) {
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(request.member.memberId, request.sessionId)} Thread '${request.threadRef}' fell back to cold: ${fallback.cause}`)
+    }
+    return { coldFallback: fallback, cache: request.verdict.cache }
   }
 
   /** Agent-only personal Attention change. */
@@ -3588,6 +3649,36 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+  /**
+   * Task-16 memory rule: the per-seat memory lock for this Session. Read-only tools
+   * and calls that never name the seat memory directory pass through; every other
+   * write runs under the seat lock and is refused with `stale-memory` when the file's
+   * revision moved since this Session last read it, returning the current content so
+   * the Session re-reads and retries. A first write by a Session that has never read
+   * the file is allowed. Slot 0 and every extra slot share the same lock.
+   */
+  private installSeatMemoryLock(agentCtx: Context, agent: Agent, memoryDirectory: string): void {
+    const read = async (path: string): Promise<string> => readFileSync(path, 'utf8')
+    agentCtx.on('tools/pre-execute', async (exec, next) => {
+      const refusal = await seatMemoryGuard.probe({ toolName: exec.name, args: exec.arguments, memoryDirectory, sessionId: agent.id, read })
+      return refusal === undefined ? next()
+        : { kind: 'deny' as const, reason: seatMemoryStaleReason(refusal) }
+    })
+    agentCtx.on('tools/post-execute', async (exec, result, next) => {
+      // Only a resolved write that named the memory directory can have moved it.
+      const seat = memoryDirectory.replace(/[\\/]+$/, '')
+      const names = seat !== '' && !MEMORY_READ_ONLY_TOOLS.has(exec.name) && !result.isError
+      if (names) {
+        try {
+          if ((JSON.stringify(exec.arguments) ?? '').includes(seat)) seatMemoryGuard.noteWriteSettled(seat, agent.id, read)
+        } catch {
+          // An unserializable argument set never named the directory: nothing to refresh.
+        }
+      }
+      return next()
+    })
+  }
+
   private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId, options?: { readonly deferNotify?: boolean; readonly seed?: readonly SessionEvent[]; readonly inheritedEventCount?: SessionLogOffset }): Promise<void> {
     if (this.handles.has(member.memberId)) return
     let created: AgentHandle | undefined
@@ -3622,6 +3713,7 @@ export default class AgentTeam extends TypertRemoteService {
           throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
         }
         installModelSelection(agentCtx, selected)
+        this.installSeatMemoryLock(agentCtx, agent, memberMemoryDirectoryPath(member))
         // Admission gate for pending context rollovers: once a successful
         // context_rollover result is durable, queued input must not open another
         // old-generation model request. The turn-stop boundary captures the
@@ -4356,6 +4448,12 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     const seatInbox = this.requireLedger().notificationFacts(member.memberId)
+    // Task-16: the seat's own warm Turns are limited (contract §4.2), so a delivery that
+    // would open a second warm Turn inside the window coalesces into the one already owed.
+    // The gate is consulted without recording, and the start is recorded only once the
+    // notice is actually queued below: a wake that failed, or was already carried by a
+    // recovery instruction, started no warm Turn and must not spend the window.
+    const warmLimited = !this.warmStartAllowed(member.memberId, Date.now(), { record: false })
     // Multi-instance seats: Threads routed to an extra slot are delivered there; slot 0 keeps the rest.
     const notifications = this.routeToInstances(member, seatInbox)
     const delegated = notifications.length !== seatInbox.length
@@ -4450,6 +4548,20 @@ export default class AgentTeam extends TypertRemoteService {
     return bySlot.get(0) ?? []
   }
 
+  /**
+   * Whether this seat may start a warm Turn now (contract §4.2). A warm start inside the
+   * window is recorded, and a trigger that arrives while the window is full is coalesced:
+   * the caller delivers its facts with the start the seat already owes instead of opening a
+   * second warm Turn. Pure policy in `warmDecision`; this only keeps the seat's window state.
+   */
+  private warmStartAllowed(memberId: AgentTeamMemberId, nowMs: number, options: { readonly record?: boolean } = {}): boolean {
+    const recent = (this.warmStartsByMember.get(memberId) ?? []).filter(at => at > nowMs - this.warmLimit.windowMs)
+    const decision = warmDecision({ limit: this.warmLimit, nowMs, recentWarmStarts: recent })
+    if (options.record === false) return decision.kind === 'start'
+    this.warmStartsByMember.set(memberId, decision.kind === 'start' ? [...recent, nowMs] : recent)
+    return decision.kind === 'start'
+  }
+
   /** A slot is busy while its turn runs or while it is starting; an absent slot is idle (it spawns on demand). */
   private slotBusy(memberId: AgentTeamMemberId, slot: number): boolean {
     if (slot === 0) {
@@ -4488,7 +4600,7 @@ export default class AgentTeam extends TypertRemoteService {
     const threadRef = notifications[0]?.item.thread.threadRef
     if (threadRef === undefined) this.slotActivityThreads.delete(key)
     else this.slotActivityThreads.set(key, threadRef)
-    const notice = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
+    const notice = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. You may write this seat's memory.md yourself; when a write is refused as stale-memory, re-read the current memory.md it returns and re-apply your edit before retrying.`
     const facts = this.notificationIdentity(notifications)
     void this.ensureSlot(member, slot).then(handle => {
       if (handle === undefined) throw new Error('the slot did not start')
@@ -4585,9 +4697,9 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Create one extra-slot Agent with a fresh Session: the seat's preset, tool policy and model,
-   * and a host-side refusal of every non-read-only tool call naming the seat-memory directory
-   * (contract v2 §2b). Extra slots carry no context rollover or pressure management: they are
-   * short Thread sessions, and slot 0 keeps the seat's full lifecycle.
+   * and the shared seat-memory revision lock every slot writes under (task-16). Extra slots carry
+   * no context rollover or pressure management: they are short Thread sessions, and slot 0 keeps
+   * the seat's full lifecycle.
    */
   private async spawnSlotAgent(member: AgentTeamAgentMember, slot: number): Promise<{ readonly handle: AgentHandle; readonly selection: ModelSelectionRef }> {
     const workspace = this.requireWorkspace(member.workspaceId)
@@ -4604,10 +4716,9 @@ export default class AgentTeam extends TypertRemoteService {
         throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
       }
       installModelSelection(agentCtx, selection)
-      agentCtx.on('tools/pre-execute', async (exec, next) => {
-        const reason = memoryWriteRefusal(exec.name, exec.arguments, memoryDirectory)
-        return reason === undefined ? next() : { kind: 'deny' as const, reason }
-      })
+      // Task-16 memory rule: every slot, including slot 0, writes seat memory under the
+      // per-seat revision lock; the host no longer refuses a slot for being not slot 0.
+      this.installSeatMemoryLock(agentCtx, agent, memoryDirectory)
       return { commit: () => { setSandboxMode(agent.session, 'danger-full-access') } }
     }
     const handle = await this.ctx.agents.create({
