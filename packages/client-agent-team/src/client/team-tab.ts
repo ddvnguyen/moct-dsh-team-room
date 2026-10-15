@@ -231,6 +231,13 @@ export interface TeamTabOptions {
   readonly order?: number
   /** Renders the tab body from the host's render props. */
   readonly render: (props: never) => unknown
+  /**
+   * Whether the tab owns the main session. The strip re-selects a tab whenever
+   * the main session changes: a session no tab claims snaps it to Tasks, so a tab
+   * that is meant to stay selected over a session (the Agents tab over a Member
+   * Session) must claim it here. Defaults to never.
+   */
+  readonly matchSession?: (sessionId: string) => boolean
   /** Test seam: replaces `setInterval`, so the retry budget is deterministic. */
   readonly schedule?: (fn: () => void, ms: number) => () => void
   /** Observes that an insert actually happened, and on which registry: the client drops its fallback Team rail row here. */
@@ -281,7 +288,7 @@ export function insertTeamTab(ctx: ClientContext, options: TeamTabOptions): () =
       id: options.id ?? TAB_ID,
       label: currentLabel,
       order: options.order ?? TAB_ORDER,
-      matchSession: () => false,
+      matchSession: options.matchSession ?? (() => false),
       render: options.render,
     })
   }

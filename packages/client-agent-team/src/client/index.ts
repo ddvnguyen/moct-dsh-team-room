@@ -742,6 +742,9 @@ function applyUi(ctx: ClientContext): void {
       order: AGENTS_TAB_ORDER,
       label: () => ctx.locale.bind(NS)('agents'),
       render: agentsTabRender,
+      // The strip snaps to Tasks on any main session no tab claims, so a Member
+      // Session must be claimed or every Agent press leaves the Agents tab.
+      matchSession: sessionId => navigation.getSnapshot().memberSessionId === sessionId,
       onInserted: () => { agentsTab.set(true) },
     })
     return () => { dispose(); agentsTab.set(false) }
