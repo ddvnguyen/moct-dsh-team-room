@@ -31,6 +31,7 @@ import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { TeamActivityLine } from './TeamActivityLine.tsx'
+import { TeamThreadDocs } from './TeamThreadDocs.tsx'
 import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
@@ -72,6 +73,8 @@ interface TeamThreadPageProps {
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
+  readonly loadDocs: TeamConversationProps['loadDocs']
+  readonly selectDoc: TeamConversationProps['selectDoc']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   /** Whether the shell's left column is closed; the header offers the open control while it is. */
   readonly sidebarCollapsed: boolean
@@ -129,11 +132,12 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
-    changeAttention,
+    changeAttention, loadDocs, selectDoc,
     subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
+  const [docsVersion, setDocsVersion] = useState(0)
   const [channelView, setChannelView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   // Current Thread followers; the composer ranks them first because a mention
@@ -462,6 +466,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setError(update.message); return }
         void refreshPassiveFacts()
+        // Every Team Document write wakes its Thread's scope; the Doc cards re-read on it.
+        setDocsVersion(version => version + 1)
         // Attention changes wake this scope too; keep the mention ranking current.
         void refreshFollowers()
         // A new reply or a finished Turn changes the usage lines.
@@ -1049,6 +1055,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             })()}
         </span>}
       </header>
+      <TeamThreadDocs workspaceId={workspaceId} threadRef={threadRef} loadDocs={loadDocs} changeVersion={docsVersion} t={t}
+        openDoc={summary => { selectDoc(summary.docRef, threadRef, summary.channelRef) }} />
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>
         {risks.map(({ claim, status, label, sentenceKey, reason, full }) => <p className={threadCss.riskRow} key={claim.claimRef}>

@@ -40,6 +40,14 @@ import type {
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveMessageRefsRequest,
   AgentTeamResolveMessageRefsResult,
+  AgentTeamCommentDocRequest,
+  AgentTeamDocCommentResult,
+  AgentTeamDocNoticeResult,
+  AgentTeamDocRequest,
+  AgentTeamDocsRequest,
+  AgentTeamDocsResult,
+  AgentTeamDocView,
+  AgentTeamReviewDocRequest,
   AgentTeamResolveThreadRefsResult,
   AgentTeamReplyResult,
   AgentTeamConfirmationRequired,
@@ -186,6 +194,14 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
   /** Quote context (author + excerpt) for the Messages replies cite; unknown refs are omitted. */
   resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => Promise<RemoteResult<AgentTeamResolveMessageRefsResult>>
+  /** Team Document rows of one Thread; the Thread page shows them as cards. */
+  loadDocs: (request: AgentTeamDocsRequest) => Promise<RemoteResult<AgentTeamDocsResult>>
+  /** One whole Team Document for its page. */
+  loadDoc: (request: AgentTeamDocRequest) => Promise<RemoteResult<AgentTeamDocView>>
+  /** The Human's comment on a selected passage; it stays pending until a verdict. */
+  commentDoc: (request: AgentTeamCommentDocRequest) => Promise<RemoteResult<AgentTeamDocCommentResult>>
+  /** The Human's Approve, Review or Cancel verdict, fenced by the Doc revision on screen. */
+  reviewDoc: (request: AgentTeamReviewDocRequest) => Promise<RemoteResult<AgentTeamDocNoticeResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
   loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>

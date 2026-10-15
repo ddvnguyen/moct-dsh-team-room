@@ -1312,6 +1312,8 @@ export interface AgentTeamDocReview {
 /** The whole current Doc. */
 export interface AgentTeamDocView {
   readonly doc: AgentTeamDoc
+  /** The ledger's Human Member id, so a reader tells the Human's comments from an Agent's. */
+  readonly humanMemberId: AgentTeamMemberId
   readonly status: AgentTeamDocStatus
   /** Sequence of the latest creation or section write; the fence for the next write and for a submit or review. */
   readonly revision: number

@@ -35,6 +35,22 @@ describe('TeamNavigation', () => {
     off()
   })
 
+  it('opens a Doc over its Thread, keeps the Thread\'s Task identity, and restores it after a reload', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    actions.selectWorkspace('workspace:one' as never)
+    actions.selectThread('thread:1' as never, 'channel:1' as never, 'task:1' as never, 3)
+    actions.selectDoc('doc:1' as never, 'thread:1' as never)
+    expect(navigation.getSnapshot()).toMatchObject({ threadRef: 'thread:1', channelRef: 'channel:1', taskRef: 'task:1', taskNumber: 3, docRef: 'doc:1' })
+    expect(new TeamNavigation().getSnapshot().docRef).toBe('doc:1')
+    // Going back to the Thread, or anywhere else, closes the Doc.
+    actions.selectThread('thread:1' as never, 'channel:1' as never, 'task:1' as never, 3)
+    expect(navigation.getSnapshot().docRef).toBeUndefined()
+    actions.selectDoc('doc:1' as never, 'thread:1' as never)
+    actions.selectInbox()
+    expect(navigation.getSnapshot().docRef).toBeUndefined()
+  })
+
   it('keeps the picked Channel when the first Workspace is adopted after the pick', () => {
     // A pick from a plain conversation lands before any Workspace is selected;
     // the browser then adopts the default Workspace it is already showing.

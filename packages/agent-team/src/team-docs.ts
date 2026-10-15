@@ -84,7 +84,7 @@ export function pendingDocCommentRefs(state: AgentTeamDocState, humanMemberId: A
 export function docView(state: AgentTeamDocState, humanMemberId: AgentTeamMemberId): AgentTeamDocView {
   const comments: AgentTeamDocCommentView[] = state.comments.map(({ comment, occurredAt }) => Object.freeze({ ...comment, occurredAt,
     pending: comment.author === humanMemberId && !state.delivered.has(comment.commentRef) }))
-  return Object.freeze({ doc: state.doc, status: state.status, revision: state.revision, sections: state.sections,
+  return Object.freeze({ doc: state.doc, humanMemberId, status: state.status, revision: state.revision, sections: state.sections,
     comments: Object.freeze(comments), reviews: state.reviews,
     ...(state.submittedRevision === undefined ? {} : { submittedRevision: state.submittedRevision }), updatedAt: state.updatedAt })
 }
