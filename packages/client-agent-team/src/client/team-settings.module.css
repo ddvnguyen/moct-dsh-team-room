@@ -48,22 +48,24 @@
 }
 
 .rows {
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--dsw-radius-md);
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .row {
   align-items: center;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
   display: flex;
   gap: 12px;
-  padding: 16px 0;
+  padding: 14px 16px;
 }
 
 /* The last identity row is followed by the judge group, whose own top rule is
  * the separator; a trailing rule here would draw a second line beside it. */
 .row:last-child {
-  border-bottom: none;
+  padding-bottom: 14px;
 }
 
 .rowText {
@@ -133,7 +135,8 @@
  * state of jev stands there, and the controls that decide it wait behind the
  * disclosure, because the endpoint is set once and then left alone. */
 .group {
-  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--dsw-radius-md);
   display: flex;
   flex-direction: column;
 }
@@ -242,8 +245,9 @@
  * about the endpoint above it, so it opens on the same rule that separates the
  * page's other rows: without it the verdict reads as the jev row's own. */
 .environment {
-  border-top: 1px solid var(--dsw-alias-border-l2);
-  padding-top: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--dsw-radius-md);
+  padding: 16px;
 }
 
 .footnote {

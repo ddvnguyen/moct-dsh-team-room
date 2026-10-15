@@ -8,6 +8,7 @@ import { formatTokens, UNKNOWN } from './reply-stats.ts'
 import { formatAbsoluteTime } from './team-formatters.ts'
 import { loadAgentMemory, type AgentMemoryLoad } from './agent-memory.ts'
 import { cachedResolvedThreadRef, hostThreadRefLookup, useResolvedThreadRefVersion } from './refs.ts'
+import { SessionStateIcon, sessionState } from './session-state.tsx'
 import createCss from './create.module.css'
 import css from './agent-detail.module.css'
 
@@ -21,6 +22,13 @@ export function formatRunTime(runMs: number): string {
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+/** Cache hit share of the input side: cache read / (uncached input + cache read). Unknown input or an empty denominator is an em dash. */
+export function cacheHitLabel(run: Pick<AgentTeamSessionRun, 'tokensIn' | 'cacheReadTokens'>): string {
+  if (run.cacheReadTokens === null) return UNKNOWN
+  const total = run.tokensIn + run.cacheReadTokens
+  return total === 0 ? UNKNOWN : `${String(Math.round((run.cacheReadTokens / total) * 100))}%`
 }
 
 /** A null bucket is unknown, never 0. */
@@ -69,7 +77,7 @@ type Loaded =
  * through the same path as the row click; an id the Client cannot open is
  * reported in the dialog, not swallowed.
  */
-export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onClose, only, t }: {
+export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, currentSessionId, openView, onClose, only, t }: {
   readonly workspaceId: WorkspaceId
   readonly status: AgentTeamClientMemberStatus
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
@@ -77,6 +85,12 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly loadMemory: TeamSidebarProps['loadMemory']
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  /** Opens a Thread in the Team conversation (the row's Thread link). */
+  readonly openThread?: (threadRef: AgentTeamSessionRun['threadRefs'][number]) => void
+  /** The Member Session now open in the main view: pressing its own row cannot remount, so it selects Chat directly. */
+  readonly currentSessionId?: string
+  /** The host's own view selector on the open session's conversation. */
+  readonly openView?: (view: string, focus: string) => void
   /** Called after a Session opened natively; the detail's tabs live in the open conversation, so nothing closes. */
   readonly onClose?: () => void
   /** Render one tab's body only (the host's conversation tab strip owns the tabs). */
@@ -152,6 +166,12 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   }
 
   const open = (run: AgentTeamSessionRun): void => {
+    // The already-open session never remounts, so no tab-mount marker fires: select its Chat here.
+    if (run.sessionId === currentSessionId && openView !== undefined) {
+      openView('chat', '')
+      onClose?.()
+      return
+    }
     let failed = false
     openMemberSession(run.sessionId, message => {
       failed = true
@@ -246,36 +266,47 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
       {loaded.state === 'ready' && loaded.runs.length > 0 && (
         <ul className={css.list}>
           {loaded.runs.map(run => {
-            const active = run.sessionId === loaded.current
             const partial = run.unknownInputTurns > 0
+            const state = sessionState(run, status, loaded.current)
+            const place = placeOf(run)
+            const [firstThread, ...otherThreads] = run.threadRefs
             return (
-              <li key={run.sessionId} className={css.run} data-session-id={run.sessionId} data-active={active || undefined}>
+              <li key={run.sessionId} className={css.run} data-session-id={run.sessionId} data-active={state !== 'inactive' || undefined}>
                 <div className={css.runHead}>
+                  <SessionStateIcon state={state} t={t} />
                   <button type="button" className={css.open} aria-label={t('agentDetailsOpen', { id: run.sessionId })} onClick={() => { open(run) }}>
                     <code>{shortSessionId(run.sessionId)}</code>
                   </button>
                   <Tooltip label={t('copySessionId')}>
                     <button type="button" className={css.copy} aria-label={t('copySessionId')} onClick={() => { void copy(run.sessionId) }}><IconCopyOutlineRegular size={14} /></button>
                   </Tooltip>
-                  {active && <span className={css.active}>{t('agentDetailsActive')}</span>}
                   {partial && <span className={css.partial} title={t('agentDetailsPartialTitle', { count: String(run.unknownInputTurns) })}>{t('agentDetailsPartial')}</span>}
                   <span className={css.muted}>{run.model === null ? UNKNOWN : run.model.model}</span>
                 </div>
-                <div className={css.muted} data-run-place>{(() => {
-                  const place = placeOf(run)
-                  const where = place === undefined ? t('agentDetailsThreads', { count: '0' }) : place.text === '' ? t('agentDetailsThreads', { count: String(place.more) }) : place.more > 0 ? `${place.text} +${String(place.more)}` : place.text
-                  return `${formatAbsoluteTime(run.startedAt)} → ${formatAbsoluteTime(run.endedAt)} · ${where}`
-                })()}</div>
+                <div className={css.muted} data-run-place>
+                  {formatAbsoluteTime(run.startedAt)} → {formatAbsoluteTime(run.endedAt)}
+                  {' · '}
+                  {firstThread === undefined
+                    ? <span data-run-no-thread>{t('agentDetailsNoThread')}</span>
+                    : <ThreadLink threadRef={firstThread} text={place === undefined || place.text === '' ? t('agentDetailsThreads', { count: String(run.threadRefs.length) }) : place.text} openThread={openThread} />}
+                  {otherThreads.length > 0 && (
+                    <details className={css.more} data-run-more-threads>
+                      <summary aria-label={t('agentDetailsMoreThreads', { count: String(otherThreads.length) })}>+{otherThreads.length}</summary>
+                      <ul className={css.moreList}>
+                        {otherThreads.map(ref => <li key={ref}><ThreadLink threadRef={ref} text={cachedResolvedThreadRef(ref)?.title || ref.slice(0, 15)} openThread={openThread} /></li>)}
+                      </ul>
+                    </details>
+                  )}
+                </div>
                 {unavailable.has(run.sessionId) && <div className={css.partial} data-run-unavailable>{t('agentDetailsNotAvailable')}</div>}
-                <div className={css.stats}>{t('agentDetailsStats', {
-                  turns: String(run.turns),
-                  input: partial ? `${formatTokens(run.tokensIn)}+` : formatTokens(run.tokensIn),
-                  output: formatTokens(run.tokensOut),
-                  cacheRead: tokensOrUnknown(run.cacheReadTokens),
-                  cacheWrite: tokensOrUnknown(run.cacheWriteTokens),
-                  tools: String(run.toolCalls),
-                  runtime: formatRunTime(run.runMs),
-                })}</div>
+                <dl className={css.stats} data-run-stats>
+                  <div><dt>{t('agentDetailsStatIn')}</dt><dd>{partial ? `${formatTokens(run.tokensIn)}+` : formatTokens(run.tokensIn)}</dd></div>
+                  <div><dt>{t('agentDetailsStatOut')}</dt><dd>{formatTokens(run.tokensOut)}</dd></div>
+                  <div><dt>{t('agentDetailsStatCache')}</dt><dd>{cacheHitLabel(run)}</dd></div>
+                  <div><dt>{t('agentDetailsStatTime')}</dt><dd>{formatRunTime(run.runMs)}</dd></div>
+                  <div><dt>{t('agentDetailsStatTools')}</dt><dd>{String(run.toolCalls)}</dd></div>
+                  <div><dt>{t('agentDetailsStatTurns')}</dt><dd>{String(run.turns)}</dd></div>
+                </dl>
               </li>
             )
           })}
@@ -285,6 +316,12 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
       )}
     </div>
   )
+}
+
+/** One Thread of a run as a link that opens it; without a way to open it, plain text. */
+function ThreadLink({ threadRef, text, openThread }: { readonly threadRef: AgentTeamSessionRun['threadRefs'][number]; readonly text: string; readonly openThread: ((threadRef: AgentTeamSessionRun['threadRefs'][number]) => void) | undefined }) {
+  if (openThread === undefined) return <span>{text}</span>
+  return <button type="button" className={css.threadLink} data-run-thread={threadRef} onClick={() => { openThread(threadRef) }}>{text}</button>
 }
 
 function MemoryList({ records }: { readonly records: readonly TeamMemoryRecord[] }) {
