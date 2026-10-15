@@ -1578,24 +1578,43 @@ export default class AgentTeam extends TypertRemoteService {
     const run = ledger.sessionRun(member.sessionId)
     const resumable = (await this.persistedSessionHeaders()).some(snapshot => snapshot.header.id === member.sessionId)
     const verdict = cacheVerdict({ lastAssistantAt: run?.lastAssistantAt, provider: run?.model?.provider, nowMs: Date.now(), resumable })
+    let fallback: AgentTeamColdFallback | undefined
     if (verdict.cache === 'warm') {
-      await this.enqueueLifecycle(member.memberId, async () => {
-        if (this.handles.get(member.memberId)?.agent.session.id !== member.sessionId) await this.activateMember(member, undefined, new Set([member.sessionId]))
-      })
-      return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
+      try {
+        await this.enqueueLifecycle(member.memberId, async () => {
+          if (this.handles.get(member.memberId)?.agent.session.id !== member.sessionId) await this.activateMember(member, undefined, new Set([member.sessionId]))
+        })
+        return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
+      } catch (error) {
+        // One warm try per Turn: a resume that throws falls back to the single cold start below.
+        fallback = { cause: 'resume-failed', triedWarm: true }
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} warm resume for Thread '${request.threadRef ?? 'none'}' failed: ${failureDetail(error)}; taking the cold start`)
+      }
     }
     if (!this.handles.has(member.memberId)) {
       // No live Session to start a fresh context from: resume the Member first, then
       // this Thread resumes warm or falls back to cold on its next delivery (one try).
       // Nothing was resumed and nothing was seeded: the result says so (`not-resumed`, no warm try)
       // and still names the Session the Member's ledger row holds, so no caller reads it as a seed.
-      const fallback = { cause: 'no-handle' as const, triedWarm: false }
-      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold fallback for Thread '${request.threadRef ?? 'none'}' cause ${fallback.cause}: the Member has no live Session; resume it before continuing`)
-      return { sessionId: member.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: fallback }
+      const noHandle = { cause: 'no-handle' as const, triedWarm: fallback !== undefined }
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold fallback for Thread '${request.threadRef ?? 'none'}' cause ${noHandle.cause}: the Member has no live Session; resume it before continuing`)
+      return { sessionId: member.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: noHandle }
     }
+    fallback ??= { cause: 'cache-cold', triedWarm: false }
+    this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId)} cold start for Thread '${request.threadRef ?? 'none'}' cause ${fallback.cause}${verdict.cache === 'cold' ? ` (${verdict.reason})` : ''}`)
     // The renewal takes the Member's lifecycle lock itself, so it runs outside any lock held here.
-    const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
-    const sessionId = cleared.status.member.sessionId
+    let sessionId: SessionId
+    try {
+      const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
+      sessionId = cleared.status.member.sessionId
+    } catch (error) {
+      // The one cold start failed too: that is the Turn's failure. No second retry, no loop; the room hears of it once.
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold start failed after ${fallback.cause}: ${failureDetail(error)}`)
+      await this.sendColdStartFailedNotice(member.memberId, member.sessionId, request.requestId, fallback, error).catch(noticeError => {
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold-start-failed notice could not be posted: ${failureDetail(noticeError)}`)
+      })
+      throw error
+    }
     if (request.threadRef !== undefined) {
       const latest = ledger.latestThreadSummary(request.threadRef)
       await ledger.bindThreadSession({
@@ -1606,7 +1625,28 @@ export default class AgentTeam extends TypertRemoteService {
       // A7b: seed the next prompt with the latest summary and the tail-10 messages.
       await this.steerAgentFromThread(member.memberId, request.threadRef)
     }
-    return { sessionId, cache: 'cold', action: 'seeded-new' }
+    return { sessionId, cache: 'cold', action: 'seeded-new', coldFallback: fallback }
+  }
+
+  /**
+   * The Team-room card for a Turn whose single cold fallback also failed: one durable message on the
+   * workspace's first live Channel naming the seat and both causes. The requestId derives from the
+   * failed resume request, so a repeat resolves to the card already posted. Same host-authored
+   * provenance prefix as the poisoned-seat card.
+   */
+  private async sendColdStartFailedNotice(memberId: AgentTeamMemberId, sessionId: SessionId, resumeRequestId: AgentTeamRequestId, fallback: AgentTeamColdFallback, error: unknown): Promise<void> {
+    const ledger = this.ledger
+    const member = ledger?.getMember(memberId)
+    const workspaceId = ledger?.workspacesOf(memberId)[0]
+    if (ledger === undefined || member === undefined || workspaceId === undefined) return
+    const channelRef = ledger.view({ workspaceId }).channels[0]?.channelRef
+    if (channelRef === undefined) return
+    await this.sendMessageAs(agentTeamHumanActor(), {
+      requestId: `cold-start-failed:${sessionId}:${resumeRequestId}` as AgentTeamRequestId,
+      workspaceId,
+      channelRef,
+      body: `[agent-team host] Seat could not be started: @${member.handle} fell back to a cold start (${fallback.cause}${fallback.triedWarm ? ', warm resume tried first' : ''}) and that failed too (${failureDetail(error)}) — the Turn is not retried; recover the seat or start it from a new context. @Lead @Architect`,
+    })
   }
 
   /** Deferred past TEST (contract §4): a Session for one Thread needs a per-Session live handle, which is not built yet. */
