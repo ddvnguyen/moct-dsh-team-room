@@ -1198,7 +1198,7 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('shows the composer agent selector and the indicator for the picked Channel', async () => {
+  it('shows the composer agent selector with the picked Channel\'s first agent', async () => {
     // The Channel is reached through the Team tab of the shell's strip: the
     // rail Team row is gone once the tab is inserted.
     const b = await runtimeWithTeam({ remainingUnreadCounts: [1] })
@@ -1215,10 +1215,12 @@ describe('Team conversation surfaces', () => {
     expect(composer).toBeTruthy()
 
     // The selected agent is visible before anything is opened, and it is the
-    // Channel's first agent by default (not persisted across reloads).
-    const indicator = b.view.container.querySelector('[data-team-agent-indicator]')
-    expect(indicator).not.toBeNull()
-    expect(indicator?.textContent).toContain('@')
+    // Channel's first agent by default (not persisted across reloads). With the
+    // active-agent chip removed (Human directive, thread:063981a9 fact 3996) the
+    // selector's own current-handle readout carries that answer.
+    const current = b.view.container.querySelector('[data-team-agent-picker-current]')
+    expect(current).not.toBeNull()
+    expect(current?.textContent).toContain('@')
     // The picker lists this Channel's members and can change the selection.
     fireEvent.click(b.view.getByRole('button', { name: '选择 Agent' }))
     const options = await b.view.findAllByRole('option')
@@ -1228,7 +1230,7 @@ describe('Team conversation surfaces', () => {
     expect(first?.getAttribute('aria-selected')).toBe('true')
     expect(second?.getAttribute('aria-selected')).toBe('false')
     fireEvent.click(second!)
-    await waitFor(() => expect(b.view.container.querySelector('[data-team-agent-indicator]')?.textContent)
+    await waitFor(() => expect(b.view.container.querySelector('[data-team-agent-picker-current]')?.textContent)
       .toContain('@worker'))
   })
 
