@@ -41,7 +41,7 @@ export function markChatLanding(sessionId: string, now: number = Date.now()): vo
 export function dropChatLanding(sessionId: string): void { chatLanding.delete(sessionId) }
 export function resetAgentSessions(): void { agentOfSession.clear(); chatLanding.clear() }
 
-type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession'>
+type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 'updateMember' | 'loadModels'>
 
 type Loaded =
   | { readonly state: 'loading' }
@@ -78,6 +78,8 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
   useEffect(() => {
     if (takeChatLanding(sessionId)) openView?.('chat', '')
   }, [sessionId])
+  // A committed Config edit re-reads the roster so the tab shows the stored values.
+  const reload = async (): Promise<void> => { setLoaded(await resolveAgent(remotes, navigation, sessionId)) }
   useEffect(() => {
     let live = true
     void (async () => {
@@ -102,7 +104,7 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
       const hit = cachedResolvedThreadRef(threadRef as never)
       if (hit !== undefined) navigation.actions().selectThread(hit.threadRef, hit.channelRef, hit.taskRef, hit.taskNumber)
     }
-    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} currentSessionId={sessionId} {...(openView === undefined ? {} : { openView })} t={t} />
+    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} currentSessionId={sessionId} updateMember={remotes.updateMember} loadModels={remotes.loadModels} onCommitted={reload} {...(openView === undefined ? {} : { openView })} t={t} />
   }
   return <div className={css.viewBody} data-team-agent-detail-body={tab}>
     {loaded.state === 'loading' && <p className={css.muted}>{t('agentDetailsLoading')}</p>}

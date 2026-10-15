@@ -182,9 +182,9 @@ describe('Team mode and the shell main panel', () => {
       return found as HTMLElement
     })
     expect(page.querySelector('h2')?.textContent).toBe('团队设置')
-    // The Agents list moved to its tab, so the page says so instead of listing
-    // it; the Team mode it was opened from stays.
-    expect(page.querySelector('[data-team-agents-moved]')).not.toBeNull()
+    // The Agents list moved to its tab, so the page no longer lists it (and
+    // carries no notice about it); the Team mode it was opened from stays.
+    expect(page.querySelector('[data-team-agents-moved]')).toBeNull()
     expect(within(page).queryByRole('button', { name: '添加 Agent' })).toBeNull()
     expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
 
