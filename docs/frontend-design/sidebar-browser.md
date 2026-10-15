@@ -57,7 +57,7 @@ The number lives in the control's accessible name on both rails (`收件箱，6 
 
 While the Inbox page stands, the card/icon carries `aria-current="page"` — and the rail icon wears the card's own current-page fill, because the icon-only rail has no label and the fill is the only thing that can say where the reader is.
 
-`TeamConversation` renders a fourth face: Thread | Channel | Inbox | welcome. Selecting Inbox clears the Channel/Thread faces; selecting a Workspace, Channel, or Thread clears the Inbox. From an Inbox row, Back lands on that row's Channel — the Inbox is never pushed onto the back path; re-enter it through the card or the rail icon.
+`TeamConversation` renders a fourth face: Thread | Channel | Inbox | welcome. Selecting Inbox clears the Channel/Thread faces; selecting a Workspace, Channel, or Thread clears the Inbox. From an Inbox row, the Thread opens beside its Channel on a wide seat (see [Two lanes](layout-and-typography.md#two-lanes)), and Back or Close lands on that Channel — the Inbox is never pushed onto the back path; re-enter it through the card or the rail icon.
 
 ### Page frame and header
 

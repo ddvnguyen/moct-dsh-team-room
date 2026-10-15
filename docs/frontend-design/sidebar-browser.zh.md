@@ -66,7 +66,7 @@ mode 的 foot 占用 settings 座位（`sidebar.settings`，单座，priority -1
 
 Inbox 页作为屏上面孔时卡片/图标携带 `aria-current='page'`。窄轨那枚图标还带上卡片同款当前页底色。rail 没有文字，底色是 rail 唯一能说「你在这」的东西。被嵌入的 Member Session 覆盖期间，入口只是被记住的位置，不携带高亮。
 
-`TeamConversation` 第四个面：Thread | Channel | Inbox | welcome。选 Inbox 清掉 Channel/Thread 面。选 Workspace、Channel 或 Thread 清掉 Inbox。从 Inbox 行进入 Thread 后，Back 落在该行 Thread 的 Channel。Inbox 不进返回栈。再进 Inbox 走左侧卡片或窄轨图标。
+`TeamConversation` 第四个面：Thread | Channel | Inbox | welcome。选 Inbox 清掉 Channel/Thread 面。选 Workspace、Channel 或 Thread 清掉 Inbox。从 Inbox 行进入 Thread 后，宽座位上 Thread 在其 Channel 旁打开（见[双栏](layout-and-typography.zh.md#双栏)），Back 或关闭都落在该 Channel。Inbox 不进返回栈。再进 Inbox 走左侧卡片或窄轨图标。
 
 ### 页面框架与页头
 

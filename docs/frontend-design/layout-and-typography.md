@@ -11,6 +11,15 @@ Channel and Thread pages are symmetric. Both subscribe to workspace changes thro
 
 It sits beside the attach control as the labeled mode chip of the language table above, keeping its word at every width — the composer narrows its control gaps below 560px instead of dropping the label.
 
+## Two lanes
+When a Channel has an open Thread and the Team seat is at least 900px wide, `TeamLanes` shows the Channel in the main lane and the Thread in a side lane beside it. A narrower seat shows the Thread alone, with its back crumb, as before. The navigation snapshot already keeps the Channel with its Thread, so a reload restores both lanes.
+
+The Team owns this split inside its own seat. The Harness right Sidebar (`rightbar`, `rightbar.session`) is bound to the current Harness Session, and Team mode is not a Session, so the lane cannot mount there.
+
+The split is a vertical separator: drag it, or focus it and use the left and right arrows. The lane keeps at least 360px and leaves the Channel at least 400px; the width is a per-browser preference, never a Team fact. In the lane the crumb becomes Close, and Escape outside a field closes the lane too.
+
+Opening a Thread beside its Channel moves focus into the lane and marks its entry row with `aria-current`; closing the lane returns focus to that row. An embedded Member Session still replaces the whole seat; closing it returns to both lanes.
+
 ## Typography and identity
 | Element | Specification |
 | --- | --- |
