@@ -13,7 +13,13 @@ import createCss from './create.module.css'
 import css from './agent-detail.module.css'
 
 /** Session ids are long; the list shows the head and copies the whole id. */
-export const shortSessionId = (sessionId: string): string => sessionId.slice(0, 8)
+const ID_TAIL = 8
+
+/** The full Session id, monospace; when the row is too narrow the head gives way (middle ellipsis) and the full id is the tooltip. */
+function SessionIdLabel({ sessionId }: { readonly sessionId: string }) {
+  const split = Math.max(0, sessionId.length - ID_TAIL)
+  return <code title={sessionId} data-session-id-label><span className={css.idHead}>{sessionId.slice(0, split)}</span><span className={css.idTail}>{sessionId.slice(split)}</span></code>
+}
 
 /** Run wall time: `42s`, `3m 5s`, `2h 14m`. */
 export function formatRunTime(runMs: number): string {
@@ -252,7 +258,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
                 {!idleSlot(instance) && <span>{presenceLabel(slotPresence(status, instance.slot, instance.presence), t)}</span>}
                 {instance.sessionId === undefined
                   ? <span className={css.muted}>{t('agentDetailsSlotIdle')}</span>
-                  : <button type="button" className={css.open} aria-label={t('agentDetailsOpen', { id: instance.sessionId })} onClick={() => { openSlot(instance.sessionId!) }}><code>{shortSessionId(instance.sessionId)}</code></button>}
+                  : <button type="button" className={css.open} aria-label={t('agentDetailsOpen', { id: instance.sessionId })} onClick={() => { openSlot(instance.sessionId!) }}><SessionIdLabel sessionId={instance.sessionId} /></button>}
                 <span className={css.muted}>{t('agentDetailsThreads', { count: String(instance.threadRefs.length) })}</span>
               </li>
             ))}
@@ -270,33 +276,28 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             const state = sessionState(run, status, loaded.current)
             const place = placeOf(run)
             const [firstThread, ...otherThreads] = run.threadRefs
+            const otherTitles = otherThreads.map(ref => cachedResolvedThreadRef(ref)?.title || ref.slice(0, 15)).join('\n')
             return (
               <li key={run.sessionId} className={css.run} data-session-id={run.sessionId} data-active={state !== 'inactive' || undefined}>
                 <div className={css.runHead}>
                   <SessionStateIcon state={state} t={t} />
                   <button type="button" className={css.open} aria-label={t('agentDetailsOpen', { id: run.sessionId })} onClick={() => { open(run) }}>
-                    <code>{shortSessionId(run.sessionId)}</code>
+                    <SessionIdLabel sessionId={run.sessionId} />
                   </button>
                   <Tooltip label={t('copySessionId')}>
                     <button type="button" className={css.copy} aria-label={t('copySessionId')} onClick={() => { void copy(run.sessionId) }}><IconCopyOutlineRegular size={14} /></button>
                   </Tooltip>
-                  {partial && <span className={css.partial} title={t('agentDetailsPartialTitle', { count: String(run.unknownInputTurns) })}>{t('agentDetailsPartial')}</span>}
-                  <span className={css.muted}>{run.model === null ? UNKNOWN : run.model.model}</span>
                 </div>
                 <div className={css.muted} data-run-place>
-                  {formatAbsoluteTime(run.startedAt)} → {formatAbsoluteTime(run.endedAt)}
+                  {partial && <span className={css.partial} title={t('agentDetailsPartialTitle', { count: String(run.unknownInputTurns) })}>{t('agentDetailsPartial')}</span>}
+                  {partial && ' '}
+                  {run.model === null ? UNKNOWN : run.model.model}
+                  {' · '}
+                  {formatAbsoluteTime(run.startedAt)}
                   {' · '}
                   {firstThread === undefined
                     ? <span data-run-no-thread>{t('agentDetailsNoThread')}</span>
-                    : <ThreadLink threadRef={firstThread} text={place === undefined || place.text === '' ? t('agentDetailsThreads', { count: String(run.threadRefs.length) }) : place.text} openThread={openThread} />}
-                  {otherThreads.length > 0 && (
-                    <details className={css.more} data-run-more-threads>
-                      <summary aria-label={t('agentDetailsMoreThreads', { count: String(otherThreads.length) })}>+{otherThreads.length}</summary>
-                      <ul className={css.moreList}>
-                        {otherThreads.map(ref => <li key={ref}><ThreadLink threadRef={ref} text={cachedResolvedThreadRef(ref)?.title || ref.slice(0, 15)} openThread={openThread} /></li>)}
-                      </ul>
-                    </details>
-                  )}
+                    : <ThreadLink threadRef={firstThread} text={place === undefined || place.text === '' ? t('agentDetailsThreads', { count: String(run.threadRefs.length) }) : place.text} title={otherTitles === '' ? undefined : t('agentDetailsOtherThreads', { titles: otherTitles })} openThread={openThread} />}
                 </div>
                 {unavailable.has(run.sessionId) && <div className={css.partial} data-run-unavailable>{t('agentDetailsNotAvailable')}</div>}
                 <dl className={css.stats} data-run-stats>
@@ -319,9 +320,9 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
 }
 
 /** One Thread of a run as a link that opens it; without a way to open it, plain text. */
-function ThreadLink({ threadRef, text, openThread }: { readonly threadRef: AgentTeamSessionRun['threadRefs'][number]; readonly text: string; readonly openThread: ((threadRef: AgentTeamSessionRun['threadRefs'][number]) => void) | undefined }) {
+function ThreadLink({ threadRef, text, title, openThread }: { readonly threadRef: AgentTeamSessionRun['threadRefs'][number]; readonly text: string; readonly title?: string | undefined; readonly openThread: ((threadRef: AgentTeamSessionRun['threadRefs'][number]) => void) | undefined }) {
   if (openThread === undefined) return <span>{text}</span>
-  return <button type="button" className={css.threadLink} data-run-thread={threadRef} onClick={() => { openThread(threadRef) }}>{text}</button>
+  return <button type="button" className={css.threadLink} data-run-thread={threadRef} title={title} onClick={() => { openThread(threadRef) }}>{text}</button>
 }
 
 function MemoryList({ records }: { readonly records: readonly TeamMemoryRecord[] }) {
