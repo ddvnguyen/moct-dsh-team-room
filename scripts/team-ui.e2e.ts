@@ -24,6 +24,7 @@ const UI06_SHOTS = join(BROWSER_ARTIFACTS, 'ui-06')
 const UI07_SHOTS = join(BROWSER_ARTIFACTS, 'ui-07')
 const UI08_SHOTS = join(BROWSER_ARTIFACTS, 'ui-08')
 const UI09_SHOTS = join(BROWSER_ARTIFACTS, 'ui-09')
+const TWO_LANE_SHOTS = join(BROWSER_ARTIFACTS, 'two-lane')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -2865,6 +2866,83 @@ it('configures the jev endpoint from the Team page in real Web', async () => {
   expect(statusBox.x + statusBox.width).toBeLessThanOrEqual(panelBox.x + panelBox.width + 1)
   await page.setViewportSize({ width: 1440, height: 960 })
   await settleLayout(page)
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * Issue 88: the Channel stays in the main lane while its Thread opens beside
+ * it. Seeded through the Host's own ledger, so the journey starts at the lanes
+ * rather than at Channel creation.
+ */
+it('keeps the Channel beside its open Thread in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'two-lane')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Two Lane')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-lane'
+  await ledger.addMember({ requestId: 'lane-member', actor: human, workspaceId: workspace.id, handle: 'lane', description: 'Answers in the lane', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:two-lane', workspaceId: workspace.id, handle: 'lane', description: 'Answers in the lane', presetId: 'team-member', privateMemoryPath: join(HOME, 'lane'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'lane-channel', actor: human, workspaceId: workspace.id, name: 'lanes', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'lane-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: 'LANE-ROOT-MARKER the Channel should stay in view', asTask: false, recipients: [] })).value
+  const threadRef = opened.thread.threadRef as string
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(([workspaceId, channelRef]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, channelRef }))
+  }, [workspace.id, channel.channelRef])
+  await page.reload()
+  const entry = page.locator(`[data-thread-entry-ref="${threadRef}"] > button`)
+  await entry.waitFor({ timeout: 20_000 })
+  await entry.click()
+
+  // Both lanes, focus inside the Thread lane, and the open row marked.
+  await page.locator(`[data-team-lanes="two"] [data-team-thread="${threadRef}"]`).waitFor()
+  await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-team-lane'))).toBe('thread')
+  expect(await entry.getAttribute('aria-current')).toBe('true')
+  await settleLayout(page)
+  await page.screenshot({ path: join(TWO_LANE_SHOTS, 'two-lanes-desktop.png') })
+
+  // A reload keeps the pair.
+  await page.reload()
+  // The shell may restore its own last Session first; entering Team again must
+  // bring back the same Channel and Thread, not the Channel list.
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  await page.locator(`[data-team-lanes="two"] [data-team-thread="${threadRef}"]`).waitFor({ timeout: 20_000 })
+  await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
+
+  // The split resizes from the keyboard.
+  const separator = page.getByRole('separator', { name: '调整 Thread 宽度' })
+  const before = Number(await separator.getAttribute('aria-valuenow'))
+  await separator.focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () => Number(await separator.getAttribute('aria-valuenow'))).toBe(before + 24)
+
+  // Escape from the lane closes it and hands focus back to the Thread's row.
+  await page.locator('[data-team-lane="thread"]').focus()
+  await page.keyboard.press('Escape')
+  await expect.poll(() => page.locator('[data-team-thread]').count()).toBe(0)
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[data-thread-entry-ref]')?.getAttribute('data-thread-entry-ref'))).toBe(threadRef)
+
+  // A narrow seat shows the Thread alone, with nothing wider than the screen.
+  await entry.click()
+  await page.locator('[data-team-lanes="two"]').waitFor()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator(`[data-team-lanes="one"] [data-team-thread="${threadRef}"]`).waitFor()
+  expect(await page.locator('[data-team-channel]').count()).toBe(0)
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(TWO_LANE_SHOTS, 'thread-alone-390.png') })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)
