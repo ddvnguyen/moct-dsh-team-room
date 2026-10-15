@@ -141,6 +141,19 @@ import type {
   AgentTeamRolloverSessionRequest,
   AgentTeamDmRequest,
   AgentTeamDmResult,
+  AgentTeamCommentDocRequest,
+  AgentTeamCreateDocRequest,
+  AgentTeamCreateDocResult,
+  AgentTeamDocCommentResult,
+  AgentTeamDocNoticeResult,
+  AgentTeamDocRequest,
+  AgentTeamDocsRequest,
+  AgentTeamDocsResult,
+  AgentTeamDocView,
+  AgentTeamReviewDocRequest,
+  AgentTeamSubmitDocRequest,
+  AgentTeamWriteDocSectionRequest,
+  AgentTeamWriteDocSectionResult,
   AgentTeamOperationId,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -2543,6 +2556,38 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Return the existing bounded public Workspace discovery projection. */
+  /** Human read of one whole Team Document. */
+  @Remote('doc')
+  doc(request: AgentTeamDocRequest): AgentTeamDocView {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().doc(agentTeamHumanActor(), request)
+  }
+
+  /** Human Doc rows for one Thread, or for Doc refs cited in Message bodies. */
+  @Remote('docs')
+  docs(request: AgentTeamDocsRequest): AgentTeamDocsResult {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().docs(agentTeamHumanActor(), request)
+  }
+
+  /** Human comment on one Doc passage; it stays pending until the Human's next verdict. */
+  @Remote('commentDoc')
+  async commentDoc(request: AgentTeamCommentDocRequest): Promise<AgentTeamDocCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().commentDoc({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Human verdict on one Doc revision; its Thread notice wakes the author. A stale revision is a business outcome. */
+  @Remote('reviewDoc')
+  async reviewDoc(request: AgentTeamReviewDocRequest): Promise<AgentTeamDocNoticeResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().reviewDoc({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
@@ -2557,6 +2602,50 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+  }
+
+  /** Agent-only start of one Team Document in a Thread the Member can work in. */
+  async createDocForAgent(agent: Agent, request: AgentTeamCreateDocRequest): Promise<AgentTeamCreateDocResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().createDoc({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only Doc section write; a stale Doc revision is a business outcome. */
+  async writeDocSectionForAgent(agent: Agent, request: AgentTeamWriteDocSectionRequest): Promise<AgentTeamWriteDocSectionResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().writeDocSection({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Agent-only comment or reply on a Doc passage. */
+  async commentDocForAgent(agent: Agent, request: AgentTeamCommentDocRequest): Promise<AgentTeamDocCommentResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().commentDoc({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only request for the Human's review; its Thread notice puts the Doc in the Human's Inbox. */
+  async submitDocForAgent(agent: Agent, request: AgentTeamSubmitDocRequest): Promise<AgentTeamDocNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().submitDoc({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  docForAgent(agent: Agent, request: AgentTeamDocRequest): AgentTeamDocView {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().doc(actor, request)
+  }
+
+  docsForAgent(agent: Agent, request: AgentTeamDocsRequest): AgentTeamDocsResult {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().docs(actor, request)
   }
 
   /**

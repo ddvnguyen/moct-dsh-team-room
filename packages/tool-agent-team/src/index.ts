@@ -3,6 +3,7 @@ import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@ddvng
 import { formatTeamTimestamp } from '@ddvnguyen/moct-dsh-team-room/time-format'
 import { registerContextTools } from './context-tools.ts'
 import { registerMemoryTools } from './memory-tools.ts'
+import { registerDocTools } from './doc-tools.ts'
 import { service, workspaceOf, workspaceParam } from './host-access.ts'
 import type {
   AgentTeamClaimRef,
@@ -737,4 +738,5 @@ export function apply(ctx: Context): void {
   ctx.tools.register(teamView)
   registerContextTools(ctx)
   registerMemoryTools(ctx)
+  registerDocTools(ctx)
 }
