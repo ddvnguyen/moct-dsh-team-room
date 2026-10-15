@@ -41,7 +41,9 @@ const call = async (method, path, body) => {
 }
 const tally = { created: 0, updated: 0, unchanged: 0 }
 for (const { record } of rows) {
-  const listed = record.type === 'task' ? { results: [] } : await call('GET', `/memory?${new URLSearchParams({ workspaceId: WORKSPACE_ID, expertId: actorId, all: '1', homes: record.home.kind, types: record.type, status: 'active', q: record.title, limit: '20' })}`)
+  // Team rules from a non-human stay `pending` until the Human approves, so a re-run must look there too or it duplicates them.
+  const listed = { results: [] }
+  if (record.type !== 'task') for (const status of ['active', 'pending']) listed.results.push(...(await call('GET', `/memory?${new URLSearchParams({ workspaceId: WORKSPACE_ID, expertId: actorId, all: '1', homes: record.home.kind, types: record.type, status, q: record.title, limit: '20' })}`)).results)
   const existing = listed.results.find(found => found.title === record.title && found.home.kind === record.home.kind && found.home.ref === record.home.ref)
   if (existing !== undefined) {
     if (existing.body === record.body) { tally.unchanged += 1; continue }

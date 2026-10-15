@@ -14,7 +14,7 @@ describe('MOCT Team Room memory migration records', () => {
   })
 
   it('refuses what the backend would: wrong home, long body, missing attrs, a credential', () => {
-    const base = { type: 'rule', home: { kind: 'team', ref: 'eda6b45f-66d5-49da-864b-6079e4b50e9f' }, title: 't', body: 'b', attrs: { level: 'must' }, source: 's' }
+    const base = { type: 'rule', home: { kind: 'team', ref: 'cf4817d4-c9d6-42b0-9a44-271db6d259ca' }, title: 't', body: 'b', attrs: { level: 'must' }, source: 's' }
     expect(problems(base)).toEqual([])
     expect(problems({ ...base, type: 'decision', attrs: {} })).toEqual(expect.arrayContaining(['decision cannot live in a team home']))
     expect(problems({ ...base, body: 'x'.repeat(2001) })[0]).toContain('body over 2000')
@@ -24,7 +24,7 @@ describe('MOCT Team Room memory migration records', () => {
 
   it('carries only the MOCT Team Room Workspace and Channel', () => {
     for (const record of RECORDS as readonly { home: { kind: string; ref: string } }[]) {
-      if (record.home.kind === 'team') expect(record.home.ref).toBe('eda6b45f-66d5-49da-864b-6079e4b50e9f')
+      if (record.home.kind === 'team') expect(record.home.ref).toBe('cf4817d4-c9d6-42b0-9a44-271db6d259ca')
       if (record.home.kind === 'channel') expect(record.home.ref).toBe('channel:7ebe3ec3-32c0-45b4-bed6-86e198e14d93')
     }
   })
