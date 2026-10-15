@@ -132,6 +132,31 @@ describe('Team mode and the shell main panel', () => {
     expect(b.runtime.ctx.teamNavigation.getSnapshot().memberSessionId).toBeUndefined()
   })
 
+  it('A14: pressing an Agent never leaves the Agents tab while the host rebinds the main view', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true, agentsTab: true })
+    const nav = b.runtime.ctx.teamNavigation
+    act(() => { nav.actions().selectWorkspace('w1' as never) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)) })
+    await act(async () => {
+      await b.runtime.sessions.add({ id: 'agent-a', summary: { title: 'A', cwd: '/work/alpha' } })
+      await b.runtime.sessions.add({ id: 'agent-b', summary: { title: 'B', cwd: '/work/alpha' } })
+    })
+    nav.actions().enterTeam()
+    // Open Agent A the way the host does it: the Team navigates first, then the main view follows.
+    act(() => { nav.actions().enterMemberSession('agent-a' as never); b.openSession('agent-a') })
+    await waitFor(() => expect(nav.getSnapshot().memberSessionId).toBe('agent-a'))
+    // Press Agent B: the Team navigates to B first; before the host binds B the main view reports another
+    // session for a beat (a catalog refresh or restore), which is not "another conversation took over".
+    await act(async () => { await b.runtime.sessions.add({ id: 'catalog-refresh', summary: { title: 'R', cwd: '/work/alpha' } }) })
+    act(() => { nav.actions().enterMemberSession('agent-b' as never) })
+    act(() => { b.openSession('catalog-refresh') })
+    act(() => { b.openSession('agent-b') })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)) })
+    const snapshot = nav.getSnapshot()
+    expect(snapshot.memberSessionId).toBe('agent-b')
+    expect(snapshot.mode).toBe('team')
+  })
+
   it('keeps the Agents list on Team Settings while the strip has no Agents tab', async () => {
     const b = await runtimeWithTeam({ nativeTabs: false, mode: 'team', workspaceId: 'w1', initialChannels: true })
     fireEvent.click(await b.view.findByRole('button', { name: '团队设置' }))
