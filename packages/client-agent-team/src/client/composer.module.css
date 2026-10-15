@@ -468,51 +468,10 @@
 .replyBannerCancel:hover { color: var(--dsw-alias-label-primary); }
 
 /* Agent selector (Task 8 slice), seated on the toolbar's bottom line beside the
-   attach and mode controls: the always-visible indicator for the
-   selected agent plus the picker that changes it. The indicator is a chip, not
-   chrome: it answers "whose skills is the slash menu listing" at a glance,
-   including when only one agent exists. It shares the toolbar line instead of
-   adding a second control bar above it. */
-.agentIndicator {
-  align-items: center;
-  min-width: 0;
-  background: var(--dsw-alias-interactive-bg-hover);
-  border-radius: var(--dsw-radius-sm, 8px);
-  color: var(--dsw-alias-label-secondary);
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 12px;
-  gap: 6px;
-  line-height: 18px;
-  max-width: 100%;
-  padding: 2px 8px 2px 4px;
-}
-
-/* A Channel with no agent keeps the slot, muted, so the composer does not read
-   as broken; with a Manage members action it is a button. */
-button.agentIndicator {
-  border: 0;
-  cursor: pointer;
-  font-family: inherit;
-}
-button.agentIndicator:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
-}
-button.agentIndicator:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 1px;
-}
-.agentIndicator[data-team-no-agent] {
-  color: var(--dsw-alias-label-tertiary);
-  padding-left: 8px;
-}
-
-.agentIndicatorName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+   attach and mode controls: one control that both shows the selected agent and
+   opens the picker that changes it. Human directive (thread:063981a9 fact 3996)
+   removed the always-visible indicator chip, so the picker's own current-handle
+   readout is the only place a selected agent is named. */
 .agentPicker {
   position: relative;
   min-width: 0;

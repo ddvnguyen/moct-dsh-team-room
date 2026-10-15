@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
-import { IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
@@ -636,17 +636,8 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
             <span className={css.asTaskLabel}>{t('asTask')}</span>
           </button>
         )}
-        {/* The selected agent is always on screen — with one agent in scope
-            too, so a reader never has to guess whose skills the slash menu
-            lists. The picker behind it lists this Channel/Thread's members. */}
-        {selectedMember === undefined && (onManageMembers === undefined
-          ? <span className={css.agentIndicator} data-team-no-agent>{t('noAgentChip')}</span>
-          : <button type="button" className={css.agentIndicator} data-team-no-agent aria-label={t('noAgentChipAction')} disabled={pending} onClick={onManageMembers}>{t('noAgentChip')}</button>)}
-        {selectedMember !== undefined && <span className={css.agentIndicator} role="status" data-team-agent-indicator={selectedMember.member.memberId} aria-label={t('agentIndicatorLabel', { handle: selectedMember.member.handle.replace(/^@/, '') })}>
-          <TeamPresenceDot status={selectedMember} t={t} />
-          <span className={css.agentIndicatorName}>@{selectedMember.member.handle.replace(/^@/, '')}</span>
-        </span>}
-        {members.length > 0 && <div className={css.agentPicker}>
+
+        {members.length > 0 && <div className={css.agentPicker} data-team-agent-picker="">
           <button
             type="button"
             className={css.agentPickerButton}
@@ -658,7 +649,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
           >
             <IconChecklistOutlineMedium size={14} />
             <span className={css.agentPickerLabel}>{t('selectAgent')}</span>
-            <span className={css.agentPickerCurrent}>{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
+            <span className={css.agentPickerCurrent} data-team-agent-picker-current="">{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
           </button>
           {agentMenuOpen && <div className={css.agentMenu} role="listbox" aria-label={t('selectAgent')} ref={agentMenuRef}>
             {members.map(status => {
@@ -684,6 +675,22 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                 <span className={css.agentOptionDescription}>{status.member.description}</span>
               </button>
             })}
+            {/* Human directive (thread:063981a9 fact 3996): one control only, so
+                the way to Manage members lives inside the picker rather than as
+                a second chip on the toolbar row. It is a popup-internal action,
+                not a pick, so it closes the list and calls back. */}
+            {onManageMembers !== undefined && (
+              <button
+                type="button"
+                className={css.agentOption}
+                data-team-manage-members=""
+                onMouseDown={event => { event.preventDefault() }}
+                onClick={() => { setAgentMenuOpen(false); onManageMembers() }}
+              >
+                <IconUserOutlineRegular size={14} />
+                <span className={css.agentOptionHandle}>{t('manageMembers')}</span>
+              </button>
+            )}
           </div>}
         </div>}
         <button

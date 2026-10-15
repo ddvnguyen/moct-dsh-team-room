@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { en } from '../src/client/locales.ts'
 import { TeamComposer } from '../src/client/TeamComposer.tsx'
 import { TeamDraftStore } from '../src/client/drafts.ts'
@@ -19,7 +19,7 @@ const catalog: readonly TeamTriggerCatalogItem[] = [
 afterEach(() => cleanup())
 beforeEach(() => { localStorage.clear() })
 
-function renderComposer(loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog'], members: readonly AgentTeamClientMemberStatus[] = []) {
+function renderComposer(loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog'], members: readonly AgentTeamClientMemberStatus[] = [], options?: { onManageMembers?: () => void }) {
   const drafts = new TeamDraftStore()
   const onSubmit = vi.fn()
   const view = render(<TeamComposer
@@ -29,6 +29,7 @@ function renderComposer(loadTriggerCatalog: TeamConversationProps['loadTriggerCa
     draftKey={draftKey}
     pending={false}
     onSubmit={onSubmit}
+    {...(options?.onManageMembers === undefined ? {} : { onManageMembers: options.onManageMembers })}
     t={translate}
   />)
   return { ...view, drafts, onSubmit, input: screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement }
@@ -231,13 +232,14 @@ describe('Team composer agent selector', () => {
   const worker = memberStatus('member:worker', 'worker', 'working')
   const roster: readonly AgentTeamClientMemberStatus[] = [builder, worker]
 
-  it('shows the selector control and the always-visible indicator with the first member as default', () => {
+  it('shows the selector control with the first member as the default handle', () => {
     const b = renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
 
-    // The indicator is on screen without opening anything, and names the
-    // default: the first member of this scope's roster.
-    const indicator = document.querySelector('[data-team-agent-indicator]')
-    expect(indicator?.textContent).toContain('@builder')
+    // Human directive (thread:063981a9 fact 3996): no always-visible chip. The
+    // picker's own current-handle readout is on screen without opening
+    // anything, and names the default: the first member of this scope's roster.
+    const current = document.querySelector('[data-team-agent-picker-current]')
+    expect(current?.textContent).toContain('@builder')
     // The picker is a real control listing every member of the scope.
     const picker = screen.getByRole('button', { name: 'Select Agent' })
     expect(picker).toBeTruthy()
@@ -251,29 +253,62 @@ describe('Team composer agent selector', () => {
     void b
   })
 
-  it('seats the indicator and the picker on the toolbar line with the send control', () => {
+  it('seats the picker on the toolbar line with the send control', () => {
     renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
 
-    // Human review 3690: the agent controls live on the bottom line with attach
-    // and send, not on a row of their own above it.
+    // Human review 3690: the agent control lives on the bottom line with attach
+    // and send, not on a row of its own above it. Human directive
+    // (thread:063981a9 fact 3996) removed the companion chip, so this is now the
+    // only agent control on that line.
     const toolbar = screen.getByRole('button', { name: 'Send' }).parentElement as HTMLElement
-    expect(toolbar.querySelector('[data-team-agent-indicator]')).toBeTruthy()
+    expect(toolbar.querySelector('[data-team-agent-picker-current]')).toBeTruthy()
     expect(toolbar.contains(screen.getByRole('button', { name: 'Select Agent' }))).toBe(true)
   })
 
-  it('keeps a muted no-agent chip and a slash notice when the scope has no agent', async () => {
+  it('renders no agent control at all when the scope has no agent and no manage-members action', async () => {
     const loadTriggerCatalog = vi.fn(async () => [{ kind: 'command', name: 'compact', description: 'Compact' }]) as unknown as TeamConversationProps['loadTriggerCatalog']
     const b = renderComposer(loadTriggerCatalog, [])
 
+    // With nothing selected and nowhere to manage members, the composer carries
+    // no agent affordance at all — the chip, its button and the picker are gone.
     expect(document.querySelector('[data-team-agent-indicator]')).toBeNull()
-    expect(document.querySelector('[data-team-no-agent]')?.textContent).toBe('No agent')
+    expect(document.querySelector('[data-team-no-agent]')).toBeNull()
+    expect(document.querySelector('[data-team-agent-picker]')).toBeNull()
+    expect(document.querySelector('[data-team-agent-picker-current]')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Select Agent' })).toBeNull()
     fireEvent.change(b.input, { target: { value: '/' } })
     await waitFor(() => expect(document.querySelector('[data-trigger-notice="no-agents"]')).toBeTruthy())
     expect(await screen.findByRole('option', { name: /compact/ })).toBeTruthy()
   })
 
-  it('changes the indicator and the scoped slash catalog when a second agent is picked', async () => {
+  it('offers the Manage members row inside the picker only when the callback exists', () => {
+    const manageMembers = vi.fn()
+    const loadTriggerCatalog = vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog']
+    // Without the callback the picker lists members and nothing else — no
+    // Manage members row, even with members present.
+    cleanup()
+    renderComposer(loadTriggerCatalog, roster)
+    fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
+    expect(screen.queryByRole('option', { name: 'Manage members' })).toBeNull()
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+    cleanup()
+
+    // With the callback the row sits inside the popup, after the member
+    // options. It is an action, not a pick, so it is a plain button there: the
+    // listbox's options stay exactly the two members.
+    const withMembers = renderComposer(loadTriggerCatalog, roster, { onManageMembers: manageMembers })
+    fireEvent.click(within(withMembers.container).getByRole('button', { name: 'Select Agent' }))
+    expect(within(withMembers.container).getAllByRole('option')).toHaveLength(2)
+    const row = within(withMembers.container).getByRole('button', { name: 'Manage members' })
+    expect(row.getAttribute('data-team-manage-members')).toBe('')
+    fireEvent.click(row)
+    // It closes the list and calls back.
+    expect(manageMembers).toHaveBeenCalledTimes(1)
+    expect(within(withMembers.container).queryByRole('button', { name: 'Manage members' })).toBeNull()
+    expect(within(withMembers.container).queryAllByRole('option')).toHaveLength(0)
+  })
+
+  it('changes the current handle and the scoped slash catalog when a second agent is picked', async () => {
     const scopes: string[] = []
     const loadTriggerCatalog = vi.fn(async (scope: { memberHandle: string }) => {
       scopes.push(scope.memberHandle)
@@ -286,8 +321,8 @@ describe('Team composer agent selector', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
     fireEvent.click(screen.getByRole('option', { name: /worker/ }))
 
-    // The indicator now names the picked agent.
-    await waitFor(() => expect(document.querySelector('[data-team-agent-indicator]')?.textContent).toContain('@worker'))
+    // The picker's readout now names the picked agent.
+    await waitFor(() => expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@worker'))
     // The slash list reloaded against the picked Member's own scope, and its
     // rows name that Member so a skill never loses its owner.
     fireEvent.change(b.input, { target: { value: '/' } })
@@ -297,11 +332,12 @@ describe('Team composer agent selector', () => {
     expect(scopes).not.toContain('')
   })
 
-  it('keeps the indicator and the picker when the scope holds one agent', () => {
+  it('keeps the current handle visible when the scope holds one agent', () => {
     const b = renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], [builder])
 
-    // One agent is not a reason to hide who is selected.
-    expect(document.querySelector('[data-team-agent-indicator]')?.textContent).toContain('@builder')
+    // One agent is not a reason to hide who is selected, and with the chip gone
+    // the picker's readout is where that answer lives.
+    expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@builder')
     fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
     expect(screen.getAllByRole('option')).toHaveLength(1)
     void b
@@ -311,13 +347,29 @@ describe('Team composer agent selector', () => {
     const b = renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
     fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
     fireEvent.click(screen.getByRole('option', { name: /worker/ }))
-    expect(document.querySelector('[data-team-agent-indicator]')?.textContent).toContain('@worker')
+    expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@worker')
 
     // A remount is what a Channel/Thread switch does to this composer; the new
     // scope's roster must decide the default, not the stale pick.
     b.unmount()
     const next = renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], [builder, memberStatus('member:reviewer', 'reviewer')])
-    expect(document.querySelector('[data-team-agent-indicator]')?.textContent).toContain('@builder')
+    expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@builder')
     void next
+  })
+
+  it('renders the selected handle exactly once and no chip element at all', () => {
+    renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
+
+    // Human directive (thread:063981a9 fact 3996): "keep only the selector, no
+    // need for the active agent UI any more." The handle appears once — inside
+    // the selector button — and the removed chip leaves no element behind.
+    expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@builder')
+    const chipNames = [...document.querySelectorAll('*')].filter(node => node.classList.contains('agentIndicatorName'))
+    expect(chipNames).toHaveLength(0)
+    expect(document.querySelector('[data-team-agent-indicator]')).toBeNull()
+    expect(document.querySelector('[data-team-no-agent]')).toBeNull()
+    // Exactly one agent control on the toolbar line.
+    const toolbar = screen.getByRole('button', { name: 'Send' }).parentElement as HTMLElement
+    expect(toolbar.querySelectorAll('[data-team-agent-picker]')).toHaveLength(1)
   })
 })
