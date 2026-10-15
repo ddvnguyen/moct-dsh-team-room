@@ -78,4 +78,24 @@ describe('Agent detail conversation tabs (A14)', () => {
     fireEvent.click(document.querySelector('[data-session-id="session:old-aaaa"] button')!)
     await waitFor(() => expect(document.querySelector('[data-session-id="session:old-aaaa"][data-run-unavailable], [data-session-id="session:old-aaaa"] [data-run-unavailable]')).not.toBeNull())
   })
+
+  it('a landing marker that no tab consumed in time is dropped, not applied to a later open', async () => {
+    const openView = vi.fn()
+    markChatLanding('session:current', Date.now() - 60_000)
+    mount('sessions', 'session:current', remotes(), openView)
+    await waitFor(() => expect(document.querySelectorAll('[data-session-id]')).toHaveLength(2))
+    expect(openView).not.toHaveBeenCalled()
+  })
+
+  it('a refused open drops its landing marker', async () => {
+    const refuse = vi.fn((_id: string, report?: (message: string) => void) => { report?.('retired') })
+    mount('sessions', 'session:current', remotes(refuse))
+    await waitFor(() => expect(document.querySelectorAll('[data-session-id]')).toHaveLength(2))
+    fireEvent.click(document.querySelector('[data-session-id="session:old-aaaa"] button')!)
+    cleanup()
+    const openView = vi.fn()
+    mount('sessions', 'session:old-aaaa', remotes(), openView)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(openView).not.toHaveBeenCalled()
+  })
 })

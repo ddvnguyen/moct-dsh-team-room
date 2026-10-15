@@ -668,6 +668,13 @@ function applyUi(ctx: ClientContext): void {
       last = current
       const snapshot = navigation.getSnapshot()
       if (current !== undefined && !returning.active && snapshot.mode === 'team' && snapshot.memberSessionId === undefined) navigation.actions().leaveTeam()
+      // The Agent tabs live on the host's global strip while a Member Session is
+      // open: another session taking the main view ends it, or they would
+      // stay on every ordinary conversation.
+      else if (current !== undefined && !returning.active && snapshot.memberSessionId !== undefined && current !== snapshot.memberSessionId) {
+        navigation.actions().exitMemberSession()
+        if (snapshot.mode === 'team') navigation.actions().leaveTeam()
+      }
     })
   }, 'agent-team: leave on session open')
 
