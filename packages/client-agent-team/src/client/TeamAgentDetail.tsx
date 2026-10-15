@@ -9,6 +9,7 @@ import { formatAbsoluteTime } from './team-formatters.ts'
 import { loadAgentMemory, type AgentMemoryLoad } from './agent-memory.ts'
 import { cachedResolvedThreadRef, hostThreadRefLookup, useResolvedThreadRefVersion } from './refs.ts'
 import { SessionStateIcon, sessionState } from './session-state.tsx'
+import { AgentConfigEditor } from './TeamMemberEditor.tsx'
 import createCss from './create.module.css'
 import css from './agent-detail.module.css'
 
@@ -83,7 +84,7 @@ type Loaded =
  * through the same path as the row click; an id the Client cannot open is
  * reported in the dialog, not swallowed.
  */
-export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, currentSessionId, openView, onClose, only, t }: {
+export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, currentSessionId, openView, onClose, only, updateMember, loadModels, onCommitted, t }: {
   readonly workspaceId: WorkspaceId
   readonly status: AgentTeamClientMemberStatus
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
@@ -101,6 +102,11 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly onClose?: () => void
   /** Render one tab's body only (the host's conversation tab strip owns the tabs). */
   readonly only?: DetailTab
+  /** With both, the Config tab edits the model and Instances through the Agent editor's own save. */
+  readonly updateMember?: TeamSidebarProps['updateMember']
+  readonly loadModels?: TeamSidebarProps['loadModels']
+  /** Re-reads the Member after a committed edit. */
+  readonly onCommitted?: () => Promise<void> | void
   readonly t: TeamSidebarProps['t']
 }) {
   const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' })
@@ -226,6 +232,12 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             <dt>{t('agentDetailsFactInstances')}</dt><dd>{String(instances.length)}</dd>
             <dt>{t('agentDetailsFactWorkspaces')}</dt><dd>{String(status.workspaceIds.length)}</dd>
           </dl>
+          {updateMember !== undefined && loadModels !== undefined && (
+            <section className={css.configEdit} data-team-agent-config aria-label={t('agentConfigEdit')}>
+              <h3 className={css.sectionTitle}>{t('agentConfigEdit')}</h3>
+              <AgentConfigEditor key={`${status.member.memberId}:${status.member.instances ?? ''}:${status.member.model?.provider ?? ''}/${status.member.model?.model ?? ''}/${status.member.model?.reasoningEffort ?? ''}`} status={status} updateMember={updateMember} loadModels={loadModels} onCommitted={onCommitted ?? (() => {})} t={t} />
+            </section>
+          )}
         </div>
       )}
       {tab === 'memory' && (

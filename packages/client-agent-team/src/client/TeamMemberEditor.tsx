@@ -229,19 +229,20 @@ export function ModelPickerField({ model, onModelChange, loadModels, disabled, t
   </div>
 }
 
-/**
- * Agent editor: handle, description, and per-Member model selection commit
- * through one durable update. Channel membership is managed from the Channel
- * side, not here.
- */
-export function AgentEditorDialog({ status, updateMember, loadModels, onCommitted, onClose, t }: {
+type AgentEditorInput = {
   readonly status: AgentTeamClientMemberStatus
   readonly updateMember: TeamSidebarProps['updateMember']
-  readonly loadModels: TeamSidebarProps['loadModels']
   readonly onCommitted: () => Promise<void> | void
   readonly onClose: () => void
-  readonly t: TeamSidebarProps['t']
-}) {
+}
+
+/**
+ * The Agent editor's state and its one durable update: handle, description,
+ * model and Instances, the dirty test, and the save lifecycle (in-flight lock,
+ * refusal in place, request reuse until a field changes). The dialog and the
+ * Agent Config tab are two seats of this one behaviour.
+ */
+function useAgentEditor({ status, updateMember, onCommitted, onClose }: AgentEditorInput) {
   const memberId = status.member.memberId
   const [handle, setHandle] = useState(status.member.handle)
   const [description, setDescription] = useState(status.member.description)
@@ -286,7 +287,34 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
     }
     await save(request)
   }
+  const edited = (change: () => void) => { pendingRequest.current = undefined; change() }
+  return { handle, setHandle, description, setDescription, model, setModel, instancesText, setInstancesText, instances, saving, error, dirty, submit, edited }
+}
 
+function InstancesField({ editor, t }: { readonly editor: ReturnType<typeof useAgentEditor>; readonly t: TeamSidebarProps['t'] }) {
+  return (
+    <label className={createCss.field}>
+      <span>{t('agentInstances')}</span>
+      <Input className={createCss.input!} type="number" inputMode="numeric" min={MIN_INSTANCES} max={MAX_INSTANCES} step={1} value={editor.instancesText} onChange={event => {
+        const next = event.target.value
+        editor.edited(() => { editor.setInstancesText(next) })
+      }} onBlur={() => { editor.setInstancesText(String(editor.instances)) }} disabled={editor.saving} />
+      <span className={createCss.hint!}>{t('agentInstancesHint')}</span>
+    </label>
+  )
+}
+
+/**
+ * Agent editor: handle, description, and per-Member model selection commit
+ * through one durable update. Channel membership is managed from the Channel
+ * side, not here.
+ */
+export function AgentEditorDialog({ status, updateMember, loadModels, onCommitted, onClose, t }: AgentEditorInput & {
+  readonly loadModels: TeamSidebarProps['loadModels']
+  readonly t: TeamSidebarProps['t']
+}) {
+  const editor = useAgentEditor({ status, updateMember, onCommitted, onClose })
+  const { saving, dirty, handle } = editor
   return (
     <Modal
       open
@@ -297,27 +325,42 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
       contentClassName={createCss.dialogContent!}
       footer={<><Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button><Button type="submit" form="team-agent-edit-form" variant="primary" disabled={saving || !dirty || handle.trim().length === 0}>{saving ? t('editSaving') : t('editSave')}</Button></>}
     >
-      <form id="team-agent-edit-form" className={createCss.form} onSubmit={event => { void submit(event) }}>
+      <form id="team-agent-edit-form" className={createCss.form} onSubmit={event => { void editor.submit(event) }}>
         <label className={createCss.field}>
           <span>{t('agentName')}</span>
-          <Input className={createCss.input!} value={handle} onChange={event => { setHandle(event.target.value); pendingRequest.current = undefined }} disabled={saving} autoFocus />
+          <Input className={createCss.input!} value={handle} onChange={event => { const next = event.target.value; editor.edited(() => { editor.setHandle(next) }) }} disabled={saving} autoFocus />
         </label>
         <label className={createCss.field}>
           <span>{t('agentDescription')}{t('optionalSuffix')}</span>
-          <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
+          <Input className={createCss.input!} value={editor.description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { const next = event.target.value; editor.edited(() => { editor.setDescription(next) }) }} disabled={saving} />
         </label>
-        <ModelPickerField model={model} onModelChange={choice => { pendingRequest.current = undefined; setModel(choice) }} loadModels={loadModels} disabled={saving} t={t} />
-        <label className={createCss.field}>
-          <span>{t('agentInstances')}</span>
-          <Input className={createCss.input!} type="number" inputMode="numeric" min={MIN_INSTANCES} max={MAX_INSTANCES} step={1} value={instancesText} onChange={event => {
-            pendingRequest.current = undefined
-            setInstancesText(event.target.value)
-          }} onBlur={() => { setInstancesText(String(instances)) }} disabled={saving} />
-          <span className={createCss.hint!}>{t('agentInstancesHint')}</span>
-        </label>
-        {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
+        <ModelPickerField model={editor.model} onModelChange={choice => { editor.edited(() => { editor.setModel(choice) }) }} loadModels={loadModels} disabled={saving} t={t} />
+        <InstancesField editor={editor} t={t} />
+        {editor.error !== undefined && <p className={createCss.error} role="alert">{editor.error}</p>}
       </form>
     </Modal>
+  )
+}
+
+/**
+ * The Agent Config tab's editor: the model and the Instances count, saved
+ * through the same update as the dialog (handle and description go along
+ * unchanged), with the same dirty test, in-flight lock and in-place refusal.
+ */
+export function AgentConfigEditor({ status, updateMember, loadModels, onCommitted, t }: Omit<AgentEditorInput, 'onClose'> & {
+  readonly loadModels: TeamSidebarProps['loadModels']
+  readonly t: TeamSidebarProps['t']
+}) {
+  const editor = useAgentEditor({ status, updateMember, onCommitted, onClose: () => {} })
+  return (
+    <form className={createCss.form} data-agent-config-editor onSubmit={event => { void editor.submit(event) }}>
+      <ModelPickerField model={editor.model} onModelChange={choice => { editor.edited(() => { editor.setModel(choice) }) }} loadModels={loadModels} disabled={editor.saving} t={t} />
+      <InstancesField editor={editor} t={t} />
+      {editor.error !== undefined && <p className={createCss.error} role="alert">{editor.error}</p>}
+      <div>
+        <Button type="submit" variant="primary" size="sm" disabled={editor.saving || !editor.dirty}>{editor.saving ? t('editSaving') : t('editSave')}</Button>
+      </div>
+    </form>
   )
 }
 

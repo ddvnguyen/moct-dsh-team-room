@@ -17,6 +17,8 @@
 /* The rail's Team Settings page reuses the settings column in the main seat,
  * so it takes the shipped page gutter the settings shell would have given it. */
 .page {
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   width: 100%;
   margin: 0 auto;

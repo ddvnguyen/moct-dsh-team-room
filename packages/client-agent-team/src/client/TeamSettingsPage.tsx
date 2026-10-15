@@ -58,7 +58,6 @@ export function TeamSettingsPage({ workspaceList, initialWorkspaceId, memory, ag
     <h2 className={css.heading}>{t('teamSettingsGroup')}</h2>
     <p className={css.intro}>{t('teamSettingsPageIntro')}</p>
     <TeamWorkspaceSelector workspaces={workspaces} selectedId={selectedId} current={false} onSelect={setChosen} t={t} />
-    {agentsInTab && <p className={css.intro} data-team-agents-moved>{t('agentsMovedToTab')}</p>}
     {!agentsInTab && selectedId !== undefined && <TeamAgentsPanel key={selectedId} workspaceId={selectedId} {...agents} onCreatingChange={() => {}} t={t} />}
     {selectedId !== undefined && <TeamMemoryPanel key={`memory:${selectedId}`} workspaceId={selectedId} memory={memory} loadMembers={agents.loadMembers} t={t} />}
   </section>

@@ -225,3 +225,10 @@
   padding: 16px clamp(18px, 3vw, 36px);
   width: 100%;
 }
+
+.configEdit {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
