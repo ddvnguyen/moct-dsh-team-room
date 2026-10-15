@@ -1222,7 +1222,7 @@ describe('Team conversation surfaces', () => {
     expect(current).not.toBeNull()
     expect(current?.textContent).toContain('@')
     // The picker lists this Channel's members and can change the selection.
-    fireEvent.click(b.view.getByRole('button', { name: '选择 Agent' }))
+    fireEvent.click(b.view.getByRole('button', { name: 'Agent：@builder，更换' }))
     const options = await b.view.findAllByRole('option')
     expect(options).toHaveLength(2)
     const [first, second] = options

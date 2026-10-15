@@ -10,7 +10,11 @@ import type { AgentTeamClientMemberStatus } from '@ddvnguyen/moct-dsh-team-room/
 import type { TeamTriggerCatalogItem } from '../src/client/trigger-catalog.ts'
 
 const draftKey = 'channel:channel:test' as never
-const translate = ((key: keyof typeof en) => en[key]) as unknown as TeamConversationProps['t']
+const translate = ((key: keyof typeof en, params?: Record<string, string>) => {
+  let text: string = en[key]
+  for (const [name, value] of Object.entries(params ?? {})) text = text.replaceAll('@{' + name + '}', '@' + value).replaceAll('{' + name + '}', value)
+  return text
+}) as unknown as TeamConversationProps['t']
 const catalog: readonly TeamTriggerCatalogItem[] = [
   { kind: 'command', name: 'compact', description: 'Compact the current context' },
   { kind: 'skill', name: 'review', description: 'Review a change' },
@@ -241,7 +245,7 @@ describe('Team composer agent selector', () => {
     const current = document.querySelector('[data-team-agent-picker-current]')
     expect(current?.textContent).toContain('@builder')
     // The picker is a real control listing every member of the scope.
-    const picker = screen.getByRole('button', { name: 'Select Agent' })
+    const picker = screen.getByRole('button', { name: 'Agent: @builder, change' })
     expect(picker).toBeTruthy()
     fireEvent.click(picker)
     const options = screen.getAllByRole('option')
@@ -262,7 +266,7 @@ describe('Team composer agent selector', () => {
     // only agent control on that line.
     const toolbar = screen.getByRole('button', { name: 'Send' }).parentElement as HTMLElement
     expect(toolbar.querySelector('[data-team-agent-picker-current]')).toBeTruthy()
-    expect(toolbar.contains(screen.getByRole('button', { name: 'Select Agent' }))).toBe(true)
+    expect(toolbar.contains(screen.getByRole('button', { name: 'Agent: @builder, change' }))).toBe(true)
   })
 
   it('renders no agent control at all when the scope has no agent and no manage-members action', async () => {
@@ -275,7 +279,7 @@ describe('Team composer agent selector', () => {
     expect(document.querySelector('[data-team-no-agent]')).toBeNull()
     expect(document.querySelector('[data-team-agent-picker]')).toBeNull()
     expect(document.querySelector('[data-team-agent-picker-current]')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Select Agent' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Agent: @builder, change' })).toBeNull()
     fireEvent.change(b.input, { target: { value: '/' } })
     await waitFor(() => expect(document.querySelector('[data-trigger-notice="no-agents"]')).toBeTruthy())
     expect(await screen.findByRole('option', { name: /compact/ })).toBeTruthy()
@@ -288,7 +292,7 @@ describe('Team composer agent selector', () => {
     // Manage members row, even with members present.
     cleanup()
     renderComposer(loadTriggerCatalog, roster)
-    fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Agent: @builder, change' }))
     expect(screen.queryByRole('option', { name: 'Manage members' })).toBeNull()
     expect(screen.getAllByRole('option')).toHaveLength(2)
     cleanup()
@@ -297,7 +301,7 @@ describe('Team composer agent selector', () => {
     // options. It is an action, not a pick, so it is a plain button there: the
     // listbox's options stay exactly the two members.
     const withMembers = renderComposer(loadTriggerCatalog, roster, { onManageMembers: manageMembers })
-    fireEvent.click(within(withMembers.container).getByRole('button', { name: 'Select Agent' }))
+    fireEvent.click(within(withMembers.container).getByRole('button', { name: 'Agent: @builder, change' }))
     expect(within(withMembers.container).getAllByRole('option')).toHaveLength(2)
     const row = within(withMembers.container).getByRole('button', { name: 'Manage members' })
     expect(row.getAttribute('data-team-manage-members')).toBe('')
@@ -318,7 +322,7 @@ describe('Team composer agent selector', () => {
     }) as unknown as TeamConversationProps['loadTriggerCatalog']
     const b = renderComposer(loadTriggerCatalog, roster)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Agent: @builder, change' }))
     fireEvent.click(screen.getByRole('option', { name: /worker/ }))
 
     // The picker's readout now names the picked agent.
@@ -338,14 +342,14 @@ describe('Team composer agent selector', () => {
     // One agent is not a reason to hide who is selected, and with the chip gone
     // the picker's readout is where that answer lives.
     expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@builder')
-    fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Agent: @builder, change' }))
     expect(screen.getAllByRole('option')).toHaveLength(1)
     void b
   })
 
   it('drops a stale pick when the scope changes and the picked member is gone', () => {
     const b = renderComposer(vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'], roster)
-    fireEvent.click(screen.getByRole('button', { name: 'Select Agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Agent: @builder, change' }))
     fireEvent.click(screen.getByRole('option', { name: /worker/ }))
     expect(document.querySelector('[data-team-agent-picker-current]')?.textContent).toContain('@worker')
 
