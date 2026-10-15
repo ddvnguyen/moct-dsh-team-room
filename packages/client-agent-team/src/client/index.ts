@@ -10,6 +10,7 @@ import type {
   AgentTeamSendMessageRequest,
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadObservationsRequest,
+  AgentTeamThreadAttentionRequest,
   AgentTeamThreadReadRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamGetAttachmentRequest,
@@ -353,6 +354,11 @@ function teamSharedRemotes(
     loadMembers: (request: AgentTeamMembersRequest) => queries.read(membersQuery(request), () => ctx.remote.agentTeam.members(request)),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
+    // L1 (issue 57, item 3): the Human's own Thread Attention op. It toggles
+    // the reading Human's follow of one Thread and nothing else — the request
+    // carries no memberId and the Host binds the actor itself, so this remote
+    // can never add or drop ANOTHER seat from a Thread.
+    changeAttention: (request: AgentTeamThreadAttentionRequest) => ctx.remote.agentTeam.changeAttention(request),
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
     updateChannel: (request: AgentTeamUpdateChannelRequest) => ctx.remote.agentTeam.updateChannel(request),
     archiveChannel: (request: AgentTeamArchiveChannelRequest) => ctx.remote.agentTeam.archiveChannel(request),

@@ -17,6 +17,8 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
+import { useThreadAttention } from './team-attention.ts'
+import { TeamMemberRow } from './TeamMemberRow.tsx'
 import { TeamComposer } from './TeamComposer.tsx'
 import { diagnosticText, TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
@@ -61,6 +63,8 @@ interface TeamThreadPageProps {
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
+  /** The Human's own Thread Attention op: follow/unfollow this Thread as the reading Human. */
+  readonly changeAttention: TeamConversationProps['changeAttention']
   readonly promoteThread: TeamConversationProps['promoteThread']
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
@@ -125,6 +129,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
+    changeAttention,
     subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
@@ -156,6 +161,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // Early acceptance: the Human may accept while Claims are still open; the
   // confirm dialog lists exactly what will be completed with the Task.
   const [confirmingAccept, setConfirmingAccept] = useState(false)
+  // L1 (issue 57, item 3): the Thread's member surface. Existing ops cap what it
+  // can offer — the Host's changeAttention is the Human's PERSONAL op, so it
+  // toggles only the reading Human's follow. The dialog therefore lists members
+  // and followers read-only, offers the Human's own follow/unfollow, and invites a
+  // Channel member by seeding an @mention into the composer draft.
+  const [managingThreadMembers, setManagingThreadMembers] = useState(false)
+  const [inviteNote, setInviteNote] = useState<string>()
+
   useEffect(() => {
     if (confirmingAccept && projection?.task?.resolution === 'accepted') setConfirmingAccept(false)
   }, [confirmingAccept, projection?.task?.resolution])
@@ -331,6 +344,22 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     } catch {
       // The next thread-scope wake retries; ranking falls back to roster order.
     }
+  }
+
+  // L1 (issue 57, item 3): the Human's own follow of this Thread. The Host binds
+  // the actor, so the request names no memberId — this can only ever be the
+  // reading Human's own follow, never another seat's.
+  const attention = useThreadAttention({ changeAttention }, () => {
+    setInviteNote(undefined)
+    void refreshFollowers()
+  })
+  /** Seed an @mention into the live draft; sending it is the invitation. */
+  const inviteMember = (handle: string): void => {
+    const { draft } = drafts.getSnapshot(draftKey)
+    const inserted = `@${handle.replace(/^@/, '')} `
+    const nextDraft = draft === '' || draft.endsWith(' ') ? `${draft}${inserted}` : `${draft} ${inserted}`
+    drafts.writeDraft(draftKey, nextDraft)
+    setInviteNote(t('inviteInserted', { name: handle.replace(/^@/, '') }))
   }
 
   // Reply stats are keyed by message ref, so each agent row finds its own line.
@@ -970,6 +999,17 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const crumbText = t('threadCrumbLabel', { channel: channelName ?? '…', title: crumbTitle })
   const crumbHint = taskTitle === undefined || taskTitle === '' ? crumbText : `${crumbText} — ${taskTitle}`
 
+  // The dialog's rows: the roster plus the writing Human, who is a participant
+  // without holding a Message of their own. The Human is matched by id, never
+  // assumed to be in the roster: a Workspace projection that serves no Human
+  // seat still gets the follow row.
+  const humanStatus = channelView?.humanMemberId === undefined
+    ? undefined
+    : members.find(status => status.member.memberId === channelView.humanMemberId)
+  const threadMemberRows: readonly AgentTeamClientMemberStatus[] = humanStatus === undefined
+    || channelMembers.some(status => status.member.memberId === humanStatus.member.memberId)
+    ? channelMembers
+    : [...channelMembers, humanStatus]
   return <main className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>
       <header className={channelCss.slimHeader} data-team-slim-header="thread">
@@ -986,24 +1026,27 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           <TeamAvatarStack owners={participantOwners} label={t('participantsLabel', { names: participantIds.map(memberId => memberName(memberId)).join(', ') })} human={threadHuman} />
         </span>}
         {task !== undefined && <Pill><TeamStateDot size={8} state={taskStatusDot(task.status)} />{formatTaskStatus(task.status, t)}</Pill>}
-        {task === undefined && thread !== undefined && <span className={channelCss.slimActions}>
-          <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
-        </span>}
-        {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
-            closed Thread lives only in the composer-slot closed notice. */}
-        {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <span className={channelCss.slimActions}>
-          {(() => {
-            const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
-            const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
-            // todo Tasks accept directly: the work finished outside the
-            // ledger, so there is nothing to confirm and no Claims to list.
-            if (!(task.status === 'in_review' || task.status === 'todo' || earlyAccept) || task.resolution !== 'open') return null
-            return <Button size="sm" variant="primary" disabled={pending}
-              onClick={() => { if (earlyAccept) { setConfirmingAccept(true) } else { void mutateTask('accept') } }}>{t('acceptTask')}</Button>
-          })()}
-          {task.resolution === 'open'
-            ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
-            : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
+        {/* L1 (issue 57, item 3): the Thread member surface rides the row's own action
+            group — the same place the Channel header opens its members. It is a Thread
+            action, not a Task transition, so it leads the group and the Task transitions
+            follow it; the group keeps the row's last-child slot either way. */}
+        {thread !== undefined && <span className={channelCss.slimActions}>
+          <Button size="sm" variant="outline" onClick={() => { setManagingThreadMembers(true) }}>{t('threadMembers')}</Button>
+          {task === undefined
+            ? <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
+            : task.resolution !== 'closed' && (() => {
+              const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
+              const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
+              // todo Tasks accept directly: the work finished outside the
+              // ledger, so there is nothing to confirm and no Claims to list.
+              const acceptButton = !(task.status === 'in_review' || task.status === 'todo' || earlyAccept) || task.resolution !== 'open' ? null
+                : <Button size="sm" variant="primary" disabled={pending}
+                  onClick={() => { if (earlyAccept) { setConfirmingAccept(true) } else { void mutateTask('accept') } }}>{t('acceptTask')}</Button>
+              const transition = task.resolution === 'open'
+                ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
+                : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>
+              return <>{acceptButton}{transition}</>
+            })()}
         </span>}
       </header>
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
@@ -1013,6 +1056,44 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           <span title={full}><strong className={threadCss.riskClass}>{label}</strong> · {t(sentenceKey, { member: status.member.handle })} — {reason}</span>
         </p>)}
       </section>}
+      {thread !== undefined && <Modal
+        open={managingThreadMembers}
+        onClose={() => { if (!attention.pending) setManagingThreadMembers(false) }}
+        title={t('threadMembers')}
+        closeLabel={t('close')}
+        contentClassName={threadCss.modalBody!}
+        description={t('threadMembersNotice')}
+      >
+        <div className={threadCss.memberList}>
+          {threadMemberRows.map(status => {
+            const following = followerIds.has(status.member.memberId)
+            const isHuman = channelView?.humanMemberId === status.member.memberId
+            // Invitation by mention: the composer draft gains @handle, and
+            // sending it notifies the seat through the existing mention path.
+            return <TeamMemberRow
+              key={status.member.memberId}
+              status={status}
+              action={isHuman
+                ? {
+                  label: attention.pending ? t('attentionUpdating') : following ? t('unfollowThread') : t('followThread'),
+                  disabled: attention.pending,
+                  onSelect: () => { void attention.change({ workspaceId, threadRef, action: following ? 'unfollow' : 'follow' }) },
+                }
+                : {
+                  label: t('inviteToThread'),
+                  onSelect: () => { inviteMember(status.member.handle) },
+                }}
+              t={t}
+            />
+          })}
+        </div>
+        <p className={threadCss.memberFoot}>
+          <span>{t('threadMembersCount', { count: channelMembers.length })}</span>
+          <span>{t('threadFollowersCount', { count: followerIds.size })}</span>
+        </p>
+        {inviteNote !== undefined && <p className={threadCss.inviteNote} role="status">{inviteNote}</p>}
+        {attention.error !== undefined && <p className={threadCss.inviteNote} role="alert">{attention.error}</p>}
+      </Modal>}
       {task !== undefined && thread !== undefined && (() => {
         // Recomputed here so the confirm list never shows stale rows.
         const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []

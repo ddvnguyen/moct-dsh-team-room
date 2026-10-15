@@ -47,9 +47,11 @@ describe('Team Thread roster', () => {
 
     // The picker carries the Thread's one participant and nothing else: no
     // Channel membership exists for this Channel, which is the case that used
-    // to fall open to every Workspace seat.
+    // to fall open to every Workspace seat. The writing Human rides along as a
+    // Thread participant, so the two rows it lists are the participant and the
+    // Human — the same pair the follow dialog draws.
     const options = await openPicker()
-    expect(options).toHaveLength(1)
+    expect(options).toHaveLength(2)
     expect(options[0]).toContain('@builder')
     expect(options.join('|')).not.toContain('@worker')
     expect(options.join('|')).not.toContain('@failed')
@@ -87,10 +89,9 @@ describe('Team Thread roster', () => {
     })
     await openThread(b)
     const options = await openPicker()
-    // The participant only: worker is a Channel member the Thread never named,
-    // and the archived seat is both. The escape that listed the whole Workspace
-    // cannot come back without this failing.
-    expect(options).toHaveLength(1)
+    // The participant only: the Thread never named worker, which is a Channel
+    // member, and the archived seat is both. The escape that listed the whole
+    // Workspace cannot come back without this failing.
     expect(options[0]).toContain('@builder')
     expect(options.join('|')).not.toContain('@worker')
     expect(options.join('|')).not.toContain('@gone-archived')
