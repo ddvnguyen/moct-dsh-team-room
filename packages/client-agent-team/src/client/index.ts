@@ -662,20 +662,33 @@ function applyUi(ctx: ClientContext): void {
   ctx.effect(() => {
     const sessions = ctx.sessions as unknown as ISessions
     let last = currentMainSessionId(ctx)
-    return sessions.list.subscribe(() => {
+    // The Member Session this effect has actually seen holding the main view. A
+    // press navigates to the Member Session before the host rebinds the main
+    // view, so a catalog refresh in that window reports the previous (or a
+    // transient) main session: only a Member Session that was shown and then
+    // replaced counts as "another session took the main view".
+    let shown: string | undefined
+    let memberSeen = navigation.getSnapshot().memberSessionId
+    const stopNavigation = navigation.subscribe(() => {
+      const now = navigation.getSnapshot().memberSessionId
+      if (now !== memberSeen) { memberSeen = now; shown = now !== undefined && currentMainSessionId(ctx) === now ? now : undefined }
+    })
+    const stopSessions = sessions.list.subscribe(() => {
       const current = currentMainSessionId(ctx)
       if (current === last) return
       last = current
       const snapshot = navigation.getSnapshot()
+      if (snapshot.memberSessionId !== undefined && current === snapshot.memberSessionId) shown = current
       if (current !== undefined && !returning.active && snapshot.mode === 'team' && snapshot.memberSessionId === undefined) navigation.actions().leaveTeam()
       // The Agent tabs live on the host's global strip while a Member Session is
       // open: another session taking the main view ends it, or they would
       // stay on every ordinary conversation.
-      else if (current !== undefined && !returning.active && snapshot.memberSessionId !== undefined && current !== snapshot.memberSessionId) {
+      else if (current !== undefined && !returning.active && snapshot.memberSessionId !== undefined && shown === snapshot.memberSessionId && current !== snapshot.memberSessionId) {
         navigation.actions().exitMemberSession()
         if (snapshot.mode === 'team') navigation.actions().leaveTeam()
       }
     })
+    return () => { stopNavigation(); stopSessions() }
   }, 'agent-team: leave on session open')
 
   // The interim native tab (A10, ruling v0.6.1, TEST-3 only). It is the
