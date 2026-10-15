@@ -11,6 +11,8 @@ import type {
   AgentTeamChannelRef,
   AgentTeamClaimRef,
   AgentTeamContextCheckpointRef,
+  AgentTeamDocCommentRef,
+  AgentTeamDocRef,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamOperation,
@@ -34,6 +36,9 @@ const threadRefSchema = z.string().regex(/^thread:[^:]+$/).transform(value => va
 const claimRefSchema = z.string().regex(/^claim:[^:]+$/).transform(value => value as AgentTeamClaimRef)
 const activityRefSchema = z.string().regex(/^activity:[^:]+$/).transform(value => value as AgentTeamActivityRef)
 const attachmentIdSchema = z.string().min(1).transform(value => value as AgentTeamAttachmentId)
+const docRefSchema = z.string().regex(/^doc:[^:]+$/).transform(value => value as AgentTeamDocRef)
+const docCommentRefSchema = z.string().regex(/^comment:[^:]+$/).transform(value => value as AgentTeamDocCommentRef)
+const docSectionIdSchema = z.string().regex(/^s[1-9][0-9]*$/)
 
 const actorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
@@ -198,6 +203,43 @@ const inboxDeltaSchema = z.object({
     removed: z.array(activityMarkerSchema),
   }).strict(),
 }).strict()
+
+const docSchema = z.object({
+  docRef: docRefSchema,
+  channelRef: channelRefSchema,
+  threadRef: threadRefSchema,
+  author: memberIdSchema,
+  title: z.string().min(1),
+  createdAtSequence: z.number().int().positive(),
+}).strict()
+
+const docSectionSchema = z.object({
+  sectionId: docSectionIdSchema,
+  heading: z.string().min(1),
+  markdown: z.string(),
+}).strict()
+
+const docCommentSchema = z.object({
+  commentRef: docCommentRefSchema,
+  docRef: docRefSchema,
+  sectionId: docSectionIdSchema,
+  quote: z.string(),
+  body: z.string().min(1),
+  author: memberIdSchema,
+  parentCommentRef: docCommentRefSchema.optional(),
+  sequence: z.number().int().positive(),
+}).strict().transform(omitUndefined)
+
+const docNoticeSchema = z.discriminatedUnion('event', [
+  z.object({ docRef: docRefSchema, event: z.literal('submitted'), docRevision: z.number().int().positive() }).strict(),
+  z.object({
+    docRef: docRefSchema,
+    event: z.literal('reviewed'),
+    docRevision: z.number().int().positive(),
+    verdict: z.enum(['approve', 'review', 'cancel']),
+    commentRefs: z.array(docCommentRefSchema),
+  }).strict(),
+])
 
 const claimSchema = z.object({
   claimRef: claimRefSchema,
@@ -473,6 +515,8 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       task: taskSchema.optional(),
       thread: threadSchema,
       inbox: inboxDeltaSchema,
+      // Optional and forward-only: every reply recorded before Team Documents omits it.
+      doc: docNoticeSchema.optional(),
     }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
@@ -629,6 +673,38 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       senderMemberId: memberIdSchema,
       recipientMemberId: memberIdSchema,
       body: z.string().min(1),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-created'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      doc: docSchema,
+      sections: z.array(docSectionSchema),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-section-written'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      docRef: docRefSchema,
+      threadRef: threadRefSchema,
+      baseDocRevision: z.number().int().positive(),
+      section: docSectionSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-comment-added'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      comment: docCommentSchema,
     }).strict(),
   }).strict(),
 ])

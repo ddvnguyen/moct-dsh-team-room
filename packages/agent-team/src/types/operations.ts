@@ -9,6 +9,11 @@ import type {
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimsReleasedActivity,
+  AgentTeamDoc,
+  AgentTeamDocComment,
+  AgentTeamDocNotice,
+  AgentTeamDocRef,
+  AgentTeamDocSection,
   AgentTeamInboxDelta,
   AgentTeamMemberId,
   AgentTeamMessage,
@@ -276,7 +281,11 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   }
 }
 
-/** Durable existing-Thread reply and any invitation/direct-mention facts. */
+/**
+ * Durable existing-Thread reply and any invitation/direct-mention facts. A
+ * reply that announces a Team Document submit or review carries that fact in
+ * `doc`: the Message is the public notice and its mention is the wake.
+ */
 export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/thread-replied'
   readonly data: {
@@ -287,6 +296,8 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
     readonly task?: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta
+    /** Absent on every ordinary reply, including every reply recorded before Team Documents. */
+    readonly doc?: AgentTeamDocNotice
   }
 }
 
@@ -602,6 +613,48 @@ export interface AgentTeamDmSentOperation extends AgentTeamOperationBase {
   }
 }
 
+/**
+ * Durable creation of one Team Document in a Thread, with its outline. It does
+ * not revise the Thread: the Doc's own revision fences later section writes.
+ */
+export interface AgentTeamDocCreatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-created'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly doc: AgentTeamDoc
+    /** The outline: one section per heading, in order, possibly with empty bodies. */
+    readonly sections: readonly AgentTeamDocSection[]
+  }
+}
+
+/** Durable write of one Doc section: replaces the section with the same id, or appends a new one. */
+export interface AgentTeamDocSectionWrittenOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-section-written'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly docRef: AgentTeamDocRef
+    /** The Doc's Thread, so the write's change scope needs no projection lookup. */
+    readonly threadRef: AgentTeamThreadRef
+    /** The Doc revision the writer read; the write is refused unless it is still current. */
+    readonly baseDocRevision: number
+    readonly section: AgentTeamDocSection
+  }
+}
+
+/**
+ * Durable comment on one Doc passage. A comment wakes nobody: the Human's
+ * comments wait as pending until a review verdict delivers them together.
+ */
+export interface AgentTeamDocCommentAddedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-comment-added'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    /** The Doc's Thread, so the comment's change scope needs no projection lookup. */
+    readonly threadRef: AgentTeamThreadRef
+    readonly comment: AgentTeamDocComment
+  }
+}
+
 /** Closed union of durable Agent Team operations. */
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
@@ -637,4 +690,7 @@ export type AgentTeamOperation =
   | AgentTeamThreadReadOperation
   | AgentTeamMemberRemovedOperation
   | AgentTeamDmSentOperation
+  | AgentTeamDocCreatedOperation
+  | AgentTeamDocSectionWrittenOperation
+  | AgentTeamDocCommentAddedOperation
 

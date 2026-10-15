@@ -44,6 +44,8 @@ import type {
   AgentTeamChannelRef,
   AgentTeamChangeScope,
   AgentTeamClaim,
+  AgentTeamDocCommentRef,
+  AgentTeamDocRef,
   AgentTeamHumanActor,
   AgentTeamInboxDelta,
   AgentTeamMemberActor,
@@ -540,6 +542,39 @@ const dmSent: Op<'team/dm-sent'> = {
   previousOperationId,
   kind: 'team/dm-sent',
   data: { workspaceId: alpha, senderMemberId: memberId, recipientMemberId: memberId, body: 'protocol fixture dm' },
+}
+
+const fixtureDocRef = 'doc:protocol-fixture' as AgentTeamDocRef
+
+const docCreated: Op<'team/doc-created'> = {
+  ...opBase('operation:protocol-31', 'request:protocol-doc-created', 31, memberActor),
+  previousOperationId,
+  kind: 'team/doc-created',
+  data: {
+    workspaceId: alpha,
+    doc: { docRef: fixtureDocRef, channelRef, threadRef: memberThread, author: memberId, title: 'Protocol plan', createdAtSequence: 31 },
+    sections: [{ sectionId: 's1', heading: 'Goal', markdown: '' }, { sectionId: 's2', heading: 'Steps', markdown: '' }],
+  },
+}
+
+const docSectionWritten: Op<'team/doc-section-written'> = {
+  ...opBase('operation:protocol-32', 'request:protocol-doc-section-written', 32, memberActor),
+  previousOperationId,
+  kind: 'team/doc-section-written',
+  data: { workspaceId: alpha, docRef: fixtureDocRef, threadRef: memberThread, baseDocRevision: 31,
+    section: { sectionId: 's1', heading: 'Goal', markdown: 'Ship the protocol fixture.' } },
+}
+
+const docCommentAdded: Op<'team/doc-comment-added'> = {
+  ...opBase('operation:protocol-33', 'request:protocol-doc-comment-added', 33),
+  previousOperationId,
+  kind: 'team/doc-comment-added',
+  data: {
+    workspaceId: alpha,
+    threadRef: memberThread,
+    comment: { commentRef: 'comment:protocol-fixture' as AgentTeamDocCommentRef, docRef: fixtureDocRef, sectionId: 's1',
+      quote: 'protocol fixture', body: 'Name the fixture.', author: human.memberId, sequence: 33 },
+  },
 }
 
 /** What one same-request retry must produce: resolved, never a second commit. */
@@ -1337,6 +1372,55 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
     },
     legacy: { normalize: 'none', repair: 'none' },
     intent: { scopes: 'no-op', inbox: 'none' },
+  },
+  'team/doc-created': {
+    stored: docCreated,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.createDoc({ requestId: docCreated.requestId, actor: memberActor, workspaceId: alpha,
+          threadRef: memberThread, title: 'Protocol plan', outline: ['Goal', 'Steps'] })
+        expect(out.value.doc.docRef, 'the creation mapper answers with the stored Doc').toBe(fixtureDocRef)
+        expect(out.value.revision, 'the creation mapper answers with the revision the creation produced').toBe(31)
+        return out
+      },
+      changed: () => ledger.createDoc({ requestId: docCreated.requestId, actor: memberActor, workspaceId: alpha,
+        threadRef: memberThread, title: 'A different plan', outline: ['Goal', 'Steps'] }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/doc-section-written': {
+    stored: docSectionWritten,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.writeDocSection({ requestId: docSectionWritten.requestId, actor: memberActor, workspaceId: alpha,
+          docRef: fixtureDocRef, baseDocRevision: 31, sectionId: 's1', heading: 'Goal', markdown: 'Ship the protocol fixture.' })
+        expect(mappedCommitted(out.value).revision, 'the section mapper answers with the revision the write produced').toBe(32)
+        return out
+      },
+      changed: () => ledger.writeDocSection({ requestId: docSectionWritten.requestId, actor: memberActor, workspaceId: alpha,
+        docRef: fixtureDocRef, baseDocRevision: 31, sectionId: 's1', heading: 'Goal', markdown: 'A different body.' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/doc-comment-added': {
+    stored: docCommentAdded,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.commentDoc({ requestId: docCommentAdded.requestId, actor: human, workspaceId: alpha,
+          docRef: fixtureDocRef, sectionId: 's1', quote: 'protocol fixture', body: 'Name the fixture.' })
+        expect(out.value.comment.commentRef, 'the comment mapper answers with the stored comment').toBe('comment:protocol-fixture')
+        return out
+      },
+      changed: () => ledger.commentDoc({ requestId: docCommentAdded.requestId, actor: human, workspaceId: alpha,
+        docRef: fixtureDocRef, sectionId: 's1', quote: 'protocol fixture', body: 'A different comment.' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
   },
 }
 

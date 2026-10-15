@@ -498,3 +498,74 @@ export interface AgentTeamStoredThreadReadFact {
   readonly direct: boolean
 }
 
+
+/** Stable identifier of one Team Document. */
+export type AgentTeamDocRef = Branded<'AgentTeamDocRef'>
+
+/** Stable identifier of one comment on a Team Document. */
+export type AgentTeamDocCommentRef = Branded<'AgentTeamDocCommentRef'>
+
+/**
+ * Identity of one Team Document: a Member-written Markdown document that lives
+ * in one Thread. Its sections, comments and review state are separate facts.
+ */
+export interface AgentTeamDoc {
+  readonly docRef: AgentTeamDocRef
+  readonly channelRef: AgentTeamChannelRef
+  /** The Thread the Doc belongs to; its submit and review notices are Messages there. */
+  readonly threadRef: AgentTeamThreadRef
+  /** The Member that created the Doc; the Human's verdict is delivered to it. */
+  readonly author: AgentTeamMemberId
+  readonly title: string
+  readonly createdAtSequence: number
+}
+
+/** One section of a Team Document. A Doc is the ordered list of its sections. */
+export interface AgentTeamDocSection {
+  /** Stable within its Doc: `s1`, `s2`, … in the order sections were first written. */
+  readonly sectionId: string
+  readonly heading: string
+  /** May be empty while the section is only an outline heading. */
+  readonly markdown: string
+}
+
+/** One comment anchored to a quoted passage of one section. */
+export interface AgentTeamDocComment {
+  readonly commentRef: AgentTeamDocCommentRef
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+  /** The passage the comment is about, as the commenter selected it; empty for a reply. */
+  readonly quote: string
+  readonly body: string
+  readonly author: AgentTeamMemberId
+  /** The comment this one answers, inside the same Doc. */
+  readonly parentCommentRef?: AgentTeamDocCommentRef
+  readonly sequence: number
+}
+
+/**
+ * Review state of one Team Document. `approved` and `cancelled` are final; the
+ * other three follow submit and review notices.
+ */
+export type AgentTeamDocStatus = 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'cancelled'
+
+/** The Human's verdict on a Doc: accept it, send the pending comments back for revision, or drop it. */
+export type AgentTeamDocVerdict = 'approve' | 'review' | 'cancel'
+
+/** The Doc event one Thread reply announces; the Message is the notice, this is the fact it carries. */
+export type AgentTeamDocNotice =
+  | {
+    readonly docRef: AgentTeamDocRef
+    readonly event: 'submitted'
+    /** The Doc revision the Member asked the Human to review. */
+    readonly docRevision: number
+  }
+  | {
+    readonly docRef: AgentTeamDocRef
+    readonly event: 'reviewed'
+    /** The Doc revision the Human reviewed. */
+    readonly docRevision: number
+    readonly verdict: AgentTeamDocVerdict
+    /** The Human's pending comments this verdict delivered to the author, oldest first. */
+    readonly commentRefs: readonly AgentTeamDocCommentRef[]
+  }
