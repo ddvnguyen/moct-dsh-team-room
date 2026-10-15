@@ -9,7 +9,7 @@ import type {
   AgentTeamThreadRef,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconChevronLeftOutlineRegular, IconPanelLeftOutlineRegular, MarkdownText, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutlineRegular, IconPanelLeftOutlineRegular, IconSendOutlineRegular, MarkdownText, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
@@ -17,6 +17,7 @@ import { commentThreads, docQuote, docStatusDot, formatDocStatus, isFinalDocStat
 import { mintRequestId } from './requests.ts'
 import css from './conversation.module.css'
 import channelCss from './channel.module.css'
+import composerCss from './composer.module.css'
 import docCss from './doc.module.css'
 
 interface TeamDocPageProps {
@@ -42,6 +43,12 @@ interface Selection {
   readonly quote: string
 }
 
+/** Grow a chat box with its text, up to the same cap the Thread composer uses. */
+function grow(input: HTMLTextAreaElement): void {
+  input.style.height = 'auto'
+  input.style.height = `${Math.min(input.scrollHeight, 180)}px`
+}
+
 /** Which durable write is in flight; every control waits for its answer. */
 type Pending = 'comment' | AgentTeamDocVerdict | undefined
 
@@ -65,6 +72,7 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
   const [pending, setPending] = useState<Pending>()
   const bodyRef = useRef<HTMLDivElement>(null)
   const commentInputRef = useRef<HTMLTextAreaElement>(null)
+  const noteInputRef = useRef<HTMLTextAreaElement>(null)
   const sequence = useRef(0)
   const mounted = useRef(true)
 
@@ -86,6 +94,9 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
     })
     return () => { mounted.current = false; sequence.current += 1; dispose() }
   }, [workspaceId, docRef, threadRef])
+
+  useEffect(() => { if (commentInputRef.current !== null) grow(commentInputRef.current) }, [commentText, selection])
+  useEffect(() => { if (noteInputRef.current !== null) grow(noteInputRef.current) }, [note, view?.status])
 
   // A selection inside one section becomes the comment draft's anchor. A
   // collapsed or cross-section selection leaves the current anchor alone, so
@@ -202,22 +213,25 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
         </article>
 
         <aside className={docCss.side} aria-label={t('docCommentsHeading')}>
-          {!final && <section className={docCss.panel}>
-            {selection === undefined
-              ? <p className={docCss.hint}>{t('docSelectionHint')}</p>
-              : <form className={docCss.commentForm} onSubmit={event => { event.preventDefault(); void addComment() }}>
+          {!final && (selection === undefined
+            ? <section className={docCss.panel}><p className={docCss.hint}>{t('docSelectionHint')}</p></section>
+            : <form className={docCss.chatCard} onSubmit={event => { event.preventDefault(); void addComment() }} data-team-doc-comment-box>
+              <div className={docCss.chatQuoteRow}>
                 <p className={docCss.selectionQuote}>{t('docSelectionQuote', { quote: selection.quote })}</p>
-                <label className={docCss.fieldLabel} htmlFor="team-doc-comment">{t('docCommentLabel')}</label>
-                <textarea id="team-doc-comment" ref={commentInputRef} className={docCss.textarea} rows={3} value={commentText}
-                  onChange={event => { setCommentText(event.target.value) }} onKeyDown={onCommentKey} disabled={pending !== undefined} />
-                <div className={docCss.formActions}>
-                  <Button size="sm" variant="ghost" onClick={() => { setSelection(undefined); setCommentText('') }} disabled={pending !== undefined}>{t('docClearSelection')}</Button>
-                  <Button size="sm" variant="primary" type="submit" disabled={pending !== undefined || commentText.trim() === ''}>
-                    {pending === 'comment' ? t('docAddingComment') : t('docAddComment')}
-                  </Button>
-                </div>
-              </form>}
-          </section>}
+                <button type="button" className={docCss.chatClear} aria-label={t('docClearSelection')} title={t('docClearSelection')}
+                  onClick={() => { setSelection(undefined); setCommentText('') }} disabled={pending !== undefined}>×</button>
+              </div>
+              <textarea id="team-doc-comment" ref={commentInputRef} className={docCss.chatInput} rows={1} value={commentText}
+                aria-label={t('docCommentLabel')} placeholder={t('docCommentPlaceholder')}
+                onChange={event => { setCommentText(event.target.value) }} onKeyDown={onCommentKey} disabled={pending !== undefined} />
+              <div className={docCss.chatToolbar}>
+                <span className={docCss.chatHint}>{t('docCommentShortcut')}</span>
+                <button type="submit" className={composerCss.sendButton} aria-label={pending === 'comment' ? t('docAddingComment') : t('docAddComment')}
+                  disabled={pending !== undefined || commentText.trim() === ''}>
+                  <IconSendOutlineRegular size={16} />
+                </button>
+              </div>
+            </form>)}
 
           <section className={docCss.panel}>
             <h2 className={docCss.panelHeading}>{t('docCommentsHeading')}</h2>
@@ -233,23 +247,27 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
       </div>}
     </section>
 
-    {view !== undefined && <footer className={docCss.reviewBar} aria-label={t('docVerdictActions')}>
+    {view !== undefined && <footer className={`${composerCss.root} ${docCss.reviewBar}`} aria-label={t('docVerdictActions')}>
       {notice !== undefined && <p className={docCss.notice} role="status">{notice}</p>}
       {final
         ? <p className={docCss.hint}>{t('docFinal', { status: formatDocStatus(view.status, t) })}</p>
-        : <>
-          {view.status === 'draft' && <p className={docCss.hint}>{t('docNotSubmitted')}</p>}
-          <label className={docCss.fieldLabel} htmlFor="team-doc-note">{t('docReviewNoteLabel')}</label>
-          <textarea id="team-doc-note" className={docCss.textarea} rows={2} value={note} onChange={event => { setNote(event.target.value) }} disabled={pending !== undefined} />
-          <p className={docCss.hint}>{reviewBlocked ? t('docReviewNeedsComment') : t('docReviewHint', { count: pendingCount })}</p>
-          <div className={docCss.reviewActions}>
-            {confirmingCancel
-              ? <Button size="sm" variant="outline" className={docCss.danger} disabled={pending !== undefined} onClick={() => { void review('cancel') }}>{t('docConfirmCancel')}</Button>
-              : <Button size="sm" variant="ghost" disabled={pending !== undefined} onClick={() => { setConfirmingCancel(true) }}>{t('docCancel')}</Button>}
-            <Button size="sm" variant="outline" disabled={pending !== undefined || reviewBlocked} onClick={() => { void review('review') }}>{t('docRequestReview')}</Button>
-            <Button size="sm" variant="primary" disabled={pending !== undefined} onClick={() => { void review('approve') }}>{t('docApprove')}</Button>
+        : <div className={composerCss.card} data-team-doc-review>
+          {view.status === 'draft' && <p className={docCss.reviewHint}>{t('docNotSubmitted')}</p>}
+          <div className={composerCss.inputArea}>
+            <textarea id="team-doc-note" ref={noteInputRef} rows={1} value={note} aria-label={t('docReviewNoteLabel')} placeholder={t('docReviewNotePlaceholder')}
+              onChange={event => { setNote(event.target.value) }} disabled={pending !== undefined} />
           </div>
-        </>}
+          <div className={docCss.reviewToolbar}>
+            <span className={docCss.chatHint}>{reviewBlocked ? t('docReviewNeedsComment') : t('docReviewHint', { count: pendingCount })}</span>
+            <div className={docCss.reviewActions}>
+              {confirmingCancel
+                ? <Button size="sm" variant="outline" className={docCss.danger} disabled={pending !== undefined} onClick={() => { void review('cancel') }}>{t('docConfirmCancel')}</Button>
+                : <Button size="sm" variant="ghost" disabled={pending !== undefined} onClick={() => { setConfirmingCancel(true) }}>{t('docCancel')}</Button>}
+              <Button size="sm" variant="outline" disabled={pending !== undefined || reviewBlocked} onClick={() => { void review('review') }}>{t('docRequestReview')}</Button>
+              <Button size="sm" variant="primary" disabled={pending !== undefined} onClick={() => { void review('approve') }}>{t('docApprove')}</Button>
+            </div>
+          </div>
+        </div>}
     </footer>}
   </main>
 }
