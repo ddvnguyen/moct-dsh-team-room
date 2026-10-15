@@ -42,6 +42,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
 
 .viewTab {
@@ -65,11 +67,111 @@
   font-weight: 600;
 }
 
+/* Filter bar: a raised surface, labelled fields at one 32px control height,
+ * an active ring on any field off its default, and Clear + count at the end.
+ * At 390 the fields stack full width. */
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 12px 14px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.field[data-wide] {
+  flex: 1 1 220px;
+}
+
+.field > :not(.fieldLabel) {
+  box-sizing: border-box;
+  height: 32px;
+  width: 100%;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.select {
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.field[data-active] .select,
+.field[data-active] > span:not(.fieldLabel) {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 1px var(--dsw-alias-state-business-primary);
+}
+
+.filterEnd {
+  display: flex;
   align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  min-height: 32px;
+}
+
+.count {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.levelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.purge {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+  margin-left: auto;
+}
+
+@media (max-width: 480px) {
+  .field,
+  .field[data-wide] {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .filterEnd {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
 }
 
 .records,

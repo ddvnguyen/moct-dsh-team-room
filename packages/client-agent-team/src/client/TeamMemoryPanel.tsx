@@ -19,7 +19,7 @@ import type {
   AgentTeamMemoryOutcome, AgentTeamMemoryRecordRequest, AgentTeamMemoryRecordView, AgentTeamMemorySettingsRequest, AgentTeamMemoryWorkspaceRequest,
   AgentTeamTaskRef, TeamMemoryHomeKind, TeamMemoryRecord, TeamMemorySearchResult, TeamMemorySettings, TeamMemoryType, TeamMemoryUsage, TeamMemoryVersion,
 } from '@ddvnguyen/moct-dsh-team-room/types'
-import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, Modal, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import css from './memory.module.css'
 
@@ -121,7 +121,7 @@ interface SectionProps {
  * for the rest; `loadMore` follows every stream that still has one.
  */
 function usePagedRecords(streams: readonly AgentTeamMemoryListRequest[], memory: TeamMemoryRemotes, onOutcome: SectionProps['onOutcome']) {
-  const [pages, setPages] = useState<{ readonly records: readonly (readonly TeamMemoryRecord[])[]; readonly cursors: readonly (string | null)[] }>()
+  const [pages, setPages] = useState<{ readonly records: readonly (readonly TeamMemoryRecord[])[]; readonly cursors: readonly (string | null)[]; readonly total: number }>()
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(false)
 
@@ -141,6 +141,7 @@ function usePagedRecords(streams: readonly AgentTeamMemoryListRequest[], memory:
       setPages({
         records: outcomes.map(outcome => outcome?.ok ? outcome.value.results : []),
         cursors: outcomes.map(outcome => outcome?.ok ? outcome.value.nextCursor : null),
+        total: outcomes.reduce((sum, outcome) => sum + (outcome?.ok ? outcome.value.total : 0), 0),
       })
     })
     return () => { live = false }
@@ -162,12 +163,13 @@ function usePagedRecords(streams: readonly AgentTeamMemoryListRequest[], memory:
         const outcome = outcomes[index]
         return outcome === undefined ? cursor : outcome.ok ? outcome.value.nextCursor : null
       }),
+      total: pages.total,
     })
   }, [pages, read])
 
   const records = useMemo(() => pages?.records.flat(), [pages])
   const hasMore = pages !== undefined && pages.cursors.some(cursor => cursor !== null)
-  return { records, error, hasMore, loading, loadMore }
+  return { records, error, hasMore, loading, loadMore, total: pages?.total }
 }
 
 function LoadMore({ loading, onLoad, shown, t }: { readonly loading: boolean; readonly onLoad: () => void; readonly shown: number; readonly t: TeamMemoryPanelProps['t'] }) {
@@ -197,26 +199,44 @@ function MemoryRecords({ workspaceId, memory, onOutcome, t }: SectionProps) {
     void reload
     return statuses.map((entry): AgentTeamMemoryListRequest => ({ ...base, status: entry }))
   }, [workspaceId, q, type, home, status, reload])
-  const { records, error, hasMore, loading, loadMore } = usePagedRecords(streams, memory, onOutcome)
+  const { records, error, hasMore, loading, loadMore, total } = usePagedRecords(streams, memory, onOutcome)
+  const filtered = q.trim() !== '' || type !== '' || home !== '' || status !== 'live'
+  const clear = () => { setQ(''); setType(''); setHome(''); setStatus('live') }
 
   return <div className={css.records}>
-    <div className={css.filters}>
-      <Input value={q} onChange={event => setQ(event.target.value)} placeholder={t('memorySearch')} aria-label={t('memorySearch')} />
-      <select aria-label={t('memoryFilterType')} value={type} onChange={event => setType(event.target.value as TeamMemoryType | '')}>
-        <option value="">{t('memoryAnyType')}</option>
-        {TYPES.map(entry => <option key={entry} value={entry}>{entry}</option>)}
-      </select>
-      <select aria-label={t('memoryFilterHome')} value={home} onChange={event => setHome(event.target.value as TeamMemoryHomeKind | '')}>
-        <option value="">{t('memoryAnyHome')}</option>
-        {HOMES.map(entry => <option key={entry} value={entry}>{entry}</option>)}
-      </select>
-      <select aria-label={t('memoryFilterStatus')} value={status} onChange={event => setStatus(event.target.value as typeof status)}>
-        <option value="live">{t('memoryStatusLive')}</option>
-        <option value="superseded">superseded</option>
-        <option value="retracted">retracted</option>
-        <option value="expired">expired</option>
-        <option value="all">{t('memoryStatusAll')}</option>
-      </select>
+    <div className={css.filters} role="group" aria-label={t('memoryFilters')}>
+      <label className={css.field} data-wide data-active={q.trim() !== '' ? '' : undefined}>
+        <span className={css.fieldLabel}>{t('memoryFilterSearch')}</span>
+        <Input value={q} onChange={event => setQ(event.target.value)} placeholder={t('memorySearch')} aria-label={t('memorySearch')} />
+      </label>
+      <label className={css.field} data-active={type !== '' ? '' : undefined}>
+        <span className={css.fieldLabel}>{t('memoryFilterType')}</span>
+        <select className={css.select} value={type} onChange={event => setType(event.target.value as TeamMemoryType | '')}>
+          <option value="">{t('memoryAnyType')}</option>
+          {TYPES.map(entry => <option key={entry} value={entry}>{entry}</option>)}
+        </select>
+      </label>
+      <label className={css.field} data-active={home !== '' ? '' : undefined}>
+        <span className={css.fieldLabel}>{t('memoryFilterHome')}</span>
+        <select className={css.select} value={home} onChange={event => setHome(event.target.value as TeamMemoryHomeKind | '')}>
+          <option value="">{t('memoryAnyHome')}</option>
+          {HOMES.map(entry => <option key={entry} value={entry}>{entry}</option>)}
+        </select>
+      </label>
+      <label className={css.field} data-active={status !== 'live' ? '' : undefined}>
+        <span className={css.fieldLabel}>{t('memoryFilterStatus')}</span>
+        <select className={css.select} value={status} onChange={event => setStatus(event.target.value as typeof status)}>
+          <option value="live">{t('memoryStatusLive')}</option>
+          <option value="superseded">superseded</option>
+          <option value="retracted">retracted</option>
+          <option value="expired">expired</option>
+          <option value="all">{t('memoryStatusAll')}</option>
+        </select>
+      </label>
+      <div className={css.filterEnd}>
+        <Button size="sm" variant="outline" disabled={!filtered} onClick={clear} data-memory-clear>{t('memoryClearFilters')}</Button>
+        {records !== undefined && total !== undefined && <span className={css.count} role="status" data-memory-count>{t('memoryResultCount', { shown: records.length, total })}</span>}
+      </div>
     </div>
     {error !== undefined && <p className={css.error} role="alert">{error}</p>}
     {records !== undefined && records.length === 0 && <p className={css.empty}>{t('memoryEmpty')}</p>}
@@ -225,6 +245,18 @@ function MemoryRecords({ workspaceId, memory, onOutcome, t }: SectionProps) {
     </ul>
     {hasMore && records !== undefined && <LoadMore loading={loading} onLoad={() => void loadMore()} shown={records.length} t={t} />}
   </div>
+}
+
+/** The `level` attr is the rule's strength; it reads as a chip, the rest of attrs stays raw. */
+export function splitLevel(attrs: TeamMemoryRecord['attrs']): { readonly level: string | undefined; readonly rest: Record<string, unknown> | undefined } {
+  if (attrs === null || typeof attrs !== 'object') return { level: undefined, rest: attrs ?? undefined }
+  const { level, ...rest } = attrs as Record<string, unknown>
+  const hasRest = Object.keys(rest).length > 0
+  return typeof level === 'string' ? { level: level.toLowerCase(), rest: hasRest ? rest : undefined } : { level: undefined, rest: attrs as Record<string, unknown> }
+}
+
+function levelLabel(level: string, t: TeamMemoryPanelProps['t']): string {
+  return level === 'must' ? t('memoryLevelMust') : level === 'should' ? t('memoryLevelShould') : level.charAt(0).toUpperCase() + level.slice(1)
 }
 
 function recordHeadline(record: Pick<TeamMemoryRecord, 'type' | 'home' | 'version' | 'authorId'>): string {
@@ -267,6 +299,7 @@ function MemoryRecordRow({ workspaceId, memory, onOutcome, record, onChanged, t 
     return false
   }, [memory, onOutcome, workspaceId, record.id, onChanged, load, t])
 
+  const { level, rest: restAttrs } = splitLevel(shown.attrs)
   const base = shown.version
   return <li className={css.record} data-memory-record={record.id}>
     <button type="button" className={css.recordHead} aria-expanded={open} onClick={() => setOpen(value => !value)}>
@@ -279,7 +312,9 @@ function MemoryRecordRow({ workspaceId, memory, onOutcome, record, onChanged, t 
     {notice !== undefined && <p className={css.notice} role="status">{notice}</p>}
     {open && <div className={css.detail}>
       {shown.body !== null && shown.body !== '' && <p className={css.body}>{shown.body}</p>}
-      {shown.attrs !== null && <pre className={css.attrs}>{JSON.stringify(shown.attrs, null, 2)}</pre>}
+      {shown.status === 'pending' && <p className={css.hint} data-memory-pending-hint>{t('memoryPendingHint')}</p>}
+      {level !== undefined && <p className={css.levelRow}><span className={css.fieldLabel}>{t('memoryLevel')}</span><span data-memory-level={level}><Tag tone={level === 'must' ? 'danger' : 'info'}>{levelLabel(level, t)}</Tag></span></p>}
+      {restAttrs !== undefined && <pre className={css.attrs}>{JSON.stringify(restAttrs, null, 2)}</pre>}
       {detail !== undefined && detail.record.links.length > 0 && <ul className={css.links} aria-label={t('memoryLinks')}>
         {detail.record.links.map(link => <li key={`${link.kind}:${link.id}`}>{`${link.kind} → ${link.type} ${link.id}`}{link.title === null ? '' : ` — ${link.title}`}</li>)}
       </ul>}
@@ -289,7 +324,7 @@ function MemoryRecordRow({ workspaceId, memory, onOutcome, record, onChanged, t 
         {shown.status === 'active' && <Button size="sm" variant="outline" disabled={busy} onClick={() => void act({ verb: 'pin', baseVersion: base, pinned: !shown.pinned })}>{shown.pinned ? t('memoryUnpin') : t('memoryPin')}</Button>}
         <Button size="sm" variant="outline" disabled={busy} onClick={() => setDialog('edit')}>{t('memoryEdit')}</Button>
         {shown.home.kind !== 'team' && shown.home.kind !== 'expert' && <Button size="sm" variant="outline" disabled={busy} onClick={() => setDialog('widen')}>{t('memoryWiden')}</Button>}
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => setDialog('purge')}>{t('memoryPurge')}</Button>
+        <Button size="sm" variant="outline" className={css.purge!} disabled={busy} onClick={() => setDialog('purge')} data-memory-purge>{t('memoryPurge')}</Button>
       </div>
       {detail !== undefined && <ol className={css.versions} aria-label={t('memoryHistory')}>
         {detail.versions.map(entry => <li key={entry.version}>
