@@ -3057,12 +3057,17 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     const sessionB = (agentB as unknown as { session: never }).session
     ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
     await host.sendMessageForAgent(agentB as never, { requestId: requestId('rpc-cold-start'), workspaceId: alpha, channelRef, body: 'cold me', asTask: false } as never)
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'cold me')!.data.message!.threadRef as never
     // A Turn an hour old: past the TTL, so cold.
     for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - 3_600_000 })) test.ctx.emit('session/event', sessionB, event as never)
     await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
     ;(host as unknown as { handles: Map<unknown, unknown> }).handles.delete(seatB.memberId)
-    await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
-      .rejects.toThrow(/no live Session to start a fresh context from/)
+    // Task-16: a cold verdict with no live Session no longer fails the call; it is the
+    // cold fallback, reported on the result so the delivery keeps its one try per Turn.
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId, threadRef }))
+      .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: { cause: 'no-handle', triedWarm: false } })
   })
 })
 
