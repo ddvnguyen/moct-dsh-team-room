@@ -762,6 +762,7 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly slotRecorders = new Map<string, AgentTeamTurnRecorder>()
   /** Warm starts per seat in the current warm-limit window, oldest first (contract §4.2). */
   private readonly warmStartsByMember = new Map<AgentTeamMemberId, number[]>()
+  private readonly warmDeferTimers = new Map<AgentTeamMemberId, ReturnType<typeof setTimeout>>()
   /** The warm limit in force; the contract default until a per-seat setting is wired. */
   private warmLimit: WarmLimit = DEFAULT_WARM_LIMIT
   /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
@@ -1239,6 +1240,8 @@ export default class AgentTeam extends TypertRemoteService {
       // through the runtime), so the chains below can drain to zero first.
       this.shutdown.resolve()
       this.memberRuntime.releaseTurnWaits()
+      for (const timer of this.warmDeferTimers.values()) clearTimeout(timer)
+      this.warmDeferTimers.clear()
       this.recovery.dispose()
       this.activityFeed.dispose()
       this.contextManagement.dispose()
@@ -2603,40 +2606,37 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * Task-16: bind one delivered Thread to the Session this seat now runs, from the cache verdict.
-   *
-   * A warm verdict re-binds the same Session (reason `resumed`) so the Thread's later turns keep
-   * the provider cache; a cold verdict records `cold-restart` and the seed rides the caller's
-   * fresh Session. Exactly one fallback is allowed per Turn: when the warm resume itself fails
-   * (no live Session, or a resume that throws), the cause is reported as `coldFallback` and the
-   * caller takes its single cold start; a cold start that also fails is the Turn's failure, which
-   * the existing failed-seat notice carries — no second retry, no loop.
-   *
-   * The bind op and its closed reason enum are untouched, so the cause never reaches the ledger:
-   * it rides this return value and one log line.
+   * Task-16 per-Thread binding: after a delivery is queued, record which Session now carries each
+   * delivered Thread for this seat (§3.1). A Thread with no binding opens `start`; a Thread whose
+   * active binding names another Session (the seat was renewed, rolled over or cold-restarted since)
+   * opens `cold-restart` and the `stale-binding` cause is logged. A Thread already bound to this
+   * Session records nothing, and the request id is derived from (seat, Thread, Session), so a repeated
+   * delivery is idempotent. The closed reason enum is untouched; the cause rides the log line only.
+   * Failures are logged and never block or fail the delivery.
    */
-  private async bindThreadForDelivery(request: {
-    readonly member: AgentTeamAgentMember
-    readonly workspaceId: WorkspaceId
-    readonly threadRef: AgentTeamThreadRef
-    readonly sessionId: SessionId
-    readonly verdict: CacheVerdict
-    readonly attemptWarm: () => Promise<AgentTeamColdFallback | undefined>
-  }): Promise<{ readonly coldFallback: AgentTeamColdFallback | undefined; readonly cache: 'warm' | 'cold' }> {
+  private bindDeliveredThreads(member: AgentTeamAgentMember, sessionId: SessionId, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): void {
     const ledger = this.requireLedger()
-    const reason: AgentTeamBindThreadSessionRequest['reason'] = request.verdict.cache === 'warm' ? 'resume' : 'cold-restart'
-    const latest = ledger.latestThreadSummary(request.threadRef)
-    await ledger.bindThreadSession({
-      requestId: `deliver-bind:${request.member.memberId}:${request.threadRef}:${request.sessionId}` as AgentTeamRequestId,
-      workspaceId: request.workspaceId, threadRef: request.threadRef, sessionId: request.sessionId, reason,
-      ...(request.verdict.cache === 'warm' ? {} : { ...(latest === undefined ? {} : { summaryGeneration: latest.generation }) }),
-      actor: { kind: 'member', memberId: request.member.memberId, handle: request.member.handle },
-    })
-    const fallback = request.verdict.cache === 'warm' ? await request.attemptWarm() : undefined
-    if (fallback !== undefined) {
-      this.ctx.logger.warn(`agent-team: ${this.memberScope(request.member.memberId, request.sessionId)} Thread '${request.threadRef}' fell back to cold: ${fallback.cause}`)
+    for (const { item } of notifications) {
+      const threadRef = item.thread.threadRef
+      const active = ledger.threadSessionsOf(threadRef, member.memberId).at(-1)
+      if (active?.sessionId === sessionId) continue
+      const reason: AgentTeamBindThreadSessionRequest['reason'] = active === undefined ? 'start' : 'cold-restart'
+      const latest = ledger.latestThreadSummary(threadRef)
+      if (active !== undefined) {
+        const fallback: AgentTeamColdFallback = { cause: 'stale-binding', triedWarm: false }
+        this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' was bound to Session '${active.sessionId}'; cold fallback cause ${fallback.cause}`)
+      }
+      void ledger.bindThreadSession({
+        requestId: `deliver-bind:${member.memberId}:${threadRef}:${sessionId}` as AgentTeamRequestId,
+        workspaceId: item.workspaceId, threadRef, sessionId, reason,
+        ...(latest === undefined ? {} : { summaryGeneration: latest.generation }),
+        actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
+      }).then(result => {
+        if (result.committed) this.emitCommitted(result.value.receipt)
+      }, (error: unknown) => {
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId, sessionId)} could not bind Thread '${threadRef}' to its Session (${reason}): ${failureDetail(error)}; the next delivery records it`)
+      })
     }
-    return { coldFallback: fallback, cache: request.verdict.cache }
   }
 
   /** Agent-only personal Attention change. */
@@ -4491,6 +4491,14 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.info(`agent-team: Team Inbox notice carried by the queued recovery instruction for ${scope} cause ${causeText} (${facts}): queued with that recovery instruction, not yet read by the model`)
       return
     }
+    // A delivery that would open a second warm Turn inside the window waits for it: the facts stay
+    // durable, and one deferred re-derivation carries everything that arrived meanwhile.
+    const opensTurn = agent.status === 'idle'
+    if (opensTurn && warmLimited) {
+      this.deferWarmDelivery(member.memberId, cause, sequenced)
+      this.ctx.logger.info(`agent-team: Team Inbox notice for ${scope} cause ${causeText} coalesced: the seat's warm-start limit is spent, one delivery is deferred to the window end (${facts})`)
+      return
+    }
     const existingInboxHint = pending.find(message => this.isInboxNotice(message))
     if (existingInboxHint !== undefined) agent.inbox.remove(existingInboxHint.id)
     const hint = createUserMessage({
@@ -4519,6 +4527,8 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.warn(`agent-team: Team Inbox notice delivery failed for ${scope} cause ${causeText} attempt ${attempt} (${facts}): ${failureDetail(error)}; the operation is committed and stands, and the notice state was cleared so the next fact touching this Member rederives and retries it`)
       return
     }
+    if (opensTurn) this.warmStartAllowed(member.memberId, Date.now())
+    this.bindDeliveredThreads(member, agent.id, notifications)
     this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${scope} cause ${causeText} attempt ${attempt} lane '${sequenced ? 'follow-up turn' : 'next step'}' (${facts}): queued for the Member's next step, not yet read by the model`)
   }
 
@@ -4546,6 +4556,21 @@ export default class AgentTeam extends TypertRemoteService {
     })
     for (const [slot, entries] of bySlot) if (slot !== 0) this.deliverToSlot(member, slot, entries)
     return bySlot.get(0) ?? []
+  }
+
+  /** Re-run the seat's delivery once the warm window frees; one timer per seat, so a burst coalesces. */
+  private deferWarmDelivery(memberId: AgentTeamMemberId, cause: NotificationCause, sequenced: boolean): void {
+    if (this.warmDeferTimers.has(memberId)) return
+    const nowMs = Date.now()
+    const recent = (this.warmStartsByMember.get(memberId) ?? []).filter(at => at > nowMs - this.warmLimit.windowMs)
+    const delay = Math.max(50, (recent[0] ?? nowMs) + this.warmLimit.windowMs - nowMs + 10)
+    const timer = setTimeout(() => {
+      this.warmDeferTimers.delete(memberId)
+      const handle = this.handles.get(memberId)
+      if (handle !== undefined) this.notifyMember(handle.agent, cause, sequenced)
+    }, delay)
+    timer.unref?.()
+    this.warmDeferTimers.set(memberId, timer)
   }
 
   /**
@@ -4622,6 +4647,7 @@ export default class AgentTeam extends TypertRemoteService {
         // Refs and counts only: a seed's Message bodies never reach the log.
         this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} seeded Thread '${threadRef}' from ${seed.generation === undefined ? 'no summary' : `summary generation ${seed.generation}`} + ${seed.messageRefs.length} Message(s) [${seed.messageRefs.join(', ')}], ${seed.omitted} not shown`)
       }
+      this.bindDeliveredThreads(member, agent.id, notifications)
       this.slotRecorder(member.memberId, slot).noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
       this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} (${facts}): not yet read by the model`)
     }).catch((error: unknown) => {
