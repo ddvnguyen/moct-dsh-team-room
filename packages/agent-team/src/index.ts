@@ -51,7 +51,7 @@ import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName,
 import { memberInstances } from './member-instances.ts'
 import { routeThreads } from './instance-router.ts'
 import { DEFAULT_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit.ts'
-import { MEMORY_READ_ONLY_TOOLS, seatMemoryGuard, seatMemoryStaleReason, type SeatMemoryStaleRefusal } from './seat-memory.ts'
+import { MEMORY_READ_ONLY_TOOLS, memoryRevision, seatMemoryGuard, seatMemoryStaleReason, type SeatMemoryStaleRefusal } from './seat-memory.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
@@ -1585,9 +1585,11 @@ export default class AgentTeam extends TypertRemoteService {
     if (!this.handles.has(member.memberId)) {
       // No live Session to start a fresh context from: resume the Member first, then
       // this Thread resumes warm or falls back to cold on its next delivery (one try).
-      const fallback = { cause: 'no-handle' as const, triedWarm: true }
+      // Nothing was resumed and nothing was seeded: the result says so (`not-resumed`, no warm try)
+      // and still names the Session the Member's ledger row holds, so no caller reads it as a seed.
+      const fallback = { cause: 'no-handle' as const, triedWarm: false }
       this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold fallback for Thread '${request.threadRef ?? 'none'}' cause ${fallback.cause}: the Member has no live Session; resume it before continuing`)
-      return { sessionId: member.sessionId, cache: 'cold', action: 'seeded-new', coldFallback: fallback }
+      return { sessionId: member.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: fallback }
     }
     // The renewal takes the Member's lifecycle lock itself, so it runs outside any lock held here.
     const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
@@ -1612,6 +1614,15 @@ export default class AgentTeam extends TypertRemoteService {
     throw new Error(`forkMemberSession is not supported yet (seed '${request.seed}'): per-Thread sessions are deferred past TEST`)
   }
 
+  /**
+   * Operator nudge for a Member that stopped making progress: steer a
+   * continuation prompt into its live session, rebuild it after an orphaned
+   * preset composition, or re-run activation when no live session exists.
+   * Runtime-only — no ledger operation, no suspend. Taking over manually also
+   * cancels any pending automatic recovery episode. A non-enabled Member
+   * still holding a live handle is an interrupted suspend/archive/remove,
+   * not a stalled one; recovery finishes that cleanup instead of nudging it.
+   */
   @Remote('recoverMember')
   async recoverMember(request: AgentTeamRecoverMemberRequest): Promise<AgentTeamRecoverMemberResult> {
     this.requireAccepting()
@@ -3642,6 +3653,13 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private installSeatMemoryLock(agentCtx: Context, agent: Agent, memoryDirectory: string): void {
     const read = async (path: string): Promise<string> => readFileSync(path, 'utf8')
+    // A Session starts having been shown the memory it will be injected with: seed its revision now, so
+    // a full-file overwrite as its first memory write is checked against that, not waved through.
+    try {
+      seatMemoryGuard.noteRead(agent.id, memoryRevision(readFileSync(join(memoryDirectory, 'memory.md'), 'utf8')))
+    } catch {
+      seatMemoryGuard.forget(agent.id)
+    }
     agentCtx.on('tools/pre-execute', async (exec, next) => {
       const refusal = await seatMemoryGuard.probe({ toolName: exec.name, args: exec.arguments, memoryDirectory, sessionId: agent.id, read })
       return refusal === undefined ? next()

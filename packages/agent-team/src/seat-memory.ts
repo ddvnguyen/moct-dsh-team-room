@@ -9,7 +9,10 @@
  * re-reads and retries instead of silently dropping another instance's edit.
  * Appending a new note needs no merge on the retry; only an edit to an
  * existing line is revision-checked, and a first write of a Session that has
- * never read the file is allowed (nothing exists yet to be stale against).
+ * never read the file is allowed (nothing exists yet to be stale against). A
+ * Session's revision is seeded when it starts and refreshed each step from the
+ * memory block the host injects, so a Session that has not yet written is
+ * still checked against what it was shown.
  *
  * Pure state plus injected I/O: the caller supplies the read, so the lock is
  * testable without a real filesystem. Fails closed: an unreadable memory.md
@@ -129,6 +132,9 @@ export class SeatMemoryGuard {
         this.revisions.set(input.sessionId, revision)
         return undefined
       }
+      // The refusal hands the Session this exact content, so it has now read it: its retry compares
+      // against this revision and passes unless another instance wrote in between.
+      this.revisions.set(input.sessionId, revision)
       return Object.freeze({ kind: 'stale-memory' as const, revision, content })
     })
   }

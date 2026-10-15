@@ -7,6 +7,7 @@ import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { matchesProducerKind } from './context-source.ts'
 import type { AgentTeamAgentMember } from './types.ts'
 import { memberMemoryDirectoryPath } from './member-runtime.ts'
+import { memoryRevision, seatMemoryGuard } from './seat-memory.ts'
 import { TEAM_MEMORY_BEGIN } from './team-memory.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
@@ -43,7 +44,10 @@ export function apply(ctx: Context): void {
     const memoryPath = memberMemoryDirectoryPath(member)
     let memory: string
     try {
-      memory = renderMemberMemory(await readFile(`${memoryPath}/memory.md`), memoryPath)
+      const raw = await readFile(`${memoryPath}/memory.md`)
+      // This step's model request carries exactly this content: record it as what the Session has read.
+      seatMemoryGuard.noteRead(agent.id, memoryRevision(raw.toString('utf8')))
+      memory = renderMemberMemory(raw, memoryPath)
     } catch (error) {
       memory = renderUnavailableMemory(memoryPath, (error as NodeJS.ErrnoException).code === 'ENOENT'
         ? 'memory.md is absent; the private memory index is empty.'

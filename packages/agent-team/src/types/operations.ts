@@ -653,7 +653,8 @@ export interface AgentTeamColdFallback {
 export interface AgentTeamResumeMemberSessionResult {
   readonly sessionId: SessionId
   readonly cache: 'warm' | 'cold'
-  readonly action: 'resumed' | 'seeded-new'
+  /** `not-resumed`: the Member had no live Session, so nothing was resumed or seeded. */
+  readonly action: 'resumed' | 'seeded-new' | 'not-resumed'
   /** Present only when this delivery took the cold fallback instead of the warm path. */
   readonly coldFallback?: AgentTeamColdFallback
 }

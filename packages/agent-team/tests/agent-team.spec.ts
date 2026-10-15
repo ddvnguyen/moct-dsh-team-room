@@ -3067,7 +3067,7 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     // Task-16: a cold verdict with no live Session no longer fails the call; it is the
     // cold fallback, reported on the result so the delivery keeps its one try per Turn.
     await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId, threadRef }))
-      .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'cold', action: 'seeded-new', coldFallback: { cause: 'no-handle', triedWarm: true } })
+      .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: { cause: 'no-handle', triedWarm: false } })
   })
 })
 
