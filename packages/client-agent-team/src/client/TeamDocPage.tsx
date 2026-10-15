@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type {
   AgentTeamClientMemberStatus,
+  AgentTeamDocCommentRef,
   AgentTeamDocCommentView,
+  AgentTeamDocSectionVersion,
   AgentTeamDocRef,
   AgentTeamDocVerdict,
   AgentTeamDocView,
@@ -13,7 +15,9 @@ import { Button, IconChevronLeftOutlineRegular, IconPanelLeftOutlineRegular, Ico
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
-import { commentThreads, docQuote, docStatusDot, formatDocStatus, isFinalDocStatus } from './team-docs.ts'
+import { commentThreads, docQuote, docStatusDot, formatDocStatus, isFinalDocStatus, quoteRange } from './team-docs.ts'
+import { TeamDocSectionEditor } from './TeamDocSectionEditor.tsx'
+import { TeamDocHistory } from './TeamDocHistory.tsx'
 import { mintRequestId } from './requests.ts'
 import css from './conversation.module.css'
 import channelCss from './channel.module.css'
@@ -28,6 +32,9 @@ interface TeamDocPageProps {
   readonly loadDoc: TeamConversationProps['loadDoc']
   readonly commentDoc: TeamConversationProps['commentDoc']
   readonly reviewDoc: TeamConversationProps['reviewDoc']
+  readonly writeDocSection: TeamConversationProps['writeDocSection']
+  readonly resolveDocComment: TeamConversationProps['resolveDocComment']
+  readonly loadDocSectionHistory: TeamConversationProps['loadDocSectionHistory']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   /** Back to the Doc's Thread. */
@@ -50,17 +57,27 @@ function grow(input: HTMLTextAreaElement): void {
 }
 
 /** Which durable write is in flight; every control waits for its answer. */
-type Pending = 'comment' | AgentTeamDocVerdict | undefined
+type Pending = 'comment' | 'edit' | 'restore' | 'resolve' | AgentTeamDocVerdict | undefined
+
+/** One section open in the editor, with the text the edit started from. */
+interface Editing {
+  readonly sectionId: string
+  readonly baseMarkdown: string
+}
+
+/** The CSS Custom Highlight name the commented passages are painted with. */
+const COMMENT_HIGHLIGHT = 'team-doc-comment'
 
 /**
  * One Team Document on its own page. The Human selects a passage to comment
  * on it; comments stay pending until one of the three verdicts sends them to
- * the author. Every write waits for the Host's answer and the page then
+ * the author. The Human may also edit a section, read its history and restore
+ * an earlier version, and resolve a comment thread. Every write waits for the Host's answer and the page then
  * re-reads the Doc: nothing here is optimistic, and each verdict is fenced by
  * the Doc revision on screen, so a Doc that moved meanwhile is re-read rather
  * than judged blind.
  */
-export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc, commentDoc, reviewDoc, loadMembers, subscribeChanges, backToThread, sidebarCollapsed, openSidebar, t }: TeamDocPageProps) {
+export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadMembers, subscribeChanges, backToThread, sidebarCollapsed, openSidebar, t }: TeamDocPageProps) {
   const [view, setView] = useState<AgentTeamDocView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [error, setError] = useState<string>()
@@ -70,6 +87,9 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
   const [note, setNote] = useState('')
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [pending, setPending] = useState<Pending>()
+  const [editing, setEditing] = useState<Editing>()
+  const [historyFor, setHistoryFor] = useState<string>()
+  const [showResolved, setShowResolved] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const commentInputRef = useRef<HTMLTextAreaElement>(null)
   const noteInputRef = useRef<HTMLTextAreaElement>(null)
@@ -113,6 +133,9 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
       }
       const anchor = sectionOf(current.anchorNode)
       if (anchor === null || anchor !== sectionOf(current.focusNode)) return
+      // Text picked inside the section editor is a draft, not a passage to comment on.
+      const element = current.anchorNode instanceof HTMLElement ? current.anchorNode : current.anchorNode?.parentElement
+      if (element?.closest('[data-doc-editor]') != null) return
       const quote = docQuote(current.toString())
       const sectionId = anchor.dataset['docSection']
       if (quote === '' || sectionId === undefined) return
@@ -162,6 +185,49 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
     await refresh()
   }
 
+  const saveSection = async (sectionId: string, heading: string, markdown: string, kind: 'edit' | 'restore'): Promise<void> => {
+    if (view === undefined || pending !== undefined) return
+    setPending(kind)
+    setNotice(undefined)
+    const result = await writeDocSection({ requestId: mintRequestId(), workspaceId, docRef: view.doc.docRef, baseDocRevision: view.revision,
+      sectionId, heading, markdown })
+    if (!mounted.current) return
+    setPending(undefined)
+    if (!result.ok) { setError(result.error.message); return }
+    // A stale save keeps the editor open: the re-read puts the newer text above the draft.
+    if (result.value.kind === 'stale_doc_revision') setNotice(t('docStale'))
+    else if (kind === 'edit') setEditing(undefined)
+    await refresh()
+  }
+
+  const resolveThread = async (commentRef: AgentTeamDocCommentRef): Promise<void> => {
+    if (view === undefined || pending !== undefined) return
+    setPending('resolve')
+    setNotice(undefined)
+    const result = await resolveDocComment({ requestId: mintRequestId(), workspaceId, docRef: view.doc.docRef, commentRef })
+    if (!mounted.current) return
+    setPending(undefined)
+    if (!result.ok) { setError(result.error.message); return }
+    await refresh()
+  }
+
+  // Paint each open comment's passage where the text still holds it. The
+  // highlight is a CSS Custom Highlight over the rendered Markdown, so the
+  // Markdown DOM itself is never rewritten; browsers without the API skip it.
+  useEffect(() => {
+    const body = bodyRef.current
+    const registry = typeof CSS === 'undefined' ? undefined : (CSS as { highlights?: Map<string, unknown> }).highlights
+    const HighlightType = (globalThis as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
+    if (body === null || view === undefined || registry === undefined || HighlightType === undefined) return
+    const ranges = view.comments.filter(comment => comment.parentCommentRef === undefined && !comment.resolved && comment.quote !== '').flatMap(comment => {
+      const section = body.querySelector(`[data-doc-section="${CSS.escape(comment.sectionId)}"] [data-doc-section-body]`)
+      const range = section === null ? undefined : quoteRange(section, comment.quote)
+      return range === undefined ? [] : [range]
+    })
+    registry.set(COMMENT_HIGHLIGHT, new HighlightType(...ranges))
+    return () => { registry.delete(COMMENT_HIGHLIGHT) }
+  }, [view, editing])
+
   const onCommentKey = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void addComment() }
     if (event.key === 'Escape') { setSelection(undefined); setCommentText('') }
@@ -170,16 +236,22 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
   const pendingCount = view?.comments.filter(comment => comment.pending).length ?? 0
   const final = view !== undefined && isFinalDocStatus(view.status)
   const reviewBlocked = pendingCount === 0 && note.trim() === ''
+  const threads = view === undefined ? [] : commentThreads(view.comments)
+  const resolvedCount = threads.filter(({ root }) => root.resolved).length
   const sectionHeading = (sectionId: string): string => view?.sections.find(section => section.sectionId === sectionId)?.heading ?? sectionId
   const commentRow = (comment: AgentTeamDocCommentView, reply: boolean) => <li key={comment.commentRef} className={reply ? docCss.commentReply : docCss.comment} data-team-doc-comment={comment.commentRef}>
     <div className={docCss.commentHead}>
       <span className={docCss.commentAuthor}>{nameOf(comment.author)}</span>
       {!reply && <span className={docCss.commentSection}>{sectionHeading(comment.sectionId)}</span>}
-      {comment.pending ? <span className={docCss.badgePending}>{t('docPendingBadge')}</span>
+      {!reply && comment.resolved ? <span className={docCss.badge}>{t('docResolvedBadge')}</span>
+        : comment.pending ? <span className={docCss.badgePending}>{t('docPendingBadge')}</span>
         : comment.author === view?.humanMemberId ? <span className={docCss.badge}>{t('docDeliveredBadge')}</span> : null}
     </div>
     {comment.quote !== '' && <blockquote className={docCss.commentQuote}>{comment.quote}</blockquote>}
     <p className={docCss.commentBody}>{comment.body}</p>
+    {!reply && !comment.resolved && !final && <div className={docCss.reviewActions}>
+      <Button size="sm" variant="ghost" disabled={pending !== undefined} onClick={() => { void resolveThread(comment.commentRef) }}>{t('docResolve')}</Button>
+    </div>}
   </li>
 
   return <main className={css.surface} data-team-doc={docRef}>
@@ -205,14 +277,32 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
           <h1 className={docCss.title}>{view.doc.title}</h1>
           {view.sections.map(section => <section key={section.sectionId} className={docCss.section} data-doc-section={section.sectionId}
             aria-labelledby={`doc-${section.sectionId}`}>
-            <h2 id={`doc-${section.sectionId}`} className={docCss.sectionHeading}>{section.heading}</h2>
-            {section.markdown === ''
-              ? <p className={docCss.emptySection}>{t('docEmptySection')}</p>
-              : <div className={`${css.messageMarkdown} ${docCss.markdown}`}><MarkdownText key={section.markdown} text={section.markdown} labels={markdownLabels} /></div>}
+            <div className={docCss.sectionHead}>
+              <h2 id={`doc-${section.sectionId}`} className={docCss.sectionHeading}>{section.heading}</h2>
+              <span className={docCss.sectionActions}>
+                {!final && editing?.sectionId !== section.sectionId && <Button size="sm" variant="ghost" disabled={pending !== undefined}
+                  aria-label={t('docEditSectionNamed', { heading: section.heading })}
+                  onClick={() => { setEditing({ sectionId: section.sectionId, baseMarkdown: section.markdown }) }}>{t('docEditSection')}</Button>}
+                <Button size="sm" variant="ghost" aria-label={t('docHistoryNamed', { heading: section.heading })} aria-pressed={historyFor === section.sectionId}
+                  onClick={() => { setHistoryFor(current => current === section.sectionId ? undefined : section.sectionId) }}>{t('docHistory')}</Button>
+              </span>
+            </div>
+            {section.writer !== view.doc.author && <p className={docCss.editedBy}>{t('docEditedBy', { name: nameOf(section.writer) })}</p>}
+            {editing?.sectionId === section.sectionId
+              ? <TeamDocSectionEditor key={section.sectionId} section={section} baseMarkdown={editing.baseMarkdown} saving={pending === 'edit'}
+                save={(heading, markdown) => { void saveSection(section.sectionId, heading, markdown, 'edit') }}
+                cancel={() => { setEditing(undefined) }} markdownLabels={markdownLabels} t={t} />
+              : section.markdown === ''
+                ? <p className={docCss.emptySection}>{t('docEmptySection')}</p>
+                : <div className={`${css.messageMarkdown} ${docCss.markdown}`} data-doc-section-body><MarkdownText key={section.markdown} text={section.markdown} labels={markdownLabels} /></div>}
           </section>)}
         </article>
 
         <aside className={docCss.side} aria-label={t('docCommentsHeading')}>
+          {historyFor !== undefined && view.sections.some(section => section.sectionId === historyFor) && <TeamDocHistory key={historyFor}
+            workspaceId={workspaceId} docRef={view.doc.docRef} sectionId={historyFor} heading={sectionHeading(historyFor)} revision={view.revision}
+            loadHistory={loadDocSectionHistory} nameOf={nameOf} restoring={pending === 'restore'} close={() => { setHistoryFor(undefined) }} t={t}
+            {...(final ? {} : { restore: (version: AgentTeamDocSectionVersion) => { void saveSection(historyFor, version.heading, version.markdown, 'restore') } })} />}
           {!final && (selection === undefined
             ? <section className={docCss.panel}><p className={docCss.hint}>{t('docSelectionHint')}</p></section>
             : <form className={docCss.chatCard} onSubmit={event => { event.preventDefault(); void addComment() }} data-team-doc-comment-box>
@@ -238,10 +328,15 @@ export function TeamDocPage({ workspaceId, docRef, threadRef, humanName, loadDoc
             {view.comments.length === 0
               ? <p className={docCss.hint}>{t('docNoComments')}</p>
               : <ul className={docCss.commentList}>
-                {commentThreads(view.comments).map(({ root, replies }) => <li key={root.commentRef} className={docCss.commentThread}>
+                {threads.filter(({ root }) => showResolved || !root.resolved).map(({ root, replies }) => <li key={root.commentRef}
+                  className={root.resolved ? `${docCss.commentThread} ${docCss.resolvedThread}` : docCss.commentThread}>
                   <ul className={docCss.commentList}>{commentRow(root, false)}{replies.map(reply => commentRow(reply, true))}</ul>
                 </li>)}
               </ul>}
+            {resolvedCount > 0 && <button type="button" className={docCss.resolvedToggle} aria-expanded={showResolved}
+              onClick={() => { setShowResolved(current => !current) }}>
+              {showResolved ? t('docHideResolved') : t('docShowResolved', { count: resolvedCount })}
+            </button>}
           </section>
         </aside>
       </div>}
