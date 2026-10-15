@@ -13,6 +13,7 @@ import type {
   AgentTeamDocComment,
   AgentTeamDocNotice,
   AgentTeamDocRef,
+  AgentTeamDocCommentRef,
   AgentTeamDocSection,
   AgentTeamInboxDelta,
   AgentTeamMemberId,
@@ -655,6 +656,22 @@ export interface AgentTeamDocCommentAddedOperation extends AgentTeamOperationBas
   }
 }
 
+/**
+ * Durable close of one comment thread: its root comment, with every reply under
+ * it. A resolved Human comment that no review delivered yet is withdrawn, so
+ * the next verdict no longer carries it.
+ */
+export interface AgentTeamDocCommentResolvedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-comment-resolved'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    /** The Doc's Thread, so the change scope needs no projection lookup. */
+    readonly threadRef: AgentTeamThreadRef
+    readonly docRef: AgentTeamDocRef
+    readonly commentRef: AgentTeamDocCommentRef
+  }
+}
+
 /** Closed union of durable Agent Team operations. */
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
@@ -693,4 +710,5 @@ export type AgentTeamOperation =
   | AgentTeamDocCreatedOperation
   | AgentTeamDocSectionWrittenOperation
   | AgentTeamDocCommentAddedOperation
+  | AgentTeamDocCommentResolvedOperation
 

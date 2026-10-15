@@ -210,4 +210,66 @@ describe('Team Documents', () => {
     expect(committed(again.value).revision).toBe(first.revision)
     await expect(ledger.writeDocSection({ ...request, markdown: 'Different.' })).rejects.toThrow(/was reused with a different operation or payload/)
   })
+
+  it('the Human edits a section, every version stays in its history, and the verdict names what the Human rewrote', async () => {
+    const { pool, ledger, ann, threadRef } = await room()
+    const { docRef, revision } = await draftedDoc(ledger, ann, threadRef)
+    const submitted = committed((await ledger.submitDoc({ requestId: requestId('submit'), workspaceId: alpha, docRef, actor: ann, docRevision: revision })).value)
+    expect(submitted.notice.docRevision).toBe(revision)
+    // A stale Human edit is refused like an Agent's.
+    expect((await ledger.writeDocSection({ requestId: requestId('stale-edit'), workspaceId: alpha, docRef, actor: human,
+      baseDocRevision: revision - 1, sectionId: 's1', heading: 'Goal', markdown: 'x' })).value.kind).toBe('stale_doc_revision')
+    const edited = committed((await ledger.writeDocSection({ requestId: requestId('human-edit'), workspaceId: alpha, docRef, actor: human,
+      baseDocRevision: revision, sectionId: 's1', heading: 'Goal', markdown: 'Ship 1.2 on Thursday.' })).value)
+    const view = ledger.doc(ann, { workspaceId: alpha, docRef })
+    expect(view.sections[0]).toMatchObject({ markdown: 'Ship 1.2 on Thursday.', writer: human.memberId, writtenAtSequence: edited.revision })
+    expect(view.sections[1]).toMatchObject({ writer: ann.memberId })
+    expect(ledger.docSectionHistory(ann, { workspaceId: alpha, docRef, sectionId: 's1' }).versions.map(version => [version.writer, version.markdown]))
+      .toEqual([[human.memberId, 'Ship 1.2 on Thursday.'], [ann.memberId, 'Ship 1.2 on Friday.'], [ann.memberId, '']])
+    expect(() => ledger.docSectionHistory(ann, { workspaceId: alpha, docRef, sectionId: 's9' })).toThrow(/no section 's9'/)
+    const reviewed = committed((await ledger.reviewDoc({ requestId: requestId('review'), workspaceId: alpha, docRef, actor: human,
+      docRevision: edited.revision, verdict: 'review', note: 'See my edit.' })).value)
+    expect(reviewed.message.body).toContain('The Human edited "Goal" since your submit')
+
+    const copy = new MemoryMediaPool()
+    copy.versions.set('agent_team', pool.versions.get('agent_team')!)
+    copy.media.set('agent_team', { tables: new Map([['operations', new Map(pool.media.get('agent_team')!.tables.get('operations')!)]]), global: null })
+    const replay = await openLedger(copy)
+    replay.validate()
+    expect(replay.doc(human, { workspaceId: alpha, docRef })).toEqual(ledger.doc(human, { workspaceId: alpha, docRef }))
+    expect(replay.docSectionHistory(human, { workspaceId: alpha, docRef, sectionId: 's1' })).toEqual(ledger.docSectionHistory(human, { workspaceId: alpha, docRef, sectionId: 's1' }))
+  })
+
+  it('resolving a thread closes it for everyone and withdraws a pending Human comment from the next verdict', async () => {
+    const { pool, ledger, ann, bob, threadRef } = await room()
+    const { docRef, revision } = await draftedDoc(ledger, ann, threadRef)
+    const kept = (await ledger.commentDoc({ requestId: requestId('keep'), workspaceId: alpha, docRef, actor: human,
+      sectionId: 's1', quote: 'Friday', body: 'Thursday?' })).value.comment
+    const dropped = (await ledger.commentDoc({ requestId: requestId('drop'), workspaceId: alpha, docRef, actor: human,
+      sectionId: 's1', quote: 'Ship', body: 'Never mind.' })).value.comment
+    const reply = (await ledger.commentDoc({ requestId: requestId('reply'), workspaceId: alpha, docRef, actor: bob,
+      sectionId: 's1', quote: '', body: 'Agreed.', parentCommentRef: dropped.commentRef })).value.comment
+    await expect(ledger.resolveDocComment({ requestId: requestId('resolve-reply'), workspaceId: alpha, docRef, actor: human,
+      commentRef: reply.commentRef })).rejects.toThrow(/first comment, not a reply/)
+    await ledger.resolveDocComment({ requestId: requestId('resolve'), workspaceId: alpha, docRef, actor: bob, commentRef: dropped.commentRef })
+    await expect(ledger.resolveDocComment({ requestId: requestId('resolve-again'), workspaceId: alpha, docRef, actor: human,
+      commentRef: dropped.commentRef })).rejects.toThrow(/already resolved/)
+    const view = ledger.doc(human, { workspaceId: alpha, docRef })
+    expect(view.comments.map(comment => [comment.commentRef, comment.resolved, comment.pending]))
+      .toEqual([[kept.commentRef, false, true], [dropped.commentRef, true, false], [reply.commentRef, true, false]])
+    const reviewed = committed((await ledger.reviewDoc({ requestId: requestId('review'), workspaceId: alpha, docRef, actor: human,
+      docRevision: revision, verdict: 'review' })).value)
+    expect(reviewed.notice).toMatchObject({ commentRefs: [kept.commentRef] })
+
+    // The Channel lists its Docs too.
+    const channelRef = ledger.doc(human, { workspaceId: alpha, docRef }).doc.channelRef
+    expect(ledger.docs(human, { workspaceId: alpha, channelRef }).docs.map(doc => doc.docRef)).toEqual([docRef])
+
+    const copy = new MemoryMediaPool()
+    copy.versions.set('agent_team', pool.versions.get('agent_team')!)
+    copy.media.set('agent_team', { tables: new Map([['operations', new Map(pool.media.get('agent_team')!.tables.get('operations')!)]]), global: null })
+    const replay = await openLedger(copy)
+    replay.validate()
+    expect(replay.doc(human, { workspaceId: alpha, docRef })).toEqual(ledger.doc(human, { workspaceId: alpha, docRef }))
+  })
 })

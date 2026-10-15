@@ -151,6 +151,10 @@ import type {
   AgentTeamDocsResult,
   AgentTeamDocView,
   AgentTeamReviewDocRequest,
+  AgentTeamResolveDocCommentRequest,
+  AgentTeamResolveDocCommentResult,
+  AgentTeamDocSectionHistory,
+  AgentTeamDocSectionHistoryRequest,
   AgentTeamSubmitDocRequest,
   AgentTeamWriteDocSectionRequest,
   AgentTeamWriteDocSectionResult,
@@ -2563,11 +2567,36 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().doc(agentTeamHumanActor(), request)
   }
 
-  /** Human Doc rows for one Thread, or for Doc refs cited in Message bodies. */
+  /** Human Doc rows for one Thread or one Channel, or for Doc refs cited in Message bodies. */
   @Remote('docs')
   docs(request: AgentTeamDocsRequest): AgentTeamDocsResult {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().docs(agentTeamHumanActor(), request)
+  }
+
+  /** Human read of every version of one Doc section, newest first. */
+  @Remote('docSectionHistory')
+  docSectionHistory(request: AgentTeamDocSectionHistoryRequest): AgentTeamDocSectionHistory {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().docSectionHistory(agentTeamHumanActor(), request)
+  }
+
+  /** Human edit of one Doc section, or a restore of an earlier version; a stale Doc revision is a business outcome. */
+  @Remote('writeDocSection')
+  async writeDocSection(request: AgentTeamWriteDocSectionRequest): Promise<AgentTeamWriteDocSectionResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().writeDocSection({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Human close of one comment thread; a pending Human comment in it is withdrawn. */
+  @Remote('resolveDocComment')
+  async resolveDocComment(request: AgentTeamResolveDocCommentRequest): Promise<AgentTeamResolveDocCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().resolveDocComment({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
   }
 
   /** Human comment on one Doc passage; it stays pending until the Human's next verdict. */
@@ -2628,6 +2657,14 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /** Agent-only close of one comment thread, typically once a revision answered it. */
+  async resolveDocCommentForAgent(agent: Agent, request: AgentTeamResolveDocCommentRequest): Promise<AgentTeamResolveDocCommentResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().resolveDocComment({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   /** Agent-only request for the Human's review; its Thread notice puts the Doc in the Human's Inbox. */
   async submitDocForAgent(agent: Agent, request: AgentTeamSubmitDocRequest): Promise<AgentTeamDocNoticeResult> {
     const actor = this.memberCall(agent, request.workspaceId)
@@ -2640,6 +2677,12 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.memberActor(agent)
     this.requireAgentWorkspace(actor, request.workspaceId)
     return this.requireLedger().doc(actor, request)
+  }
+
+  docSectionHistoryForAgent(agent: Agent, request: AgentTeamDocSectionHistoryRequest): AgentTeamDocSectionHistory {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().docSectionHistory(actor, request)
   }
 
   docsForAgent(agent: Agent, request: AgentTeamDocsRequest): AgentTeamDocsResult {

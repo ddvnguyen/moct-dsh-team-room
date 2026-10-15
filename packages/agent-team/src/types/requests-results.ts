@@ -1235,7 +1235,10 @@ export interface AgentTeamCreateDocRequest {
   readonly outline: readonly string[]
 }
 
-/** Member intent to write one Doc section: replace `sectionId`, or append a new section when it is absent. */
+/**
+ * Intent to write one Doc section: replace `sectionId`, or append a new section
+ * when it is absent. The Doc's author writes it; the Human may edit it too.
+ */
 export interface AgentTeamWriteDocSectionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -1280,16 +1283,54 @@ export interface AgentTeamReviewDocRequest {
   readonly note?: string
 }
 
+/** Close one comment thread by its root comment. */
+export interface AgentTeamResolveDocCommentRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly commentRef: AgentTeamDocCommentRef
+}
+
 export interface AgentTeamDocRequest {
   readonly workspaceId: WorkspaceId
   readonly docRef: AgentTeamDocRef
 }
 
-/** List the Docs of one Thread, or resolve Doc refs cited in Message bodies. */
+/** List the Docs of one Thread or one Channel, or resolve Doc refs cited in Message bodies. */
 export interface AgentTeamDocsRequest {
   readonly workspaceId: WorkspaceId
   readonly threadRef?: AgentTeamThreadRef
+  readonly channelRef?: AgentTeamChannelRef
   readonly docRefs?: readonly AgentTeamDocRef[]
+}
+
+/** Every version of one section, newest first. */
+export interface AgentTeamDocSectionHistoryRequest {
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+}
+
+/** One written version of a section: the outline at creation, or a later write. */
+export interface AgentTeamDocSectionVersion {
+  readonly sequence: number
+  readonly writer: AgentTeamMemberId
+  readonly heading: string
+  readonly markdown: string
+  readonly occurredAt: string
+}
+
+export interface AgentTeamDocSectionHistory {
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+  readonly versions: readonly AgentTeamDocSectionVersion[]
+}
+
+/** One section as a reader sees it: its text, and who wrote that text last. */
+export interface AgentTeamDocSectionView extends AgentTeamDocSection {
+  readonly writer: AgentTeamMemberId
+  /** Sequence of the write that produced this text. */
+  readonly writtenAtSequence: number
 }
 
 /** One comment as a reader sees it. */
@@ -1297,6 +1338,8 @@ export interface AgentTeamDocCommentView extends AgentTeamDocComment {
   readonly occurredAt: string
   /** A Human comment no review verdict has delivered yet. */
   readonly pending: boolean
+  /** Its thread is closed: set on the root comment and every reply under it. */
+  readonly resolved: boolean
 }
 
 /** One review verdict the Human gave. */
@@ -1317,7 +1360,7 @@ export interface AgentTeamDocView {
   readonly status: AgentTeamDocStatus
   /** Sequence of the latest creation or section write; the fence for the next write and for a submit or review. */
   readonly revision: number
-  readonly sections: readonly AgentTeamDocSection[]
+  readonly sections: readonly AgentTeamDocSectionView[]
   readonly comments: readonly AgentTeamDocCommentView[]
   readonly reviews: readonly AgentTeamDocReview[]
   /** The revision the latest submit asked the Human to review. */
@@ -1354,6 +1397,12 @@ export interface AgentTeamCreateDocResult {
 export interface AgentTeamDocCommentResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly comment: AgentTeamDocComment
+}
+
+export interface AgentTeamResolveDocCommentResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly docRef: AgentTeamDocRef
+  readonly commentRef: AgentTeamDocCommentRef
 }
 
 /** The Doc changed after the caller read it; nothing was committed. */

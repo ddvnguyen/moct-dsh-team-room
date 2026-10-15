@@ -577,6 +577,13 @@ const docCommentAdded: Op<'team/doc-comment-added'> = {
   },
 }
 
+const docCommentResolved: Op<'team/doc-comment-resolved'> = {
+  ...opBase('operation:protocol-34', 'request:protocol-doc-comment-resolved', 34),
+  previousOperationId,
+  kind: 'team/doc-comment-resolved',
+  data: { workspaceId: alpha, threadRef: memberThread, docRef: fixtureDocRef, commentRef: 'comment:protocol-fixture' as AgentTeamDocCommentRef },
+}
+
 /** What one same-request retry must produce: resolved, never a second commit. */
 interface RetryOutcome {
   readonly committed: boolean
@@ -1418,6 +1425,22 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
       },
       changed: () => ledger.commentDoc({ requestId: docCommentAdded.requestId, actor: human, workspaceId: alpha,
         docRef: fixtureDocRef, sectionId: 's1', quote: 'protocol fixture', body: 'A different comment.' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/doc-comment-resolved': {
+    stored: docCommentResolved,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.resolveDocComment({ requestId: docCommentResolved.requestId, actor: human, workspaceId: alpha,
+          docRef: fixtureDocRef, commentRef: 'comment:protocol-fixture' as AgentTeamDocCommentRef })
+        expect(out.value.commentRef, 'the resolve mapper answers with the stored comment').toBe('comment:protocol-fixture')
+        return out
+      },
+      changed: () => ledger.resolveDocComment({ requestId: docCommentResolved.requestId, actor: human, workspaceId: alpha,
+        docRef: fixtureDocRef, commentRef: 'comment:protocol-other' as AgentTeamDocCommentRef }),
     },
     legacy: { normalize: 'none', repair: 'none' },
     intent: { scopes: 'derived', inbox: 'none' },
