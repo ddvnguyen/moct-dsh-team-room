@@ -150,6 +150,8 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadMemory: (request: AgentTeamMemoryListRequest) => Promise<RemoteResult<AgentTeamMemoryListResult>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
+    /** A14: open the Agent's current Session natively; the Agent's detail tabs ride the conversation. */
+    openAgentDetail: (workspaceId: AgentTeamViewRequest['workspaceId'], memberId: AgentTeamClientMemberStatus['member']['memberId'], sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
     selectedChannelRef?: AgentTeamChannelRef
   }
 

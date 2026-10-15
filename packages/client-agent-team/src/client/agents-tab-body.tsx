@@ -22,7 +22,7 @@ import css from './sidebar.module.css'
 
 type AgentsTabProps = Pick<TeamSidebarProps,
   'navigation' | 'useWorkspaces' | 'loadMembers' | 'subscribeChanges' | 'addMember' | 'updateMember' | 'recoverMember'
-  | 'archiveMember' | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 't'>
+  | 'archiveMember' | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail' | 't'>
 
 export function TeamAgentsTab({ navigation, useWorkspaces, t, ...agents }: AgentsTabProps) {
   const workspaces = useWorkspaces(state => state.items)

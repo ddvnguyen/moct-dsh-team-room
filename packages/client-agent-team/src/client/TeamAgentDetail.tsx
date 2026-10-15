@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamSessionRun, TeamMemoryRecord } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconCopyOutlineRegular, Modal, SegmentedTabs, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCopyOutlineRegular, SegmentedTabs, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { presenceLabel } from './TeamPresenceDot.tsx'
 import { formatTokens, UNKNOWN } from './reply-stats.ts'
@@ -69,7 +69,7 @@ type Loaded =
  * through the same path as the row click; an id the Client cannot open is
  * reported in the dialog, not swallowed.
  */
-export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onClose, t }: {
+export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, onClose, only, t }: {
   readonly workspaceId: WorkspaceId
   readonly status: AgentTeamClientMemberStatus
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
@@ -77,12 +77,16 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly loadMemory: TeamSidebarProps['loadMemory']
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
-  readonly onClose: () => void
+  /** Called after a Session opened natively; the detail's tabs live in the open conversation, so nothing closes. */
+  readonly onClose?: () => void
+  /** Render one tab's body only (the host's conversation tab strip owns the tabs). */
+  readonly only?: DetailTab
   readonly t: TeamSidebarProps['t']
 }) {
   const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' })
   const [alert, setAlert] = useState<string>()
-  const [tab, setTab] = useState<DetailTab>('sessions')
+  const [tabState, setTab] = useState<DetailTab>('sessions')
+  const tab = only ?? tabState
   /** Sessions the Client refused to open (retired or not in its catalog): the row says so instead of staying silent. */
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(new Set())
   const [memory, setMemory] = useState<AgentMemoryLoad | 'loading'>('loading')
@@ -154,7 +158,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
       setUnavailable(current => new Set(current).add(run.sessionId))
       setAlert(t('openAgentSessionFailed', { name, message }))
     })
-    if (!failed) onClose()
+    if (!failed) onClose?.()
   }
 
   const instances = status.instances
@@ -164,26 +168,19 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
       failed = true
       setAlert(t('openAgentSessionFailed', { name, message }))
     })
-    if (!failed) onClose()
+    if (!failed) onClose?.()
   }
 
   const latestModel = loaded.state === 'ready' ? loaded.runs.find(run => run.model !== null)?.model ?? null : null
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={t('agentDetailsTitle', { name })}
-      closeLabel={t('close')}
-      contentClassName={createCss.dialogContent!}
-      footer={<Button variant="outline" onClick={onClose}>{t('close')}</Button>}
-    >
-      <div className={css.header} data-team-agent-detail>
+    <div className={only === undefined ? undefined : css.viewBody} data-team-agent-detail-body={only ?? 'all'}>
+      {(only === undefined || only === 'sessions') && <div className={css.header} data-team-agent-detail>
         <span className={css.handle}>@{name}</span>
         <span>{presenceLabel(status, t)}</span>
         <span className={css.muted}>{latestModel === null ? UNKNOWN : `${latestModel.provider}/${latestModel.model}`}</span>
-      </div>
-      <SegmentedTabs
+      </div>}
+      {only === undefined && <SegmentedTabs
         label={t('agentDetailsTabs')}
         value={tab}
         onChange={setTab}
@@ -192,7 +189,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
           { value: 'overview', label: t('agentDetailsTabOverview'), id: 'agent-detail-tab-overview', panelId: 'agent-detail-panel-overview' },
           { value: 'memory', label: t('agentDetailsTabMemory'), id: 'agent-detail-tab-memory', panelId: 'agent-detail-panel-memory' },
         ]}
-      />
+      />}
       {tab === 'overview' && (
         <div role="tabpanel" id="agent-detail-panel-overview" aria-labelledby="agent-detail-tab-overview" data-team-agent-overview>
           <dl className={css.facts}>
@@ -286,7 +283,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
       )}
         </div>
       )}
-    </Modal>
+    </div>
   )
 }
 

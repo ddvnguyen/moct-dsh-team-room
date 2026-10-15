@@ -81,6 +81,7 @@ const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings'
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
+import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
 import { renderAgentsTabBody } from './agents-tab-body.tsx'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
@@ -372,6 +373,12 @@ function teamSharedRemotes(
     loadModels: () => ctx.remote.session.modelCatalog(),
     loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => ctx.remote.agentTeam.memberSessions(request),
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => {
+      openMemberSessionImpl(ctx, navigation, sessionId, reportFailure)
+    },
+    // A14: the Agent's detail is its Session in the native conversation, with the
+    // Sessions / Config / Memory tabs registered beside Chat while it is open.
+    openAgentDetail: (workspaceId: AgentTeamViewRequest['workspaceId'], memberId: AgentTeamClientMemberStatus['member']['memberId'], sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => {
+      noteAgentSession(sessionId, { workspaceId, memberId })
       openMemberSessionImpl(ctx, navigation, sessionId, reportFailure)
     },
     /** Agent detail names the Threads a Session run touched. */
@@ -719,6 +726,40 @@ function applyUi(ctx: ClientContext): void {
     })
     return () => { dispose(); agentsTab.set(false) }
   }, 'agent-team: agents native tab')
+
+  // A14: the Agent detail's tabs ride the host's conversation tab strip
+  // (`conversation.view`). The strip is global, so the entries are registered only
+  // while a Member Session is the open main session and disposed afterwards.
+  ctx.effect(() => {
+    let dispose: (() => void) | undefined
+    const sync = (): void => {
+      const open = navigation.getSnapshot().memberSessionId !== undefined
+      if (open && dispose === undefined) {
+        const bound = (): TeamSidebarProps['t'] => ctx.locale.bind(NS) as TeamSidebarProps['t']
+        const entry = (tab: 'sessions' | 'overview' | 'memory', id: string, order: number, labelKey: 'agentDetailsTabSessions' | 'agentTabConfig' | 'agentDetailsTabMemory') => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+          name: 'conversation.view',
+          id,
+          order,
+          locale: NS,
+          label: () => ctx.locale.bind(NS)(labelKey),
+          inject: (sessionId: string) => ({ sessionId }),
+        }, ((props: { sessionId: string; openView?: (view: string, focus: string) => void }) => createElement(TeamSlotBoundary, { slot: 'conversation.view', t: bound() as never },
+          createElement(AgentViewBody, { tab, sessionId: props.sessionId, remotes: teamTabSeat as never, navigation, ...(props.openView === undefined ? {} : { openView: props.openView }), t: bound() }))) as never))
+        const drops = [
+          entry('sessions', AGENT_VIEW_IDS.sessions, AGENT_VIEW_ORDER.sessions, 'agentDetailsTabSessions'),
+          entry('overview', AGENT_VIEW_IDS.config, AGENT_VIEW_ORDER.config, 'agentTabConfig'),
+          entry('memory', AGENT_VIEW_IDS.memory, AGENT_VIEW_ORDER.memory, 'agentDetailsTabMemory'),
+        ]
+        dispose = () => { for (const drop of drops) drop() }
+      } else if (!open && dispose !== undefined) {
+        dispose()
+        dispose = undefined
+      }
+    }
+    sync()
+    const unsubscribe = navigation.subscribe(sync)
+    return () => { unsubscribe(); dispose?.(); dispose = undefined }
+  }, 'agent-team: agent detail conversation tabs')
 
   // The Team's settings page: one settings section, ordered between General (0)
   // and Models (10) so it sits near the top. It holds two groups that write
