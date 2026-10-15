@@ -4,6 +4,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import type { TeamSidebarProps } from './slots.ts'
 import type { TeamNavigation } from './navigation.ts'
 import { TeamAgentDetail } from './TeamAgentDetail.tsx'
+import { cachedResolvedThreadRef } from './refs.ts'
 import css from './agent-detail.module.css'
 
 /**
@@ -97,7 +98,11 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
       // A session the host cannot open never mounts a tab: drop its marker.
       remotes.openMemberSession(target, message => { dropChatLanding(target); reportFailure?.(message) })
     }
-    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} t={t} />
+    const openThread = (threadRef: string): void => {
+      const hit = cachedResolvedThreadRef(threadRef as never)
+      if (hit !== undefined) navigation.actions().selectThread(hit.threadRef, hit.channelRef, hit.taskRef, hit.taskNumber)
+    }
+    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} currentSessionId={sessionId} {...(openView === undefined ? {} : { openView })} t={t} />
   }
   return <div className={css.viewBody} data-team-agent-detail-body={tab}>
     {loaded.state === 'loading' && <p className={css.muted}>{t('agentDetailsLoading')}</p>}
