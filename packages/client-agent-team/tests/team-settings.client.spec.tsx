@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { AgentTeamContextJudgeResult, AgentTeamHumanProfileResult } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamContextJudgeResult, AgentTeamHumanProfileResult } from '@ddvnguyen/moct-dsh-team-room/types'
 import { TeamHumanIdentity, type TeamHumanIdentityLoader } from '../src/client/human-identity.ts'
 import { TeamEnvironmentCheck, type TeamEnvironmentLoader } from '../src/client/environment-check.ts'
 import { TeamContextJudgeCheck, type TeamContextJudgeLoader } from '../src/client/context-judge.ts'
@@ -24,7 +24,7 @@ const readFailure = (message: string): RemoteResult<AgentTeamHumanProfileResult>
 const PROFILE = {
   name: 'Ada',
   version: '0.1.13',
-  repoUrl: 'https://github.com/Contexera/dsh-agent-team',
+  repoUrl: 'https://github.com/ddvnguyen/moct-dsh-team-room',
   updateAvailable: false,
 }
 

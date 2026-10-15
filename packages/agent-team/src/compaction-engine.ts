@@ -13,7 +13,7 @@
  * Re-exporting it here is what gives the row a name the profile can resolve.
  * The module is a pure re-export: it adds no behavior, and the engine keeps
  * owning its own selection, retention, and summarization.
- * @module @contexera/dsh-agent-team/compaction-engine
+ * @module @ddvnguyen/moct-dsh-team-room/compaction-engine
  */
 
 export { default } from '@contexera/dsh-context-continuity/compaction-engine'

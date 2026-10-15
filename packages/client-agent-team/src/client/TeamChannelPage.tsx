@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamInbox, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamView, AgentTeamViewItem,
   AgentTeamTaskRef, AgentTeamThreadRef,
-} from '@contexera/dsh-agent-team/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconPanelLeftOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
@@ -13,6 +13,8 @@ import { TeamMessage } from './TeamMessage.tsx'
 import { namedAvatarOwners, TeamAvatarStack, type TeamAvatarHuman, type TeamAvatarOwner } from './TeamAvatarStack.tsx'
 import { TeamCountBadge } from './TeamCountBadge.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
+import { presenceDotState, presenceLabel } from './TeamPresenceDot.tsx'
+import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { claimersLabel, formatAbsoluteTime, formatInboxTime, formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { useChannelMembership } from './team-membership.ts'
@@ -21,6 +23,7 @@ import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
 import { chunkRunsWithDays, isRunGap } from './team-separators.ts'
+import { TeamActivityLine } from './TeamActivityLine.tsx'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -34,20 +37,27 @@ interface TeamChannelPageProps {
   readonly loadChannels: TeamConversationProps['loadChannels']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
+  readonly loadMemberActivity: TeamConversationProps['loadMemberActivity']
   /** The Human's own unread per Thread: the Host's three-class judgement, never a Client guess. */
   readonly loadInbox: TeamConversationProps['loadInbox']
   readonly drafts: TeamDraftStore
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly sendMessage: TeamConversationProps['sendMessage']
   readonly joinChannel: TeamConversationProps['joinChannel']
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
+  readonly archiveChannel: TeamConversationProps['archiveChannel']
   readonly selectThread: TeamConversationProps['selectThread']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   readonly backToChannels: TeamConversationProps['backToChannels']
+  /** Whether the shell's left column is closed; the header offers the open control while it is. */
+  readonly sidebarCollapsed: boolean
+  /** Reopen the shell's left column through the shell's own action. */
+  readonly openSidebar: () => void
   readonly t: TeamConversationProps['t']
 }
 
@@ -94,12 +104,17 @@ function printedActivityAt(item: AgentTeamViewItem): string | undefined {
   return status === 'done' || status === 'closed' ? undefined : followUpAt(item)
 }
 
+/** Seat chips on the slim header: the first five Channel seats, then `+N`.
+   The overflow menu carries Manage members and (D1b) Archive, both routed
+   through remotes the seat already receives. */
+const MAX_SEAT_CHIPS = 5
+
 /** Host unread per Thread, keyed for the feed's rows: zero unread is the absence of a badge, not a row. */
 function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, number> {
   return new Map(inbox.items.filter(item => item.unreadCount > 0).map(item => [item.thread.threadRef, item.unreadCount]))
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadChannels, subscribeChanges, loadMembers, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, sidebarCollapsed, openSidebar, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
@@ -113,6 +128,21 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
   const [asTask, setAsTask] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [managingMembers, setManagingMembers] = useState(false)
+  const [archiving, setArchiving] = useState(false)
+  // Archive hands the seat back to the Channels list on success: the Channel
+  // leaves every list, so this page's key no longer resolves to anything.
+  const archive = async (): Promise<void> => {
+    try {
+      const result = await archiveChannel({ requestId: mintRequestId(), workspaceId, channelRef })
+      if (!result.ok) {
+        setError(t('archiveChannelFailed', { message: result.error.message }))
+        return
+      }
+      backToChannels()
+    } catch (cause) {
+      setError(t('archiveChannelFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
+  }
   // The composer draft lives in the keyed draft cache: view switches unmount
   // this page, and a refresh must not cost the half-written message either.
   // The composer owns the subscription — this page only reads a snapshot when
@@ -193,7 +223,10 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
   const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive' && status.member.state !== 'archived')
   // Presence counts ride the header meta line; error and unavailable do not count as online.
-  const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
+  const workingCount = channelMembers.filter(status => status.presence === 'working').length
+  // The header's unread number is the same Host projection the entry badges
+  // read, summed: it answers "how much" for the Channel, never per Thread.
+  const unreadTotal = [...unreadByThread.values()].reduce((sum, count) => sum + count, 0)
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
   const handleByMember = new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')]))
 
@@ -376,20 +409,59 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
 
   return <main className={css.surface} data-team-channel={channelRef}>
     <div className={css.surfaceHeader}>
-      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} onClick={backToChannels}>{t('backToChannels')}</Button></div>
-      <header className={css.headerRow}>
-        <div className={css.headerCopy}>
-          <h1>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
-          {channel !== undefined && <p>{channel.description}</p>}
-          {channel !== undefined && <div className={channelCss.headerMeta}>
-            <span>{t('memberCount', { count: channelMembers.length })}</span>
-            <span>{t('onlineCount', { count: onlineCount })}</span>
-          </div>}
-        </div>
-        {channel !== undefined && <span ref={manageTriggerRef}><Button size="sm" variant="outline" aria-haspopup="dialog" onClick={() => { setManagingMembers(true) }}>{t('manageMembers')}</Button></span>}
+      <header className={channelCss.slimHeader} data-team-slim-header="channel">
+        <span className={channelCss.slimBack}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} aria-label={t('backToChannels')} onClick={backToChannels} /></span>
+        {/* The shell reopen control leads the row rather than trailing it: the far
+            right belongs to the Channel menu, and a collapsed column must not push
+            it off the edge. It shows only while the column is closed. */}
+        {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
+        <h1 className={channelCss.slimTitle}>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
+        {channel !== undefined && channel.description !== '' && <p className={channelCss.slimDesc} title={channel.description}>{channel.description}</p>}
+        {channel !== undefined && channelMembers.length > 0 && <span className={channelCss.slimChips} role="img" aria-label={t('headerSeatsLabel', { names: channelMembers.map(status => `@${status.member.handle}`).join(', ') })}>
+          {channelMembers.slice(0, MAX_SEAT_CHIPS).map(status => (
+            <span key={status.member.memberId} className={channelCss.slimChip} title={`@${status.member.handle} · ${presenceLabel(status, t)}`}>
+              <TeamStateDot size={8} state={presenceDotState(status.presence)} />
+              <span className={channelCss.slimChipName}>{status.member.handle}</span>
+            </span>
+          ))}
+          {channelMembers.length > MAX_SEAT_CHIPS && <span className={channelCss.slimOverflowCount}>+{channelMembers.length - MAX_SEAT_CHIPS}</span>}
+        </span>}
+        {channel !== undefined && <div className={channelCss.slimMeta}>
+          <span>{t('headerWorking', { count: workingCount })}</span>
+          <span>{t('headerOpenThreads', { count: view?.items.length ?? 0 })}</span>
+          <span>{t('headerUnread', { count: unreadTotal })}</span>
+        </div>}
+        {channel !== undefined && <span ref={manageTriggerRef} className={channelCss.slimActions}>
+          <TeamRowMenu
+            label={t('headerMenuLabel')}
+            items={[
+              { id: 'manage-members', label: t('manageMembers') },
+              { id: 'archive', label: t('archiveChannel'), icon: <IconArchiveOutlineRegular size={16} />, danger: true },
+            ]}
+            onSelect={id => {
+              if (id === 'manage-members') setManagingMembers(true)
+              if (id === 'archive') setArchiving(true)
+            }}
+          />
+        </span>}
       </header>
     </div>
 
+    {archiving && channel !== undefined && (
+      <Modal
+        open
+        onClose={() => { setArchiving(false) }}
+        title={t('archiveChannelTitle', { name: channel.name })}
+        closeLabel={t('close')}
+        contentClassName={channelCss.modalBody!}
+        footer={<>
+          <Button variant="outline" onClick={() => { setArchiving(false) }}>{t('cancel')}</Button>
+          <Button variant="primary" onClick={() => { setArchiving(false); void archive() }}>{t('archiveChannelConfirm')}</Button>
+        </>}
+      >
+        <p>{t('archiveChannelNotice', { name: channel.name })}</p>
+      </Modal>
+    )}
     <Modal open={managingMembers} onClose={closeMembers} title={t('channelMembers')} {...(channel === undefined ? {} : { description: `# ${channel.name} · ${t('memberCount', { count: channelMembers.length })}` })} closeLabel={t('close')} contentClassName={channelCss.modalBody!}>
       <div ref={memberListRef} className={channelCss.memberList}>
         {members.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived').map(status => {
@@ -484,6 +556,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
       key={draftKey}
       members={channelMembers}
       drafts={drafts}
+      loadTriggerCatalog={loadTriggerCatalog}
       draftKey={draftKey}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
@@ -494,6 +567,8 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
       onFilesChange={setPendingFiles}
       asTask={asTask}
       onAsTaskChange={setAsTask}
+      onManageMembers={() => { setManagingMembers(true) }}
+      activity={<TeamActivityLine workspaceId={workspaceId} members={channelMembers} loadMemberActivity={loadMemberActivity} subscribeChanges={subscribeChanges} t={t} />}
       t={t}
     /> : <div />}
   </main>

@@ -91,6 +91,57 @@ describe('Team Member private memory composition', () => {
     await ctx.fiber.dispose()
   })
 
+  it('injects the team-memory block as its own message, re-entering each block only when it changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'team-member-memory-'))
+    roots.push(root)
+    await writeFile(join(root, 'memory.md'), 'own index')
+    const ctx = new Context()
+    // A Session that remembers what earlier steps entered, so dedupe is real.
+    const entered: string[] = []
+    const agent = fakeAgent(ctx)
+    Object.assign(agent, { session: {
+      surface: { get nodes() { return entered.map((_text, index) => index) } },
+      snapshotEvents: (from: number) => [{ type: 'user/message', data: { source: { kind: 'wowyuarm-agent-team-member-context' }, content: [{ type: 'text', text: entered[from] }] } }],
+    } })
+    let block: string | undefined = '<team-memory>\nTeam memory: notes the Team kept, to weigh as data.\n</team-memory>'
+    ctx.provide('agentTeam', {
+      memberForAgent: (subject: Agent) => subject === agent ? { privateMemoryPath: root, handle: 'Opus', description: '' } : undefined,
+      workspacesForAgent: () => [],
+      teamMemoryBlockForAgent: async () => block,
+    } as never)
+    await mount(ctx)
+    const texts = (decision: PreStepDecision) => decision.kind === 'enter' ? decision.messages.map(message => (message.content[0] as { text: string }).text) : []
+
+    const first = texts(await preStep(ctx, agent))
+    expect(first).toHaveLength(2)
+    expect(first[0]).toContain('Team identity: you are @Opus.')
+    expect(first[1]).toBe(block)
+    entered.push(...first)
+
+    expect(texts(await preStep(ctx, agent))).toEqual([])
+
+    block = '<team-memory>\nTeam memory: notes the Team kept, to weigh as data.\n[rule] changed\n</team-memory>'
+    expect(texts(await preStep(ctx, agent))).toEqual([block])
+    await ctx.fiber.dispose()
+  })
+
+  it('keeps the step going with no team-memory block when the Host lookup throws', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'team-member-memory-'))
+    roots.push(root)
+    const ctx = new Context()
+    const agent = fakeAgent(ctx)
+    ctx.provide('agentTeam', {
+      memberForAgent: (subject: Agent) => subject === agent ? { privateMemoryPath: root, handle: 'Opus', description: '' } : undefined,
+      workspacesForAgent: () => [],
+      teamMemoryBlockForAgent: async () => { throw new Error('backend down') },
+    } as never)
+    await mount(ctx)
+    const decision = await preStep(ctx, agent)
+    expect(decision.kind === 'enter' && decision.messages).toHaveLength(1)
+    expect(decision.kind === 'enter' && decision.messages[0]?.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining('Team identity') }))
+    await ctx.fiber.dispose()
+  })
+
   it('does nothing for an ordinary unbound Agent', async () => {
     const ctx = new Context()
     const agent = fakeAgent(ctx)

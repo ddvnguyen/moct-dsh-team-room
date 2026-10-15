@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { AgentTeamEnvironmentResult } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamEnvironmentResult } from '@ddvnguyen/moct-dsh-team-room/types'
 
 /**
  * The Client's one projection of the local environment check.

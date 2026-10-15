@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { AgentTeamMemberCapabilities, AgentTeamModelSelection } from './types.ts'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { AGENT_TEAM_MAX_INSTANCES } from './member-instances.ts'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
@@ -117,6 +118,8 @@ const messageSchema = z.object({
   sender: memberIdSchema,
   body: z.string().min(1),
   attachments: z.array(attachmentSchema).optional(),
+  // Optional and forward-only: a pre-reply-link Message omits it and replays as is.
+  replyToMessageRef: messageRefSchema.optional(),
   topLevel: z.boolean(),
   sequence: z.number().int().positive(),
   occurredAt: z.string().datetime().optional(),
@@ -520,6 +523,93 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/thread-read'),
     data: z.union([threadReadReceiptDataSchema, threadReadSnapshotDataSchema]),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/session-turn-recorded'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      memberId: memberIdSchema,
+      sessionId: sessionIdSchema,
+      parentSessionId: sessionIdSchema.optional(),
+      threadRefs: z.array(threadRefSchema),
+      turn: z.number().int().nonnegative(),
+      startedAt: z.string().min(1),
+      endedAt: z.string().min(1),
+      toolCalls: z.number().int().nonnegative(),
+      runMs: z.number().nonnegative(),
+      usage: z.object({
+        // null when the uncached split is not provable (a step reported no cache fields); never 0 for unknown.
+        uncachedInputTokens: z.number().int().nonnegative().nullable(),
+        outputTokens: z.number().int().nonnegative(),
+        cacheReadTokens: z.number().int().nonnegative().nullable(),
+        cacheWriteTokens: z.number().int().nonnegative().nullable(),
+        reasoningTokens: z.number().int().nonnegative().nullable(),
+        route: z.object({ provider: z.string().min(1), model: z.string().min(1) }).strict().optional(),
+      }).strict(),
+      startSequence: z.number().int().positive().optional(),
+      endSequence: z.number().int().positive().optional(),
+    }).strict(),
+  }).strict(),
+  // TEST-2 only (contract §6.0 rollback rule). A Turn that ended in error on one Thread: a diagnostic
+  // notice. No unread fact, no wake, no mention, and not a reply, so no fold of message-sent sees it.
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/turn-failure-notice'),
+    data: z.object({
+      requestId: requestIdSchema,
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      memberId: memberIdSchema,
+      sessionId: sessionIdSchema,
+      turn: z.number().int().nonnegative(),
+      reason: z.string().min(1).max(200),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-summary-committed'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      generation: z.number().int().positive(),
+      trigger: z.enum(['rolling', 'wrapup']),
+      text: z.string().min(1),
+      coversThroughSequence: z.number().int().positive(),
+      transcriptTokens: z.number().int().nonnegative(),
+      model: z.object({ provider: z.string().min(1), model: z.string().min(1) }).strict(),
+      usage: z.object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative() }).strict().nullable(),
+      at: z.string().min(1),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-session-bound'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      memberId: memberIdSchema,
+      sessionId: sessionIdSchema,
+      reason: z.enum(['start', 'resume', 'fork', 'cold-restart', 'rollover']),
+      parentSessionId: sessionIdSchema.optional(),
+      summaryGeneration: z.number().int().nonnegative().optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-instance-bound'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      memberId: memberIdSchema,
+      slot: z.number().int().min(0).max(AGENT_TEAM_MAX_INSTANCES - 1),
+      boundAt: z.string().min(1),
+    }).strict(),
   }).strict(),
   z.object({
     ...operationBase,

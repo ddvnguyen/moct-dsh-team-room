@@ -1,17 +1,162 @@
-.headerMeta {
+/* A12 slim header: one row, at most 40px high, shared by the Channel and
+   Thread views. Everything on it is single-line; the description and the
+   crumb compress with ellipsis while counts, chips and actions keep their
+   width. Narrow seats collapse the description and the seat chips instead of
+   scrolling sideways. */
+.slimHeader {
   align-items: center;
-  color: var(--dsw-alias-label-tertiary);
   display: flex;
-  flex-wrap: wrap;
-  font-size: 12px;
-  gap: 6px;
-  line-height: 18px;
-  margin-top: 7px;
+  gap: 8px;
+  margin: 0 auto;
+  max-height: 40px;
+  max-width: 880px;
+  min-height: 40px;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.headerMeta span + span::before {
+.slimBack {
+  flex: 0 0 auto;
+}
+
+.slimTitle {
+  color: var(--dsw-alias-label-primary);
+  flex: 0 1 auto;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slimDesc {
+  color: var(--dsw-alias-label-secondary);
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slimChips {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.slimChip {
+  align-items: center;
+  color: var(--dsw-alias-label-secondary);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  line-height: 18px;
+  max-width: 96px;
+}
+
+.slimChipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slimOverflowCount {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.slimMeta {
+  color: var(--dsw-alias-label-tertiary);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  gap: 6px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.slimMeta span + span::before {
   content: '·';
   margin-right: 6px;
+}
+
+.slimActions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+/* L1: on the Thread row the action group seats itself at the far right of the
+   header. The crumb, the participant stack and the status pill share the left;
+   the header has no free-space consumer of its own (the Channel row's
+   description takes it), so the group carries the auto margin itself. Scoped to
+   the Thread row so the Channel header keeps its own layout untouched. */
+.slimHeader[data-team-slim-header="thread"] .slimActions {
+  margin-left: auto;
+}
+
+/* The row's page title for assistive technology: the visible crumb carries
+   the Channel-qualified title, while the heading keeps the short Thread/Task
+   name the entry rows cross-reference. It takes no space on the row. */
+.slimHidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* Thread breadcrumb: "Back to Channel" as the row's own first element. */
+.slimCrumb {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  display: flex;
+  flex: 0 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+  gap: 4px;
+  line-height: 22px;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.slimCrumb:hover .slimCrumbText {
+  text-decoration: underline;
+}
+
+.slimCrumbText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slimParticipants {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .slimHeader { gap: 6px; }
+  .slimDesc { display: none; }
+  .slimChips { display: none; }
+  .slimParticipants { display: none; }
 }
 
 /* The roster is a scrollable window of shared Member rows; the row owns its

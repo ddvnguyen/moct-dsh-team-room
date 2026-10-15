@@ -1,7 +1,7 @@
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type { AgentTeamChannelRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamChannelRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 
 export type TeamMode = 'conversation' | 'team'
 
@@ -11,6 +11,14 @@ export type TeamMode = 'conversation' | 'team'
  * it and the mode follows (see the panel-ownership effect in `index.ts`).
  */
 export const TEAM_PANEL_ID = 'agent-team' as MainPanelId
+
+/**
+ * The Team Settings page: the rail row that replaced the Team row. It is
+ * mode-neutral — selecting it neither enters nor leaves Team mode — so the Team
+ * tab keeps its Channel view beside it, and any Team destination picked while
+ * it holds the column hands the column back to `TEAM_PANEL_ID`.
+ */
+export const TEAM_SETTINGS_PANEL_ID = 'agent-team-settings' as MainPanelId
 
 export interface TeamNavigationSnapshot {
   mode: TeamMode
@@ -153,6 +161,16 @@ export class TeamNavigation {
 
   private setWorkspace(workspaceId: WorkspaceId): void {
     if (this.snapshot.workspaceId === workspaceId && this.snapshot.inbox !== true) return
+    // With no Workspace selected yet this is the browser adopting the default it
+    // is already showing, not a switch: a Channel picked before the adoption (the
+    // one-gesture landing from a plain conversation) belongs to that Workspace
+    // and must survive it. Only a real switch to another Workspace clears.
+    if (this.snapshot.workspaceId === undefined && this.snapshot.channelRef !== undefined) {
+      const { inbox: _inbox, ...base } = this.snapshot
+      this.snapshot = { ...base, workspaceId }
+      this.commit()
+      return
+    }
     const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, inbox: _inbox, ...base } = this.snapshot
     this.snapshot = { ...base, workspaceId }
     this.commit()

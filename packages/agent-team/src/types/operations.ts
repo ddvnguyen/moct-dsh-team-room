@@ -12,6 +12,7 @@ import type {
   AgentTeamInboxDelta,
   AgentTeamMemberId,
   AgentTeamMessage,
+  AgentTeamRequestId,
   AgentTeamStoredMessage,
   AgentTeamStoredThreadReadFact,
   AgentTeamTask,
@@ -411,6 +412,165 @@ export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
   readonly data: AgentTeamThreadReadData
 }
 
+/** Why a Member's turns in a Thread moved onto a Session. */
+export type AgentTeamThreadSessionReason = 'start' | 'resume' | 'fork' | 'cold-restart' | 'rollover'
+
+/** The durable facts of one thread-session binding. */
+export interface AgentTeamThreadSessionBoundData {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  /** The seat that binds itself: the Member is the only actor allowed to record its own session. */
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly reason: AgentTeamThreadSessionReason
+  readonly parentSessionId?: SessionId
+  /** Summary generation the seeded Session was started from, when a summary seeded it. */
+  readonly summaryGeneration?: number
+}
+
+/** One binding in projection order; the last binding for a (Thread, Member) pair is the active Session. */
+export interface AgentTeamThreadSessionBinding extends AgentTeamThreadSessionBoundData {
+  readonly sequence: number
+}
+
+/**
+ * Durable record that one Member's turns in one Thread run on a given Session
+ * (contract §3.1). The Member's home Session stays on the Member record; this
+ * binding only says which Session that Member's turns in this Thread use.
+ */
+export interface AgentTeamThreadSessionBoundOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-session-bound'
+  readonly data: AgentTeamThreadSessionBoundData
+}
+
+/**
+ * A seat's sticky affinity for one Thread to one instance slot (multi-instance
+ * contract v2 §2a/§2c). Slot 0 is the main instance. The binding names a slot,
+ * never a live Session: the Session behind a slot is lazy and may be respawned.
+ */
+export interface AgentTeamThreadInstanceBoundData {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  /** 0..4. A slot at or past the seat's current `instances` reads as unbound. */
+  readonly slot: number
+  readonly boundAt: string
+}
+
+/** Forward-only and append-only: the latest binding per (Thread, seat) wins; there is no release op. */
+export interface AgentTeamThreadInstanceBoundOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-instance-bound'
+  readonly data: AgentTeamThreadInstanceBoundData
+}
+
+/** One completed Turn's provider-reported usage, as the host derived it from session events. */
+export interface AgentTeamSessionTurnUsage {
+  /** Uncached prompt input across every attempt of the Turn. null when the split is not provable; never 0 for "unknown". */
+  readonly uncachedInputTokens: number | null
+  readonly outputTokens: number
+  /** null when any attempt did not report the bucket. Never 0 for "unknown". */
+  readonly cacheReadTokens: number | null
+  readonly cacheWriteTokens: number | null
+  /** Output subset, null when not reported. */
+  readonly reasoningTokens: number | null
+  /** The last billed route of the Turn, when every attempt carried attribution. */
+  readonly route?: { readonly provider: string; readonly model: string }
+}
+
+/** Durable record of one completed Turn in a Session (contract §3.2 input). */
+export interface AgentTeamSessionTurnRecordedData {
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly parentSessionId?: SessionId
+  /** Threads the Turn belongs to (delivered or replied); empty means "no thread". */
+  readonly threadRefs: readonly AgentTeamThreadRef[]
+  readonly turn: number
+  readonly startedAt: string
+  readonly endedAt: string
+  readonly toolCalls: number
+  readonly runMs: number
+  readonly usage: AgentTeamSessionTurnUsage
+  /**
+   * The Turn's ledger sequence window, inclusive. A reply of this Member whose
+   * sequence falls inside it belongs to this Turn (per-reply stats, contract §3.2).
+   * Absent on Turns recorded before per-reply usage.
+   */
+  readonly startSequence?: number
+  readonly endSequence?: number
+}
+
+/** Session-level stats row, folded from its recorded Turns. Cache buckets are null once any Turn lacked them. */
+export interface AgentTeamSessionRun {
+  readonly sessionId: SessionId
+  readonly memberId: AgentTeamMemberId
+  readonly parentSessionId?: SessionId
+  readonly threadRefs: readonly AgentTeamThreadRef[]
+  readonly startedAt: string
+  readonly endedAt: string
+  readonly turns: number
+  /** Sum of the Turns' known uncached input. A Turn whose split is null adds nothing here; see unknownInputTurns. */
+  readonly tokensIn: number
+  /** Recorded Turns whose uncached input was null, so tokensIn is a partial total when this is above 0. */
+  readonly unknownInputTurns: number
+  readonly tokensOut: number
+  readonly cacheReadTokens: number | null
+  readonly cacheWriteTokens: number | null
+  readonly reasoningTokens: number | null
+  readonly toolCalls: number
+  readonly runMs: number
+  readonly model: { readonly provider: string; readonly model: string } | null
+  readonly lastAssistantAt: string
+}
+
+/** Append-only Turn record; the SessionRun row is the fold of these, so replay reproduces it exactly. */
+export interface AgentTeamSessionTurnRecordedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/session-turn-recorded'
+  readonly data: AgentTeamSessionTurnRecordedData
+}
+
+/**
+ * A Turn that ended in error, noted on one Thread it was delivered to. TEST-2 only: `fc28cd8` does
+ * not know this kind and refuses to open a log that holds it (contract §6.0 rollback rule).
+ */
+export interface AgentTeamTurnFailureNoticeData {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly turn: number
+  /** Short, first line only, at most 200 characters; no stack, prompt text or keys. */
+  readonly reason: string
+}
+
+export interface AgentTeamTurnFailureNoticeOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/turn-failure-notice'
+  readonly data: AgentTeamTurnFailureNoticeData
+}
+
+/** One committed Thread summary (contract §3.3). Generation N+1 follows N; the ledger assigns it. */
+export interface AgentTeamThreadSummaryCommittedData {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly generation: number
+  readonly trigger: 'rolling' | 'wrapup'
+  readonly text: string
+  /** Ledger sequence of the last Message the summary read; the next summary starts after it. */
+  readonly coversThroughSequence: number
+  /** Estimated input size of the call, the figure the input cap was checked against. */
+  readonly transcriptTokens: number
+  readonly model: { readonly provider: string; readonly model: string }
+  /** Null when the model reported no usage: unreported is not zero (contract §3). */
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number } | null
+  readonly at: string
+}
+
+export interface AgentTeamThreadSummaryCommittedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-summary-committed'
+  readonly data: AgentTeamThreadSummaryCommittedData
+}
+
 /** Durable irreversible Member removal and global inbox cleanup. */
 export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-removed'
@@ -454,6 +614,11 @@ export type AgentTeamOperation =
   | AgentTeamMemberContextClearedOperation
   | AgentTeamMemberSessionRenewedOperation
   | AgentTeamMemberSessionRolledOverOperation
+  | AgentTeamThreadSessionBoundOperation
+  | AgentTeamThreadInstanceBoundOperation
+  | AgentTeamSessionTurnRecordedOperation
+  | AgentTeamTurnFailureNoticeOperation
+  | AgentTeamThreadSummaryCommittedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation

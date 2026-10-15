@@ -4,7 +4,7 @@ import type {
   AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
   AgentTeamMemberId,
-} from '@contexera/dsh-agent-team/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { rosterChannelName, rosterMember } from '../src/client/refs.ts'
@@ -36,6 +36,7 @@ function status(memberId: string, handle: string, availability: AgentTeamClientM
     availability,
     capabilityState: availability === 'active' ? 'applied' : 'pending',
     presence: 'available',
+    instances: [{ slot: 0, presence: 'available', threadRefs: [] }],
     workspaceIds: [workspaceId],
   }
 }

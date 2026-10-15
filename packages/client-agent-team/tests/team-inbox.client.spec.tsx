@@ -402,28 +402,6 @@ describe('Team Inbox surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('orders the narrow rail Inbox → Channels → Agents with the unread dot on the Inbox icon', async () => {
-    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
-    // Collapse the fixture sidebar to the narrow rail.
-    fireEvent.click(b.view.container.querySelector('[data-test-control]')!)
-    const rail = await waitFor(() => {
-      const nav = b.view.container.querySelector('nav[class*="railWorkspace"]')
-      expect(nav).toBeTruthy()
-      return nav as HTMLElement
-    })
-    const labels = [...rail.querySelectorAll('button')].map(button => button.getAttribute('aria-label'))
-    expect(labels).toEqual(['收件箱', '频道', 'Agents'])
-    b.seedInbox([inboxRow('w1', 'thread:w1')])
-    b.seedInbox([inboxRow('w1', 'thread:w1')])
-    const inboxButton = within(rail).getByRole('button', { name: '收件箱' })
-    await waitForEntryUnread(inboxButton, 1)
-    // The rail icon is a destination: clicking it opens the Inbox page and
-    // asks the shell to expand the sidebar again.
-    fireEvent.click(inboxButton)
-    await waitFor(() => expect(b.view.container.querySelector('[data-team-inbox]')).toBeTruthy())
-    await b.runtime.dispose()
-  })
-
   it('reads the whole unread slice — no mention-only flag — for the dot and the Inbox page', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })

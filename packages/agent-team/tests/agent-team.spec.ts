@@ -16,11 +16,17 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_TOKENS } from '@contexera/dsh-context-continuity'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { completeTurnEvents } from './helpers/turn-events.ts'
 import { snapshotReadData, receiptReadData } from './helpers/legacy-thread-read.ts'
 import AgentTeam, { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor, isThreadReadSnapshot } from '../src/ledger.ts'
+import { turnFailureNoticeRequestId } from '../src/turn-recorder.ts'
+import { nextChange } from './helpers/change-stream.ts'
 import { agentTeamDomainSpec } from '../src/spec.ts'
+import { SUMMARY_OUTPUT_TOKEN_CAP } from '../src/thread-summary.ts'
+import type { ThreadSummaryModelCall } from '../src/thread-summary-model.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
+import type { AgentTeamReplyCommittedResult, AgentTeamSendMessageCommittedResult } from '../src/types.ts'
 import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamTask, AgentTeamTaskRef, AgentTeamThreadReadData, AgentTeamThreadReadOperation, AgentTeamThreadReadReceipt, AgentTeamThreadReadResult, AgentTeamThreadRef } from '../src/types.ts'
 
 interface TeamHarness {
@@ -155,6 +161,176 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(replay.getMember(member.memberId)).toEqual(member)
     expect(replay.view({ workspaceId: beta }, member.memberId).channels).toContainEqual(channel)
     replay.validate()
+  })
+
+  it('binds a seat to one Session per Thread, keeps the last binding active, and replays it (§3.1)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('bind-channel'), workspaceId: alpha, name: 'bind', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('bind-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Start', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const start = { requestId: requestId('bind-start'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bind-a'), reason: 'start' as const, actor }
+    expect((await ledger.bindThreadSession(start)).committed).toBe(true)
+    const coldRestart = await ledger.bindThreadSession({ requestId: requestId('bind-cold'), workspaceId: alpha, threadRef,
+      sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1, actor })
+    expect(coldRestart).toMatchObject({ committed: true, value: { binding: { sessionId: SessionId('session:bind-b'), reason: 'cold-restart', summaryGeneration: 1 } } })
+    // The last binding is the active Session; earlier ones stay as lineage.
+    expect(ledger.threadSessionsOf(threadRef, member.memberId).map(binding => binding.sessionId))
+      .toEqual([SessionId('session:bind-a'), SessionId('session:bind-b')])
+    // An exact retry resolves to the recorded binding; the same request with other data collides.
+    expect((await ledger.bindThreadSession(start)).committed).toBe(false)
+    await expect(ledger.bindThreadSession({ ...start, reason: 'resume' })).rejects.toThrow()
+    // Only the Member itself binds its own Session, never the Human on its behalf.
+    await expect(ledger.bindThreadSession({ ...start, requestId: requestId('bind-human'), actor: agentTeamHumanActor() as never }))
+      .rejects.toThrow(/requires Member authority/)
+    const replay = replayLedger(test)
+    expect(replay.threadSessionsOf(threadRef, member.memberId)).toEqual(ledger.threadSessionsOf(threadRef, member.memberId))
+    replay.validate()
+  })
+
+  it('folds recorded Turns into one SessionRun, and an unreported cache bucket stays null, never 0 (§3.2)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('run-channel'), workspaceId: alpha, name: 'runs', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('run-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Run', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const sessionId = SessionId('session:run-a')
+    const turn = (number: number, usage: { cacheReadTokens: number | null }) => ({
+      requestId: requestId(`run-turn-${number}`), workspaceId: alpha, memberId: member.memberId, sessionId, threadRefs: [threadRef], turn: number,
+      startedAt: `2026-10-11T01:0${number}:00+08:00`, endedAt: `2026-10-11T01:0${number}:05+08:00`, toolCalls: 1, runMs: 5000,
+      usage: { uncachedInputTokens: 100, outputTokens: 20, cacheWriteTokens: 0, reasoningTokens: null, ...usage }, actor,
+    })
+    await ledger.recordSessionTurn(turn(1, { cacheReadTokens: 50 }))
+    const second = await ledger.recordSessionTurn(turn(2, { cacheReadTokens: null }))
+    expect(second).toMatchObject({ committed: true, value: { run: { turns: 2, tokensIn: 200, tokensOut: 40, cacheReadTokens: null, toolCalls: 2, runMs: 10000 } } })
+    // An exact retry resolves to the recorded row and does not fold the Turn twice.
+    expect((await ledger.recordSessionTurn(turn(2, { cacheReadTokens: null }))).committed).toBe(false)
+    expect(ledger.sessionRun(sessionId)?.turns).toBe(2)
+    const replay = replayLedger(test)
+    expect(replay.sessionRun(sessionId)).toEqual(ledger.sessionRun(sessionId))
+    // Turns recorded without a sequence window (the pre-per-reply shape) replay unchanged and attribute no reply.
+    expect(replay.turnForReply(member.memberId, 1)).toBeUndefined()
+    replay.validate()
+  })
+
+  it('a retry that changes any recorded field collides; a fresh requestId cannot fold the same Turn twice (§3.2)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('dup-channel'), workspaceId: alpha, name: 'dups', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('dup-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Dup', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const sessionId = SessionId('session:dup-a')
+    const base = {
+      requestId: requestId('dup-turn-1'), workspaceId: alpha, memberId: member.memberId, sessionId, threadRefs: [threadRef], turn: 1,
+      startedAt: '2026-10-11T01:01:00+08:00', endedAt: '2026-10-11T01:01:05+08:00', toolCalls: 1, runMs: 5000,
+      usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0, reasoningTokens: null }, actor,
+    }
+    expect((await ledger.recordSessionTurn(base)).committed).toBe(true)
+    // Same requestId, one field changed at a time: every recorded field is compared, so each change collides.
+    const changes: Array<Partial<typeof base> & { parentSessionId?: SessionId }> = [
+      { startedAt: '2026-10-11T01:01:01+08:00' }, { endedAt: '2026-10-11T01:01:06+08:00' }, { toolCalls: 9 }, { runMs: 1 },
+      { threadRefs: [] }, { parentSessionId: SessionId('session:dup-parent') }, { sessionId: SessionId('session:dup-b') },
+      { usage: { ...base.usage, outputTokens: 21 } },
+    ]
+    for (const change of changes) await expect(ledger.recordSessionTurn({ ...base, ...change })).rejects.toThrow(/reused/)
+    // A fresh requestId for the same Turn with identical data resolves to the folded row: no second fold.
+    expect((await ledger.recordSessionTurn({ ...base, requestId: requestId('dup-turn-1-host-retry') })).committed).toBe(false)
+    // A fresh requestId for the same Turn with different data is refused, not silently dropped.
+    await expect(ledger.recordSessionTurn({ ...base, requestId: requestId('dup-turn-1-other'), toolCalls: 9 })).rejects.toThrow(/already recorded/)
+    expect(ledger.sessionRun(sessionId)).toMatchObject({ turns: 1, tokensIn: 100, toolCalls: 1 })
+    const replay = replayLedger(test)
+    expect(replay.sessionRun(sessionId)).toEqual(ledger.sessionRun(sessionId))
+    replay.validate()
+  })
+
+  it('accepts the empty window (end = start - 1) and refuses a window that ends before it (§3.2)', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('window-channel'), workspaceId: alpha, name: 'window', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('window-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Window', asTask: false, actor })).value)
+    const turn = (number: number, startSequence: number, endSequence: number) => ({
+      requestId: requestId(`window-turn-${number}`), workspaceId: alpha, memberId: member.memberId, sessionId: SessionId('session:window'),
+      threadRefs: [sent.message.threadRef], turn: number, startedAt: '2026-10-11T01:02:00+08:00', endedAt: '2026-10-11T01:02:05+08:00',
+      toolCalls: 0, runMs: 0, startSequence, endSequence,
+      usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null }, actor,
+    })
+    // No ledger op landed during the Turn: the window is empty, end = start - 1.
+    expect((await ledger.recordSessionTurn(turn(1, 20, 19))).committed).toBe(true)
+    // A window that ends two or more before it starts is a derivation bug, and the ledger refuses it.
+    await expect(ledger.recordSessionTurn(turn(2, 20, 18))).rejects.toThrow(/window ends before it starts/)
+    expect(ledger.sessionRun(SessionId('session:window'))).toMatchObject({ turns: 1 })
+  })
+
+  // TEST-2 only (contract §6.0): a failure notice is audit-only, so it must change no unread fact, wake, reply or stats row.
+  it('a turn failure notice is audit-only: no unread, no wake, no reply, no stats row, and it replays through this fold', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('notice-channel'), workspaceId: alpha, name: 'notice', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('notice-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Notice', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const before = {
+      facts: ledger.notificationFacts(member.memberId),
+      replied: ledger.repliedThreadsBetween(member.memberId, 0, ledger.projectionSequence()),
+      stats: ledger.threadReplyStats(threadRef),
+      attribution: ledger.attributionSequence(),
+    }
+    const notice = {
+      requestId: turnFailureNoticeRequestId(SessionId('session:notice'), 1, threadRef), workspaceId: alpha, threadRef, memberId: member.memberId,
+      sessionId: SessionId('session:notice'), turn: 1, reason: 'provider returned 503', actor,
+    }
+    expect((await ledger.recordTurnFailureNotice(notice)).committed).toBe(true)
+    // The notice is durable and ordered, but no unread fact, inbox entry, reply or stats row changes.
+    expect(ledger.turnFailureNotices(threadRef)).toHaveLength(1)
+    expect(ledger.turnFailureNotices(threadRef)[0]!.sequence).toBeGreaterThan(sent.message.sequence)
+    expect(ledger.notificationFacts(member.memberId)).toEqual(before.facts)
+    expect(ledger.repliedThreadsBetween(member.memberId, 0, ledger.projectionSequence())).toEqual(before.replied)
+    expect(ledger.threadReplyStats(threadRef)).toEqual(before.stats)
+    // The notice moves the UI invalidation position only; the attribution position stays where it was.
+    expect(ledger.projectionSequence()).toBeGreaterThan(before.attribution)
+    expect(ledger.attributionSequence()).toBe(before.attribution)
+    // Replay the stored log through this branch's schema and fold: the notice parses, and every projection a reader folds is unchanged.
+    const replayed = replayLedger(test)
+    expect(replayed.turnFailureNotices(threadRef)).toHaveLength(1)
+    expect(replayed.notificationFacts(member.memberId)).toEqual(before.facts)
+    expect(replayed.threadReplyStats(threadRef)).toEqual(before.stats)
+    expect(replayed.attributionSequence()).toBe(before.attribution)
+  })
+
+  it('a re-delivered turn failure notice resolves to the committed one, and a changed reason collides', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha])
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, undefined)
+    const channel = (await ledger.createChannel({ requestId: requestId('redeliver-channel'), workspaceId: alpha, name: 'redeliver', description: '',
+      memberIds: [member.memberId], actor: agentTeamHumanActor() })).value.channel
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('redeliver-message'), workspaceId: alpha, channelRef: channel.channelRef,
+      body: 'Again', asTask: false, actor })).value)
+    const threadRef = sent.message.threadRef
+    const notice = {
+      requestId: turnFailureNoticeRequestId(SessionId('session:redeliver'), 2, threadRef), workspaceId: alpha, threadRef, memberId: member.memberId,
+      sessionId: SessionId('session:redeliver'), turn: 2, reason: 'provider returned 503', actor,
+    }
+    const first = await ledger.recordTurnFailureNotice(notice)
+    const again = await ledger.recordTurnFailureNotice(notice)
+    expect(first.committed).toBe(true)
+    expect(again.committed).toBe(false)
+    expect(again.value.operationId).toBe(first.value.operationId)
+    expect(ledger.turnFailureNotices(threadRef)).toHaveLength(1)
+    await expect(ledger.recordTurnFailureNotice({ ...notice, reason: 'a different error' })).rejects.toThrow()
   })
 
   it('withdraws only the target Workspace and rejects subsequent work there', async () => {
@@ -2717,5 +2893,537 @@ describe('AgentTeam sendMessage asTask is explicit (issue #43 #9)', () => {
     const plain = committed((await ledger.sendMessage({ requestId: requestId('explicit-false-send'), workspaceId: alpha, channelRef: channel.channel.channelRef,
       body: 'no task', asTask: false, actor: agentTeamHumanActor() })).value)
     expect(plain.task).toBeUndefined()
+  })
+})
+
+/**
+ * A4 (contract §4.1): the Host's Agent-only entry points and the session-event
+ * path take the acting Member from the live agent handle, never from a request
+ * or event payload. Covers: a message posted by seat A with seat B named in the
+ * request is recorded as seat A; an unregistered agent cannot post; a session
+ * event from seat B's live session that names seat A is attributed to seat B's
+ * handle only. Does not cover tool-argument parsing in packages/tool-agent-team:
+ * its `team_message` execute() reads no member or sender field and takes the
+ * actor from exec.agent, which is checked by reading it, not by this spec. A
+ * positive Turn record needs real harness usage events (deriveAgentTeamTurn),
+ * so the event path here asserts the recorder's attribution through the
+ * unprovable-usage counter, not through a recorded Turn.
+ */
+async function seatedHost() {
+  const test = await harness()
+  const host = test.ctx.agentTeam
+  const channel = await host.createChannel({ requestId: requestId('a4-channel'), workspaceId: alpha, name: 'a4', description: '' })
+  const seatA = (await host.addMember({ requestId: requestId('a4-seat-a'), workspaceId: alpha, handle: 'seat-a', description: 'Seat A', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
+  const seatB = (await host.addMember({ requestId: requestId('a4-seat-b'), workspaceId: alpha, handle: 'seat-b', description: 'Seat B', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).status.member
+  // Seat the two Members on live stub agent identities. The host matches by object identity (memberForAgent), so these stand in for live handles without an activation.
+  const seat = (member: AgentTeamAgentMember) => {
+    // A bare session stub: the projection registry folds history on first sight, so it needs an empty log, header and cursor.
+    const session = { id: member.sessionId, header: {}, inheritedEventCount: 0, seq: 0, snapshotEvents: () => [] }
+    const agent = { id: `agent-${member.handle}`, session, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+    const internals = host as unknown as { handles: Map<unknown, unknown>; memberBySessionId: Map<unknown, unknown> }
+    internals.handles.set(member.memberId, { agent })
+    internals.memberBySessionId.set(member.sessionId, member.memberId)
+    return agent
+  }
+  return { test, host, channelRef: channel.channel.channelRef, seatA, seatB, agentA: seat(seatA), agentB: seat(seatB), seat }
+}
+
+describe('AgentTeam host seat identity (A4, §4.1)', () => {
+  it('posts as the calling seat even when the request names another Member', async () => {
+    const { test, host, channelRef, seatA, seatB, agentA } = await seatedHost()
+    const spoof = { memberId: seatB.memberId, actor: { kind: 'member', memberId: seatB.memberId, handle: seatB.handle } }
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('a4-post'), workspaceId: alpha, channelRef, body: 'from seat A', asTask: false, ...spoof } as never)
+    expect(sent).toMatchObject({ kind: 'committed' })
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => JSON.stringify(operation))
+    const posted = records.filter(record => record.includes('"body":"from seat A"'))
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toContain(`"sender":"${seatA.memberId}"`)
+    expect(posted[0]).not.toContain(`"sender":"${seatB.memberId}"`)
+  })
+
+  it('rejects a post from an agent that is not a seated Member', async () => {
+    const { host, channelRef } = await seatedHost()
+    const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+    await expect(host.sendMessageForAgent(stranger, { requestId: requestId('a4-stranger'), workspaceId: alpha, channelRef, body: 'intrude', asTask: false } as never)).rejects.toThrow(/not an active Team Member/)
+  })
+
+  it('records a provable Turn against the live handle of its own session, never a Member named in the payload', async () => {
+    const { test, seatA, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    // Every event of seat B's Turn names seat A in its payload; the host must ignore it and key on the live handle.
+    const spoof = { memberId: seatA.memberId, handle: seatA.handle, sessionId: seatA.sessionId, actor: { kind: 'member', memberId: seatA.memberId } }
+    for (const event of completeTurnEvents({ turn: 1, startData: spoof })) test.ctx.emit('session/event', sessionB, event as never)
+    const turnRows = () => [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { memberId: string; sessionId: string }; actor: { memberId: string } })
+      .filter(operation => operation.kind === 'team/session-turn-recorded')
+    await vi.waitFor(() => expect(turnRows()).toHaveLength(1))
+    const [row] = turnRows()
+    expect(row!.data.memberId).toBe(seatB.memberId)
+    expect(row!.actor.memberId).toBe(seatB.memberId)
+    expect(row!.data.sessionId).toBe(seatB.sessionId)
+    expect(turnRows().some(operation => operation.data.memberId === seatA.memberId || operation.actor.memberId === seatA.memberId)).toBe(false)
+  })
+
+  it('joins a reply to the Turn whose sequence window holds it, and to no Turn when it falls outside (§3.2)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    const bodyOf = (body: string) => ({ requestId: requestId(`a4-${body}`), workspaceId: alpha, channelRef, body, asTask: false } as never)
+    await host.sendMessageForAgent(agentB as never, bodyOf('before the turn'))
+    const [start, ...rest] = completeTurnEvents({ turn: 1 })
+    test.ctx.emit('session/event', sessionB, start as never)
+    await host.sendMessageForAgent(agentB as never, bodyOf('during the turn'))
+    for (const event of rest) test.ctx.emit('session/event', sessionB, event as never)
+    const operations = () => [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => operation as unknown as {
+      kind: string; sequence: number; data: { memberId: string; message?: { body: string }; startSequence?: number; endSequence?: number } })
+    await vi.waitFor(() => expect(operations().some(operation => operation.kind === 'team/session-turn-recorded')).toBe(true))
+    const sequenceOf = (body: string) => operations().find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === body)!.sequence
+    const ledger = replayLedger(test)
+    const during = ledger.turnForReply(seatB.memberId, sequenceOf('during the turn'))
+    expect(during).toMatchObject({ memberId: seatB.memberId, turn: 1 })
+    expect(during!.startSequence).toBeLessThanOrEqual(sequenceOf('during the turn'))
+    expect(during!.endSequence).toBeGreaterThanOrEqual(sequenceOf('during the turn'))
+    expect(ledger.turnForReply(seatB.memberId, sequenceOf('before the turn'))).toBeUndefined()
+  })
+
+  it('serves per-reply stats, the Member session list and the Turn counters through the host read RPCs (§4)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    const start = (body: string) => host.sendMessageForAgent(agentB as never, { requestId: requestId(`rpc-${body}`), workspaceId: alpha, channelRef, body, asTask: false } as never)
+    await start('before the turn')
+    const [first, ...rest] = completeTurnEvents({ turn: 1 })
+    test.ctx.emit('session/event', sessionB, first as never)
+    await start('during the turn')
+    for (const event of rest) test.ctx.emit('session/event', sessionB, event as never)
+    const messages = () => [...test.facility.get('agent_team')!.table('operations').entries()].map(([, operation]) => operation as unknown as {
+      kind: string; data: { message?: { body: string; threadRef: string; messageRef: string } } })
+      .filter(operation => operation.kind === 'team/message-sent')
+      .map(operation => operation.data.message!)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    const during = messages().find(message => message.body === 'during the turn')!
+    const before = messages().find(message => message.body === 'before the turn')!
+    expect(host.threadReplyStats({ workspaceId: alpha, threadRef: during.threadRef as never })).toEqual([
+      { messageRef: during.messageRef, memberId: seatB.memberId, turn: expect.objectContaining({ turn: 1, memberId: seatB.memberId }), isLastOfTurn: true },
+    ])
+    expect(host.threadReplyStats({ workspaceId: alpha, threadRef: before.threadRef as never })).toEqual([])
+    const sessions = host.memberSessions({ workspaceId: alpha, memberId: seatB.memberId })
+    expect(sessions.current).toBe(seatB.sessionId)
+    expect(sessions.runs).toEqual([expect.objectContaining({ sessionId: seatB.sessionId, memberId: seatB.memberId, turns: 1, toolCalls: 0 })])
+    expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId })).toMatchObject({ unrecorded: { failed: 0, unprovable: 0 } })
+  })
+
+  it('binds a Thread for the calling seat only, and rejects a bind from an unseated agent (§3.1, §4)', async () => {
+    const { test, host, channelRef, seatA, seatB, agentA, agentB } = await seatedHost()
+    await host.sendMessageForAgent(agentA as never, { requestId: requestId('a4-bind-thread'), workspaceId: alpha, channelRef, body: 'bind this thread', asTask: false } as never)
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'bind this thread')!.data.message!.threadRef as never
+    const bound = await host.bindThreadSessionForAgent(agentB as never, {
+      requestId: requestId('a4-bind-b'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bound-b'), reason: 'start',
+    })
+    expect(bound).toMatchObject({ memberId: seatB.memberId, sessionId: 'session:bound-b', threadRef })
+    // A request that names seat A is spread under the calling seat's actor: it binds seat B, never A.
+    const spoof = { memberId: seatA.memberId, actor: { kind: 'member', memberId: seatA.memberId, handle: seatA.handle } }
+    const spoofed = await host.bindThreadSessionForAgent(agentB as never, {
+      requestId: requestId('a4-bind-spoof'), workspaceId: alpha, threadRef, sessionId: SessionId('session:bound-spoof'), reason: 'resume', ...spoof,
+    } as never)
+    expect(spoofed).toMatchObject({ memberId: seatB.memberId })
+    // Bindings are checked on the ledger; the RPC shows only seats with bindings, and no Turns exist here, so no run yet.
+    const ledger = replayLedger(test)
+    expect(ledger.threadSessionsOf(threadRef, seatA.memberId)).toEqual([])
+    expect(ledger.threadSessionsOf(threadRef, seatB.memberId).map(binding => binding.sessionId)).toEqual(['session:bound-b', 'session:bound-spoof'])
+    expect(host.threadSessions({ workspaceId: alpha, threadRef })).toEqual([{ memberId: seatB.memberId, active: null, history: [] }])
+    const stranger = { id: 'agent-stranger', session: { id: 'session:stranger' }, inbox: { nextStep: [], nextTurn: [] }, status: 'idle' } as unknown as never
+    await expect(host.bindThreadSessionForAgent(stranger, { requestId: requestId('a4-bind-stranger'), workspaceId: alpha, threadRef, sessionId: SessionId('session:stranger'), reason: 'start' })).rejects.toThrow(/not an active Team Member/)
+  })
+
+  it('resumes the home Session warm inside its cache TTL, and refuses fork and non-home Sessions (§4.2)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    // The provider still holds the home Session, so the verdict is decided by the clock alone.
+    ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('rpc-resume-start'), workspaceId: alpha, channelRef, body: 'resume me', asTask: false } as never)
+    // A Turn that ended just now: inside the 5-minute default TTL, so warm.
+    for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - 4000 })) test.ctx.emit('session/event', sessionB, event as never)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-warm'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
+      .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'warm', action: 'resumed' })
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-other'), workspaceId: alpha, memberId: seatB.memberId, sessionId: SessionId('session:not-home') }))
+      .rejects.toThrow(/per-Thread sessions are not supported yet/)
+    expect(() => host.forkMemberSession({ workspaceId: alpha, memberId: seatB.memberId, fromSessionId: seatB.sessionId, seed: 'full' })).toThrow(/not supported yet/)
+  })
+
+  it('refuses a cold restart when the Member has no live Session to start a fresh context from (§4.2)', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('rpc-cold-start'), workspaceId: alpha, channelRef, body: 'cold me', asTask: false } as never)
+    // A Turn an hour old: past the TTL, so cold.
+    for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - 3_600_000 })) test.ctx.emit('session/event', sessionB, event as never)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    ;(host as unknown as { handles: Map<unknown, unknown> }).handles.delete(seatB.memberId)
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
+      .rejects.toThrow(/no live Session to start a fresh context from/)
+  })
+})
+
+describe('AgentTeam thread summary (§3.3)', () => {
+  // A stub model: zero tokens, and every call's input kept for inspection. `text` may depend on the call index.
+  function stubModel(text: string | ((index: number) => string), usage: { inputTokens: number; outputTokens: number } | null = { inputTokens: 0, outputTokens: 0 }) {
+    const calls: { system: string; transcript: string; maxTokens: number }[] = []
+    const model = async (call: ThreadSummaryModelCall) => {
+      calls.push({ system: call.input.system, transcript: call.input.transcript, maxTokens: call.maxTokens })
+      return { text: typeof text === 'string' ? text : text(calls.length), model: call.model, usage }
+    }
+    return { calls, model }
+  }
+
+  it('commits a rolling summary that cites ledger handles, and the RPC reads it back', async () => {
+    const { test, host, channelRef, seatA, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-post-1'), workspaceId: alpha, channelRef, body: 'first decision', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const { message } = sent
+    const stub = stubModel(`Decided: first decision [${message.messageRef}]`)
+    host.configureThreadSummary({ model: stub.model })
+    const summary = await host.runThreadSummary(alpha, message.threadRef, 'rolling')
+    expect(summary).toMatchObject({ generation: 1, trigger: 'rolling', coversThroughSequence: message.sequence, model: { provider: 'dsh-opencode-go', model: 'mimo-v2.6-flash' }, usage: { inputTokens: 0, outputTokens: 0 } })
+    expect(stub.calls).toHaveLength(1)
+    expect(stub.calls[0]!.transcript).toContain(`[${message.messageRef}] ${seatA.handle}: first decision`)
+    expect(stub.calls[0]!.maxTokens).toBe(SUMMARY_OUTPUT_TOKEN_CAP)
+    expect(host.threadSummary({ workspaceId: alpha, threadRef: message.threadRef })).toMatchObject({ generation: 1, trigger: 'rolling', text: `Decided: first decision [${message.messageRef}]` })
+    expect(replayLedger(test).latestThreadSummary(message.threadRef)).toMatchObject({ generation: 1, text: `Decided: first decision [${message.messageRef}]` })
+  })
+
+  it('with no LLM service mounted, a due summary logs once per Thread, commits nothing, and does not throw', async () => {
+    const { test, host, channelRef, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-nollm-post'), workspaceId: alpha, channelRef, body: 'no model here', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = sent.message.threadRef
+    // The default model is in use, and this harness mounts no 'llm' service.
+    const logger = (host as unknown as { ctx: { logger: { warn: (...args: unknown[]) => void } } }).ctx.logger
+    const warn = vi.spyOn(logger, 'warn')
+    expect(await host.runThreadSummary(alpha, threadRef, 'rolling')).toBeUndefined()
+    expect(await host.runThreadSummary(alpha, threadRef, 'rolling')).toBeUndefined()
+    const skipped = warn.mock.calls.map(args => String(args[0])).filter(line => line.includes(threadRef))
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0]).toMatch(/no LLM service is mounted; nothing committed, no retry/)
+    expect(host.threadSummary({ workspaceId: alpha, threadRef })).toBeNull()
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toBeUndefined()
+    warn.mockRestore()
+  })
+
+  it('a second summary reads only the Messages after the first, folds the prior text in, and advances the generation', async () => {
+    const { test, host, channelRef, agentA, agentB } = await seatedHost()
+    const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-post-a'), workspaceId: alpha, channelRef, body: 'alpha point', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    host.configureThreadSummary({ model: stubModel('summary one').model })
+    await host.runThreadSummary(alpha, threadRef, 'rolling')
+    const reply = await host.replyForAgent(agentB as never, { requestId: requestId('ts-post-b'), workspaceId: alpha, threadRef, body: 'beta point', baseRevision: first.thread.revision } as never) as AgentTeamReplyCommittedResult
+    const second = { message: reply.message }
+    const stub = stubModel('summary two')
+    host.configureThreadSummary({ model: stub.model })
+    const summary = await host.runThreadSummary(alpha, threadRef, 'rolling')
+    expect(summary).toMatchObject({ generation: 2, coversThroughSequence: second.message.sequence })
+    const [call] = stub.calls
+    expect(call!.transcript).toContain('Prior summary:\nsummary one')
+    expect(call!.transcript).toContain(`[${second.message.messageRef}]`)
+    expect(call!.transcript).not.toContain(`[${first.message.messageRef}]`)
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 2, text: 'summary two' })
+  })
+
+  it('stores null usage when the model reports none, never a guessed zero', async () => {
+    const { test, host, channelRef, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-no-usage'), workspaceId: alpha, channelRef, body: 'no usage reported', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = sent.message.threadRef
+    host.configureThreadSummary({ model: stubModel('summary without usage', null).model })
+    await expect(host.runThreadSummary(alpha, threadRef, 'rolling')).resolves.toMatchObject({ generation: 1, usage: null })
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 1, usage: null })
+  })
+
+  it('summarizes an over-cap Thread in windows: several generations, coverage on Message boundaries', async () => {
+    const { test, host, channelRef, agentA } = await seatedHost()
+    // About 13.3k estimated tokens per Message: two fit under the 32k cap, three do not.
+    const body = 'y'.repeat(40_000)
+    const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-big-0'), workspaceId: alpha, channelRef, body, asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    const messages = [first.message]
+    let revision = first.thread.revision
+    for (let index = 1; index < 5; index++) {
+      const reply = await host.replyForAgent(agentA as never, { requestId: requestId(`ts-big-${index}`), workspaceId: alpha, threadRef, body, baseRevision: revision } as never) as AgentTeamReplyCommittedResult
+      messages.push(reply.message)
+      revision = reply.thread.revision
+    }
+    const stub = stubModel(index => `window summary ${index}`)
+    host.configureThreadSummary({ model: stub.model })
+    const generations = []
+    for (let round = 0; round < 3; round++) generations.push(await host.runThreadSummary(alpha, threadRef, 'rolling'))
+    expect(generations.map(summary => summary?.generation)).toEqual([1, 2, 3])
+    // Two Messages per window, then two, then the last one: coverage stops at the last Message each window carried.
+    expect(generations.map(summary => summary?.coversThroughSequence)).toEqual([messages[1]!.sequence, messages[3]!.sequence, messages[4]!.sequence])
+    expect(stub.calls[0]!.transcript).toContain(`[${messages[0]!.messageRef}]`)
+    expect(stub.calls[0]!.transcript).not.toContain(`[${messages[2]!.messageRef}]`)
+    expect(stub.calls[1]!.transcript).toContain('Prior summary:\nwindow summary 1')
+    expect(stub.calls[1]!.transcript).toContain(`[${messages[2]!.messageRef}]`)
+    expect(stub.calls[1]!.transcript).not.toContain(`[${messages[1]!.messageRef}]`)
+    expect(replayLedger(test).latestThreadSummary(threadRef)).toMatchObject({ generation: 3, coversThroughSequence: messages[4]!.sequence })
+  })
+
+  it('skips input over the cap, logs, and calls no model', async () => {
+    const { host, channelRef, agentA } = await seatedHost()
+    const huge = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-huge'), workspaceId: alpha, channelRef, body: 'x'.repeat(120_000), asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const stub = stubModel('never used')
+    host.configureThreadSummary({ model: stub.model })
+    await expect(host.runThreadSummary(alpha, huge.message.threadRef, 'rolling')).resolves.toBeUndefined()
+    expect(stub.calls).toHaveLength(0)
+    expect(host.threadSummary({ workspaceId: alpha, threadRef: huge.message.threadRef })).toBeNull()
+  })
+
+  it('a failing model call logs, commits nothing, and leaves the send path working', async () => {
+    const { host, channelRef, agentA } = await seatedHost()
+    const first = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-fail-1'), workspaceId: alpha, channelRef, body: 'before the failure', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    host.configureThreadSummary({ model: async () => { throw new Error('upstream 503') } })
+    await expect(host.runThreadSummary(alpha, threadRef, 'rolling')).resolves.toBeUndefined()
+    expect(host.threadSummary({ workspaceId: alpha, threadRef })).toBeNull()
+    const after = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-fail-2'), workspaceId: alpha, channelRef, body: 'after the failure', asTask: false, threadRef } as never)
+    expect(after).toMatchObject({ kind: 'committed' })
+  })
+
+  it('a threshold crossing schedules one summary off the send path', async () => {
+    const { host, channelRef, agentA } = await seatedHost()
+    const sent = await host.sendMessageForAgent(agentA as never, { requestId: requestId('ts-threshold'), workspaceId: alpha, channelRef, body: 'due now', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = sent.message.threadRef
+    const stub = stubModel('scheduled summary')
+    host.configureThreadSummary({ policy: { everyTokens: 1 }, model: stub.model })
+    ;(host as unknown as { scheduleThreadSummaries(workspaceId: WorkspaceId, threadRefs: readonly AgentTeamThreadRef[]): void }).scheduleThreadSummaries(alpha, [threadRef])
+    await vi.waitFor(() => expect(host.threadSummary({ workspaceId: alpha, threadRef })).toMatchObject({ generation: 1, text: 'scheduled summary' }))
+    expect(stub.calls).toHaveLength(1)
+  })
+})
+
+// TEST-2 only (contract §6.0, option B): errored-Turn notices reach the Thread through a human read, and nothing else.
+describe('AgentTeam turn failure notices (§6.0, threadTurnFailures read)', () => {
+  it('returns every errored Turn of a Thread in ledger order, kept across replays, with the read itself changing nothing', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('tf-thread'), workspaceId: alpha, channelRef, body: 'fail this thread', asTask: false } as never)
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'fail this thread')!.data.message!.threadRef as never
+    // The seat was notified of this Thread at delivery, so its errored Turns are noted against it (stands in for notifyMember).
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    const failTurn = (turn: number, message: string) => {
+      test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: { turn } } as never)
+      test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: { turn, reason: { kind: 'error', error: { message } } } } as never)
+    }
+    failTurn(1, 'provider returned 503')
+    await vi.waitFor(() => expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1))
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    failTurn(2, 'Connection error.')
+    await vi.waitFor(() => expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(2))
+
+    const readState = () => ({
+      head: replayLedger(test).projectionSequence(),
+      facts: replayLedger(test).notificationFacts(seatB.memberId),
+      attention: host.attentionStatusForAgent(agentB as never, { workspaceId: alpha, threadRef }),
+    })
+    // The notice moves the UI invalidation position to its own sequence, and never the position Turn windows are attributed against.
+    const failuresLedger = replayLedger(test)
+    const latestFailure = failuresLedger.turnFailureNotices(threadRef).at(-1)!
+    expect(failuresLedger.changeScopesOf(latestFailure)).toEqual([{ kind: 'thread', threadRef }])
+    expect(failuresLedger.projectionSequence()).toBe(latestFailure.sequence)
+    expect(failuresLedger.attributionSequence()).toBeLessThan(latestFailure.sequence)
+    const before = readState()
+    const failures = host.threadTurnFailures({ workspaceId: alpha, threadRef })
+    expect(failures.map(failure => [failure.turn, failure.reason, failure.handle, failure.memberId])).toEqual([
+      [1, 'provider returned 503', seatB.handle, seatB.memberId],
+      [2, 'Connection error.', seatB.handle, seatB.memberId],
+    ])
+    expect(failures[0]!.sequence).toBeLessThan(failures[1]!.sequence)
+    // The read has no side effects: ledger head, unread facts and attention state are identical before and after.
+    expect(readState()).toEqual(before)
+    // The notices never enter the thread's facts, history or read path: they are shown only by threadTurnFailures.
+    const history = JSON.stringify(host.threadHistory({ workspaceId: alpha, threadRef }))
+    expect(history).not.toContain('provider returned 503')
+    expect(history).not.toContain('Connection error.')
+    expect(JSON.stringify(replayLedger(test).notificationFacts(seatB.memberId))).not.toContain('Connection error.')
+    // Replay of the stored log keeps every notice, in ledger order, with no de-duplication.
+    expect(replayLedger(test).threadTurnFailures(threadRef).map(failure => failure.turn)).toEqual([1, 2])
+  })
+
+  it('answers a retry of the same requestId with the stored notice, and never writes a second row', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('tf-retry'), workspaceId: alpha, channelRef, body: 'retry thread', asTask: false } as never)
+    // The host's own ledger instance: a second replay would not see the host's cached writes.
+    const ledger = (host as unknown as { requireLedger(): AgentTeamLedger }).requireLedger()
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'retry thread')!.data.message!.threadRef as never
+    const notice = {
+      requestId: turnFailureNoticeRequestId(SessionId('session:retry'), 1, threadRef), workspaceId: alpha, threadRef, memberId: seatB.memberId,
+      sessionId: SessionId('session:retry'), turn: 1, reason: 'Connection error.', actor: { kind: 'member' as const, memberId: seatB.memberId, handle: seatB.handle },
+    }
+    const first = await ledger.recordTurnFailureNotice(notice)
+    const again = await ledger.recordTurnFailureNotice(notice)
+    // The retry resolves to the stored receipt (committed:false: nothing new was written).
+    expect(again.value).toEqual(first.value)
+    expect(again.committed).toBe(false)
+    expect(ledger.threadTurnFailures(threadRef)).toHaveLength(1)
+    expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+  })
+})
+
+describe('AgentTeam recorder commits wake Thread scopes on the change path only (§6.0, UI-only)', () => {
+  const threadRefOf = (test: { facility: { get(name: string): { table(name: string): { entries(): IterableIterator<[unknown, unknown]> } } | undefined } }, body: string) =>
+    [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === body)!.data.message!.threadRef as never
+  /** Commit-path wakes of Members: `notifyMember` also runs for running-state cues, which are not commits. */
+  const commitWakes = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.filter(([, cause]) => (cause as { kind: string }).kind === 'commit').length
+
+  it('wakes a waiter on the Thread when an errored Turn writes its notice, with no committed listener and no Member wake', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('wake-notice'), workspaceId: alpha, channelRef, body: 'wake notice thread', asTask: false } as never)
+    const threadRef = threadRefOf(test, 'wake notice thread')
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    const committed = vi.fn()
+    test.ctx.on('agent-team/committed', committed)
+    const notify = vi.spyOn(host as unknown as { notifyMember(...args: unknown[]): void }, 'notifyMember')
+    const waiter = nextChange(host, { kind: 'thread', threadRef })
+    test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: { turn: 1 } } as never)
+    test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: { turn: 1, reason: { kind: 'error', error: { message: 'Connection error.' } } } } as never)
+    await expect(waiter).resolves.toBeDefined()
+    expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+    expect(committed).not.toHaveBeenCalled()
+    expect(commitWakes(notify)).toBe(0)
+  })
+
+  it('wakes a waiter on the Thread when a provable Turn is recorded, with no committed listener and no Member wake', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('wake-turn'), workspaceId: alpha, channelRef, body: 'wake turn thread', asTask: false } as never)
+    const threadRef = threadRefOf(test, 'wake turn thread')
+    ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+    const committed = vi.fn()
+    test.ctx.on('agent-team/committed', committed)
+    const notify = vi.spyOn(host as unknown as { notifyMember(...args: unknown[]): void }, 'notifyMember')
+    const waiter = nextChange(host, { kind: 'thread', threadRef })
+    for (const event of completeTurnEvents({ turn: 1 })) test.ctx.emit('session/event', sessionB, event as never)
+    await expect(waiter).resolves.toBeDefined()
+    const recorded = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { threadRefs: string[] } })
+      .filter(operation => operation.kind === 'team/session-turn-recorded')
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]!.data.threadRefs).toContain(threadRef)
+    expect(committed).not.toHaveBeenCalled()
+    expect(commitWakes(notify)).toBe(0)
+  })
+
+  it('emits nothing for a same-requestId rewrite of a notice that is already committed', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId('wake-rewrite'), workspaceId: alpha, channelRef, body: 'rewrite thread', asTask: false } as never)
+    const threadRef = threadRefOf(test, 'rewrite thread')
+    const fail = () => {
+      ;(host as unknown as { turnRecorder: { noteDelivered(memberId: unknown, threadRefs: unknown[]): void } }).turnRecorder.noteDelivered(seatB.memberId, [threadRef])
+      test.ctx.emit('session/event', sessionB, { type: 'turn/start', seq: 1, time: 0, data: { turn: 1 } } as never)
+      test.ctx.emit('session/event', sessionB, { type: 'turn/end', seq: 2, time: 0, data: { turn: 1, reason: { kind: 'error', error: { message: 'Connection error.' } } } } as never)
+    }
+    fail()
+    await vi.waitFor(() => expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1))
+    const ledger = (host as unknown as { requireLedger(): AgentTeamLedger }).requireLedger()
+    const write = vi.spyOn(ledger, 'recordTurnFailureNotice')
+    const changed = vi.spyOn(host as unknown as { emitChanged(scopes?: unknown): void }, 'emitChanged')
+    fail()
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+    await write.mock.results[0]!.value
+    expect(host.threadTurnFailures({ workspaceId: alpha, threadRef })).toHaveLength(1)
+    expect(changed).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentTeam records a completed Turn with a null uncached input (§3.2, TEST-2b)', () => {
+  it('records session aeca99c0 turn 5 through the real recorder: output provable, uncached input null, stats row marked partial', async () => {
+    const { test, host, seatB, agentB } = await seatedHost()
+    const sessionB = (agentB as unknown as { session: never }).session
+    // The real route's turn 5: three steps, the first with no cache fields, the others with cacheReadTokens only, no totalTokens.
+    const at = (offset: number) => Date.UTC(2026, 9, 11, 2, 38, 40) + offset * 1000
+    const model = { role: 'assistant', content: [], source: { kind: 'model', provider: 'opencode2dsh', model: 'mimo-v2.6-flash-free' } }
+    const turn5 = [
+      { type: 'turn/start', seq: 1, time: at(0), data: { turn: 5 } },
+      { type: 'step/start', seq: 2, time: at(1), data: { turn: 5, step: 1 } },
+      { type: 'assistant/message', seq: 3, time: at(2), data: { turn: 5, step: 1, message: model, usage: { inputTokens: 34491, outputTokens: 127 } } },
+      { type: 'step/end', seq: 4, time: at(3), data: { turn: 5, step: 1 } },
+      { type: 'step/start', seq: 5, time: at(4), data: { turn: 5, step: 2 } },
+      { type: 'assistant/message', seq: 6, time: at(5), data: { turn: 5, step: 2, message: model, usage: { inputTokens: 436, outputTokens: 126, cacheReadTokens: 34432 } } },
+      { type: 'step/end', seq: 7, time: at(6), data: { turn: 5, step: 2 } },
+      { type: 'step/start', seq: 8, time: at(7), data: { turn: 5, step: 3 } },
+      { type: 'assistant/message', seq: 9, time: at(8), data: { turn: 5, step: 3, message: model, usage: { inputTokens: 307, outputTokens: 44, cacheReadTokens: 34816 } } },
+      { type: 'step/end', seq: 10, time: at(9), data: { turn: 5, step: 3 } },
+      { type: 'turn/end', seq: 11, time: at(32), data: { turn: 5, reason: { kind: 'completed' } } },
+    ]
+    for (const event of turn5) test.ctx.emit('session/event', sessionB, event as never)
+    const turnRows = () => [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { memberId: string; turn: number; usage: Record<string, unknown> } })
+      .filter(operation => operation.kind === 'team/session-turn-recorded')
+    await vi.waitFor(() => expect(turnRows()).toHaveLength(1))
+    expect(turnRows()[0]!.data).toMatchObject({ memberId: seatB.memberId, turn: 5 })
+    expect(turnRows()[0]!.data.usage).toMatchObject({ uncachedInputTokens: null, outputTokens: 297, cacheReadTokens: null, cacheWriteTokens: null, reasoningTokens: null })
+    const run = host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run
+    expect(run).toMatchObject({ turns: 1, tokensIn: 0, tokensOut: 297, unknownInputTurns: 1 })
+  })
+})
+describe('AgentTeam cold-restart context seed (A7b)', () => {
+  // A stub model for summaries; usage zero so nothing else changes.
+  function stubModel(text: (index: number) => string) {
+    let n = 0
+    return { model: async (call: ThreadSummaryModelCall) => ({ text: text(++n), model: call.model, usage: { inputTokens: 0, outputTokens: 0 } }) }
+  }
+    it('a cold-restart binding steers the seed with the latest summary and tail Messages, and the binding records the summary generation', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    // A Thread with three Messages and a committed summary generation 1.
+    const first = await host.sendMessageForAgent(agentB as never, { requestId: requestId('seedTail-post-1'), workspaceId: alpha, channelRef, body: 'seedTail: alpha', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    const threadRef = first.message.threadRef
+    const reply = await host.replyForAgent(agentB as never, { requestId: requestId('seedTail-post-2'), workspaceId: alpha, threadRef, body: 'seedTail: beta', baseRevision: first.thread.revision } as never) as AgentTeamReplyCommittedResult
+    await host.replyForAgent(agentB as never, { requestId: requestId('seedTail-post-3'), workspaceId: alpha, threadRef, body: 'seedTail: gamma', baseRevision: reply.thread.revision } as never) as AgentTeamReplyCommittedResult
+    function stubModel(text: (index: number) => string) {
+      let n = 0
+      return { model: async (call: ThreadSummaryModelCall) => ({ text: text(++n), model: call.model, usage: { inputTokens: 0, outputTokens: 0 } }) }
+    }
+    host.configureThreadSummary({ model: stubModel(index => `seed summary gen ${index}`).model })
+    const summary = await host.runThreadSummary(alpha, threadRef, 'rolling')
+    expect(summary).toMatchObject({ generation: 1 })
+    // The seat handle records what the seed steered into it.
+    const steered: string[] = []
+    const internals = host as unknown as { handles: Map<unknown, { readonly agent: Record<string, unknown> }> }
+    const old = internals.handles.get(seatB.memberId)!
+    ;(old.agent as unknown as { steer: (message: { content: readonly { readonly text?: string }[] }) => void }).steer = (message) => { steered.push(String(message.content[0]?.text)) }
+    const binding = await host.bindThreadSessionForAgent(agentB as never, { requestId: requestId('seedTail-bind'), workspaceId: alpha, threadRef, sessionId: seatB.sessionId, reason: 'cold-restart' } as never)
+    expect(binding).toMatchObject({ sessionId: seatB.sessionId, threadRef })
+    const seed = steered.find(text => text.includes('Thread context seed (A7b)'))
+    expect(seed).toBeDefined()
+    expect(seed).toContain('Latest summary (generation 1):')
+    expect(seed).toContain('seed summary gen 1')
+    expect(seed).toContain('seedTail: alpha')
+    expect(seed).toContain('seedTail: gamma')
+    expect(seed).toContain('Recent messages (last 10):')
+    // The binding cites the summary generation the seed used, so an op-log check can verify the seed source.
+    const sqlite = replayLedger(test)
+    const bindings = sqlite.threadSessionsOf(threadRef, seatB.memberId)
+    expect(bindings.at(-1)).toMatchObject({ sessionId: seatB.sessionId, summaryGeneration: 1 })
+  })
+
+it('a fresh start binding (reason start) steers the seed too, and the binding records the summary generation', async () => {
+    const { test, host, channelRef, seatB, agentB } = await seatedHost()
+    const first = await host.sendMessageForAgent(agentB as never, { requestId: requestId('seed2-post'), workspaceId: alpha, channelRef, body: 'seed2: alpha', asTask: false } as never) as AgentTeamSendMessageCommittedResult
+    host.configureThreadSummary({ model: stubModel(() => 'seed2 summary').model })
+    await expect(host.runThreadSummary(alpha, first.message.threadRef, 'rolling')).resolves.toMatchObject({ generation: 1 })
+    const steered: string[] = []
+    const internals = host as unknown as { handles: Map<unknown, { readonly agent: Record<string, unknown> }> }
+    const old = internals.handles.get(seatB.memberId)!
+    ;(old.agent as unknown as { steer: (message: { content: readonly { readonly text?: string }[] }) => void }).steer = (message) => { steered.push(String(message.content[0]?.text)) }
+    await host.bindThreadSessionForAgent(agentB as never, { requestId: requestId('seed2-bind'), workspaceId: alpha, threadRef: first.message.threadRef, sessionId: seatB.sessionId, reason: 'start' } as never)
+    const seed = steered.find(text => text.includes('Thread context seed (A7b)'))
+    expect(seed).toBeDefined()
+    expect(seed).toContain('seed2 summary')
+    expect(seed).toContain('seed2: alpha')
   })
 })

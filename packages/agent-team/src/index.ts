@@ -3,7 +3,7 @@
  *
  * The Host owns the append-only collaboration ledger and all Member lifecycle
  * effects. Session history and browser state are projections, never Team facts.
- * @module @contexera/dsh-agent-team
+ * @module @ddvnguyen/moct-dsh-team-room
  */
 
 import { randomUUID } from 'node:crypto'
@@ -13,6 +13,9 @@ import { isDeepStrictEqual } from 'node:util'
 import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, THREAD_SEED_TOKEN_BUDGET, buildThreadSeed, estimateTokens, selectSummaryWindow, summaryDue, type SummaryMessageLine, type ThreadSeed, type ThreadSummaryPolicy } from './thread-summary.ts'
+import { buildThreadContextSeed } from './thread-context-seed.ts'
+import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-app-boot'
@@ -20,6 +23,8 @@ import type { CompactionEngine } from '@deepseek-ai/dsh-compaction'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
+// Brings the session-controller's `model/selection` event into the Session event map.
+import type {} from '@deepseek-ai/dsh-api-session-controller/types'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import z from '@deepseek-ai/schemastery'
@@ -40,18 +45,32 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
+import { cacheVerdict } from './cache-verdict.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
+import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime } from './member-runtime.ts'
+import { memberInstances } from './member-instances.ts'
+import { memoryWriteRefusal, routeThreads } from './instance-router.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
+import { AgentTeamTurnRecorder } from './turn-recorder.ts'
+import type { AgentTeamPoisonVerdict } from './poisoned-session.ts'
+import { AgentTeamActivityFeed } from './activity-feed.ts'
 import { agentTeamDomainSpec } from './spec.ts'
+import { MoctOperationsTable } from './moct-table.ts'
+import { TeamMemoryClient, TeamMemoryError, type TeamMemoryScope, type TeamMemorySearchResult, type TeamMemoryRecord } from './team-memory.ts'
+import { TeamMemoryHuman, memoryOutcome, type TeamMemoryHumanContext } from './team-memory-human.ts'
+import type {
+  AgentTeamMemoryActRequest, AgentTeamMemoryListRequest, AgentTeamMemoryOutcome, AgentTeamMemoryRecordRequest, AgentTeamMemoryRecordView,
+  AgentTeamMemorySettingsRequest, AgentTeamMemoryWorkspaceRequest, TeamMemorySettings, TeamMemoryUsage, TeamMemoryVersion,
+} from './types/memory.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamAddMemberResult,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
+  AgentTeamMemberInstanceStatus,
   AgentTeamArchiveChannelRequest,
   AgentTeamArchiveChannelResult,
   AgentTeamArchiveMemberRequest,
@@ -60,6 +79,8 @@ import type {
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
   AgentTeamActivity,
+  AgentTeamMemberActivityRequest,
+  AgentTeamMemberActivityResult,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
@@ -96,12 +117,15 @@ import type {
   AgentTeamMessageAttachment,
   AgentTeamMemberEffect,
   AgentTeamMemberId,
+  AgentTeamMessage,
   AgentTeamMemberResult,
   AgentTeamMembersRequest,
   AgentTeamResolveTaskRefsRequest,
   AgentTeamResolveTaskRefsResult,
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveThreadRefsResult,
+  AgentTeamResolveMessageRefsRequest,
+  AgentTeamResolveMessageRefsResult,
   AgentTeamTaskRef,
   AgentTeamThreadRef,
   AgentTeamOperation,
@@ -150,21 +174,45 @@ import type {
   AgentTeamUpdateMemberRequest,
   AgentTeamUpdateMemberResult,
   AgentTeamView,
+  AgentTeamSessionRun,
+  AgentTeamThreadSessionBinding,
   AgentTeamViewRequest,
+  AgentTeamThreadReplyStat,
+  AgentTeamThreadTurnFailure,
+  AgentTeamThreadSessionRuns,
+  AgentTeamThreadSummaryCommittedData,
+  AgentTeamRoomActivityRequest,
+  AgentTeamRoomActivityResult,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) throw new Error(`${name} must be set when MOCT_TEAM_URL is set`)
+  return value
+}
+
 export type * from './types.ts'
 export { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './ledger.ts'
 export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName } from './human-profile.ts'
 export { humanAvatarsRoot } from './human-avatar.ts'
 export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
+export { TEAM_MEMORY_HOMES, TEAM_MEMORY_STATUSES, TEAM_MEMORY_TYPES, TeamMemoryClient, TeamMemoryError } from './team-memory.ts'
+export { TeamMemoryHuman, memoryOutcome } from './team-memory-human.ts'
+export type { TeamMemoryHumanContext } from './team-memory-human.ts'
+export type { TeamMemoryGetResult, TeamMemoryNearMatch, TeamMemoryNoteInput, TeamMemoryNoteResult, TeamMemoryRecord, TeamMemoryScope, TeamMemorySearchInput, TeamMemorySearchResult } from './team-memory.ts'
 
 /** Process-stable marker carried by the final Team message tool definition. */
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
 
 
 const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
+/** Multi-instance (contract v2): what slot 0 is told when other slots took part of the seat's Inbox. */
+const SLOT_ZERO_NOTE = 'You are the main instance (slot 0) of a multi-instance seat. Other unread Threads in your Inbox are being handled by your seat\'s other instances; work only on the Threads listed above.'
+/** An extra slot that stays idle this long ends; its Thread bindings stay, and it respawns on the next message. */
+const SLOT_IDLE_END_MS = 15 * 60 * 1000
+const slotKey = (memberId: AgentTeamMemberId, slot: number): string => `${memberId}#${slot}`
+const routeKey = (memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): string => `${memberId}|${threadRef}`
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
 const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
 
@@ -230,6 +278,7 @@ function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope
   if (left.kind === 'channel' && right.kind === 'channel') return left.channelRef === right.channelRef
   if (left.kind === 'thread' && right.kind === 'thread') return left.threadRef === right.threadRef
   if (left.kind === 'presence' && right.kind === 'presence') return left.workspaceId === right.workspaceId
+  if (left.kind === 'activity' && right.kind === 'activity') return left.workspaceId === right.workspaceId
   return false
 }
 
@@ -402,6 +451,18 @@ export interface Config {
   readonly gate: TeamGateSettings
   /** The relatedness judge's own settings; a key here is what mounts it. */
   readonly jev: TeamJudgeSettings
+  /** Poisoned-seat auto-recovery: default OFF (flag + card) until a deployment opts in. */
+  readonly poisonRecovery: TeamPoisonRecoverySettings
+}
+
+/** The Host row's `poisonRecovery` fields, as the settings service reads and writes them. */
+export interface TeamPoisonRecoverySettings {
+  /** Whether the threshold crossing auto-recovers the seat; default false. */
+  readonly enabled: Volatile<boolean>
+  /** Provider of the optional model swap before the fresh context; absent keeps the current route. */
+  readonly provider: Volatile<string | undefined>
+  /** Model id of the optional model swap before the fresh context; absent keeps the current route. */
+  readonly model: Volatile<string | undefined>
 }
 
 /** The Host row's `gate` fields, as the settings service reads and writes them. */
@@ -455,6 +516,26 @@ const TEAM_JUDGE_SETTINGS_SCHEMA = z.object({
   apiBase: z.string().volatile().description('Endpoint base the judgements go to. Default: the jev plugin\'s own default.'),
 })
 
+/** How long a poisoned-seat auto-recovery waits for the errored generation to leave `running`. */
+const POISON_AUTO_RECOVERY_IDLE_WAIT_MS = 60_000
+
+/**
+ * Task-11 item 2: poisoned-seat auto-recovery, default OFF. The threshold
+ * crossing is the operator's decision by default — the diagnosis and the
+ * Team-room card are the whole of it — which is why `enabled` reads false
+ * until a deployment opts in. An opted-in deployment recovers at the crossing:
+ * an optional swap to the configured route (the K model) followed by a fresh
+ * context, whose renewal archives the poisoned Session's log untouched — no
+ * log mutation, and no replay state travels into the new Session. Every field
+ * is volatile, so the settings surface reaches the running Host without a
+ * restart, like gate and jev.
+ */
+const TEAM_POISON_RECOVERY_SETTINGS_SCHEMA = z.object({
+  enabled: z.boolean().default(false).volatile().description('Recover a provider-poisoned seat automatically at the threshold crossing: swap the configured model (when both route fields are set) and start the Member from a new context. Default: false — diagnosis and Team-room card only.'),
+  provider: z.string().volatile().description('Provider of the model swap run before a poisoned seat\'s fresh context. Absent keeps the Member\'s current model.'),
+  model: z.string().volatile().description('Model id of the model swap run before a poisoned seat\'s fresh context. Absent keeps the Member\'s current model.'),
+})
+
 /**
  * The Host row's whole schema: the profile fields verbatim, so their volatility
  * and defaults stay owned by {@link HUMAN_PROFILE_SETTINGS_SCHEMA}, plus the
@@ -465,9 +546,52 @@ export const TEAM_HOST_ROW_SETTINGS_SCHEMA = z.object({
   ...HUMAN_PROFILE_SETTINGS_SCHEMA.dict,
   gate: TEAM_PRESSURE_GATE_SCHEMA,
   jev: TEAM_JUDGE_SETTINGS_SCHEMA,
+  poisonRecovery: TEAM_POISON_RECOVERY_SETTINGS_SCHEMA,
 })
 
+/** The default thread-summary model has no LLM service to call; the caller logs this once per Thread. */
+class ThreadSummaryLlmUnavailable extends Error {}
+
 /** Host owner of the single Agent Team in one dshHome. */
+/** The `model/selection` payload shape: provider, model, and an optional string effort. */
+interface SeatModelSelection {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+function seatModelSelection(selection: { readonly provider: string; readonly model: string; readonly reasoningEffort?: unknown }): SeatModelSelection {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: String(selection.reasoningEffort) }),
+  }
+}
+
+function sameModelSelection(left: SeatModelSelection, right: SeatModelSelection): boolean {
+  return left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
+}
+
+/**
+ * The session controller's `modelSelection` view, `next = pending ?? lastUsed`,
+ * folded from one Session's own events with the same rules: a selection sets
+ * `pending`; a request header sets `lastUsed` and clears `pending` only when the
+ * request used it. Null when the Session has neither.
+ */
+export function projectedNextModelSelection(events: readonly SessionEvent[]): SeatModelSelection | null {
+  let lastUsed: SeatModelSelection | null = null
+  let pending: SeatModelSelection | null = null
+  for (const event of events) {
+    if (event.type === 'model/selection') {
+      pending = seatModelSelection(event.data)
+    } else if (event.type === 'request/header') {
+      lastUsed = seatModelSelection(event.data.header.config)
+      if (pending !== null && sameModelSelection(pending, lastUsed)) pending = null
+    }
+  }
+  return pending ?? lastUsed
+}
+
 export default class AgentTeam extends TypertRemoteService {
   static Config = TEAM_HOST_ROW_SETTINGS_SCHEMA
   static inject = [
@@ -483,11 +607,29 @@ export default class AgentTeam extends TypertRemoteService {
 
   private domain?: Domain<typeof agentTeamDomainSpec>
   private ledger?: AgentTeamLedger
+  /** Team memory (MOCT schema v8); present only beside the MOCT ledger backend. */
+  private teamMemory?: TeamMemoryClient
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   /** Live Member per session id; drives the root session/event listener. */
   private readonly memberBySessionId = new Map<SessionId, AgentTeamMemberId>()
   /** Live selection refs let model edits take effect without disposing the Session. */
   private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
+  /** Extra instance slots 1..N-1 per seat (multi-instance contract v2); slot 0 is `handles`. */
+  private readonly slotHandles = new Map<AgentTeamMemberId, Map<number, AgentHandle>>()
+  /** Seat and slot per live extra-instance Session. */
+  private readonly slotBySessionId = new Map<SessionId, { readonly memberId: AgentTeamMemberId; readonly slot: number }>()
+  /** In-flight slot spawns, so one slot never starts twice. */
+  private readonly slotSpawns = new Map<string, Promise<AgentHandle | undefined>>()
+  /** Live selection refs of extra slots; a seat model edit reaches them like slot 0's. */
+  private readonly slotSelections = new Map<string, ModelSelectionRef>()
+  /** Routes taken in this process, ahead of their durable `thread-instance-bound` commit. */
+  private readonly routedSlots = new Map<string, number>()
+  /** Last delivered Inbox signature per extra slot (slot 0 keeps `notifiedInbox`). */
+  private readonly notifiedSlotInbox = new Map<string, string>()
+  /** Threads already delivered to each live extra-slot Session, seeded or not (A7b): only a Session's first delivery of a Thread seeds; a respawned slot is a new Session. */
+  private readonly seededSlotThreads = new Map<SessionId, Set<AgentTeamThreadRef>>()
+  /** Idle-end timers of extra slots; an ended slot keeps its bindings and respawns on demand. */
+  private readonly slotIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
   /** Per-Member runtime state: tool restrictions, skill mounts, warnings, private memory. */
@@ -525,6 +667,15 @@ export default class AgentTeam extends TypertRemoteService {
     compaction?: string
     /** The post-commit configuration apply failed; the stored row is ahead of the live surface. */
     capabilityApply?: AgentTeamMemberDiagnostic
+    /**
+     * Task-11: the Session's provider rejects its Turns with an identical 4xx
+     * INVALID_REQUEST signature before any usage (poisoned). Sticky until a
+     * clean recorded Turn or a non-matching failure clears it — the plain
+     * `runtime` slot is cleared on every `running` status, which would hide
+     * the very condition that needs a model switch or new context. Shown only
+     * while `sessionId` is still the Member's current Session.
+     */
+    providerPoison?: { readonly detail: string; readonly failedTurns: number; readonly sessionId: SessionId }
   }>()
   private readonly pressurePolicy: TeamPressurePolicy
   /**
@@ -574,6 +725,162 @@ export default class AgentTeam extends TypertRemoteService {
    * unit owns intent, and this coordinator owns only reconstructible process
    * state. See docs/architecture/README.md and docs/team-collaboration/README.md.
    */
+  /** Records each completed Turn with its Threads (contract §3.2). Reads the ledger lazily, so it can exist before the ledger does. */
+  private readonly turnRecorder = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
+    this.ctx.logger.warn(`${message}: ${error instanceof Error ? error.message : String(error)}`)
+  }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt), message => {
+    this.ctx.logger.warn(message)
+  }, (memberId, verdict, crossed) => this.onMemberPoisoned(memberId, verdict, crossed), memberId => this.onMemberPoisonCleared(memberId))
+
+  /**
+   * One Turn recorder per extra instance slot (multi-instance contract v2): a slot's Turns are recorded
+   * and its errored Turns noted on their Threads under the seat's member id, while its open Turn, held
+   * deliveries and provider-rejection streak stay its own. A slot never poisons the seat (§2), so its
+   * recorder reports no poison. Kept across an idle end, so a respawned slot keeps its counts.
+   */
+  private readonly slotRecorders = new Map<string, AgentTeamTurnRecorder>()
+  /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
+  private readonly slotErrors = new Set<string>()
+
+  /** Host activity feed (A13 v2): in-memory only, folded from session events. */
+  private readonly activityFeed = new AgentTeamActivityFeed({
+    identify: (memberId, slot) => this.activityIdentity(memberId, slot),
+    invalidate: memberId => this.invalidateActivity(memberId),
+  })
+  /** Each seat's Thread for its running Turn, from the Turn's delivery notices. */
+  private readonly activityThreads = new Map<AgentTeamMemberId, AgentTeamThreadRef>()
+  /** Each extra slot's Thread for its running Turn, from the slot's own delivery notice. */
+  private readonly slotActivityThreads = new Map<string, AgentTeamThreadRef>()
+  /** Activity wake epoch: a process-local counter that never takes part in a projection comparison. */
+  private activityEpoch = 0
+
+  /** Thread summary policy and model call (contract §3.3). Plugin settings are not wired yet; `configureThreadSummary` is the seam. */
+  private threadSummaryPolicy: ThreadSummaryPolicy = DEFAULT_THREAD_SUMMARY_POLICY
+  private threadSummaryModel: (call: ThreadSummaryModelCall) => Promise<ThreadSummaryModelResult> = call => {
+    // get(), not a bare read: 'llm' is not in static inject, and a bare read of it throws on the live Host.
+    const llm = this.ctx.get('llm')
+    if (llm === undefined) throw new ThreadSummaryLlmUnavailable('no LLM runtime is available for the thread summary')
+    return callThreadSummaryModel(llm, call)
+  }
+  /** Threads whose summary was skipped for want of an LLM service, so the skip logs once per Thread. */
+  private readonly summaryLlmUnavailableThreads = new Set<string>()
+  /** Threads with a summary call in flight, keyed by workspace and Thread, so one Thread never runs two calls at once. */
+  private readonly summarizingThreads = new Set<string>()
+
+  /** Replace the summary policy and/or the model call. Tests use it; plugin settings will call it once their schema lands. */
+  configureThreadSummary(options: { readonly policy?: Partial<ThreadSummaryPolicy>; readonly model?: (call: ThreadSummaryModelCall) => Promise<ThreadSummaryModelResult> }): void {
+    if (options.policy !== undefined) this.threadSummaryPolicy = { ...this.threadSummaryPolicy, ...options.policy }
+    if (options.model !== undefined) this.threadSummaryModel = options.model
+  }
+
+  /** Runs after a Turn is recorded, off the send path. Never throws into the recorder. */
+  private scheduleThreadSummaries(workspaceId: WorkspaceId, threadRefs: readonly AgentTeamThreadRef[]): void {
+    for (const threadRef of threadRefs) {
+      const key = `${workspaceId}|${threadRef}`
+      if (this.summarizingThreads.has(key)) continue
+      let due: boolean
+      try {
+        due = this.threadSummaryDue(threadRef)
+      } catch (error) {
+        this.ctx.logger.warn(`agent-team: thread summary check for '${threadRef}' failed: ${error instanceof Error ? error.message : String(error)}`)
+        continue
+      }
+      if (!due) continue
+      this.summarizingThreads.add(key)
+      void this.runThreadSummary(workspaceId, threadRef, 'rolling')
+        .catch(error => this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' failed, no retry: ${error instanceof Error ? error.message : String(error)}`))
+        .finally(() => this.summarizingThreads.delete(key))
+    }
+  }
+
+  /** Due when enough Turns name the Thread, or enough Message tokens accrued, since its last summary. */
+  private threadSummaryDue(threadRef: AgentTeamThreadRef): boolean {
+    if (!this.threadSummaryPolicy.enabled) return false
+    const ledger = this.requireLedger()
+    const since = ledger.latestThreadSummary(threadRef)?.coversThroughSequence ?? 0
+    const tokens = ledger.threadMessagesAfter(threadRef, since).reduce((sum, message) => sum + estimateTokens(message.body), 0)
+    return summaryDue({ turns: ledger.recordedTurnsNamingThreadAfter(threadRef, since), tokens }, this.threadSummaryPolicy)
+  }
+
+  /**
+   * Summarize one Thread from the committed Messages after its last summary. Over the input cap the
+   * call is skipped and logged, never truncated; a model failure logs and commits nothing. Returns the
+   * committed summary, or undefined when none was committed.
+   */
+  async runThreadSummary(workspaceId: WorkspaceId, threadRef: AgentTeamThreadRef, trigger: 'rolling' | 'wrapup'): Promise<AgentTeamThreadSummaryCommittedData | undefined> {
+    const ledger = this.requireLedger()
+    const latest = ledger.latestThreadSummary(threadRef)
+    const messages = ledger.threadMessagesAfter(threadRef, latest?.coversThroughSequence ?? 0)
+    if (messages.length === 0) return undefined
+    const lines = messages.map(message => ({ messageRef: message.messageRef, sender: ledger.getMember(message.sender)?.handle ?? message.sender, body: message.body }))
+    // Prior summary plus as many oldest Messages as fit; coverage stops at the last one included.
+    const window = selectSummaryWindow(latest?.text, lines)
+    if (!window.ok) {
+      // The blocking Message is the oldest uncovered one: the window always starts there.
+      this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped at Message '${messages[0]!.messageRef}': it alone exceeds the ${SUMMARY_INPUT_TOKEN_CAP} estimated input token cap (${window.tokens}); this Thread's summaries stall until resolved`)
+      return undefined
+    }
+    const last = messages[window.included - 1]!
+    let output: ThreadSummaryModelResult
+    try {
+      output = await this.threadSummaryModel({ model: this.threadSummaryPolicy.model, input: window.input, maxTokens: SUMMARY_OUTPUT_TOKEN_CAP })
+    } catch (error) {
+      if (error instanceof ThreadSummaryLlmUnavailable) {
+        // No LLM service is mounted: log once per Thread, commit nothing, and do not retry.
+        if (!this.summaryLlmUnavailableThreads.has(threadRef)) {
+          this.summaryLlmUnavailableThreads.add(threadRef)
+          this.ctx.logger.warn(`agent-team: thread summary for '${threadRef}' skipped: no LLM service is mounted; nothing committed, no retry`)
+        }
+        return undefined
+      }
+      this.ctx.logger.warn(`agent-team: thread summary model call for '${threadRef}' failed, no retry: ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
+    if (output.text.length === 0) {
+      this.ctx.logger.warn(`agent-team: thread summary model returned no text for '${threadRef}', nothing committed`)
+      return undefined
+    }
+    const result = await ledger.commitThreadSummary({
+      requestId: `thread-summary:${threadRef}:${last.sequence}` as AgentTeamRequestId,
+      workspaceId, actor: agentTeamHumanActor(), threadRef, trigger, text: output.text,
+      coversThroughSequence: last.sequence, transcriptTokens: window.input.tokens, model: output.model, usage: output.usage,
+    })
+    return result.value.summary
+  }
+
+  /** The current summary of one Thread, or null before its first summary commits (contract §3.3). */
+  @Remote('threadSummary')
+  threadSummary(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): { generation: number; text: string; trigger: 'rolling' | 'wrapup'; at: string } | null {
+    this.requireWorkspace(request.workspaceId)
+    const latest = this.requireLedger().latestThreadSummary(request.threadRef)
+    if (latest === undefined) return null
+    return { generation: latest.generation, text: latest.text, trigger: latest.trigger, at: latest.at }
+  }
+
+  /** Turns this host did not record since start; `sessionStats` reports them so SessionRun under-counts are visible. */
+  unrecordedTurns(): { readonly failed: number; readonly unprovable: number } {
+    let { failed, unprovable } = this.turnRecorder.unrecordedTurns
+    for (const recorder of this.slotRecorders.values()) {
+      failed += recorder.unrecordedTurns.failed
+      unprovable += recorder.unrecordedTurns.unprovable
+    }
+    return { failed, unprovable }
+  }
+
+  /** The Turn recorder of one extra slot, created on first use. */
+  private slotRecorder(memberId: AgentTeamMemberId, slot: number): AgentTeamTurnRecorder {
+    const key = slotKey(memberId, slot)
+    const existing = this.slotRecorders.get(key)
+    if (existing !== undefined) return existing
+    const created = new AgentTeamTurnRecorder(() => this.requireLedger(), (message, error) => {
+      this.ctx.logger.warn(`${message} (instance slot ${slot}): ${error instanceof Error ? error.message : String(error)}`)
+    }, (workspaceId, threadRefs) => this.scheduleThreadSummaries(workspaceId, threadRefs), receipt => this.emitRecorded(receipt), message => {
+      this.ctx.logger.warn(`${message} (instance slot ${slot})`)
+    })
+    this.slotRecorders.set(key, created)
+    return created
+  }
+
   private readonly contextManagement = createTeamContextManagement({
     agentForMember: memberId => this.handles.get(memberId)?.agent,
     memberForAgent: agent => this.memberForAgent(agent),
@@ -826,9 +1133,14 @@ export default class AgentTeam extends TypertRemoteService {
     ), 'agentTeam.contextProjection')
     this.ctx.on('agent/error', ({ agent, error }) => {
       const member = this.memberForAgent(agent)
-      if (member === undefined) return
+      if (member === undefined) {
+        this.onSlotError(agent)
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       this.setMemberFailure(member.memberId, 'runtime', message)
+      this.activityThreads.delete(member.memberId)
+      this.activityFeed.onAgentError(member.memberId)
       // Every occurrence is classified here, including the two verdicts the
       // coordinator then reports no state change for (a terminal error with no
       // episode to cancel, and a repeat after standing down). Those belong at
@@ -843,6 +1155,7 @@ export default class AgentTeam extends TypertRemoteService {
       const member = this.memberForAgent(agent)
       if (status === 'running') this.runningAgents.add(agent.id)
       else this.runningAgents.delete(agent.id)
+      if (member === undefined) this.onSlotStatus(agent, status)
       if (status === 'running' && member !== undefined) {
         const recovered = this.clearMemberFailure(member.memberId, 'runtime')
         if (recovered) this.notifiedInbox.delete(member.memberId)
@@ -859,6 +1172,8 @@ export default class AgentTeam extends TypertRemoteService {
       // above; without this wake, cached Client member rows keep showing the
       // Member as working after every turn until an unrelated change arrives.
       if (status === 'idle' && member !== undefined) {
+        this.activityThreads.delete(member.memberId)
+        this.activityFeed.onAgentIdle(member.memberId)
         if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
           this.recovery.onCleanTurnEnd(member.memberId)
         }
@@ -874,9 +1189,16 @@ export default class AgentTeam extends TypertRemoteService {
     // any tool call streams, the map lookup succeeds.
     this.ctx.on('session/event', (session, event) => {
       const memberId = this.memberBySessionId.get(session.id)
-      if (memberId === undefined) return
+      if (memberId === undefined) {
+        this.onSlotSessionEvent(session.id, event)
+        return
+      }
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
+      this.turnRecorder.onSessionEvent(memberId, session.id, event)
+      this.activityFeed.onSessionEvent(memberId, event)
+      // The seat's model is authoritative: a composer pick on the seat Session is re-asserted away.
+      if (event.type === 'model/selection') queueMicrotask(() => { this.assertSeatModel(memberId, handle.agent, 'composer pick') })
       // A successful assistant response ends any open provider-overflow
       // recovery sequence for this Member.
       if (event.type === 'assistant/message') this.pressurePolicy.onAssistantMessage(memberId)
@@ -893,6 +1215,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.shutdown.resolve()
       this.memberRuntime.releaseTurnWaits()
       this.recovery.dispose()
+      this.activityFeed.dispose()
       this.contextManagement.dispose()
       this.pressurePolicy.dispose()
       if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
@@ -904,13 +1227,26 @@ export default class AgentTeam extends TypertRemoteService {
       await Promise.all([...this.memberLifecycleTails.values(), ...this.additionLifecycleTails.values()])
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
+      await Promise.all([...this.slotHandles.keys()].map(memberId => this.disposeSlots(memberId)))
       this.modelSelections.clear()
       this.memberRuntime.disposeAll()
       this.runningAgents.clear()
       await domain.close()
     }, 'agentTeam.dispose')
     this.domain = domain
-    const ledger = new AgentTeamLedger(domain.table('operations'))
+    // MOCT Team Room (contract v0.3 §2): when MOCT_TEAM_URL is set, the ledger's
+    // operations table is the backend's log, not the local domain table. The
+    // domain still opens for the other tables. The workspace id is required so
+    // a shared backend never mixes two hosts' sequence spaces.
+    const mocUrl = process.env.MOCT_TEAM_URL?.trim()
+    const operationsTable = mocUrl
+      ? await MoctOperationsTable.open<AgentTeamOperationId, AgentTeamOperation>({
+          baseUrl: mocUrl,
+          workspaceId: requiredEnv('MOCT_TEAM_WORKSPACE'),
+        })
+      : domain.table('operations')
+    if (mocUrl) this.teamMemory = new TeamMemoryClient({ baseUrl: mocUrl })
+    const ledger = new AgentTeamLedger(operationsTable)
     this.ledger = ledger
     // A live Config edit in the constructor's window may have arrived before
     // the ledger existed; sync once here so @ matching starts from the stored
@@ -996,9 +1332,37 @@ export default class AgentTeam extends TypertRemoteService {
     return undefined
   }
 
+  /**
+   * Resolve any live instance of a seat, slot 0 or an extra slot, to the seat and its slot.
+   * Instances share the seat's identity (contract v2 §1.3): Team tools act as @seat from any slot.
+   */
+  seatForAgent(agent: Agent): { readonly member: AgentTeamAgentMember; readonly slot: number } | undefined {
+    const member = this.memberForAgent(agent)
+    if (member !== undefined) return { member, slot: 0 }
+    const entry = this.slotBySessionId.get(agent.id)
+    if (entry === undefined || this.slotHandles.get(entry.memberId)?.get(entry.slot)?.agent !== agent) return undefined
+    const seat = this.requireLedger().getMember(entry.memberId)
+    return seat === undefined ? undefined : { member: seat, slot: entry.slot }
+  }
+
+  /** The seat behind any live instance; the member-context row injects the seat's memory into every slot. */
+  seatMemberForAgent(agent: Agent): AgentTeamAgentMember | undefined {
+    return this.seatForAgent(agent)?.member
+  }
+
   /** Return every durable Member with current process availability. */
   members(): readonly AgentTeamAgentMemberStatus[] {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
+  }
+
+  /** Running Turns of this Workspace's seats (A13 v2), read from the in-memory feed; never persisted. */
+  @Remote('memberActivity')
+  memberActivity(request: AgentTeamMemberActivityRequest): AgentTeamMemberActivityResult {
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    const activities = this.activityFeed.snapshot(request.threadRef)
+      .filter(activity => ledger.participatesIn(activity.memberId, request.workspaceId))
+    return { revision: this.activityEpoch, activities }
   }
 
   /** Read-only navigation lookup for branded Task refs found in message bodies. */
@@ -1025,6 +1389,14 @@ export default class AgentTeam extends TypertRemoteService {
       return true
     })
     return Object.freeze({ resolved: Object.freeze(this.requireLedger().resolveThreadRefs(request.workspaceId, threadRefs)) })
+  }
+
+  /** Read-only quote context for Messages cited by `replyToMessageRef`; unknown refs are omitted. */
+  @Remote('resolveMessageRefs')
+  resolveMessageRefs(request: AgentTeamResolveMessageRefsRequest): AgentTeamResolveMessageRefsResult {
+    this.requireWorkspace(request.workspaceId)
+    const messageRefs = [...new Set(request.messageRefs)]
+    return Object.freeze({ resolved: Object.freeze(this.requireLedger().resolveMessageRefs(request.workspaceId, messageRefs)) })
   }
 
   /** Browser-safe Human roster, optionally filtered to one participation. */
@@ -1130,6 +1502,7 @@ export default class AgentTeam extends TypertRemoteService {
         presetId: request.presetId,
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
         ...(request.capabilities === undefined ? {} : { capabilities: Object.freeze(deepCopyCapabilities(request.capabilities)) }),
+        ...(request.instances === undefined ? {} : { instances: request.instances }),
         privateMemoryPath: dshHomePath('agent-team', 'members', memberMemoryDirectoryName(memberId)),
         state: 'enabled',
       })
@@ -1180,6 +1553,55 @@ export default class AgentTeam extends TypertRemoteService {
    * still holding a live handle is an interrupted suspend/archive/remove,
    * not a stalled one; recovery finishes that cleanup instead of nudging it.
    */
+  /**
+   * Human resume of a Member's home Session (contract §4, TEST scope). Warm (the Session is
+   * still held by the provider and inside its cache TTL) resumes it in place. Cold starts a
+   * fresh home Session through the existing renewal, which carries the continuity handoff,
+   * and binds the named Thread to it (reason cold-restart). Any other Session is refused:
+   * per-Thread sessions are not supported yet.
+   */
+  @Remote('resumeMemberSession')
+  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<{ sessionId: SessionId; cache: 'warm' | 'cold'; action: 'resumed' | 'seeded-new' }> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    const member = ledger.getMember(request.memberId)
+    if (member === undefined || !ledger.participatesIn(request.memberId, request.workspaceId)) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
+    if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can resume`)
+    if (request.sessionId !== member.sessionId) throw new Error('per-Thread sessions are not supported yet: resumeMemberSession takes only the Member\'s home Session')
+    const run = ledger.sessionRun(member.sessionId)
+    const resumable = (await this.persistedSessionHeaders()).some(snapshot => snapshot.header.id === member.sessionId)
+    const verdict = cacheVerdict({ lastAssistantAt: run?.lastAssistantAt, provider: run?.model?.provider, nowMs: Date.now(), resumable })
+    if (verdict.cache === 'warm') {
+      await this.enqueueLifecycle(member.memberId, async () => {
+        if (this.handles.get(member.memberId)?.agent.session.id !== member.sessionId) await this.activateMember(member, undefined, new Set([member.sessionId]))
+      })
+      return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
+    }
+    if (!this.handles.has(member.memberId)) throw new Error(`Agent Member '${member.handle}' has no live Session to start a fresh context from; resume it before continuing`)
+    // The renewal takes the Member's lifecycle lock itself, so it runs outside any lock held here.
+    const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
+    const sessionId = cleared.status.member.sessionId
+    if (request.threadRef !== undefined) {
+      const latest = ledger.latestThreadSummary(request.threadRef)
+      await ledger.bindThreadSession({
+        requestId: `${request.requestId}:bind` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef: request.threadRef, sessionId, reason: 'cold-restart',
+        ...(latest === undefined ? {} : { summaryGeneration: latest.generation }),
+        actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
+      })
+      // A7b: seed the next prompt with the latest summary and the tail-10 messages.
+      await this.steerAgentFromThread(member.memberId, request.threadRef)
+    }
+    return { sessionId, cache: 'cold', action: 'seeded-new' }
+  }
+
+  /** Deferred past TEST (contract §4): a Session for one Thread needs a per-Session live handle, which is not built yet. */
+  @Remote('forkMemberSession')
+  forkMemberSession(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef?: AgentTeamThreadRef; seed: 'summary' | 'full' }): never {
+    this.requireWorkspace(request.workspaceId)
+    throw new Error(`forkMemberSession is not supported yet (seed '${request.seed}'): per-Thread sessions are deferred past TEST`)
+  }
+
   @Remote('recoverMember')
   async recoverMember(request: AgentTeamRecoverMemberRequest): Promise<AgentTeamRecoverMemberResult> {
     this.requireAccepting()
@@ -1234,6 +1656,18 @@ export default class AgentTeam extends TypertRemoteService {
       // retry reports again rather than something the restart heals.
       await this.reactivateMember(request.memberId)
       return Object.freeze({ status: this.memberStatus(member) })
+    }
+    // Task-11 item 4: a provider-poisoned Session cannot recover by steering —
+    // the resume prompt would replay the exact history the provider keeps
+    // rejecting with an identical signature before any usage. Report the same
+    // error instead of silently re-queuing a Turn that cannot succeed. Session-
+    // scoped to the live generation: a renewal or new context already moved
+    // past the poisoned history and may steer normally.
+    const poison = this.turnRecorder.poisonedVerdict(request.memberId, handle.agent.id)
+    if (poison !== undefined) {
+      const detail = `same error again: ${poison.failedTurns} consecutive Turns rejected by the provider (${poison.signature}, zero usage); steering would replay it — switch the model or start a new context`
+      this.ctx.logger.info(`agent-team: recovery not queued for ${this.memberScope(request.memberId)}: ${detail}`)
+      return Object.freeze({ status: this.memberStatus(member), sameError: { detail, failedTurns: poison.failedTurns } })
     }
     this.steerResume(member, this.manualResumeText(), 'operator recovery')
     return Object.freeze({ status: this.memberStatus(member) })
@@ -1517,6 +1951,23 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
+  /** A7b: steer the next prompt with the latest summary and the last 10 messages of a Thread, on a fresh start or cold restart. */
+  private async steerAgentFromThread(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): Promise<void> {
+    const ledger = this.requireLedger()
+    const latest = ledger.latestThreadSummary(threadRef)
+    const tail = ledger.threadMessagesAfter(threadRef, 0).slice(-10)
+    const seed = buildThreadContextSeed({
+      ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
+      messages: tail.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
+    })
+    const handle = this.handles.get(memberId)
+    if (handle !== undefined && typeof handle.agent.steer === 'function') {
+      const hint = createUserMessage({ content: [{ type: 'text', text: seed }], source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'A7b thread context seed' } })
+      const result = handle.agent.steer(hint)
+      if ((result as unknown) instanceof Promise) await result
+    }
+  }
+
   /** Ledger handle for log lines; falls back to the raw id when unknown. */
   private memberLabel(memberId: AgentTeamMemberId): string {
     return this.ledger?.getMember(memberId)?.handle ?? memberId
@@ -1577,7 +2028,9 @@ export default class AgentTeam extends TypertRemoteService {
   private steerResume(member: AgentTeamAgentMember, text: string, trigger: 'automatic recovery' | 'operator recovery'): void {
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) throw new Error(`member '${member.handle}' has no active session`)
-    const notifications = this.requireLedger().notificationFacts(member.memberId)
+    const notifications = this.routeToInstances(member, this.requireLedger().notificationFacts(member.memberId))
+    this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
+    this.noteActivityThread(member.memberId, notifications)
     const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
     const hint = createUserMessage({
       content: [{ type: 'text', text: body }],
@@ -1627,6 +2080,8 @@ export default class AgentTeam extends TypertRemoteService {
           const selection = this.modelSelections.get(request.memberId)
           if (selection === undefined) throw new Error(`Agent Member '${current.handle}' has no live model selection`)
           selection.current = current.model ?? this.ctx.agentDefaultModel.currentSelection()
+          for (const [key, ref] of this.slotSelections) if (key.startsWith(`${request.memberId}#`)) ref.current = selection.current
+          this.assertSeatModel(request.memberId, active.agent, 'model change')
           effect = 'applied'
         }
         if (!this.memberRuntime.appliedCapabilitiesMatch(current.memberId, current.capabilities)) {
@@ -2034,6 +2489,59 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().threadHistory(agentTeamHumanActor(), request)
   }
 
+  /** Human's per-seat Session runs in one Thread: the active run and the history of runs (contract §4). */
+  @Remote('threadSessions')
+  threadSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadSessionRuns[] {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadSessionRuns(request.threadRef)
+  }
+
+  /** Human's per-Member Session list, newest first, with each Session's folded stats row. */
+  @Remote('memberSessions')
+  memberSessions(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId }): { current: SessionId | null; runs: readonly AgentTeamSessionRun[] } {
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    if (ledger.getMember(request.memberId) === undefined) throw new Error(`Member '${request.memberId}' is not known to this Team`)
+    return { current: ledger.getMember(request.memberId)?.sessionId ?? null, runs: ledger.memberSessionRuns(request.memberId) }
+  }
+
+  /** One Session's folded stats row, plus this host's count of Turns it did not record (the sessionStats contract). */
+  @Remote('sessionStats')
+  sessionStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; sessionId: SessionId }): { run: AgentTeamSessionRun | null; unrecorded: { failed: number; unprovable: number } } {
+    this.requireWorkspace(request.workspaceId)
+    return { run: this.requireLedger().sessionRun(request.sessionId) ?? null, unrecorded: this.unrecordedTurns() }
+  }
+
+  /** Per-reply stats for one Thread: only replies inside a recorded Turn window; read-only. */
+  @Remote('threadReplyStats')
+  threadReplyStats(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadReplyStat[] {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadReplyStats(request.threadRef)
+  }
+
+  /**
+   * Room-activity read: one Channel's or one Thread's derived activity (contract §19.1). Read-only —
+   * no receipt, no unread change, no wake, no new operation. The scope is resolved by the ledger,
+   * so an unknown Channel or Thread and an archived Channel all reject with the same typed
+   * not-found every other read uses.
+   */
+  @Remote('roomActivity')
+  roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
+    this.requireWorkspace(request.workspaceId)
+    try {
+      return this.requireLedger().roomActivity(request)
+    } catch (error) {
+      throw new RemoteError('team/room-activity-not-found', error instanceof Error ? error.message : String(error), request.threadRef === undefined ? { channelRef: request.channelRef } : { channelRef: request.channelRef, threadRef: request.threadRef })
+    }
+  }
+
+  /** Errored-Turn notices of one Thread for the human view, every notice kept; read-only (no receipt, no unread change, no wake). */
+  @Remote('threadTurnFailures')
+  threadTurnFailures(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadTurnFailure[] {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadTurnFailures(request.threadRef)
+  }
+
   /** Return the existing bounded public Workspace discovery projection. */
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
@@ -2049,6 +2557,25 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+  }
+
+  /**
+   * Agent-only: bind this seat's turns in one Thread to a Session (§3.1). The actor is the
+   * calling seat, never a request field, so a request naming another Member binds only the caller.
+   */
+  async bindThreadSessionForAgent(agent: Agent, request: Omit<AgentTeamBindThreadSessionRequest, 'actor'>): Promise<AgentTeamThreadSessionBinding> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const ledger = this.requireLedger()
+    // A7b: record which summary generation seeded this binding when starting fresh.
+    const summaryGeneration = request.reason === 'start' || request.reason === 'cold-restart'
+      ? (ledger.latestThreadSummary(request.threadRef)?.generation ?? request.summaryGeneration)
+      : request.summaryGeneration
+    const result = await ledger.bindThreadSession({ ...request, ...(summaryGeneration === undefined ? {} : { summaryGeneration }), actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    if (request.reason === 'start' || request.reason === 'cold-restart') {
+      await this.steerAgentFromThread(actor.memberId, request.threadRef)
+    }
+    return result.value.binding
   }
 
   /** Agent-only personal Attention change. */
@@ -2181,7 +2708,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Relay body: the DM itself plus one bounded line of adjacent context. */
   private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string, occurredAt: string, excluding: AgentTeamOperationId, workspaceId: WorkspaceId): string {
-    const sender = this.memberForAgent(senderAgent)
+    const sender = this.seatMemberForAgent(senderAgent)
     const prior = this.requireLedger().dmHistoryBetween(senderAgent.id, recipient.memberId, excluding)
     const header = `Direct message from @${sender?.handle ?? 'a Team Member'} at ${formatTeamTimestamp(occurredAt)}:`
     const context = prior === undefined ? '' : `\n\n[most recent prior DM between you: ${prior}]`
@@ -2205,7 +2732,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only bounded discovery projection; participation list carries registry titles when known. */
   viewForAgent(agent: Agent, request: AgentTeamViewRequest): AgentTeamView {
-    const member = this.memberForAgent(agent)
+    const member = this.seatMemberForAgent(agent)
     if (member === undefined) throw new Error('Agent is not an active Team Member')
     if (!this.requireLedger().participatesIn(member.memberId, request.workspaceId)) throw new Error('Member cannot view another Workspace')
     const view = this.requireLedger().view(request, member.memberId)
@@ -2213,6 +2740,127 @@ export default class AgentTeam extends TypertRemoteService {
       const title = this.ctx.workspaceRegistry.get(participation.workspaceId)?.title
       return title === undefined ? participation : Object.freeze({ ...participation, title })
     })) })
+  }
+
+  /**
+   * Team memory for one live instance (memory M2). The reader is resolved from
+   * the Session alone: the seat's Member id is the actor, its Channels in the
+   * Workspace are the scope, and the Thread is the one this slot's Turn was
+   * delivered for. A `threadRef` argument may only narrow to a Thread in one of
+   * the Member's own Channels; it never widens the scope.
+   */
+  teamMemoryForAgent(agent: Agent, request: { readonly workspaceId?: WorkspaceId; readonly threadRef?: string } = {}): { readonly client: TeamMemoryClient; readonly scope: TeamMemoryScope } {
+    const client = this.teamMemory
+    if (client === undefined) throw new TeamMemoryError(503, 'BACKEND_UNAVAILABLE', 'team memory needs the MOCT Team Room backend (MOCT_TEAM_URL is not set)')
+    return { client, scope: this.teamMemoryScope(agent, request) }
+  }
+
+  /** The `<team-memory>` block for this instance's next step, or undefined; never throws. */
+  async teamMemoryBlockForAgent(agent: Agent): Promise<string | undefined> {
+    const client = this.teamMemory
+    if (client === undefined) return undefined
+    let scope: TeamMemoryScope
+    try {
+      scope = this.teamMemoryScope(agent, {})
+    } catch {
+      return undefined
+    }
+    return client.injectionBlock(scope, message => this.ctx.logger.warn(message))
+  }
+
+  private teamMemoryScope(agent: Agent, request: { readonly workspaceId?: WorkspaceId; readonly threadRef?: string }): TeamMemoryScope {
+    const seat = this.seatForAgent(agent)
+    if (seat === undefined) throw new Error('Agent is not an active Team Member')
+    const ledger = this.requireLedger()
+    const memberId = seat.member.memberId
+    const delivered = seat.slot === 0 ? this.activityThreads.get(memberId) : this.slotActivityThreads.get(slotKey(memberId, seat.slot))
+    const workspaces = ledger.workspacesOf(memberId)
+    let workspaceId = seat.member.workspaceId
+    if (request.workspaceId !== undefined) {
+      if (!workspaces.includes(request.workspaceId)) throw new Error(`Not participating in Workspace '${request.workspaceId}'`)
+      workspaceId = request.workspaceId
+    }
+    const threadRef = (request.threadRef ?? delivered) as AgentTeamThreadRef | undefined
+    if (request.workspaceId === undefined) {
+      // The Thread names its Workspace; otherwise the seat's default.
+      workspaceId = (threadRef === undefined ? undefined : workspaces.find(id => ledger.resolveThreadRefs(id, [threadRef]).length > 0)) ?? seat.member.workspaceId
+    }
+    const channelRefs = ledger.memberChannels(memberId, workspaceId)
+    const resolved = threadRef === undefined ? undefined : ledger.resolveThreadRefs(workspaceId, [threadRef])[0]
+    if (request.threadRef !== undefined && (resolved === undefined || !channelRefs.includes(resolved.channelRef))) {
+      throw new TeamMemoryError(403, 'SCOPE_FORBIDDEN', `Thread '${request.threadRef}' is not in one of your Channels in Workspace '${workspaceId}'`)
+    }
+    const thread = resolved === undefined || !channelRefs.includes(resolved.channelRef) ? undefined : Object.freeze({
+      threadRef: resolved.threadRef, channelRef: resolved.channelRef, ...(resolved.taskRef === undefined ? {} : { taskRef: resolved.taskRef }),
+    })
+    return Object.freeze({ memberId, workspaceId, channelRefs, ...(thread === undefined ? {} : { thread }) })
+  }
+
+  /** Human Memory page (memory M3): the whole Workspace's records, newest and most important first. */
+  @Remote('memoryList')
+  memoryList(request: AgentTeamMemoryListRequest): Promise<AgentTeamMemoryOutcome<TeamMemorySearchResult>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.list(context, request))
+  }
+
+  /** One record with its links and every version. */
+  @Remote('memoryRecord')
+  memoryRecord(request: AgentTeamMemoryRecordRequest): Promise<AgentTeamMemoryOutcome<AgentTeamMemoryRecordView>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.record(context, request.id))
+  }
+
+  /** The rule change feed: every rule version in the Workspace, newest first. */
+  @Remote('memoryRuleFeed')
+  memoryRuleFeed(request: AgentTeamMemoryWorkspaceRequest): Promise<AgentTeamMemoryOutcome<readonly TeamMemoryVersion[]>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.ruleFeed(context))
+  }
+
+  /** Each home's always-load use against the cap. */
+  @Remote('memoryUsage')
+  memoryUsage(request: AgentTeamMemoryWorkspaceRequest): Promise<AgentTeamMemoryOutcome<TeamMemoryUsage>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.usage(context))
+  }
+
+  @Remote('memorySettings')
+  memorySettings(request: AgentTeamMemoryWorkspaceRequest): Promise<AgentTeamMemoryOutcome<TeamMemorySettings>> {
+    return this.humanMemory(request.workspaceId, (human, context) => human.settings(context))
+  }
+
+  /** Change the closed set of memory settings as the Human. */
+  @Remote('updateMemorySettings')
+  updateMemorySettings(request: AgentTeamMemorySettingsRequest): Promise<AgentTeamMemoryOutcome<TeamMemorySettings>> {
+    this.requireAccepting()
+    return this.humanMemory(request.workspaceId, (human, context) => human.updateSettings(context, {
+      workspaceId: request.workspaceId,
+      ...(request.expertApproval === undefined ? {} : { expertApproval: request.expertApproval }),
+      ...(request.orchestrators === undefined ? {} : { orchestrators: request.orchestrators }),
+      ...(request.injectLayerTokens === undefined ? {} : { injectLayerTokens: request.injectLayerTokens }),
+    }))
+  }
+
+  /** One Human verb on one record: approve, retract, restore, purge, widen, edit or pin. */
+  @Remote('memoryAct')
+  memoryAct(request: AgentTeamMemoryActRequest): Promise<AgentTeamMemoryOutcome<TeamMemoryRecord>> {
+    this.requireAccepting()
+    return this.humanMemory(request.workspaceId, (human, context) => human.act(context, request.id, request.action))
+  }
+
+  /**
+   * Fence one Human memory call. The request names only the Workspace the page
+   * browses, checked like every Human surface; the actor is the ledger's Human
+   * Member and the scope is the whole Workspace, both added here.
+   */
+  private async humanMemory<T>(workspaceId: WorkspaceId, run: (human: TeamMemoryHuman, context: TeamMemoryHumanContext) => Promise<T>): Promise<AgentTeamMemoryOutcome<T>> {
+    this.requireWorkspace(workspaceId)
+    const client = this.teamMemory
+    if (client === undefined) return { ok: false, code: 'BACKEND_UNAVAILABLE', message: 'team memory needs the MOCT Team Room backend (MOCT_TEAM_URL is not set)' }
+    const ledger = this.requireLedger()
+    const context: TeamMemoryHumanContext = {
+      humanId: ledger.humanMemberId(),
+      workspaceId,
+      agentMemberIds: new Set(this.members().map(status => status.member.memberId).filter(memberId => ledger.participatesIn(memberId, workspaceId))),
+      channelOfTask: taskRef => ledger.resolveTaskRefs(workspaceId, [taskRef as AgentTeamTaskRef])[0]?.channelRef,
+    }
+    return memoryOutcome(() => run(new TeamMemoryHuman(client), context))
   }
 
   /** Validate the durable ledger against an independently replayed projection. */
@@ -2879,7 +3527,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   private memberActor(agent: Agent): AgentTeamMemberActor {
-    const member = this.memberForAgent(agent)
+    const member = this.seatMemberForAgent(agent)
     if (member === undefined) throw new Error('Agent is not an active Team Member')
     return Object.freeze({ kind: 'member', memberId: member.memberId, handle: member.handle })
   }
@@ -2897,17 +3545,20 @@ export default class AgentTeam extends TypertRemoteService {
     // No route to check: absent keeps the stored selection and null clears it.
     if (model === undefined || model === null) return
     // No LLM service means no adapter to check against; the reasoning-effort
-    // branch below already defers in that case, and so does this one.
-    const providers = this.ctx.llm?.listProviders()
+    // branch below already defers in that case, and so does this one. The
+    // service is read with get(), not a bare property: the Host does not inject
+    // 'llm', and a bare read of an undeclared service throws.
+    const llm = this.ctx.get('llm')
+    const providers = llm?.listProviders()
     if (providers !== undefined && !providers.some(provider => provider.id === model.provider)) {
       throw new Error(`provider '${model.provider}' is not registered`)
     }
     // Validate a pinned route's reasoning effort against the adapter's own
     // metadata when the LLM service is reachable; unknown routes defer to the
     // LLM layer's runtime check at call time.
-    if (model.reasoningEffort === undefined) return
+    if (model.reasoningEffort === undefined || llm === undefined) return
     try {
-      const resolved = await this.ctx.llm.resolveModelInfo(model.provider, model.model)
+      const resolved = await llm.resolveModelInfo(model.provider, model.model)
       const efforts = resolved.reasoning?.efforts ?? []
       if (efforts.length > 0 && !efforts.some(effort => effort.id === model.reasoningEffort)) {
         throw new Error(`reasoning effort '${model.reasoningEffort}' is not supported by ${model.provider}/${model.model}`)
@@ -3092,6 +3743,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.handles.set(member.memberId, created)
       this.memberBySessionId.set(member.sessionId, member.memberId)
       this.modelSelections.set(member.memberId, selected)
+      this.assertSeatModel(member.memberId, created.agent, 'activation')
       this.clearMemberFailure(member.memberId, 'activation')
       this.clearMemberFailure(member.memberId, 'capabilityApply')
       this.nameMemberSession(member, created.agent)
@@ -3239,6 +3891,14 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
+    const seat = this.seatStatus(member)
+    const instances = this.instanceStatuses(member, seat.presence)
+    // The seat works while any instance works; only slot 0 can put it in error.
+    const presence = seat.presence === 'available' && instances.some(instance => instance.presence === 'working') ? 'working' : seat.presence
+    return Object.freeze({ ...seat, presence, instances })
+  }
+
+  private seatStatus(member: AgentTeamAgentMember): Omit<AgentTeamAgentMemberStatus, 'instances'> {
     // The five states with no live surface report 'pending' literally: no
     // apply can be in force there, and a literal cannot inherit a stale
     // applied-record left behind by a torn-down surface.
@@ -3260,6 +3920,12 @@ export default class AgentTeam extends TypertRemoteService {
       return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'preset-composition' as const, detail: ORPHANED_MEMBER_DIAGNOSTIC } })
     }
     const runtimeError = failures?.runtime ?? failures?.compaction
+    // A provider-poisoned Session outranks the plain runtime error: identical
+    // 4xx rejections before any usage mean re-queueing cannot recover this
+    // seat (task-11 item 1), and the detail carries the failing-Turn count the
+    // sidebar shows. Session-scoped so a renewal or rollover drops it.
+    const poison = failures?.providerPoison
+    if (poison !== undefined && poison.sessionId === member.sessionId) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'runtime' as const, detail: poison.detail } })
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'runtime' as const, detail: runtimeError } })
     // A failed apply outranks the plain success row but not a live runtime
     // error: the Member runs, yet its stored configuration is ahead of the
@@ -3319,7 +3985,33 @@ export default class AgentTeam extends TypertRemoteService {
     return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
   }
 
-  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'capabilityApply'): boolean {
+  /**
+   * The seat's model is authoritative (human ruling): `installModelSelection`
+   * rewrites every seat request to the Member's selection, so a pick made in
+   * the native composer is recorded but never runs. Worse, the session
+   * controller's `modelSelection` projection clears a pending pick only when a
+   * request actually uses it — so without this, the composer label would keep
+   * naming a model the seat never runs. Whenever the Session's projected next
+   * selection differs from the seat's, append the seat's selection: the label
+   * then shows what will run, and the next request header consumes it. Loop-
+   * safe: the appended event equals the seat's selection, so it never differs.
+   */
+  private assertSeatModel(memberId: AgentTeamMemberId, agent: Agent, reason: string): void {
+    const seat = this.modelSelections.get(memberId)?.current
+    if (seat === undefined || this.handles.get(memberId)?.agent !== agent) return
+    const wanted = seatModelSelection(seat)
+    const next = projectedNextModelSelection(agent.session.ownEvents())
+    // A fresh Session has no selection yet: its first request header records the seat's.
+    if (next === null || sameModelSelection(next, wanted)) return
+    try {
+      agent.session.append('model/selection', wanted)
+      this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} model selection re-asserted to the seat's ${wanted.provider}/${wanted.model} (${reason})`)
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId)} could not re-assert the seat model (${reason}): ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'capabilityApply' | 'providerPoison'): boolean {
     const failures = this.memberFailures.get(memberId)
     if (failures === undefined || failures[slot] === undefined) return false
     if (Object.keys(failures).length === 1) this.memberFailures.delete(memberId)
@@ -3327,10 +4019,155 @@ export default class AgentTeam extends TypertRemoteService {
     return true
   }
 
+  /**
+   * Task-11 item 1: store the sticky provider-poison diagnosis (the plain
+   * `runtime` slot would be cleared by every `running` status poll) and
+   * refresh presence so the sidebar shows the failing-Turn count. On the one
+   * threshold crossing, also fire the Team-room notice — never awaited into
+   * the session event path that reached us; a notice failure is logged only —
+   * and hand the seat to the auto-recovery that returns immediately while
+   * the default-OFF setting keeps it a flag (task-11 item 2).
+   */
+  private onMemberPoisoned(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict, crossed: boolean): void {
+    const detail = `provider-poisoned session: ${verdict.failedTurns} consecutive identical provider failures (${verdict.signature}, zero usage); re-queueing cannot recover this seat — switch its model or start it from a new context`
+    const failures = this.memberFailures.get(memberId) ?? {}
+    failures.providerPoison = Object.freeze({ detail, failedTurns: verdict.failedTurns, sessionId: verdict.sessionId })
+    this.memberFailures.set(memberId, failures)
+    this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} ${detail}`)
+    const member = this.ledger?.getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+    if (crossed) {
+      this.sendPoisonNotice(memberId, verdict).catch(error => {
+        this.ctx.logger.warn(`agent-team: poisoned-seat notice for '${memberId}' failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+      this.autoRecoverPoisonedMember(memberId, verdict).catch(error => {
+        this.ctx.logger.warn(`agent-team: poisoned-seat auto-recovery for '${memberId}' failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }
+  }
+
+  /** The streak ended (a clean recorded Turn, or a non-matching failure): drop the diagnosis so presence recovers. */
+  private onMemberPoisonCleared(memberId: AgentTeamMemberId): void {
+    if (!this.clearMemberFailure(memberId, 'providerPoison')) return
+    this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} provider-poison diagnosis cleared`)
+    const member = this.ledger?.getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+  }
+
+  /**
+   * The Team-room card for the threshold crossing: one durable message on the
+   * workspace's first live Channel naming the seat, the consecutive failed-Turn
+   * count, and the @Lead/@Architect mentions (unresolvable handles stay prose —
+   * the ledger resolves mentions only against live Channel Members). The
+   * deterministic requestId makes a crash-time re-send resolve to the message
+   * already committed instead of a second card. The `[agent-team host]`
+   * prefix carries provenance: the ledger has no host actor kind, so the card
+   * posts under the Human actor like every other host-authored message, and
+   * the prefix keeps it from reading as the operator's own words.
+   */
+  private async sendPoisonNotice(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict): Promise<void> {
+    const ledger = this.ledger
+    const member = ledger?.getMember(memberId)
+    const workspaceId = ledger?.workspacesOf(memberId)[0]
+    if (ledger === undefined || member === undefined || workspaceId === undefined) return
+    const channelRef = ledger.view({ workspaceId }).channels[0]?.channelRef
+    if (channelRef === undefined) return
+    await this.sendMessageAs(agentTeamHumanActor(), {
+      requestId: `poisoned:${verdict.sessionId}:${verdict.turn}` as AgentTeamRequestId,
+      workspaceId,
+      channelRef,
+      body: `[agent-team host] Provider-poisoned seat: @${member.handle} failed ${verdict.failedTurns} consecutive Turns (provider ${verdict.signature}, zero usage) — re-queueing cannot recover it; switch its model or start it from a new context. @Lead @Architect`,
+    })
+  }
+
+  /**
+   * Task-11 item 2 (default OFF): when the `poisonRecovery` row is enabled,
+   * recover the poisoned seat at its threshold crossing without touching any
+   * log — first an optional swap of the Member's model to the configured route
+   * (the operator's K), then a fresh context: the renewal archives the
+   * poisoned Session's log untouched and the new Session starts with no replay
+   * state, so queued Turns stop replaying the identical rejection. Off by
+   * default this returns before anything runs (diagnosis + card are the whole
+   * crossing), and every refusal — host paused, seat still running past the
+   * deadline, an activation that failed on the fresh Session — is reported to
+   * the log alone: the Team-room card already put an operator on the case.
+   */
+  private async autoRecoverPoisonedMember(memberId: AgentTeamMemberId, verdict: AgentTeamPoisonVerdict): Promise<void> {
+    // A row patched before this schema can arrive with no section at all —
+    // which must read as the default, not as a crash at the crossing.
+    const settings = this.config.poisonRecovery
+    if (settings?.enabled?.get() !== true) return
+    const ledger = this.ledger
+    const member = ledger?.getMember(memberId)
+    const workspaceId = ledger?.workspacesOf(memberId)[0]
+    if (ledger === undefined || member === undefined || workspaceId === undefined) return
+    // The crossing arrives the moment `turn/end` errors, while that errored
+    // generation may still count as running — and a renewal refuses until the
+    // seat's agent is idle. Wait it out; the check after the wait lets an
+    // operator who recovered the seat by hand win instead of racing them.
+    const agentId = this.handles.get(memberId)?.agent.id
+    const deadline = Date.now() + POISON_AUTO_RECOVERY_IDLE_WAIT_MS
+    while (agentId !== undefined && this.runningAgents.has(agentId) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    const latest = this.ledger?.getMember(memberId)
+    if (latest === undefined || latest.sessionId !== verdict.sessionId) return
+    const provider = settings.provider?.get()
+    const model = settings.model?.get()
+    if (provider !== undefined && model !== undefined) {
+      try {
+        await this.updateMember({
+          requestId: `poison-recovery-model-${verdict.sessionId}-${verdict.turn}` as AgentTeamRequestId,
+          memberId,
+          handle: latest.handle,
+          description: latest.description,
+          model: { provider, model },
+        })
+      } catch (error) {
+        // The fresh context is the promise this setting makes; a rejected
+        // route edit must not silently disable it. The swap's own failure
+        // stays loud in the log either way.
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} poisoned-seat model swap to ${provider}/${model} failed: ${error instanceof Error ? error.message : String(error)}; continuing with the Member's current route`)
+      }
+    }
+    await this.clearMemberContext({
+      requestId: `poison-recovery-${verdict.sessionId}-${verdict.turn}` as AgentTeamRequestId,
+      workspaceId,
+      memberId,
+    })
+    // The renewal already moved the Session past the diagnosis; dropping the
+    // slot is what lets presence recover instead of staying flagged.
+    this.onMemberPoisonCleared(memberId)
+    this.ctx.logger.info(`agent-team: ${this.memberScope(memberId, verdict.sessionId)} provider-poison auto-recovered with a new context${provider !== undefined && model !== undefined ? ` on ${provider}/${model}` : ''}`)
+  }
+
   private requireWorkspace(workspaceId: AgentTeamViewRequest['workspaceId']) {
     const workspace = this.ctx.workspaceRegistry.get(workspaceId)
     if (workspace === undefined) throw new Error(`unknown Workspace '${workspaceId}'`)
     return workspace
+  }
+
+  /** A seat's '@handle' and the Thread its slot's running Turn was delivered for; undefined for an unknown seat. */
+  private activityIdentity(memberId: AgentTeamMemberId, slot: number): { readonly handle: string; readonly threadRef?: AgentTeamThreadRef } | undefined {
+    const member = this.ledger?.getMember(memberId)
+    if (member === undefined) return undefined
+    const handle = member.handle.startsWith('@') ? member.handle : `@${member.handle}`
+    const threadRef = slot === 0 ? this.activityThreads.get(memberId) : this.slotActivityThreads.get(slotKey(memberId, slot))
+    return threadRef === undefined ? { handle } : { handle, threadRef }
+  }
+
+  /** Bumps the activity epoch for the seat's Workspaces; wakes only activity waiters. */
+  private invalidateActivity(memberId: AgentTeamMemberId): void {
+    const workspaces = this.ledger?.workspacesOf(memberId) ?? []
+    if (workspaces.length === 0) return
+    this.emitChanged(workspaces.map(workspaceId => ({ kind: 'activity' as const, workspaceId })))
+  }
+
+  /** Remember the Thread a seat's Turn was delivered for; an empty delivery leaves no Thread to show. */
+  private noteActivityThread(memberId: AgentTeamMemberId, notifications: readonly { readonly item: { readonly thread: { readonly threadRef: AgentTeamThreadRef } } }[]): void {
+    const threadRef = notifications[0]?.item.thread.threadRef
+    if (threadRef === undefined) this.activityThreads.delete(memberId)
+    else this.activityThreads.set(memberId, threadRef)
   }
 
   private requireLedger(): AgentTeamLedger {
@@ -3340,6 +4177,20 @@ export default class AgentTeam extends TypertRemoteService {
 
   private requireAccepting(): void {
     if (!this.accepting) throw new Error('agent-team service is shutting down')
+  }
+
+  /**
+   * Change invalidation for a Turn notice or Turn record written by the recorder. It runs the same change
+   * step as `emitCommitted` and nothing else: no `agent-team/committed` listener, participation notice or wake.
+   */
+  private emitRecorded(receipt: AgentTeamOperationReceipt): void {
+    const ledger = this.requireLedger()
+    const operation = ledger.getOperation(receipt.operationId)
+    if (operation === undefined) {
+      this.afterCommit('change invalidation', () => this.emitChanged())
+      return
+    }
+    this.afterCommit('change invalidation', () => this.emitChanged(ledger.changeScopesOf(operation)))
   }
 
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
@@ -3453,7 +4304,7 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private memberScope(memberId: AgentTeamMemberId, sessionId?: SessionId): string {
     const handle = this.ledger?.getMember(memberId)?.handle
-    const session = sessionId ?? this.handles.get(memberId)?.agent.session.id ?? this.ledger?.getMember(memberId)?.sessionId
+    const session = sessionId ?? this.handles.get(memberId)?.agent.session?.id ?? this.ledger?.getMember(memberId)?.sessionId
     return `member '${handle ?? memberId}' memberId '${memberId}'${session === undefined ? '' : ` session '${session}'`}`
   }
 
@@ -3504,7 +4355,12 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.debug(`agent-team: Team Inbox notice not attempted for ${this.memberScope(member.memberId, agent.id)} cause ${this.notificationCauseText(cause)}: the Member is ${member.state}`)
       return
     }
-    const notifications = this.requireLedger().notificationFacts(member.memberId)
+    const seatInbox = this.requireLedger().notificationFacts(member.memberId)
+    // Multi-instance seats: Threads routed to an extra slot are delivered there; slot 0 keeps the rest.
+    const notifications = this.routeToInstances(member, seatInbox)
+    const delegated = notifications.length !== seatInbox.length
+    this.turnRecorder.noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
+    this.noteActivityThread(member.memberId, notifications)
     const scope = this.memberScope(member.memberId, agent.id)
     const causeText = this.notificationCauseText(cause)
     if (notifications.length === 0) {
@@ -3540,7 +4396,9 @@ export default class AgentTeam extends TypertRemoteService {
     const existingInboxHint = pending.find(message => this.isInboxNotice(message))
     if (existingInboxHint !== undefined) agent.inbox.remove(existingInboxHint.id)
     const hint = createUserMessage({
-      content: [{ type: 'text', text: this.notificationText(notifications, member.memberId) }],
+      content: [{ type: 'text', text: delegated
+        ? `${this.notificationText(notifications, member.memberId)}\n\n${SLOT_ZERO_NOTE}`
+        : this.notificationText(notifications, member.memberId) }],
       source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
     })
     this.notifiedInbox.set(member.memberId, signature)
@@ -3564,6 +4422,333 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${scope} cause ${causeText} attempt ${attempt} lane '${sequenced ? 'follow-up turn' : 'next step'}' (${facts}): queued for the Member's next step, not yet read by the model`)
+  }
+
+  /**
+   * Multi-instance routing (contract v2 §2/§2a): split a seat's unread Threads across its slots.
+   * Threads routed to an extra slot are delivered there (spawning it on demand); the subset for
+   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. N=1 is
+   * today's behavior: everything stays on slot 0 and nothing is bound.
+   */
+  private routeToInstances(member: AgentTeamAgentMember, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): ReturnType<AgentTeamLedger['notificationFacts']> {
+    const instances = memberInstances(member)
+    if (instances <= 1 || notifications.length === 0) return notifications
+    const ledger = this.requireLedger()
+    const routes = routeThreads(
+      notifications.map(entry => entry.item.thread.threadRef),
+      instances,
+      threadRef => this.routedSlots.get(routeKey(member.memberId, threadRef)) ?? ledger.threadInstanceOf(threadRef, member.memberId),
+      slot => this.slotBusy(member.memberId, slot),
+    )
+    const bySlot = new Map<number, ReturnType<AgentTeamLedger['notificationFacts']>[number][]>()
+    routes.forEach((route, index) => {
+      const entry = notifications[index]!
+      bySlot.set(route.slot, [...(bySlot.get(route.slot) ?? []), entry])
+      if (route.bind) this.bindInstance(member, entry.item.workspaceId, route.threadRef, route.slot)
+    })
+    for (const [slot, entries] of bySlot) if (slot !== 0) this.deliverToSlot(member, slot, entries)
+    return bySlot.get(0) ?? []
+  }
+
+  /** A slot is busy while its turn runs or while it is starting; an absent slot is idle (it spawns on demand). */
+  private slotBusy(memberId: AgentTeamMemberId, slot: number): boolean {
+    if (slot === 0) {
+      const handle = this.handles.get(memberId)
+      return handle === undefined || handle.agent.status !== 'idle'
+    }
+    if (this.slotSpawns.has(slotKey(memberId, slot))) return true
+    const handle = this.slotHandles.get(memberId)?.get(slot)
+    return handle !== undefined && handle.agent.status !== 'idle'
+  }
+
+  /** Record a new route at once in memory, then durably; a failed commit drops the in-memory route so the next wake re-routes. */
+  private bindInstance(member: AgentTeamAgentMember, workspaceId: WorkspaceId, threadRef: AgentTeamThreadRef, slot: number): void {
+    const key = routeKey(member.memberId, threadRef)
+    this.routedSlots.set(key, slot)
+    void this.requireLedger().bindThreadInstance({
+      requestId: `instance-bound:${member.memberId}:${threadRef}:${randomUUID()}` as AgentTeamRequestId,
+      workspaceId, threadRef, slot, boundAt: new Date().toISOString(),
+      actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
+    }).then(() => {
+      this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId)} Thread '${threadRef}' bound to instance slot ${slot}`)
+    }, (error: unknown) => {
+      if (this.routedSlots.get(key) === slot) this.routedSlots.delete(key)
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} could not bind Thread '${threadRef}' to instance slot ${slot}: ${failureDetail(error)}; the next wake routes it again`)
+    })
+  }
+
+  /** Wake one extra slot with only its Threads; an idle slot gets a follow-up turn, a busy one a steer. */
+  private deliverToSlot(member: AgentTeamAgentMember, slot: number, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): void {
+    const key = slotKey(member.memberId, slot)
+    const signature = JSON.stringify(notifications.map(({ item }) => [
+      item.thread.threadRef, item.thread.revision, item.unreadCount, item.directCount, item.newestSequence,
+    ]))
+    if (this.notifiedSlotInbox.get(key) === signature) return
+    this.notifiedSlotInbox.set(key, signature)
+    const threadRef = notifications[0]?.item.thread.threadRef
+    if (threadRef === undefined) this.slotActivityThreads.delete(key)
+    else this.slotActivityThreads.set(key, threadRef)
+    const notice = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
+    const facts = this.notificationIdentity(notifications)
+    void this.ensureSlot(member, slot).then(handle => {
+      if (handle === undefined) throw new Error('the slot did not start')
+      const agent = handle.agent
+      const existing = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message => this.isInboxNotice(message))
+      if (existing !== undefined) agent.inbox.remove(existing.id)
+      // A7b: a Thread this Session has not seen opens with its context, ahead of the notice facts.
+      const seeds = this.threadSeeds(agent.id, notifications, notice.length)
+      const hint = createUserMessage({
+        content: [{ type: 'text', text: [...seeds.map(entry => entry.seed.text), notice].join('\n\n') }],
+        source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
+      })
+      if (agent.status === 'idle') agent.followup(hint)
+      else agent.steer(hint)
+      const delivered = this.seededSlotThreads.get(agent.id) ?? new Set<AgentTeamThreadRef>()
+      for (const entry of notifications) delivered.add(entry.item.thread.threadRef)
+      this.seededSlotThreads.set(agent.id, delivered)
+      for (const { threadRef, seed } of seeds) {
+        // Refs and counts only: a seed's Message bodies never reach the log.
+        this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} seeded Thread '${threadRef}' from ${seed.generation === undefined ? 'no summary' : `summary generation ${seed.generation}`} + ${seed.messageRefs.length} Message(s) [${seed.messageRefs.join(', ')}], ${seed.omitted} not shown`)
+      }
+      this.slotRecorder(member.memberId, slot).noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
+      this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} (${facts}): not yet read by the model`)
+    }).catch((error: unknown) => {
+      this.notifiedSlotInbox.delete(key)
+      this.ctx.logger.warn(`agent-team: Team Inbox notice delivery failed for ${this.memberScope(member.memberId)} instance slot ${slot} (${facts}): ${failureDetail(error)}; the binding stands and the next fact touching this Thread retries it`)
+    })
+  }
+
+  /**
+   * A7b: the context block for each notified Thread this slot Session has not been delivered yet: the
+   * latest summary (else the anchor) and the newest Messages before the slot's unread batch, which
+   * the notice and the slot's own read carry. Seeds share what the notice leaves of its 32 KiB cap.
+   * Slot 0 is the long-lived home Session; its cold-restart seed is A6, not this.
+   */
+  private threadSeeds(sessionId: SessionId, notifications: ReturnType<AgentTeamLedger['notificationFacts']>, noticeLength: number): readonly { readonly threadRef: AgentTeamThreadRef; readonly seed: ThreadSeed }[] {
+    const ledger = this.requireLedger()
+    const seeded = this.seededSlotThreads.get(sessionId)
+    const line = (message: AgentTeamMessage): SummaryMessageLine => ({
+      messageRef: message.messageRef,
+      sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? message.sender,
+      body: this.boundedNotificationBody(message.body),
+    })
+    let characters = 32 * 1024 - noticeLength
+    const seeds: { readonly threadRef: AgentTeamThreadRef; readonly seed: ThreadSeed }[] = []
+    for (const { item, facts } of notifications) {
+      const threadRef = item.thread.threadRef
+      if (seeded?.has(threadRef) === true) continue
+      const unread = facts.filter(entry => entry.unread).map(entry => entry.fact.sequence)
+      const before = unread.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...unread)
+      const summary = ledger.latestThreadSummary(threadRef)
+      const messages = ledger.threadMessagesAfter(threadRef, summary?.coversThroughSequence ?? 0).filter(message => message.sequence < before)
+      const anchor = summary === undefined ? messages[0] : undefined
+      const seed = buildThreadSeed({
+        threadRef,
+        summary: summary === undefined ? undefined : { generation: summary.generation, text: summary.text, coversThroughSequence: summary.coversThroughSequence },
+        anchor: anchor === undefined ? undefined : line(anchor),
+        earlier: (anchor === undefined ? messages : messages.slice(1)).map(line),
+      }, { tokens: THREAD_SEED_TOKEN_BUDGET, characters: characters - 2 })
+      if (seed === undefined) continue
+      characters -= seed.text.length + 2
+      seeds.push({ threadRef, seed })
+    }
+    return seeds
+  }
+
+  /** The live Agent behind one extra slot, spawned once on demand (contract v2 §2a: lazy, respawned after an idle end). */
+  private ensureSlot(member: AgentTeamAgentMember, slot: number): Promise<AgentHandle | undefined> {
+    const live = this.slotHandles.get(member.memberId)?.get(slot)
+    if (live !== undefined) return Promise.resolve(live)
+    const key = slotKey(member.memberId, slot)
+    const inFlight = this.slotSpawns.get(key)
+    if (inFlight !== undefined) return inFlight
+    const spawn = (async () => {
+      const created = await this.spawnSlotAgent(member, slot)
+      const current = this.requireLedger().getMember(member.memberId)
+      // The seat was suspended, removed, shrunk or shut down while the slot started: never publish it.
+      if (!this.accepting || current === undefined || current.state !== 'enabled' || slot >= memberInstances(current) || !this.handles.has(member.memberId)) {
+        await created.handle.dispose()
+        return undefined
+      }
+      const slots = this.slotHandles.get(member.memberId) ?? new Map<number, AgentHandle>()
+      slots.set(slot, created.handle)
+      this.slotHandles.set(member.memberId, slots)
+      this.slotBySessionId.set(created.handle.agent.id, { memberId: member.memberId, slot })
+      this.slotSelections.set(key, created.selection)
+      this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, created.handle.agent.id)} instance slot ${slot} started`)
+      this.emitMemberPresenceChanged(current)
+      return created.handle
+    })().finally(() => { this.slotSpawns.delete(key) })
+    this.slotSpawns.set(key, spawn)
+    return spawn
+  }
+
+  /**
+   * Create one extra-slot Agent with a fresh Session: the seat's preset, tool policy and model,
+   * and a host-side refusal of every non-read-only tool call naming the seat-memory directory
+   * (contract v2 §2b). Extra slots carry no context rollover or pressure management: they are
+   * short Thread sessions, and slot 0 keeps the seat's full lifecycle.
+   */
+  private async spawnSlotAgent(member: AgentTeamAgentMember, slot: number): Promise<{ readonly handle: AgentHandle; readonly selection: ModelSelectionRef }> {
+    const workspace = this.requireWorkspace(member.workspaceId)
+    const current = member.model ?? this.ctx.agentDefaultModel.currentSelection()
+    const selection: ModelSelectionRef = { current, assembled: undefined }
+    const memoryDirectory = memberMemoryDirectoryPath(member)
+    const sessionId = SessionId(`agent-team-${randomUUID()}`)
+    const setup = async (agentCtx: Context, agent: Agent) => {
+      try {
+        await this.ctx.agentPresets.mount(agentCtx, member.presetId)
+        this.memberRuntime.applySlotToolPolicy(agentCtx, member)
+        this.validateMemberPreset(agentCtx)
+      } catch (error) {
+        throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
+      }
+      installModelSelection(agentCtx, selection)
+      agentCtx.on('tools/pre-execute', async (exec, next) => {
+        const reason = memoryWriteRefusal(exec.name, exec.arguments, memoryDirectory)
+        return reason === undefined ? next() : { kind: 'deny' as const, reason }
+      })
+      return { commit: () => { setSandboxMode(agent.session, 'danger-full-access') } }
+    }
+    const handle = await this.ctx.agents.create({
+      sessionId,
+      meta: { cwd: workspace.path, agentPreset: member.presetId },
+      agentOptions: { provider: current.provider, model: current.model },
+      setup,
+    })
+    await workspace.attachSession(sessionId)
+    try {
+      this.ctx.get('sessionTitle')?.rename(handle.agent.session, `${member.handle} #${slot}`)
+    } catch {
+      // A composition without the title service runs the slot identically.
+    }
+    return { handle, selection }
+  }
+
+  /** The live slot behind a Session id, or undefined when the Session is not a current extra slot. */
+  private liveSlotOf(sessionId: SessionId): { readonly memberId: AgentTeamMemberId; readonly slot: number; readonly handle: AgentHandle } | undefined {
+    const entry = this.slotBySessionId.get(sessionId)
+    if (entry === undefined) return undefined
+    const handle = this.slotHandles.get(entry.memberId)?.get(entry.slot)
+    if (handle === undefined || handle.agent.id !== sessionId) return undefined
+    return { ...entry, handle }
+  }
+
+  /**
+   * Extra-slot session events: the slot's Turns are recorded under the seat (D6 session history and
+   * reply stats include slot work), an errored Turn posts the turn-failure notice on its Threads, and
+   * the slot's activity line follows them (contract v2 §3, D6).
+   */
+  private onSlotSessionEvent(sessionId: SessionId, event: SessionEvent): void {
+    const live = this.liveSlotOf(sessionId)
+    if (live === undefined) return
+    this.slotRecorder(live.memberId, live.slot).onSessionEvent(live.memberId, sessionId, event)
+    this.activityFeed.onSessionEvent(live.memberId, event, live.slot)
+  }
+
+  /**
+   * A failed extra slot ends its running Turn's activity, and forgets its last notice so the next fact on
+   * its Threads delivers again instead of deduping into silence. The Turn's failure notice comes from the
+   * slot's recorder on its errored `turn/end`. The seat itself is never marked failed (§2): presence reads
+   * the slot's error from its own Agent.
+   */
+  private onSlotError(agent: Agent): void {
+    const live = this.liveSlotOf(agent.id)
+    if (live === undefined) return
+    this.notifiedSlotInbox.delete(slotKey(live.memberId, live.slot))
+    this.slotErrors.add(slotKey(live.memberId, live.slot))
+    this.ctx.logger.warn(`agent-team: ${this.memberScope(live.memberId, agent.id)} instance slot ${live.slot} reported an error; the seat stays available and the slot's Threads redeliver on their next fact`)
+    this.slotActivityThreads.delete(slotKey(live.memberId, live.slot))
+    this.activityFeed.onAgentError(live.memberId, live.slot)
+    const member = this.requireLedger().getMember(live.memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+  }
+
+  /** Extra-slot status changes: presence follows them, and an idle slot ends after SLOT_IDLE_END_MS. */
+  private onSlotStatus(agent: Agent, status: string): void {
+    const entry = this.slotBySessionId.get(agent.id)
+    if (entry === undefined || this.slotHandles.get(entry.memberId)?.get(entry.slot)?.agent !== agent) return
+    const key = slotKey(entry.memberId, entry.slot)
+    const timer = this.slotIdleTimers.get(key)
+    if (timer !== undefined) clearTimeout(timer)
+    this.slotIdleTimers.delete(key)
+    if (status === 'running') this.slotErrors.delete(key)
+    if (status === 'idle') {
+      this.slotActivityThreads.delete(key)
+      this.activityFeed.onAgentIdle(entry.memberId, entry.slot)
+      const next = setTimeout(() => { void this.endSlot(entry.memberId, entry.slot) }, SLOT_IDLE_END_MS)
+      next.unref?.()
+      this.slotIdleTimers.set(key, next)
+    }
+    const member = this.requireLedger().getMember(entry.memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+  }
+
+  /**
+   * End one idle extra slot (contract v2 §2a). Its Thread bindings stay: the next message in a
+   * bound Thread respawns the slot with a fresh Session. A running slot is never ended.
+   */
+  private async endSlot(memberId: AgentTeamMemberId, slot: number): Promise<boolean> {
+    const key = slotKey(memberId, slot)
+    const handle = this.slotHandles.get(memberId)?.get(slot)
+    if (handle === undefined || handle.agent.status !== 'idle') return false
+    const timer = this.slotIdleTimers.get(key)
+    if (timer !== undefined) clearTimeout(timer)
+    this.slotIdleTimers.delete(key)
+    this.slotHandles.get(memberId)?.delete(slot)
+    this.slotBySessionId.delete(handle.agent.id)
+    this.seededSlotThreads.delete(handle.agent.id)
+    this.slotSelections.delete(key)
+    this.notifiedSlotInbox.delete(key)
+    this.slotActivityThreads.delete(key)
+    this.slotErrors.delete(key)
+    this.activityFeed.onAgentIdle(memberId, slot)
+    await handle.dispose()
+    this.ctx.logger.info(`agent-team: ${this.memberScope(memberId, handle.agent.id)} instance slot ${slot} ended while idle; its Thread bindings stay`)
+    const member = this.requireLedger().getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+    return true
+  }
+
+  /** Dispose every extra slot of one seat (suspend, removal, shutdown). */
+  private async disposeSlots(memberId: AgentTeamMemberId): Promise<void> {
+    const slots = this.slotHandles.get(memberId)
+    this.slotHandles.delete(memberId)
+    if (slots === undefined) return
+    for (const [slot, handle] of slots) {
+      const key = slotKey(memberId, slot)
+      const timer = this.slotIdleTimers.get(key)
+      if (timer !== undefined) clearTimeout(timer)
+      this.slotIdleTimers.delete(key)
+      this.slotBySessionId.delete(handle.agent.id)
+      this.seededSlotThreads.delete(handle.agent.id)
+      this.slotSelections.delete(key)
+      this.notifiedSlotInbox.delete(key)
+      this.slotActivityThreads.delete(key)
+      this.slotErrors.delete(key)
+      this.activityFeed.onAgentIdle(memberId, slot)
+    }
+    await Promise.all([...slots.values()].map(handle => handle.dispose()))
+  }
+
+  /** Per-slot status (contract v2 §3): length N, slot order; slot 0 mirrors the seat's own presence. */
+  private instanceStatuses(member: AgentTeamAgentMember, seatPresence: AgentTeamAgentMemberStatus['presence']): readonly AgentTeamMemberInstanceStatus[] {
+    const instances = memberInstances(member)
+    const threadsBySlot = new Map<number, AgentTeamThreadRef[]>()
+    if (this.ledger !== undefined) {
+      for (const [threadRef, slot] of this.ledger.threadInstancesOf(member.memberId)) threadsBySlot.set(slot, [...(threadsBySlot.get(slot) ?? []), threadRef])
+    }
+    return Object.freeze(Array.from({ length: instances }, (_, slot): AgentTeamMemberInstanceStatus => {
+      const threadRefs = Object.freeze(threadsBySlot.get(slot) ?? [])
+      if (slot === 0) {
+        const live = seatPresence !== 'unavailable' && this.handles.has(member.memberId)
+        return Object.freeze({ slot, ...(live ? { sessionId: member.sessionId } : {}), presence: seatPresence, threadRefs })
+      }
+      const handle = member.state === 'enabled' ? this.slotHandles.get(member.memberId)?.get(slot) : undefined
+      if (handle === undefined) return Object.freeze({ slot, presence: 'unavailable' as const, threadRefs })
+      const presence = handle.agent.status === 'running' ? 'working' as const : this.slotErrors.has(slotKey(member.memberId, slot)) ? 'error' as const : 'available' as const
+      return Object.freeze({ slot, sessionId: handle.agent.id, presence, threadRefs })
+    }))
   }
 
   /**
@@ -3631,6 +4816,7 @@ export default class AgentTeam extends TypertRemoteService {
           const detail = ['Direct Team mention', `Occurred at: ${formatTeamTimestamp(fact.occurredAt)}`, `From: ${sender}`, `Channel: ${item.channelRef}`,
             ...(item.task === undefined ? [] : [`Task: ${item.task.taskRef}`]),
             `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
+            ...(fact.message.replyToMessageRef === undefined ? [] : [`Replies to: ${fact.message.replyToMessageRef}`]),
             `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
           if (append(detail)) detailedFactCount += 1
         } else if (fact.kind === 'activity') {
@@ -3697,6 +4883,7 @@ export default class AgentTeam extends TypertRemoteService {
   /** Dispose one live Member Session and drop its per-Member runtime state. */
   private async disposeMemberSession(memberId: AgentTeamMemberId, member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): Promise<void> {
     this.clearMemberRecoveryState(member)
+    await this.disposeSlots(memberId)
     const handle = this.handles.get(memberId)
     if (handle !== undefined) {
       // Disposal cancels the Member's turn and then waits for the Agent to
@@ -3737,10 +4924,12 @@ export default class AgentTeam extends TypertRemoteService {
    * around. Nothing here advances the projection version.
    */
   private emitChanged(scopes?: readonly AgentTeamChangeScope[]): void {
-    const touchesProjection = scopes === undefined || scopes.some(scope => scope.kind !== 'presence')
+    const touchesProjection = scopes === undefined || scopes.some(scope => scope.kind !== 'presence' && scope.kind !== 'activity')
     const touchesPresence = scopes !== undefined && scopes.some(scope => scope.kind === 'presence')
-    if (!touchesProjection && !touchesPresence) return
+    const touchesActivity = scopes !== undefined && scopes.some(scope => scope.kind === 'activity')
+    if (!touchesProjection && !touchesPresence && !touchesActivity) return
     if (touchesPresence) this.presenceEpoch += 1
+    if (touchesActivity) this.activityEpoch += 1
     for (const waiter of this.changeWaiters) {
       const waiterScope = waiter.scope
       if (scopes !== undefined && (waiterScope === undefined ? !touchesProjection : !scopes.some(scope => sameChangeScope(scope, waiterScope)))) continue
@@ -3757,12 +4946,13 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private changeVersionOf(scope: AgentTeamChangeScope | undefined): number {
     if (scope?.kind === 'presence') return this.presenceEpoch
+    if (scope?.kind === 'activity') return this.activityEpoch
     return this.ledger?.projectionSequence() ?? 0
   }
 
   private validateChangeScope(scope: AgentTeamChangeScope | undefined): AgentTeamChangeScope | undefined {
     if (scope === undefined) return undefined
-    const ref = scope.kind === 'workspace' || scope.kind === 'presence' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
+    const ref = scope.kind === 'workspace' || scope.kind === 'presence' || scope.kind === 'activity' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
     if (typeof ref !== 'string' || ref.length === 0) throw new Error(`change scope of kind '${scope.kind}' requires a non-empty ref`)
     return scope
   }

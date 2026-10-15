@@ -1,15 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@contexera/dsh-agent-team/types'
-import { IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
+import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
+import { IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
+import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { allMentionMembers, containsAllMention, containsMention, mentionedMemberIds } from './team-formatters.ts'
 import css from './composer.module.css'
 import { formatByteSize } from './attachment-preview.ts'
 
 interface MentionMatch {
+  readonly start: number
+  readonly end: number
+  readonly query: string
+}
+
+interface TriggerMatch {
   readonly start: number
   readonly end: number
   readonly query: string
@@ -29,9 +36,37 @@ function findMention(draft: string, caret: number): MentionMatch | undefined {
   return { start: at, end: caret, query: beforeCaret.slice(at + 1) }
 }
 
-function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], query: string): readonly AgentTeamClientMemberStatus[] {
+function findSlashTrigger(draft: string, caret: number): TriggerMatch | undefined {
+  const beforeCaret = draft.slice(0, caret)
+  if (beforeCaret.length === 0 || /\s/u.test(beforeCaret.at(-1) ?? '')) return undefined
+  let tokenStart = beforeCaret.length
+  while (tokenStart > 0 && !/\s/u.test(beforeCaret[tokenStart - 1]!)) tokenStart -= 1
+  const slash = beforeCaret.lastIndexOf('/')
+  if (slash < tokenStart) return undefined
+  if (slash > 0 && /[\p{L}\p{N}_]/u.test(beforeCaret[slash - 1]!)) return undefined
+  return { start: slash, end: caret, query: beforeCaret.slice(slash + 1) }
+}
+
+function matchingTriggerGroups(catalog: readonly TeamTriggerCatalogItem[], match: TriggerMatch, draft: string) {
+  const atDraftStart = /^\s*$/u.test(draft.slice(0, match.start))
+  const eligible = catalog.filter(item => atDraftStart || item.leadingOnly !== true)
+  return {
+    commands: rankByName(eligible.filter(item => item.kind === 'command'), match.query),
+    skills: rankByName(eligible.filter(item => item.kind === 'skill'), match.query),
+    notices: eligible.filter(item => item.kind === 'notice'),
+  }
+}
+
+/**
+ * Mention candidates: every seat this composer can name, minus the writing
+ * Human. The Human writes through this composer, so notifying themselves is
+ * never offered — a roster that serves the Human seat therefore does not grow
+ * a pointless @human candidate.
+ */
+function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], query: string, humanMemberId?: AgentTeamMemberId): readonly AgentTeamClientMemberStatus[] {
   const normalized = query.toLocaleLowerCase()
-  return members.filter(status => status.presence !== 'unavailable'
+  return members.filter(status => status.member.memberId !== humanMemberId
+    && status.presence !== 'unavailable'
     && status.member.state !== 'inactive'
     && status.member.state !== 'archived'
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
@@ -56,7 +91,20 @@ function draftPreviewUrl(file: File): string | undefined {
   return url
 }
 
-export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, asTask, onAsTaskChange, t }: {
+/**
+ * The composer's selected agent: a Member id never survives a reload (human
+ * rule 3273) and never outlives its scope, so it is derived state — the stored
+ * id when it still names a Member of the current Channel/Thread, otherwise the
+ * first member. Nothing is persisted, and a scope change (or a roster that
+ * dropped the pick) falls back on the next render rather than staying stale.
+ */
+function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], stored: AgentTeamMemberId | undefined): AgentTeamMemberId | undefined {
+  if (members.length === 0) return undefined
+  if (stored !== undefined && members.some(status => status.member.memberId === stored)) return stored
+  return members[0]!.member.memberId
+}
+
+export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, onManageMembers, activity, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
@@ -66,6 +114,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
    * timeline around it.
    */
   readonly drafts: TeamDraftStore
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   readonly draftKey: TeamDraftKey
   readonly pending: boolean
   readonly confirmation?: string
@@ -78,37 +127,80 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
   /** Upload-capable surfaces pass this to enable the "+" file picker; the reply path omits it. */
   readonly pendingFiles?: readonly File[]
   readonly onFilesChange?: (files: readonly File[]) => void
+  /**
+   * The Message this send answers. Present, the composer states what is being
+   * answered and offers a way out: a quote the reader cannot cancel would ride
+   * the next Enter after they had moved past it. `memberId` lets the author join
+   * the ordinary "will notify" row; it is absent when the parent did not resolve.
+   */
+  readonly replyTo?: { readonly memberId?: AgentTeamMemberId; readonly senderName: string; readonly excerpt: string } | undefined
+  readonly onCancelReply?: (() => void) | undefined
+  /** The writing Human's Member id, from the page's Team view: a quote of their own Message notifies no one. */
+  readonly humanMemberId?: AgentTeamMemberId | undefined
   /** Channel-only: create a real Task with the top-level Message. Default off. */
   readonly asTask?: boolean
   readonly onAsTaskChange?: (asTask: boolean) => void
+  /** Channel-only: opens Manage members, so an agent-less composer can offer the way to add one. */
+  readonly onManageMembers?: () => void
+  /** A13 activity line, overlaid directly above the card (see TeamActivityLine). */
+  readonly activity?: ReactNode
   readonly t: TeamConversationProps['t']
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLFormElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const agentMenuRef = useRef<HTMLDivElement>(null)
   const activeOptionRef = useRef<HTMLButtonElement>(null)
   const composingRef = useRef(false)
+  const pasteSuppressesSlashRef = useRef(false)
+  const pasteResetRef = useRef<ReturnType<typeof setTimeout>>()
   // The draft lives in the injected cache so a view switch or refresh does not
   // cost the half-written message. Subscribing here — not in the page that
   // hosts this composer — is what keeps a keystroke off the timeline.
   const { draft, recipients } = useSyncExternalStore(drafts.subscribe, () => drafts.getSnapshot(draftKey))
   const [mention, setMention] = useState<MentionMatch>()
+  const [trigger, setTrigger] = useState<TriggerMatch>()
+  const [triggerCatalog, setTriggerCatalog] = useState<readonly TeamTriggerCatalogItem[] | null>(null)
+  // The selected agent for the slash-trigger skills and the indicator chip.
+  // Derived from the roster: a stored id that left this scope is dropped, so a
+  // Channel/Thread switch can never keep a stale pick on screen.
+  const [pickedMemberId, setPickedMemberId] = useState<AgentTeamMemberId>()
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false)
+  const [triggerCatalogError, setTriggerCatalogError] = useState(false)
   const [highlight, setHighlight] = useState(0)
+  const [triggerHighlight, setTriggerHighlight] = useState(0)
   // @all is a composer-layer expansion of the same eligibility filter a
   // handle pick uses; the fixed row stays on top of the matching members.
-  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query), followerMemberIds)
+  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query, humanMemberId), followerMemberIds)
   const options: readonly MentionOption[] = mention !== undefined && 'all'.startsWith(mention.query.toLocaleLowerCase())
     ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status }))]
     : memberCandidates.map(status => ({ kind: 'member' as const, status }))
   const menuOpen = mention !== undefined && options.length > 0
   const activeOption = options[highlight]
   const activeOptionKey = activeOption === undefined ? undefined : activeOption.kind === 'all' ? 'all' : activeOption.status.member.memberId
+  const triggerMenuOpen = trigger !== undefined
+  const triggerGroups = trigger === undefined || triggerCatalog === null ? { commands: [], skills: [], notices: [] } : matchingTriggerGroups(triggerCatalog, trigger, draft)
+  // The selected agent, resolved against this scope's roster every render: a
+  // pick that is no longer a member here falls back to the first member rather
+  // than lingering as a dead selection.
+  const currentMemberId = selectedMemberId(members, pickedMemberId)
+  const selectedMember = members.find(status => status.member.memberId === currentMemberId)
+  const triggerOptions = [...triggerGroups.commands, ...triggerGroups.skills].filter(item => item.kind !== 'notice')
+  const activeTriggerOption = triggerOptions[triggerHighlight]
+  const triggerListId = 'team-trigger-suggestions'
   const allCount = allMentionMembers(members).length
   const listId = 'team-mention-suggestions'
-  const menuMaxHeight = useAnchoredMaxHeight(menuRef, 320, menuOpen ? draft : null)
+  const suggestionOpen = menuOpen || triggerMenuOpen
+  const activeSuggestionKey = menuOpen ? activeOptionKey : activeTriggerOption === undefined ? undefined : activeTriggerOption.kind + ':' + activeTriggerOption.name
+  const menuMaxHeight = useAnchoredMaxHeight(menuRef, 320, suggestionOpen ? draft : null)
 
-  useDismissOnOutsidePointer(rootRef, menuOpen, open => { if (!open) setMention(undefined) })
+  useDismissOnOutsidePointer(rootRef, suggestionOpen, open => {
+    if (!open) { setMention(undefined); setTrigger(undefined) }
+  })
+  // The agent picker is a row-local menu inside the same root: an outside
+  // pointer closes it without touching the draft menus.
+  useDismissOnOutsidePointer(agentMenuRef, agentMenuOpen, open => { if (!open) setAgentMenuOpen(false) })
 
   useLayoutEffect(() => {
     const input = inputRef.current
@@ -125,13 +217,50 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
     setHighlight(current => Math.min(current, options.length - 1))
   }, [mention, options.length])
 
+  useEffect(() => {
+    if (trigger === undefined || triggerOptions.length === 0) {
+      setTriggerHighlight(0)
+      return
+    }
+    setTriggerHighlight(current => Math.min(current, triggerOptions.length - 1))
+  }, [trigger, triggerOptions.length])
+
   // The anchored height cap keeps long rosters scrollable; without this the
   // keyboard-highlighted row can stay hidden below the fold.
   useLayoutEffect(() => {
-    if (!menuOpen) return
+    if (!suggestionOpen) return
     // Optional call: jsdom renders the menu without a layout engine.
     activeOptionRef.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [menuOpen, highlight, activeOptionKey])
+  }, [suggestionOpen, highlight, triggerHighlight, activeSuggestionKey])
+
+  // The catalog is scoped to the selected agent, so changing the selection
+  // reloads it: each Member's skills ride that Member's own session. The
+  // callback keys on the two facts that scope it, so a roster refresh that
+  // leaves the pick untouched does not re-read the catalogs.
+  const memberSessionId = selectedMember?.member.sessionId
+  const memberHandle = selectedMember === undefined ? '' : selectedMember.member.handle.replace(/^@/, '')
+  const loadCatalog = useCallback((signal: AbortSignal) => loadTriggerCatalog({ sessionId: memberSessionId, memberHandle }, signal), [
+    loadTriggerCatalog, memberSessionId, memberHandle,
+  ])
+  useEffect(() => {
+    if (!triggerMenuOpen) return
+    const controller = new AbortController()
+    setTriggerCatalog(null)
+    setTriggerCatalogError(false)
+    void loadCatalog(controller.signal).then(catalog => {
+      if (!controller.signal.aborted) setTriggerCatalog(catalog)
+    }).catch(() => {
+      if (!controller.signal.aborted) {
+        setTriggerCatalog(null)
+        setTriggerCatalogError(true)
+      }
+    })
+    return () => { controller.abort() }
+  }, [triggerMenuOpen, loadCatalog])
+
+  useEffect(() => () => {
+    if (pasteResetRef.current !== undefined) clearTimeout(pasteResetRef.current)
+  }, [])
 
   // Match the resident DSH composer without stealing a later user choice: Team
   // data can load after navigation, so a dialog or another control may already
@@ -176,7 +305,13 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
   // The notify row reports what the Host will resolve from this draft, not just
   // what the mention menu picked: an authored `@Handle` delivers exactly like a
   // pick, and `@all` stands for the menu's expansion.
-  const notifiedIds = [...new Set([...recipients, ...mentionedMemberIds(draft, members)])].sort()
+  // A quote's author belongs here too — the Host merges them into the
+  // recipients — except the Human, who is the one writing through this composer.
+  const notifiedIds = [...new Set<AgentTeamMemberId>([
+    ...recipients,
+    ...mentionedMemberIds(draft, members),
+    ...(replyTo?.memberId === undefined || replyTo.memberId === humanMemberId ? [] : [replyTo.memberId]),
+  ])].sort()
 
   const updateMention = (nextDraft: string, caret: number): void => {
     const match = findMention(nextDraft, caret)
@@ -184,16 +319,27 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
     if (match === undefined) setHighlight(0)
   }
 
+  const updateTrigger = (nextDraft: string, caret: number): void => {
+    if (pasteSuppressesSlashRef.current) {
+      setTrigger(undefined)
+      return
+    }
+    const match = findSlashTrigger(nextDraft, caret)
+    setTrigger(match)
+    if (match === undefined) setTriggerHighlight(0)
+  }
+
   const onChange = (event: ChangeEvent<HTMLTextAreaElement>): void => {
     const nextDraft = event.target.value
     drafts.writeDraft(draftKey, nextDraft)
     onEdit?.()
     pruneRecipients(nextDraft)
-    updateMention(nextDraft, event.target.selectionStart ?? nextDraft.length)
+    const caret = event.target.selectionStart ?? nextDraft.length
+    updateMention(nextDraft, caret)
+    updateTrigger(nextDraft, caret)
   }
 
-  // Both pick kinds share the same commit path: swap the text in, add the
-  // recipients, close the menu, and restore the caret after focus.
+  // A mention pick also updates recipients; slash picks only insert their literal trigger.
   const commitMention = (nextDraft: string, nextCaret: number, nextRecipients: ReadonlySet<AgentTeamMemberId>): void => {
     drafts.writeDraft(draftKey, nextDraft)
     drafts.writeRecipients(draftKey, nextRecipients)
@@ -208,6 +354,22 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
     })
   }
 
+  const selectTriggerOption = (option: TeamTriggerCatalogItem): void => {
+    if (trigger === undefined) return
+    const inserted = '/' + option.name + ' '
+    const nextDraft = draft.slice(0, trigger.start) + inserted + draft.slice(trigger.end)
+    const nextCaret = trigger.start + inserted.length
+    drafts.writeDraft(draftKey, nextDraft)
+    onEdit?.()
+    setTrigger(undefined)
+    setTriggerHighlight(0)
+    requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (input === null) return
+      input.focus({ preventScroll: true })
+      input.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
   const selectOption = (option: MentionOption): void => {
     if (mention === undefined) return
     if (option.kind === 'all') {
@@ -227,11 +389,18 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
     commitMention(nextDraft, nextCaret, new Set(recipients).add(member.member.memberId))
   }
 
-  // Pasted files (screenshots, copies) join the same chips the "+" picker
-  // fills; only a paste that carries files is intercepted, so plain text
-  // keeps the browser's native insertion.
+  // Plain text paste remains native and must never open a slash suggestion menu.
+  // Pasted files join the same chips the + picker fills.
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
-    if (pending || onFilesChange === undefined || pendingFiles === undefined) return
+    if (pending) return
+    pasteSuppressesSlashRef.current = true
+    if (pasteResetRef.current !== undefined) clearTimeout(pasteResetRef.current)
+    pasteResetRef.current = setTimeout(() => {
+      pasteSuppressesSlashRef.current = false
+      pasteResetRef.current = undefined
+    }, 0)
+    setTrigger(undefined)
+    if (onFilesChange === undefined || pendingFiles === undefined) return
     const files = Array.from(event.clipboardData.items)
       .filter(item => item.kind === 'file')
       .map(item => item.getAsFile())
@@ -253,9 +422,24 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
       setHighlight(current => (current - 1 + options.length) % options.length)
       return
     }
+    if (triggerMenuOpen && triggerOptions.length > 0 && event.key === 'ArrowDown') {
+      event.preventDefault()
+      setTriggerHighlight(current => (current + 1) % triggerOptions.length)
+      return
+    }
+    if (triggerMenuOpen && triggerOptions.length > 0 && event.key === 'ArrowUp') {
+      event.preventDefault()
+      setTriggerHighlight(current => (current - 1 + triggerOptions.length) % triggerOptions.length)
+      return
+    }
     if (event.key === 'Escape' && menuOpen) {
       event.preventDefault()
       setMention(undefined)
+      return
+    }
+    if (event.key === 'Escape' && triggerMenuOpen) {
+      event.preventDefault()
+      setTrigger(undefined)
       return
     }
     // Tab accepts the highlighted candidate; Shift+Tab keeps default focus reversal.
@@ -264,7 +448,17 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
       if (activeOption !== undefined) selectOption(activeOption)
       return
     }
+    if (triggerMenuOpen && event.key === 'Tab' && !event.shiftKey && activeTriggerOption !== undefined) {
+      event.preventDefault()
+      selectTriggerOption(activeTriggerOption)
+      return
+    }
     if (event.key !== 'Enter' || event.shiftKey || composing || event.repeat) return
+    if (triggerMenuOpen) {
+      event.preventDefault()
+      if (activeTriggerOption !== undefined) selectTriggerOption(activeTriggerOption)
+      return
+    }
     if (menuOpen && activeOption !== undefined) {
       event.preventDefault()
       selectOption(activeOption)
@@ -274,13 +468,65 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
     if (!pending && draft.trim() !== '') onSubmit()
   }
 
+  const triggerOptionId = (option: TeamTriggerCatalogItem, index: number): string => triggerListId + '-' + option.kind + '-' + option.name + '-' + index
+  const renderTriggerOption = (option: TeamTriggerCatalogItem, index: number): ReactNode => {
+    const selected = index === triggerHighlight
+    return <button
+      key={option.kind + ':' + option.name + ':' + index}
+      id={triggerOptionId(option, index)}
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={css.mentionOption}
+      ref={selected ? activeOptionRef : undefined}
+      onMouseDown={event => { event.preventDefault() }}
+      onClick={() => { selectTriggerOption(option) }}
+    >
+      <span className={css.mentionAllDot} aria-hidden="true" />
+      <span className={css.mentionName}>/{option.name}</span>
+      <span className={css.mentionDescription}>
+        {option.kind === 'skill' && option.memberHandle !== undefined
+          ? <span className={css.triggerOwner}>@{option.memberHandle}</span>
+          : null}
+        {option.description}
+      </span>
+    </button>
+  }
   return <form ref={rootRef} className={css.root} onSubmit={event => {
     event.preventDefault()
     if (!pending && draft.trim() !== '') onSubmit()
   }}>
+    {activity}
     <div className={css.card} data-team-composer>
+      {replyTo !== undefined && <div className={css.replyBanner} data-reply-banner="">
+        <span className={css.replyBannerBody}>
+          <span className={css.replyBannerAuthor}>{t('replyingTo', { name: replyTo.senderName })}</span>
+          <span className={css.replyBannerText}>{replyTo.excerpt}</span>
+        </span>
+        {onCancelReply !== undefined && <button type="button" className={css.replyBannerCancel} onClick={onCancelReply}
+          aria-label={t('cancelReply')} title={t('cancelReply')}>×</button>}
+      </div>}
       {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
       <div className={css.inputArea}>
+        {triggerMenuOpen && <div id={triggerListId} ref={menuRef} className={css.mentionMenu} role="listbox" aria-label={t('triggerSuggestions')} style={{ maxHeight: menuMaxHeight }}>
+          {triggerCatalogError ? <div className={css.triggerStatus} role="alert">{t('triggerCatalogUnavailable')}</div>
+            : triggerCatalog === null ? <div className={css.triggerStatus} role="status">{t('triggerCatalogLoading')}</div>
+            : triggerOptions.length === 0 ? <div className={css.triggerStatus} role="status">{trigger.query === '' ? t('triggerCatalogEmpty') : t('triggerNoResults')}</div>
+            : <>
+                {triggerGroups.commands.length > 0 && <div role="group" aria-label={t('triggerCommands')}>
+                  <div className={css.triggerGroupHeading}>{t('triggerCommands')}</div>
+                  {triggerGroups.commands.map((option, index) => renderTriggerOption(option, index))}
+                </div>}
+                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0 || members.length === 0) && <div role="group" aria-label={t('triggerSkills')}>
+                  <div className={css.triggerGroupHeading}>{t('triggerSkills')}</div>
+                  {triggerGroups.skills.map((option, index) => renderTriggerOption(option, triggerGroups.commands.length + index))}
+                  {triggerGroups.notices.map(notice => <p key={notice.name} className={css.triggerNotice} data-trigger-notice={notice.name}>
+                    {t(notice.name === 'skills-unavailable' ? 'triggerSkillsUnavailable' : 'triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
+                  </p>)}
+                  {members.length === 0 && <p className={css.triggerNotice} data-trigger-notice="no-agents">{t('triggerNoAgents')}</p>}
+                </div>}
+              </>}
+        </div>}
         {menuOpen && <div id={listId} ref={menuRef} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')} style={{ maxHeight: menuMaxHeight }}>
           {options.map((option, index) => {
             const optionId = option.kind === 'all' ? `${listId}-all` : `${listId}-${option.status.member.memberId}`
@@ -322,9 +568,9 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
           ref={inputRef}
           aria-label={t('messageDraft')}
           aria-autocomplete="list"
-          aria-controls={menuOpen ? listId : undefined}
-          aria-activedescendant={menuOpen && activeOption !== undefined ? activeOption.kind === 'all' ? `${listId}-all` : `${listId}-${activeOption.status.member.memberId}` : undefined}
-          aria-expanded={menuOpen}
+          aria-controls={suggestionOpen ? (menuOpen ? listId : triggerListId) : undefined}
+          aria-activedescendant={menuOpen && activeOption !== undefined ? activeOption.kind === 'all' ? `${listId}-all` : `${listId}-${activeOption.status.member.memberId}` : triggerMenuOpen && activeTriggerOption !== undefined ? triggerOptionId(activeTriggerOption, triggerHighlight) : undefined}
+          aria-expanded={suggestionOpen}
           value={draft}
           readOnly={pending}
           placeholder={placeholder ?? t('messagePlaceholder')}
@@ -332,7 +578,11 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
           onChange={onChange}
           onPaste={onPaste}
           onKeyDown={onKeyDown}
-          onSelect={event => { updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length) }}
+          onSelect={event => {
+             const caret = event.currentTarget.selectionStart ?? event.currentTarget.value.length
+             updateMention(event.currentTarget.value, caret)
+             updateTrigger(event.currentTarget.value, caret)
+           }}
           onCompositionStart={() => { composingRef.current = true }}
           onCompositionEnd={() => { setTimeout(() => { composingRef.current = false }, 10) }}
         />
@@ -386,6 +636,63 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
             <span className={css.asTaskLabel}>{t('asTask')}</span>
           </button>
         )}
+
+        {members.length > 0 && <div className={css.agentPicker} data-team-agent-picker="">
+          <button
+            type="button"
+            className={css.agentPickerButton}
+            aria-label={t('selectAgent')}
+            aria-haspopup="listbox"
+            aria-expanded={agentMenuOpen}
+            disabled={pending}
+            onClick={() => { setAgentMenuOpen(open => !open) }}
+          >
+            <IconChecklistOutlineMedium size={14} />
+            <span className={css.agentPickerLabel}>{t('selectAgent')}</span>
+            <span className={css.agentPickerCurrent} data-team-agent-picker-current="">{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
+          </button>
+          {agentMenuOpen && <div className={css.agentMenu} role="listbox" aria-label={t('selectAgent')} ref={agentMenuRef}>
+            {members.map(status => {
+              const chosen = status.member.memberId === currentMemberId
+              return <button
+                key={status.member.memberId}
+                type="button"
+                role="option"
+                aria-selected={chosen}
+                className={chosen ? `${css.agentOption} ${css.agentOptionOn}` : css.agentOption}
+                onMouseDown={event => { event.preventDefault() }}
+                onClick={() => {
+                  setPickedMemberId(status.member.memberId)
+                  setAgentMenuOpen(false)
+                  // The catalog is scoped to the pick, so the open slash menu
+                  // must reload against the new Member's session.
+                  setTriggerCatalog(null)
+                  inputRef.current?.focus({ preventScroll: true })
+                }}
+              >
+                <TeamPresenceDot status={status} t={t} />
+                <span className={css.agentOptionHandle}>@{status.member.handle.replace(/^@/, '')}</span>
+                <span className={css.agentOptionDescription}>{status.member.description}</span>
+              </button>
+            })}
+            {/* Human directive (thread:063981a9 fact 3996): one control only, so
+                the way to Manage members lives inside the picker rather than as
+                a second chip on the toolbar row. It is a popup-internal action,
+                not a pick, so it closes the list and calls back. */}
+            {onManageMembers !== undefined && (
+              <button
+                type="button"
+                className={css.agentOption}
+                data-team-manage-members=""
+                onMouseDown={event => { event.preventDefault() }}
+                onClick={() => { setAgentMenuOpen(false); onManageMembers() }}
+              >
+                <IconUserOutlineRegular size={14} />
+                <span className={css.agentOptionHandle}>{t('manageMembers')}</span>
+              </button>
+            )}
+          </div>}
+        </div>}
         <button
           type="submit"
           className={css.sendButton}

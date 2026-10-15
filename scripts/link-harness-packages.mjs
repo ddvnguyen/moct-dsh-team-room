@@ -90,13 +90,13 @@ if (!existsSync(continuityEntry)) {
 }
 if (continuityFromSibling) linkPackage('@contexera/dsh-context-continuity', continuityDir)
 // The bundle's own self-reference must resolve for preset rows that name it.
-const selfRef = join(repoRoot, 'node_modules', '@contexera')
+const selfRef = join(repoRoot, 'node_modules', '@ddvnguyen')
 mkdirSync(selfRef, { recursive: true })
-if (!existsSync(join(selfRef, 'dsh-agent-team'))) {
+if (!existsSync(join(selfRef, 'moct-dsh-team-room'))) {
   if (process.platform === 'win32') {
-    symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'dsh-agent-team'), 'junction')
+    symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'moct-dsh-team-room'), 'junction')
   } else {
-    symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'dsh-agent-team'), 'dir')
+    symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'moct-dsh-team-room'), 'dir')
   }
   linked += 1
 }

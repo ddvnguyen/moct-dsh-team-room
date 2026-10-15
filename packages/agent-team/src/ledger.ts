@@ -82,6 +82,7 @@ import type {
   AgentTeamRequestId,
   AgentTeamResolvedTaskRef,
   AgentTeamResolvedThreadRef,
+  AgentTeamResolvedMessageRef,
   AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
@@ -109,6 +110,23 @@ import type {
   AgentTeamThreadReadFact,
   AgentTeamThreadReadData,
   AgentTeamThreadReadOperation,
+  AgentTeamThreadSessionBinding,
+  AgentTeamThreadSessionBoundData,
+  AgentTeamThreadSessionBoundOperation,
+  AgentTeamThreadInstanceBoundData,
+  AgentTeamThreadInstanceBoundOperation,
+  AgentTeamThreadSessionReason,
+  AgentTeamSessionRun,
+  AgentTeamSessionTurnRecordedData,
+  AgentTeamThreadReplyStat,
+  AgentTeamThreadSessionRuns,
+  AgentTeamThreadTurnFailure,
+  AgentTeamSessionTurnRecordedOperation,
+  AgentTeamTurnFailureNoticeData,
+  AgentTeamTurnFailureNoticeOperation,
+  AgentTeamThreadSummaryCommittedData,
+  AgentTeamThreadSummaryCommittedOperation,
+  AgentTeamSessionTurnUsage,
   AgentTeamThreadReadReceipt,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
@@ -121,15 +139,24 @@ import type {
   AgentTeamPromoteThreadResult,
   AgentTeamThreadRepliedOperation,
   AgentTeamUnreadRequired,
+  AgentTeamActor,
+  AgentTeamRoomActivityAgent,
+  AgentTeamRoomActivityEvent,
+  AgentTeamRoomActivityRequest,
+  AgentTeamRoomActivityResult,
+  AgentTeamRoomActivityTotals,
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateChannelResult,
   AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
+import type { SessionId as AgentTeamMemberSessionId } from '@deepseek-ai/dsh-session'
 import { formatTeamTimestamp } from './time-format.ts'
 import { resolveBodyMentions } from './mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
+import type { AgentTeamRepliedThread } from './turn-threads.ts'
+import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
 
 /** Stable Human Member identity shared by every replay of one dshHome Team. */
 export const AGENT_TEAM_HUMAN_MEMBER_ID = 'member:human' as AgentTeamMemberId
@@ -173,6 +200,101 @@ export interface AgentTeamAuthorizedAddMemberRequest extends AgentTeamAddMemberR
 
 export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMemberStateRequest {
   readonly actor: AgentTeamHumanActor
+}
+
+/**
+ * One completed Turn of a Member's own Session. The Member is the only actor.
+ * runMs is model plus tool time (llm + tool wall time), not the Turn's wall-clock span.
+ */
+export interface AgentTeamCommitThreadSummaryRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+  readonly threadRef: AgentTeamThreadRef
+  readonly trigger: 'rolling' | 'wrapup'
+  readonly text: string
+  readonly coversThroughSequence: number
+  readonly transcriptTokens: number
+  readonly model: { readonly provider: string; readonly model: string }
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number } | null
+}
+
+/** A Turn that ended in error on one delivered Thread (contract §6.0). The Member is the only author. */
+export interface AgentTeamRecordTurnFailureNoticeRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly turn: number
+  readonly reason: string
+  readonly actor: AgentTeamMemberActor
+}
+
+export interface AgentTeamRecordSessionTurnRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly parentSessionId?: SessionId
+  readonly threadRefs: readonly AgentTeamThreadRef[]
+  readonly turn: number
+  readonly startedAt: string
+  readonly endedAt: string
+  readonly toolCalls: number
+  readonly runMs: number
+  readonly usage: AgentTeamSessionTurnUsage
+  /** The Turn's ledger sequence window, inclusive (see AgentTeamSessionTurnRecordedData). */
+  readonly startSequence?: number
+  readonly endSequence?: number
+  /** The Member recording its own Turn. */
+  readonly actor: AgentTeamMemberActor
+}
+
+/** A committed or resolved Turn record: its receipt, and the Session's folded row when this projection holds it. */
+export interface AgentTeamSessionTurnResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly run: AgentTeamSessionRun | undefined
+}
+
+export interface AgentTeamThreadSummaryResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly summary: AgentTeamThreadSummaryCommittedData
+}
+
+/** A committed or resolved seat binding: its receipt, and the binding itself. */
+export interface AgentTeamThreadSessionBindResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly binding: AgentTeamThreadSessionBinding
+}
+
+export interface AgentTeamBindThreadSessionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly sessionId: SessionId
+  readonly reason: AgentTeamThreadSessionReason
+  readonly parentSessionId?: SessionId
+  readonly summaryGeneration?: number
+  /** The seat binding itself; the host passes the calling Member's actor, never a caller-supplied id. */
+  readonly actor: AgentTeamMemberActor
+}
+
+/** Host intent to bind one seat's turns in one Thread to an instance slot (multi-instance contract v2 §2c). */
+export interface AgentTeamBindThreadInstanceRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly slot: number
+  readonly boundAt: string
+  /** The host records the binding under the seat's own actor, as it does for the seat's Turns. */
+  readonly actor: AgentTeamMemberActor
+}
+
+/** A committed or resolved instance binding: its receipt, and the binding itself. */
+export interface AgentTeamThreadInstanceBindResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly binding: AgentTeamThreadInstanceBoundData
 }
 
 /** Host-authorized intent to move one enabled Member onto a fresh Session id. */
@@ -383,6 +505,16 @@ interface Projection {
   readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
   /** Latest retired Session id per Member, from the most recent renewal or rollover record. */
   readonly previousSessions: Map<AgentTeamMemberId, SessionId>
+  /** Session bindings per Thread and Member, in sequence order; the last entry is the active Session. */
+  readonly threadSessions: Map<AgentTeamThreadRef, Map<AgentTeamMemberId, AgentTeamThreadSessionBinding[]>>
+  /** Latest instance slot binding per Thread and seat; a later op replaces an earlier one. */
+  readonly threadInstances: Map<AgentTeamThreadRef, Map<AgentTeamMemberId, AgentTeamThreadInstanceBoundData>>
+  /** Session stats rows, folded from recorded Turns; keyed by sessionId. */
+  readonly sessionRuns: Map<SessionId, AgentTeamSessionRun>
+  /** The recorded Turn per (sessionId, turn); a second record for the same key is a duplicate fold and is rejected. */
+  readonly sessionTurns: Map<string, AgentTeamSessionTurnRecordedOperation>
+  /** Committed Thread summaries per Thread, oldest first; the last entry is the current summary (contract §3.3). */
+  readonly threadSummaries: Map<AgentTeamThreadRef, AgentTeamThreadSummaryCommittedOperation[]>
   /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
   readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
   /** Top-level anchor Message per Thread; the first topLevel Message wins, like the linear scan it replaces. */
@@ -409,15 +541,151 @@ interface AgentTeamAttentionObservation {
   readonly action: 'follow' | 'unfollow'
 }
 
+function sessionTurnKey(sessionId: SessionId, turn: number): string {
+  return `${sessionId}\u0000${turn}`
+}
+
+/** Combines a running cache bucket with one Turn's bucket: null is sticky, because one unreported attempt makes the session total unknown. */
+function sumBucket(prior: number | null | undefined, turn: number | null): number | null {
+  if (turn === null || prior === null) return null
+  return prior === undefined ? turn : prior + turn
+}
+
+/** Folds one recorded Turn into its Session's stats row. Pure, so replay derives the same row. */
+function foldSessionTurn(prior: AgentTeamSessionRun | undefined, data: AgentTeamSessionTurnRecordedData): AgentTeamSessionRun {
+  const usage: AgentTeamSessionTurnUsage = data.usage
+  const threadRefs = [...new Set<AgentTeamThreadRef>([...(prior?.threadRefs ?? []), ...data.threadRefs])]
+  return Object.freeze({
+    sessionId: data.sessionId,
+    memberId: data.memberId,
+    ...(data.parentSessionId === undefined ? {} : { parentSessionId: data.parentSessionId }),
+    threadRefs: Object.freeze([...threadRefs]),
+    startedAt: prior?.startedAt ?? data.startedAt,
+    endedAt: data.endedAt,
+    turns: (prior?.turns ?? 0) + 1,
+    tokensIn: (prior?.tokensIn ?? 0) + (usage.uncachedInputTokens ?? 0),
+    unknownInputTurns: (prior?.unknownInputTurns ?? 0) + (usage.uncachedInputTokens === null ? 1 : 0),
+    tokensOut: (prior?.tokensOut ?? 0) + usage.outputTokens,
+    cacheReadTokens: sumBucket(prior === undefined ? undefined : prior.cacheReadTokens, usage.cacheReadTokens),
+    cacheWriteTokens: sumBucket(prior === undefined ? undefined : prior.cacheWriteTokens, usage.cacheWriteTokens),
+    reasoningTokens: sumBucket(prior === undefined ? undefined : prior.reasoningTokens, usage.reasoningTokens),
+    toolCalls: (prior?.toolCalls ?? 0) + data.toolCalls,
+    runMs: (prior?.runMs ?? 0) + data.runMs,
+    model: usage.route ?? prior?.model ?? null,
+    lastAssistantAt: data.endedAt,
+  })
+}
+
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), participations: new Map(), memberships: new Map(),
     claims: new Map(), tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], claimsByTask: new Map(), factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     messagesByRef: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map(), rolloverSeeds: new Map(),
+    attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), threadInstances: new Map(), sessionRuns: new Map(), sessionTurns: new Map(), threadSummaries: new Map(), rolloverSeeds: new Map(),
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
+}
+
+/**
+ * One row of the bounded room-activity event feed (contract §19.1): a committed operation reduced
+ * to a plain-text gist. Never a Message body, never a stack, never a key.
+ */
+type RoomActivityMemberTotals = {
+  messages: number
+  turns: number
+  tokensIn: number
+  tokensOut: number
+  cacheRead: number
+  cacheWrite: number
+  toolCalls: number
+  runMs: number
+  failedTurns: number
+  sessionIds: AgentTeamMemberSessionId[]
+}
+
+/** Session rows a room-activity read may return: the newest first, hard-bounded. */
+const ROOM_ACTIVITY_SESSION_LIMIT = 100
+
+/** Event rows a room-activity read returns when the request names no limit. */
+const ROOM_ACTIVITY_LIMIT_DEFAULT = 50
+
+/** Event rows a room-activity read may return per page: the contract's upper clamp. */
+const ROOM_ACTIVITY_EVENT_LIMIT = 200
+
+/** A cursor token is a plain run of digits — the shape `nextCursor` hands back. */
+const ROOM_ACTIVITY_SEQUENCE = /^\d+$/
+
+/** Character bound of one event summary; the first line wins, then the bound (contract §19.1). */
+const ROOM_ACTIVITY_SUMMARY_LIMIT = 200
+
+/**
+ * The four usage buckets of one Turn. Each row names the result field, the Turn-usage field it
+ * folds, and whether the Turn proved it: outputTokens is always reported, the other three may
+ * arrive null and then stick as null in every scope they reach (contract §3.2).
+ */
+const ROOM_ACTIVITY_BUCKETS: readonly { readonly field: RoomActivityBucket; readonly usage: keyof Pick<AgentTeamSessionTurnUsage, 'uncachedInputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'> }[] = [
+  { field: 'tokensIn', usage: 'uncachedInputTokens' },
+  { field: 'tokensOut', usage: 'outputTokens' },
+  { field: 'cacheRead', usage: 'cacheReadTokens' },
+  { field: 'cacheWrite', usage: 'cacheWriteTokens' },
+]
+
+/** One Member's proof state: which of its buckets stay null because a Turn never proved them. */
+type RoomActivityBuckets = Record<RoomActivityBucket, boolean>
+
+/** The neutral proof state: no bucket is known-unproven until a Turn proves otherwise. */
+const ROOM_ACTIVITY_BUCKET_PROVEN: RoomActivityBuckets = { tokensIn: false, tokensOut: false, cacheRead: false, cacheWrite: false }
+
+/** The name of one usage bucket, shared by the projection types and the result rows. */
+type RoomActivityBucket = 'tokensIn' | 'tokensOut' | 'cacheRead' | 'cacheWrite'
+
+/** Plain-text gist of an event: the opening line, trimmed, then bounded. Never a whole body. */
+function roomActivitySummary(text: string): string {
+  const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine.length > ROOM_ACTIVITY_SUMMARY_LIMIT ? `${firstLine.slice(0, ROOM_ACTIVITY_SUMMARY_LIMIT - 1)}…` : firstLine
+}
+
+/** One actor rendered as its handle: a Member's own handle, or the Human's. */
+function roomActivityActor(actor: AgentTeamActor): string {
+  return actor.handle
+}
+
+/** One Member-lifecycle operation reduced to a gist: the transition, then the Member's handle. */
+function roomActivityMemberSummary(kind: string, handle: string): string {
+  switch (kind) {
+    case 'team/channel-member-added': return `${handle} joined the Channel`
+    case 'team/channel-member-removed': return `${handle} left the Channel`
+    case 'team/member-added': return `${handle} was added to the Team`
+    case 'team/member-updated': return `${handle} was updated`
+    case 'team/member-suspended': return `${handle} was suspended`
+    case 'team/member-resumed': return `${handle} was resumed`
+    case 'team/member-archived': return `${handle} was archived`
+    case 'team/member-removed': return `${handle} was removed`
+    case 'team/member-session-renewed': return `${handle} moved to a fresh Session`
+    case 'team/member-session-rolled-over': return `${handle} rolled over its context`
+    case 'team/member-session-restarted': return `${handle} restarted its Session`
+    case 'team/member-context-cleared': return `${handle} cleared its context`
+    case 'team/member-workspace-joined': return `${handle} joined the Workspace`
+    case 'team/member-workspace-left': return `${handle} left the Workspace`
+    default: return ''
+  }
+}
+
+/** One Claim transition reduced to a gist: the state change, then the direction's opening line. */
+function roomActivityClaimSummary(kind: AgentTeamClaimActivity['kind'], direction: string): string {
+  const state = kind === 'claim' ? 'claimed' : kind === 'done' ? 'finished a claim on' : 'released a claim on'
+  return `${state} ${roomActivitySummary(direction)}`
+}
+
+/** One Task transition reduced to a gist: the transition, then the standing it left the Task in. */
+function roomActivityTaskSummary(kind: string, status: AgentTeamTask['status'], resolution: AgentTeamTask['resolution']): string {
+  return `task ${kind} → ${status}/${resolution}`
+}
+
+/** One session binding reduced to a gist naming the Session and why it was bound. */
+function roomActivitySessionSummary(data: AgentTeamThreadSessionBoundData): string {
+  return `turns bound to Session ${data.sessionId} (${data.reason})`
 }
 
 /** Exhaustiveness guard for the closed operation union: adding a kind must update every dispatch. */
@@ -444,6 +712,12 @@ function boundedInboxPreview(body: string): string {
 function boundedThreadTitle(body: string): string {
   const firstLine = body.split('\n', 1)[0]?.trim() ?? ''
   return firstLine.length > 40 ? `${firstLine.slice(0, 39)}…` : firstLine
+}
+
+/** Quote-block gist of a replied-to Message: first line, trimmed, capped at 120 characters. */
+function boundedReplyExcerpt(body: string): string {
+  const firstLine = body.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine
 }
 
 /**
@@ -523,13 +797,20 @@ export class AgentTeamLedger {
    * projection — the durable position the Client's change cursors compare
    * against, rebuilt by replay like every other index.
    *
-   * Records whose commit is private read progress or audit-only
-   * (`changeScopesOf` derives no scope for them) never move it, so one
-   * Member's Thread read cannot make a parked Client believe that something it
-   * watches changed. Being a ledger position rather than a process counter, it
-   * also stays monotone across a restart.
+   * Records whose commit is private read progress (`changeScopesOf` derives no
+   * scope for them) never move it, so one Member's Thread read cannot make a
+   * parked Client believe that something it watches changed. Being a ledger
+   * position rather than a process counter, it also stays monotone across a
+   * restart.
    */
   private projectionVersion = 0
+  /**
+   * The same position as before Turn notices were shown in the Thread: Turn
+   * records and failure notices move `projectionVersion` for the open Thread's
+   * refresh, but never this one. Turn windows are attributed against it, so
+   * agent-side attribution does not change with UI invalidation.
+   */
+  private attributionVersion = 0
 
   constructor(
     private readonly table: KvTable<AgentTeamOperationId, AgentTeamOperation>,
@@ -659,6 +940,7 @@ export class AgentTeamLedger {
       this.assertHandleAvailable(request.workspaceId, handle)
       this.assertModelSelection(request.member.model)
       this.assertCapabilities(request.member.capabilities)
+      assertInstances(request.member.instances)
       const member = Object.freeze({
         ...request.member, handle, description, presetId, state: 'enabled' as const,
         ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
@@ -692,6 +974,7 @@ export class AgentTeamLedger {
       if (handle !== prior.handle) for (const workspaceId of this.workspacesOf(prior.memberId)) this.assertHandleAvailable(workspaceId, handle, prior.memberId)
       this.assertModelSelection(request.model)
       this.assertCapabilities(request.capabilities)
+      assertInstances(request.instances)
       // Partial update: an absent field keeps what the Member already has, and
       // an explicit null clears the override. Spreading `prior` verbatim
       // handles the first case; the second must drop the resolved field so the
@@ -702,10 +985,13 @@ export class AgentTeamLedger {
         : request.capabilities === null ? undefined : request.capabilities
       // Both overlays come off `prior` before being re-added, or a cleared field
       // would survive in the spread and the null branch would do nothing.
-      const { model: _priorModel, capabilities: _priorCapabilities, ...priorWithoutOverlays } = prior
+      const nextInstances = request.instances === undefined ? prior.instances
+        : request.instances === null ? undefined : request.instances
+      const { model: _priorModel, capabilities: _priorCapabilities, instances: _priorInstances, ...priorWithoutOverlays } = prior
       const member = Object.freeze({
         ...priorWithoutOverlays, handle, description,
         ...(nextModel === undefined ? {} : { model: nextModel }),
+        ...(nextInstances === undefined ? {} : { instances: nextInstances }),
         ...freezeCapabilities(nextCapabilities),
       })
       const operation: AgentTeamMemberUpdatedOperation = Object.freeze({
@@ -1115,10 +1401,14 @@ export class AgentTeamLedger {
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       const channel = this.requireChannel(request.workspaceId, channelRef)
-      const recipients = this.mergeBodyMentions(actor.memberId, channelRef, body, this.normalizeRecipients(actor, request.recipients))
+      // The parent resolves before recipients so its author is part of the
+      // merged set a retry re-derives for the collision check.
+      const parent = request.replyToMessageRef === undefined ? undefined : this.requireReplyParent(thread.threadRef, request.replyToMessageRef)
+      const recipients = this.withReplyAuthor(actor.memberId, channelRef, parent,
+        this.mergeBodyMentions(actor.memberId, channelRef, body, this.normalizeRecipients(actor, request.recipients)))
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameReply(existing, request, recipients)
+        this.assertSameReply(existing, request, recipients, parent?.messageRef)
         return this.resolved(this.replyResult(existing, this.undeliverableRecipients(actor, thread.threadRef, recipients)))
       }
       this.assertMentionTargets(channel, recipients)
@@ -1147,6 +1437,7 @@ export class AgentTeamLedger {
         messageRef: this.ref('message'), channelRef, threadRef: thread.threadRef,
         ...(task === undefined ? {} : { taskRef: task.taskRef }), sender: request.actor.memberId, body,
         ...(request.resolvedAttachments === undefined ? {} : { attachments: request.resolvedAttachments }),
+        ...(parent === undefined ? {} : { replyToMessageRef: parent.messageRef }),
         topLevel: false, sequence, occurredAt: base.occurredAt,
       })
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
@@ -1707,6 +1998,623 @@ export class AgentTeamLedger {
       facts: this.unreadFor(memberId, item.thread.threadRef) })))
   }
 
+  /**
+   * Record one completed Turn of a Member's Session. The Member is the only
+   * actor; an exact retry (same requestId, same Turn) resolves to the recorded
+   * Turn; the same requestId with different data collides.
+   */
+  recordSessionTurn(request: AgentTeamRecordSessionTurnRequest): Promise<AgentTeamLedgerResult<AgentTeamSessionTurnResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameSessionTurn(existing, request)
+        return this.resolved(this.sessionTurnResult(existing))
+      }
+      if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Session turn requires the Member\'s own authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      // A window ends at or after startSequence - 1. end = start - 1 is the empty window: no ledger op landed during the Turn.
+      if (request.startSequence !== undefined && request.endSequence !== undefined && request.endSequence < request.startSequence - 1) {
+        throw new Error(`Session turn window ends before it starts: ${request.startSequence}..${request.endSequence}`)
+      }
+      // A host retry after a crash may arrive with a fresh requestId; the Turn itself is the dedupe key.
+      const recordedTurn = this.state.sessionTurns.get(sessionTurnKey(request.sessionId, request.turn))
+      if (recordedTurn !== undefined) {
+        if (!this.sameSessionTurnData(recordedTurn.data, request)) throw new Error(`agent-team Session '${request.sessionId}' turn ${request.turn} was already recorded with different data`)
+        return this.resolved(this.sessionTurnResult(recordedTurn))
+      }
+      for (const threadRef of request.threadRefs) this.requireThread(threadRef)
+      this.requireMember(request.memberId)
+      const data: AgentTeamSessionTurnRecordedData = Object.freeze({
+        workspaceId: request.workspaceId, memberId: request.memberId, sessionId: request.sessionId, threadRefs: Object.freeze([...request.threadRefs]), turn: request.turn,
+        startedAt: request.startedAt, endedAt: request.endedAt, toolCalls: request.toolCalls, runMs: request.runMs, usage: Object.freeze({ ...request.usage }),
+        ...(request.parentSessionId === undefined ? {} : { parentSessionId: request.parentSessionId }),
+        ...(request.startSequence === undefined || request.endSequence === undefined ? {} : { startSequence: request.startSequence, endSequence: request.endSequence }),
+      })
+      const operation: AgentTeamSessionTurnRecordedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/session-turn-recorded', data,
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.sessionTurnResult(operation))
+    })
+  }
+
+  /**
+   * Note one errored Turn on one Thread (contract §6.0, TEST-2 only). Audit-only by construction: it
+   * creates no unread fact, wakes nobody, and changes no projection a reader folds. A retry with the
+   * same requestId resolves to the committed notice; the same requestId with other data collides.
+   */
+  recordTurnFailureNotice(request: AgentTeamRecordTurnFailureNoticeRequest): Promise<AgentTeamLedgerResult<AgentTeamOperationReceipt>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/turn-failure-notice' || existing.data.threadRef !== request.threadRef || existing.data.sessionId !== request.sessionId
+          || existing.data.turn !== request.turn || existing.data.reason !== request.reason) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.receipt(existing))
+      }
+      if (request.actor.kind !== 'member' || request.actor.memberId !== request.memberId) throw new Error('Turn failure notice requires the Member\'s own authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      this.requireMember(request.memberId)
+      const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
+      const data: AgentTeamTurnFailureNoticeData = Object.freeze({
+        requestId: request.requestId, workspaceId: request.workspaceId, threadRef: request.threadRef, memberId: request.memberId,
+        sessionId: request.sessionId, turn: request.turn, reason: request.reason,
+      })
+      const operation: AgentTeamTurnFailureNoticeOperation = Object.freeze({ ...base, kind: 'team/turn-failure-notice', data })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.receipt(operation))
+    })
+  }
+
+  /** The failure notices a Thread carries, in ledger order (contract §6.0). Read-only; no wake, no receipt. */
+  turnFailureNotices(threadRef: AgentTeamThreadRef): readonly AgentTeamTurnFailureNoticeOperation[] {
+    return Object.freeze(this.state.ordered.filter((operation): operation is AgentTeamTurnFailureNoticeOperation =>
+      operation.kind === 'team/turn-failure-notice' && operation.data.threadRef === threadRef))
+  }
+
+  /**
+   * The human-facing view of a Thread's failure notices, in ledger order, every notice kept (no de-duplication).
+   * Read-only: no receipt, no unread change, no wake. Never feeds facts, notifications or prompts.
+   */
+  threadTurnFailures(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadTurnFailure[] {
+    return Object.freeze(this.turnFailureNotices(threadRef).map(operation => Object.freeze({
+      sequence: operation.sequence,
+      occurredAt: operation.occurredAt,
+      threadRef: operation.data.threadRef,
+      memberId: operation.data.memberId,
+      handle: this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId,
+      sessionId: operation.data.sessionId,
+      turn: operation.data.turn,
+      reason: operation.data.reason,
+    })))
+  }
+
+  /** The receipt of the recorded Turn, plus the Session's folded row when this projection holds it. */
+  /**
+   * Commit one Thread summary. The generation is assigned here (prior + 1), and coverage must move
+   * forward and stay within the ledger. A retry with the same requestId resolves to the committed summary.
+   */
+  commitThreadSummary(request: AgentTeamCommitThreadSummaryRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadSummaryResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/thread-summary-committed' || existing.data.threadRef !== request.threadRef
+          || existing.data.coversThroughSequence !== request.coversThroughSequence || existing.data.text !== request.text) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.threadSummaryResult(existing))
+      }
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      const prior = this.state.threadSummaries.get(request.threadRef)?.at(-1)?.data
+      if (prior !== undefined && request.coversThroughSequence <= prior.coversThroughSequence) {
+        throw new Error(`Thread '${request.threadRef}' already has a summary covering through sequence ${prior.coversThroughSequence}`)
+      }
+      if (request.coversThroughSequence > this.projectionSequence()) throw new Error('Thread summary covers a sequence the ledger has not reached')
+      const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
+      const data: AgentTeamThreadSummaryCommittedData = Object.freeze({
+        workspaceId: request.workspaceId, threadRef: request.threadRef, generation: (prior?.generation ?? 0) + 1, trigger: request.trigger, text: request.text,
+        coversThroughSequence: request.coversThroughSequence, transcriptTokens: request.transcriptTokens,
+        model: Object.freeze({ ...request.model }), usage: request.usage === null ? null : Object.freeze({ ...request.usage }), at: base.occurredAt,
+      })
+      const operation: AgentTeamThreadSummaryCommittedOperation = Object.freeze({ ...base, kind: 'team/thread-summary-committed', data })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.threadSummaryResult(operation))
+    })
+  }
+
+  private threadSummaryResult(operation: AgentTeamThreadSummaryCommittedOperation): AgentTeamThreadSummaryResult {
+    return Object.freeze({ receipt: this.receipt(operation), summary: operation.data })
+  }
+
+  /** The current Thread summary, or undefined before the first commit. */
+  latestThreadSummary(threadRef: AgentTeamThreadRef): AgentTeamThreadSummaryCommittedData | undefined {
+    return this.state.threadSummaries.get(threadRef)?.at(-1)?.data
+  }
+
+  /** Thread Messages committed after a sequence, oldest first: the input a summary has not yet read. */
+  threadMessagesAfter(threadRef: AgentTeamThreadRef, sequence: number): readonly AgentTeamMessage[] {
+    return [...this.state.messagesByRef.values()].filter(message => message.threadRef === threadRef && message.sequence > sequence).sort((left, right) => left.sequence - right.sequence)
+  }
+
+  /** Recorded Turns that named this Thread and were committed after a sequence: the count a rolling trigger reads. */
+  recordedTurnsNamingThreadAfter(threadRef: AgentTeamThreadRef, sequence: number): number {
+    let count = 0
+    for (const turn of this.state.sessionTurns.values()) if (turn.sequence > sequence && turn.data.threadRefs.includes(threadRef)) count += 1
+    return count
+  }
+
+  private sessionTurnResult(operation: AgentTeamSessionTurnRecordedOperation): AgentTeamSessionTurnResult {
+    return Object.freeze({ receipt: this.receipt(operation), run: this.state.sessionRuns.get(operation.data.sessionId) })
+  }
+
+  /**
+   * The recorded Turn whose sequence window holds this Member's reply at `sequence`,
+   * or undefined when no recorded Turn covers it. A reply's per-reply usage is that
+   * Turn's usage (the SessionRun delta for the Turn, contract §3.2).
+   */
+  turnForReply(memberId: AgentTeamMemberId, sequence: number): AgentTeamSessionTurnRecordedData | undefined {
+    for (const operation of this.state.sessionTurns.values()) {
+      const { startSequence, endSequence } = operation.data
+      if (operation.data.memberId === memberId && startSequence !== undefined && endSequence !== undefined && startSequence <= sequence && sequence <= endSequence) return operation.data
+    }
+    return undefined
+  }
+
+  /** The folded stats row for one Session, or undefined before its first recorded Turn. */
+  sessionRun(sessionId: SessionId): AgentTeamSessionRun | undefined {
+    return this.state.sessionRuns.get(sessionId)
+  }
+
+  /** Every Session this Member has run that holds a recorded Turn, newest start first. */
+  memberSessionRuns(memberId: AgentTeamMemberId): readonly AgentTeamSessionRun[] {
+    return Object.freeze([...this.state.sessionRuns.values()]
+      .filter(run => run.memberId === memberId)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt)))
+  }
+
+  /**
+   * Per seat in one Thread: its active Session's run and its history of Session runs
+   * (contract §4). History is oldest first, one entry per bound Session that holds a
+   * recorded Turn; `active` is the last binding's run, or undefined before its first Turn.
+   */
+  threadSessionRuns(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadSessionRuns[] {
+    const byMember = this.state.threadSessions.get(threadRef)
+    if (byMember === undefined) return Object.freeze([])
+    return Object.freeze([...byMember.entries()].map(([memberId, bindings]) => {
+      const sessionIds = [...new Set(bindings.map(binding => binding.sessionId))]
+      const history = sessionIds.map(sessionId => this.state.sessionRuns.get(sessionId)).filter((run): run is AgentTeamSessionRun => run !== undefined)
+      const last = bindings.at(-1)
+      return Object.freeze({ memberId, active: last === undefined ? null : this.state.sessionRuns.get(last.sessionId) ?? null, history: Object.freeze(history) })
+    }))
+  }
+
+  /**
+   * Per-reply stats for one Thread (contract §3.2, §4). Only replies that resolve to a
+   * recorded Turn window appear; a reply outside every window is absent, not zero.
+   * `isLastOfTurn` marks the Member's last reply in each Turn, the one the UI puts the
+   * stats row on, so a Turn's tokens are never shown twice. Read-only: no receipt, no lock.
+   */
+  threadReplyStats(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadReplyStat[] {
+    const replies: Array<{ readonly messageRef: AgentTeamMessageRef; readonly memberId: AgentTeamMemberId; readonly sequence: number; readonly turn: AgentTeamSessionTurnRecordedData }> = []
+    for (const message of [...this.state.messagesByRef.values()].filter(candidate => candidate.threadRef === threadRef).sort((left, right) => left.sequence - right.sequence)) {
+      const turn = this.turnForReply(message.sender, message.sequence)
+      if (turn !== undefined) replies.push({ messageRef: message.messageRef, memberId: message.sender, sequence: message.sequence, turn })
+    }
+    const lastSequenceByTurn = new Map<string, number>()
+    for (const reply of replies) lastSequenceByTurn.set(`${reply.turn.sessionId}\0${reply.turn.turn}`, reply.sequence)
+    return Object.freeze(replies.map(reply => Object.freeze({
+      messageRef: reply.messageRef,
+      memberId: reply.memberId,
+      turn: reply.turn,
+      isLastOfTurn: lastSequenceByTurn.get(`${reply.turn.sessionId}\0${reply.turn.turn}`) === reply.sequence,
+    })))
+  }
+
+  /**
+   * Room-activity read for one Channel or one Thread (contract §19.1). Derived only from the
+   * projection: Messages, SessionRun rows, Turn records, failure notices and the committed
+   * operations of the scope. Read-only — no receipt, no lock, no wake, no attention change.
+   *
+   * Scope resolution reuses the guards every other read uses. A Channel scope takes the Channel
+   * itself; a Thread scope resolves the Thread and then proves it belongs to the requested Channel,
+   * so a Thread paired with somebody else’s Channel is the same typed not-found as an unknown ref.
+   * An unknown Channel or Thread, a Thread outside the Workspace and an archived Channel all
+   * throw the ledger Error the host maps to that not-found. A Channel scope includes every
+   * Thread the Channel owns.
+   *
+   * Usage buckets are null while any contributing Turn left the bucket unproven (contract §3.2):
+   * null is sticky, per bucket, and never folded to 0. `turns` always counts recorded Turns;
+   * `unrecordedTurns` counts a Turn whose usage is not fully proven — any bucket null makes it
+   * unrecorded, not only the input split.
+   *
+   * Every field is a fold over the projection, so one call costs the operations, Turns and
+   * Messages of the scope: bounded by ledger size, never by the request.
+   */
+  roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
+    // A cursor is an opaque sequence token. Anything that cannot be one is rejected here as a
+    // typed bad-request rather than silently paging from the newest event, so a stale or mangled
+    // cursor is a visible failure instead of a duplicated page. `Number` is not the test: it reads
+    // an empty string and a whitespace-padded one as 0 and 12, which would replay a page the
+    // caller never asked for, so the token must be a plain run of digits to count at all.
+    const cursor = request.cursor === undefined ? null : ROOM_ACTIVITY_SEQUENCE.test(request.cursor) ? Number(request.cursor) : null
+    if (request.cursor !== undefined && cursor === null) throw new Error('room activity cursor must be a non-negative decimal sequence')
+    const limit = Math.min(Math.max(request.limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT)
+
+    const channelRef = this.requireChannel(request.workspaceId, request.channelRef).channelRef
+    const scope: 'channel' | 'thread' = request.threadRef === undefined ? 'channel' : 'thread'
+    const threadContext = request.threadRef === undefined ? undefined : this.threadContextFrom(this.state, request.workspaceId, { threadRef: request.threadRef })
+    // The Thread’s own Channel must be the requested one, and that Channel must still be active: a
+    // Thread paired with a foreign or archived Channel is not-found, never an empty success.
+    if (threadContext !== undefined && threadContext.channelRef !== channelRef) throw new Error(`Thread '${request.threadRef}' does not belong to Channel '${channelRef}'`)
+    if (threadContext === undefined && this.state.channels.get(channelRef)?.state === 'archived') throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
+    const threadRefs: ReadonlySet<AgentTeamThreadRef> = threadContext === undefined
+      ? this.channelThreadRefs(channelRef)
+      : new Set<AgentTeamThreadRef>([threadContext.thread.threadRef])
+    const inScope = (threadRef: AgentTeamThreadRef): boolean => threadRefs.has(threadRef)
+
+    const byMember = new Map<AgentTeamMemberId, RoomActivityMemberTotals>()
+    const bucketFor = (memberId: AgentTeamMemberId) => {
+      const existing = byMember.get(memberId)
+      if (existing !== undefined) return existing
+      const created: RoomActivityMemberTotals = { messages: 0, turns: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, toolCalls: 0, runMs: 0, failedTurns: 0, sessionIds: [] }
+      byMember.set(memberId, created)
+      return created
+    }
+
+    let messages = 0
+    for (const message of this.state.messagesByRef.values()) {
+      if (!inScope(message.threadRef)) continue
+      messages += 1
+      bucketFor(message.sender).messages += 1
+    }
+
+    // Turn records are the only source of every usage bucket. A Turn belongs to the scope when
+    // any of its `threadRefs` is in scope; a Turn naming no Thread belongs to no scope.
+    let turns = 0
+    let failedTurns = 0
+    let unrecordedTurns = 0
+    const unknownBuckets = new Map<AgentTeamMemberId, RoomActivityBuckets>()
+    const unknownFor = (memberId: AgentTeamMemberId) => {
+      const existing = unknownBuckets.get(memberId)
+      if (existing !== undefined) return existing
+      const created = { tokensIn: false, tokensOut: false, cacheRead: false, cacheWrite: false }
+      unknownBuckets.set(memberId, created)
+      return created
+    }
+    const sessionIdsInScope = new Set<SessionId>()
+    for (const operation of this.state.sessionTurns.values()) {
+      const turn = operation.data
+      if (!turn.threadRefs.some(inScope)) continue
+      turns += 1
+      sessionIdsInScope.add(turn.sessionId)
+      const bucket = bucketFor(turn.memberId)
+      const unknown = unknownFor(turn.memberId)
+      bucket.turns += 1
+      bucket.toolCalls += turn.toolCalls
+      bucket.runMs += turn.runMs
+      // Each bucket is proven independently: one null makes that bucket unproven for this Member
+      // and leaves the other buckets statable. `outputTokens` is never null, but the same
+      // accounting keeps the four buckets symmetric.
+      let proven = true
+      for (const { field, usage } of ROOM_ACTIVITY_BUCKETS) {
+        const value = turn.usage[usage]
+        if (value === null) { unknown[field] = true; proven = false } else bucket[field] += value
+      }
+      // A Turn with any unproven bucket is an unrecorded Turn, whatever the other buckets say.
+      if (!proven) unrecordedTurns += 1
+      if (!bucket.sessionIds.includes(turn.sessionId)) bucket.sessionIds.push(turn.sessionId)
+    }
+
+    for (const operation of this.state.ordered) {
+      if (operation.kind !== 'team/turn-failure-notice') continue
+      if (!inScope(operation.data.threadRef)) continue
+      failedTurns += 1
+      bucketFor(operation.data.memberId).failedTurns += 1
+    }
+
+    const sessions = [...sessionIdsInScope]
+      .map(sessionId => this.state.sessionRuns.get(sessionId))
+      .filter((run): run is AgentTeamSessionRun => run !== undefined)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+      .slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
+
+    // Sticky null, per bucket: a bucket is unproven for a Member once any of its Turns left that
+    // bucket unreported, and stays unproven in this scope — the signature of an unknown, never a 0.
+    const bucketState = (memberId: AgentTeamMemberId) => unknownBuckets.get(memberId) ?? ROOM_ACTIVITY_BUCKET_PROVEN
+    const perAgent: readonly AgentTeamRoomActivityAgent[] = [...byMember.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([memberId, bucket]) => {
+        const unknown = bucketState(memberId)
+        return Object.freeze({
+          memberId,
+          messages: bucket.messages,
+          turns: bucket.turns,
+          tokensIn: unknown.tokensIn ? null : bucket.tokensIn,
+          tokensOut: unknown.tokensOut ? null : bucket.tokensOut,
+          cacheRead: unknown.cacheRead ? null : bucket.cacheRead,
+          cacheWrite: unknown.cacheWrite ? null : bucket.cacheWrite,
+          toolCalls: bucket.toolCalls,
+          runMs: bucket.runMs,
+          failedTurns: bucket.failedTurns,
+          sessionIds: Object.freeze([...bucket.sessionIds].sort()),
+        })
+      })
+
+    const total = (pick: (agent: AgentTeamRoomActivityAgent) => number | null): number | null => {
+      let total = 0
+      for (const agent of perAgent) {
+        const value = pick(agent)
+        if (value === null) return null
+        total += value
+      }
+      return total
+    }
+    const totals: AgentTeamRoomActivityTotals = Object.freeze({
+      messages,
+      turns,
+      tokensIn: total(agent => agent.tokensIn),
+      tokensOut: total(agent => agent.tokensOut),
+      cacheRead: total(agent => agent.cacheRead),
+      cacheWrite: total(agent => agent.cacheWrite),
+      toolCalls: total(agent => agent.toolCalls),
+      runMs: total(agent => agent.runMs),
+      failedTurns,
+      unrecordedTurns,
+    })
+
+    const eventChannelRef = scope === 'thread' ? (threadContext?.channelRef ?? null) : channelRef
+    return Object.freeze(this.roomActivityEvents(request.workspaceId, eventChannelRef, threadRefs, scope, totals, perAgent, sessions, limit, cursor))
+  }
+
+
+  /**
+   * The bounded event feed of a room-activity scope: one row per committed operation that belongs
+   * to the scope, newest first, one page. Read-only; it walks `state.ordered` from the head, so a
+   * page costs the operations it scans, never a second index. A Message contributes an opening-line
+   * preview bounded to 200 characters — a body is never returned whole (contract §19.1).
+   */
+  private roomActivityEvents(
+    workspaceId: WorkspaceId,
+    channelRef: AgentTeamChannelRef | null,
+    threadRefs: ReadonlySet<AgentTeamThreadRef>,
+    scope: 'channel' | 'thread',
+    totals: AgentTeamRoomActivityTotals,
+    perAgent: readonly AgentTeamRoomActivityAgent[],
+    sessions: readonly AgentTeamSessionRun[],
+    limit: number,
+    cursor: number | null,
+  ): AgentTeamRoomActivityResult {
+    const fromSequence = cursor
+    const page: AgentTeamRoomActivityEvent[] = []
+    let nextCursor: string | undefined
+    for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
+      const event = this.roomActivityEvent(this.state.ordered[index]!, channelRef, threadRefs, workspaceId)
+      if (event === undefined) continue
+      if (fromSequence !== null && event.sequence >= fromSequence) continue
+      if (page.length < limit) page.push(event)
+      else { nextCursor = String(page[page.length - 1]!.sequence); break }
+    }
+    return Object.freeze({
+      scope,
+      totals,
+      perAgent,
+      sessions,
+      events: Object.freeze(page),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    })
+  }
+
+  /** One committed operation projected into an event row, or undefined when it is out of scope. */
+  private roomActivityEvent(operation: AgentTeamOperation, channelRef: AgentTeamChannelRef | null, threadRefs: ReadonlySet<AgentTeamThreadRef>, workspaceId: WorkspaceId): AgentTeamRoomActivityEvent | undefined {
+    const base = { sequence: operation.sequence, at: operation.occurredAt, actor: roomActivityActor(operation.actor) }
+    const event = (kind: string, summary: string, scope: { threadRef?: AgentTeamThreadRef | undefined; taskRef?: AgentTeamTaskRef | undefined; messageRef?: AgentTeamMessageRef | undefined }): AgentTeamRoomActivityEvent =>
+      Object.freeze({ ...base, kind, summary: roomActivitySummary(summary), ...(scope.threadRef === undefined ? {} : { threadRef: scope.threadRef }), ...(scope.taskRef === undefined ? {} : { taskRef: scope.taskRef }), ...(scope.messageRef === undefined ? {} : { messageRef: scope.messageRef }) })
+    switch (operation.kind) {
+      case 'team/message-sent':
+      case 'team/thread-replied': {
+        const message = operation.data.message
+        if (!threadRefs.has(message.threadRef)) return undefined
+        return event(operation.kind, message.body, { threadRef: message.threadRef, taskRef: message.taskRef, messageRef: message.messageRef })
+      }
+      case 'team/thread-promoted':
+      case 'team/claim-created':
+      case 'team/claim-done':
+      case 'team/claim-released':
+      case 'team/task-changed': {
+        const threadRef = operation.data.thread.threadRef
+        if (!threadRefs.has(threadRef)) return undefined
+        const taskRef = operation.data.task.taskRef
+        if (operation.kind === 'team/thread-promoted' || operation.kind === 'team/task-changed') {
+          return event(operation.kind, roomActivityTaskSummary(operation.data.activity.kind, operation.data.task.status, operation.data.task.resolution), { threadRef, taskRef })
+        }
+        const claim = operation.data.claim
+        return event(operation.kind, roomActivityClaimSummary(operation.data.activity.kind, claim.direction), { threadRef, taskRef })
+      }
+      case 'team/thread-session-bound': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, roomActivitySessionSummary(operation.data), { threadRef: operation.data.threadRef })
+      }
+      case 'team/thread-instance-bound': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, `bound to instance slot ${operation.data.slot}`, { threadRef: operation.data.threadRef })
+      }
+      case 'team/session-turn-recorded': {
+        const threadRef = operation.data.threadRefs.find(candidate => threadRefs.has(candidate))
+        if (threadRef === undefined) return undefined
+        return event(operation.kind, `turn ${operation.data.turn} recorded ${operation.data.toolCalls} tool calls`, { threadRef })
+      }
+      case 'team/turn-failure-notice': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, `turn ${operation.data.turn} failed: ${operation.data.reason}`, { threadRef: operation.data.threadRef })
+      }
+      case 'team/thread-summary-committed': {
+        if (!threadRefs.has(operation.data.threadRef)) return undefined
+        return event(operation.kind, `summary generation ${operation.data.generation} (${operation.data.trigger})`, { threadRef: operation.data.threadRef })
+      }
+      case 'team/channel-member-added':
+      case 'team/channel-member-removed':
+        if (operation.data.workspaceId !== workspaceId || channelRef === null || operation.data.channelRef !== channelRef) return undefined
+        return event(operation.kind, roomActivityMemberSummary(operation.kind, this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId), {})
+      case 'team/member-workspace-joined':
+      case 'team/member-workspace-left':
+        // Workspace participation is Team-wide, not Thread-scoped: it reaches only a Channel feed.
+        if (channelRef === null || operation.data.workspaceId !== workspaceId) return undefined
+        if (!this.isChannelMember(channelRef, operation.data.memberId)) return undefined
+        return event(operation.kind, roomActivityMemberSummary(operation.kind, this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId), {})
+      case 'team/member-added':
+      case 'team/member-updated':
+      case 'team/member-suspended':
+      case 'team/member-resumed':
+      case 'team/member-archived':
+      case 'team/member-removed':
+      case 'team/member-session-renewed':
+      case 'team/member-session-rolled-over':
+      case 'team/member-session-restarted':
+      case 'team/member-context-cleared':
+        // Member lifecycle is never Thread-scoped, so it belongs to the Channel feed only, and
+        // only when the Member still has a projection row in this Channel.
+        if (channelRef === null) return undefined
+        if (this.state.members.get(operation.data.member.memberId) === undefined) return undefined
+        if (!this.isChannelMember(channelRef, operation.data.member.memberId)) return undefined
+        return event(operation.kind, roomActivityMemberSummary(operation.kind, operation.data.member.handle), {})
+      case 'team/dm-sent':
+      case 'team/channel-created':
+      case 'team/channel-updated':
+      case 'team/channel-archived':
+      case 'team/initialized':
+      case 'team/thread-attention-changed':
+      case 'team/thread-read':
+        // Not room activity: a DM has no Channel, a read or attention change is private, and the
+        // rest is workspace or channel administration a room view does not narrate.
+        return undefined
+      default:
+        return undefined
+    }
+  }
+
+  /**
+   * This Member's committed operations that name a Thread, inside [startSequence, endSequence].
+   * The host's replied list for one Turn window (turn-threads.ts). Walks back from the head, so
+   * the cost is the window, not the whole log.
+   */
+  repliedThreadsBetween(memberId: AgentTeamMemberId, startSequence: number, endSequence: number): readonly AgentTeamRepliedThread[] {
+    const replied: AgentTeamRepliedThread[] = []
+    for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
+      const operation = this.state.ordered[index]!
+      if (operation.sequence > endSequence) continue
+      if (operation.sequence < startSequence) break
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== memberId) continue
+      if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
+        replied.push(Object.freeze({ sequence: operation.sequence, threadRef: operation.data.message.threadRef }))
+      }
+    }
+    return Object.freeze(replied)
+  }
+
+  /**
+   * Record that one Member's turns in one Thread run on a Session. Append-only:
+   * a later binding supersedes an earlier one by sequence, never by overwrite.
+   * An exact retry resolves to the recorded binding; the same requestId with
+   * different data collides.
+   */
+  bindThreadSession(request: AgentTeamBindThreadSessionRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadSessionBindResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameThreadSessionBound(existing, request)
+        return this.resolved(this.threadSessionBindResult(existing))
+      }
+      if (request.actor.kind !== 'member') throw new Error('Thread session bind requires Member authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      const member = this.requireMember(request.actor.memberId)
+      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can bind a Session`)
+      const data: AgentTeamThreadSessionBoundData = Object.freeze({
+        workspaceId: request.workspaceId, threadRef: request.threadRef, memberId: request.actor.memberId, sessionId: request.sessionId, reason: request.reason,
+        ...(request.parentSessionId === undefined ? {} : { parentSessionId: request.parentSessionId }),
+        ...(request.summaryGeneration === undefined ? {} : { summaryGeneration: request.summaryGeneration }),
+      })
+      const operation: AgentTeamThreadSessionBoundOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/thread-session-bound', data,
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.threadSessionBindResult(operation))
+    })
+  }
+
+  /** The receipt of the binding, plus the binding itself; derived from the stored record alone. */
+  private threadSessionBindResult(operation: AgentTeamThreadSessionBoundOperation): AgentTeamThreadSessionBindResult {
+    return Object.freeze({ receipt: this.receipt(operation), binding: this.threadSessionBinding(operation) })
+  }
+
+  /** Bindings for one seat in one Thread, oldest first; the last entry is the active Session. */
+  threadSessionsOf(threadRef: AgentTeamThreadRef, memberId: AgentTeamMemberId): readonly AgentTeamThreadSessionBinding[] {
+    return Object.freeze([...(this.state.threadSessions.get(threadRef)?.get(memberId) ?? [])])
+  }
+
+  /**
+   * Bind one seat's turns in one Thread to an instance slot (contract v2 §2c).
+   * Forward-only: a re-bind is a newer op, never a rewrite. An exact retry
+   * resolves to the recorded binding; the same requestId with other data collides.
+   */
+  bindThreadInstance(request: AgentTeamBindThreadInstanceRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadInstanceBindResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameThreadInstanceBound(existing, request)
+        return this.resolved(this.threadInstanceBindResult(existing))
+      }
+      if (request.actor.kind !== 'member') throw new Error('Thread instance bind requires the seat\'s own authority')
+      this.assertActorForWorkspace(request.actor, request.workspaceId)
+      this.requireThread(request.threadRef)
+      const member = this.requireMember(request.actor.memberId)
+      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can bind an instance`)
+      if (!Number.isInteger(request.slot) || request.slot < 0 || request.slot >= memberInstances(member)) {
+        throw new Error(`instance slot ${request.slot} is outside 0..${memberInstances(member) - 1} for '${member.handle}'`)
+      }
+      const data: AgentTeamThreadInstanceBoundData = Object.freeze({
+        workspaceId: request.workspaceId, threadRef: request.threadRef, memberId: member.memberId, slot: request.slot, boundAt: request.boundAt,
+      })
+      const operation: AgentTeamThreadInstanceBoundOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/thread-instance-bound', data,
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.threadInstanceBindResult(operation))
+    })
+  }
+
+  private threadInstanceBindResult(operation: AgentTeamThreadInstanceBoundOperation): AgentTeamThreadInstanceBindResult {
+    return Object.freeze({ receipt: this.receipt(operation), binding: operation.data })
+  }
+
+  /**
+   * The slot one seat's turns in one Thread are bound to, or undefined when the
+   * Thread is unbound for that seat. A binding to a slot at or past the seat's
+   * current `instances`, or to a seat that is gone, reads as unbound (§2a).
+   */
+  threadInstanceOf(threadRef: AgentTeamThreadRef, memberId: AgentTeamMemberId): number | undefined {
+    const binding = this.state.threadInstances.get(threadRef)?.get(memberId)
+    const member = this.state.members.get(memberId)
+    if (binding === undefined || member === undefined || binding.slot >= memberInstances(member)) return undefined
+    return binding.slot
+  }
+
+  /** Every live binding of one seat, by Thread; stale slots (>= N) are left out. */
+  threadInstancesOf(memberId: AgentTeamMemberId): ReadonlyMap<AgentTeamThreadRef, number> {
+    const out = new Map<AgentTeamThreadRef, number>()
+    for (const threadRef of this.state.threadInstances.keys()) {
+      const slot = this.threadInstanceOf(threadRef, memberId)
+      if (slot !== undefined) out.set(threadRef, slot)
+    }
+    return out
+  }
+
   readThread(request: AgentTeamAuthorizedThreadReadRequest): Promise<AgentTeamThreadReadOutcome> {
     return this.enqueue(async () => {
       const existing = this.state.byRequest.get(request.requestId)
@@ -1819,6 +2727,30 @@ export class AgentTeamLedger {
         channelRef,
         ...(task === undefined ? {} : { taskRef: task.taskRef, taskNumber: numbers.get(task.taskRef) ?? 0 }),
         title: boundedThreadTitle(this.threadAnchor(thread.threadRef).body),
+      }))
+    }
+    return resolved
+  }
+
+  /**
+   * Context for Messages cited by `replyToMessageRef`; unknown refs are omitted.
+   *
+   * A reply stores only its parent's identity, so the author and the excerpt a
+   * quote block renders are derived here from the recorded Message. Resolving
+   * through the ledger rather than the reader's loaded window is what lets a
+   * quote survive history paging — the parent may be far outside the facts the
+   * reader currently holds.
+   */
+  resolveMessageRefs(workspaceId: WorkspaceId, messageRefs: readonly AgentTeamMessageRef[]): AgentTeamResolvedMessageRef[] {
+    const resolved: AgentTeamResolvedMessageRef[] = []
+    for (const messageRef of messageRefs) {
+      const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
+      const message = key === undefined ? undefined : this.state.messagesByRef.get(key)
+      const channel = message === undefined ? undefined : this.state.channels.get(message.channelRef)
+      // Same archival rule as Thread refs: an archived Channel's Messages stop resolving.
+      if (message === undefined || channel?.workspaceId !== workspaceId || channel.state === 'archived') continue
+      resolved.push(Object.freeze({
+        messageRef: message.messageRef, threadRef: message.threadRef, sender: message.sender, excerpt: boundedReplyExcerpt(message.body),
       }))
     }
     return resolved
@@ -2052,10 +2984,16 @@ export class AgentTeamLedger {
    * Durable position of the newest shared-projection commit: the version every
    * change waiter outside the presence scope observes. It only moves when a
    * commit has scopes somebody could refetch (`changeScopesOf`), never for
-   * private read progress or an audit-only record.
+   * private read progress. UI invalidation only: agent Turn windows read
+   * `attributionSequence()` instead.
    */
   projectionSequence(): number {
     return this.projectionVersion
+  }
+
+  /** The position Turn windows are attributed against; excludes Turn records and failure notices (see `attributionVersion`). */
+  attributionSequence(): number {
+    return this.attributionVersion
   }
 
   /** Scopes whose projections one committed operation invalidates; undefined wakes every waiter. */
@@ -2123,6 +3061,16 @@ export class AgentTeamLedger {
         return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
+      case 'team/turn-failure-notice':
+        // UI invalidation only: an open Thread refetches its notices. Agents are not woken from here:
+        // `affectedMembersOf` derives members from attention deltas and touched threads, never from these scopes.
+        return [{ kind: 'thread', threadRef: operation.data.threadRef }]
+      case 'team/session-turn-recorded':
+        // UI invalidation only, as above: each Thread the Turn was attributed to refreshes its stats row.
+        return operation.data.threadRefs.map(threadRef => ({ kind: 'thread' as const, threadRef }))
+      case 'team/thread-session-bound':
+      case 'team/thread-instance-bound':
+      case 'team/thread-summary-committed':
       case 'team/thread-read':
         // A read advances only the reader's private watermark; no projection
         // visible to other participants changes, so nobody is woken.
@@ -2188,6 +3136,11 @@ export class AgentTeamLedger {
       case 'team/member-session-rolled-over':
       case 'team/member-updated':
       case 'team/channel-member-added':
+      case 'team/thread-session-bound':
+      case 'team/thread-instance-bound':
+      case 'team/session-turn-recorded':
+      case 'team/turn-failure-notice':
+      case 'team/thread-summary-committed':
       case 'team/thread-read':
       case 'team/dm-sent':
         return []
@@ -2434,6 +3387,53 @@ export class AgentTeamLedger {
         : this.inboxDelta([], [{ memberId: operation.data.memberId, threadRef: thread.threadRef }], [], this.directMarkersForFrom(projection, operation.data.memberId, thread.threadRef))
       if (!isDeepStrictEqual(operation.data.inbox, expected)) throw new Error('invalid Attention projection')
       this.validateInboxDelta(operation.data.inbox, projection, refs)
+      return
+    }
+    if (operation.kind === 'team/session-turn-recorded') {
+      // Self-scoped: the Member's own Turn is the only record of its Session stats.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the Member's own authority`)
+      }
+      if (operation.data.threadRefs.some(threadRef => !projection.threads.has(threadRef))) throw new Error('Session turn names an unknown Thread')
+      if (!projection.members.has(operation.data.memberId)) throw new Error('Session turn names an unknown Member')
+      if (projection.sessionTurns.has(sessionTurnKey(operation.data.sessionId, operation.data.turn))) throw new Error('Session turn duplicates an already-recorded Turn')
+      return
+    }
+    if (operation.kind === 'team/turn-failure-notice') {
+      // Self-scoped: a Member notes only its own errored Turns.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the Member's own authority`)
+      }
+      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Turn failure notice names an unknown Thread')
+      if (!projection.members.has(operation.data.memberId)) throw new Error('Turn failure notice names an unknown Member')
+      return
+    }
+    if (operation.kind === 'team/thread-summary-committed') {
+      const { threadRef, generation, coversThroughSequence } = operation.data
+      if (!projection.threads.has(threadRef)) throw new Error('Thread summary names an unknown Thread')
+      const prior = projection.threadSummaries.get(threadRef)?.at(-1)?.data
+      if (generation !== (prior?.generation ?? 0) + 1) throw new Error('Thread summary generation does not follow its predecessor')
+      if (coversThroughSequence <= (prior?.coversThroughSequence ?? 0) || coversThroughSequence >= operation.sequence) throw new Error('Thread summary coverage is not monotonic')
+      return
+    }
+    if (operation.kind === 'team/thread-instance-bound') {
+      // Host-written under the seat's own actor; a slot past today's N is legal history and reads as unbound.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the bound seat's own authority`)
+      }
+      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Thread instance bind names an unknown Thread')
+      if (!projection.members.has(operation.data.memberId)) throw new Error('Thread instance bind names an unknown Member')
+      if (!Number.isInteger(operation.data.slot) || operation.data.slot < 0 || operation.data.slot >= AGENT_TEAM_MAX_INSTANCES) throw new Error('Thread instance bind names an invalid slot')
+      return
+    }
+    if (operation.kind === 'team/thread-session-bound') {
+      // Self-scoped: a Member records only its own Session per Thread.
+      if (operation.actor.kind !== 'member' || operation.actor.memberId !== operation.data.memberId) {
+        throw new Error(`agent-team operation ${operation.sequence} requires the bound Member's own authority`)
+      }
+      if (!projection.threads.has(operation.data.threadRef)) throw new Error('Thread session bind names an unknown Thread')
+      const member = projection.members.get(operation.data.memberId)
+      if (member === undefined || member.state !== 'enabled') throw new Error('Thread session bind requires an enabled Member')
       return
     }
     if (operation.kind === 'team/thread-read') {
@@ -2834,7 +3834,9 @@ export class AgentTeamLedger {
     // against its own scratch projection, so a scope derivation there would be
     // discarded.
     const scopes = this.changeScopesOf(operation)
-    if (scopes === undefined || scopes.length !== 0) this.projectionVersion = operation.sequence
+    const invalidates = scopes === undefined || scopes.length !== 0
+    if (invalidates) this.projectionVersion = operation.sequence
+    if (invalidates && operation.kind !== 'team/session-turn-recorded' && operation.kind !== 'team/turn-failure-notice') this.attributionVersion = operation.sequence
   }
 
   private applyTo(target: Projection, operation: AgentTeamOperation): void {
@@ -2990,6 +3992,32 @@ export class AgentTeamLedger {
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/session-turn-recorded') {
+      target.sessionRuns.set(operation.data.sessionId, foldSessionTurn(target.sessionRuns.get(operation.data.sessionId), operation.data))
+      target.sessionTurns.set(sessionTurnKey(operation.data.sessionId, operation.data.turn), operation)
+      return
+    }
+    if (operation.kind === 'team/turn-failure-notice') {
+      // Audit-only: the notice is read back from the ledger, not folded into a projection.
+      return
+    }
+    if (operation.kind === 'team/thread-summary-committed') {
+      target.threadSummaries.set(operation.data.threadRef, [...(target.threadSummaries.get(operation.data.threadRef) ?? []), operation])
+      return
+    }
+    if (operation.kind === 'team/thread-instance-bound') {
+      const byMember = target.threadInstances.get(operation.data.threadRef) ?? new Map<AgentTeamMemberId, AgentTeamThreadInstanceBoundData>()
+      target.threadInstances.set(operation.data.threadRef, byMember)
+      byMember.set(operation.data.memberId, operation.data)
+      return
+    }
+    if (operation.kind === 'team/thread-session-bound') {
+      const byMember = target.threadSessions.get(operation.data.threadRef) ?? new Map<AgentTeamMemberId, AgentTeamThreadSessionBinding[]>()
+      target.threadSessions.set(operation.data.threadRef, byMember)
+      const bindings = byMember.get(operation.data.memberId) ?? []
+      byMember.set(operation.data.memberId, [...bindings, Object.freeze({ ...operation.data, sequence: operation.sequence })])
       return
     }
     if (operation.kind === 'team/thread-attention-changed' || operation.kind === 'team/thread-read') {
@@ -3961,6 +4989,13 @@ export class AgentTeamLedger {
     return new Set([...projection.threads.keys()].filter(threadRef => this.channelRefForThreadFrom(projection, threadRef) === channelRef))
   }
 
+  /** Live Channels of one Workspace the Member belongs to: the team-memory reader scope, sorted. */
+  memberChannels(memberId: AgentTeamMemberId, workspaceId: WorkspaceId): readonly AgentTeamChannelRef[] {
+    return Object.freeze([...this.state.channels.values()]
+      .filter(channel => channel.workspaceId === workspaceId && channel.state !== 'archived' && this.isChannelMember(channel.channelRef, memberId))
+      .map(channel => channel.channelRef).sort())
+  }
+
   /** The Workspace authorization question: does this Member participate in this Workspace. */
   participatesIn(memberId: AgentTeamMemberId, workspaceId: WorkspaceId): boolean {
     return this.participatesInFrom(this.state, memberId, workspaceId)
@@ -4096,6 +5131,35 @@ export class AgentTeamLedger {
    * result, because inviting a Member into an existing Thread stays a Human
    * decision.
    */
+  /**
+   * The Message a reply answers. It must already be recorded in the same
+   * Thread: a quote that pointed elsewhere would announce a context the reader
+   * of this Thread cannot follow. Abbreviated refs resolve like other refs.
+   */
+  private requireReplyParent(threadRef: AgentTeamThreadRef, messageRef: AgentTeamMessageRef): AgentTeamMessage {
+    const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
+    const parent = key === undefined ? undefined : this.state.messagesByRef.get(key)
+    if (parent === undefined) throw new Error(`unknown Message '${messageRef}' for replyToMessageRef`)
+    if (parent.threadRef !== threadRef) throw new Error(`Message '${parent.messageRef}' belongs to another Thread; replyToMessageRef must name a Message in Thread '${threadRef}'`)
+    return parent
+  }
+
+  /**
+   * Answering a Message reaches its author the way a mention does. Only an
+   * author the Channel can still address joins — a departed Member stays out
+   * rather than failing the reply — and a reply to one's own Message adds no one.
+   */
+  private withReplyAuthor(
+    sender: AgentTeamMemberId,
+    channelRef: AgentTeamChannelRef,
+    parent: AgentTeamMessage | undefined,
+    recipients: readonly AgentTeamMemberId[],
+  ): readonly AgentTeamMemberId[] {
+    if (parent === undefined || parent.sender === sender || recipients.includes(parent.sender)) return recipients
+    if (!this.mentionCandidatesFor(channelRef).some(candidate => candidate.memberId === parent.sender)) return recipients
+    return Object.freeze([...recipients, parent.sender].sort())
+  }
+
   private undeliverableRecipients(
     actor: AgentTeamHumanActor | AgentTeamMemberActor,
     threadRef: AgentTeamThreadRef,
@@ -4155,6 +5219,14 @@ export class AgentTeamLedger {
     }
   }
 
+  /** The Human Member the Team was initialized with; undefined before initialization. */
+  humanMemberId(): AgentTeamMemberId | undefined {
+    const operation = this.state.ordered[0]
+    if (operation === undefined) return undefined
+    this.assertInitializationRecord(operation)
+    return operation.data.humanMemberId
+  }
+
   private initialization(): AgentTeamInitializedOperation {
     const operation = this.state.ordered[0]
     if (operation === undefined) throw new Error('agent-team ledger is not initialized')
@@ -4185,6 +5257,7 @@ export class AgentTeamLedger {
       || operation.data.member.description !== request.description.trim() || operation.data.member.presetId !== request.presetId.trim()
       || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.member.model ?? undefined)
       || !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.member.capabilities ?? undefined)
+      || (operation.data.member.instances ?? undefined) !== (request.member.instances ?? undefined)
       || !this.sameList(operation.data.channelRefs, this.normalizeUnique(request.channelRefs, 'initial Member Channels'))) this.throwRequestCollision(request.requestId)
   }
 
@@ -4222,7 +5295,8 @@ export class AgentTeamLedger {
       // means "keep the stored value", which the record cannot distinguish from
       // a request that stated the same value.
       || (request.model !== undefined && !isDeepStrictEqual(operation.data.member.model ?? undefined, request.model ?? undefined))
-      || (request.capabilities !== undefined && !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.capabilities ?? undefined))) this.throwRequestCollision(request.requestId)
+      || (request.capabilities !== undefined && !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.capabilities ?? undefined))
+      || (request.instances !== undefined && (operation.data.member.instances ?? undefined) !== (request.instances ?? undefined))) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameChannelJoin(operation: AgentTeamOperation, request: AgentTeamAuthorizedJoinChannelRequest): asserts operation is AgentTeamChannelMemberAddedOperation {
@@ -4271,8 +5345,14 @@ export class AgentTeamLedger {
       || (request.asTask === true) !== (operation.data.task !== undefined)) this.throwRequestCollision(request.requestId)
   }
 
-  private assertSameReply(operation: AgentTeamOperation, request: AgentTeamAuthorizedReplyRequest, recipients: readonly AgentTeamMemberId[]): asserts operation is AgentTeamThreadRepliedOperation {
+  private assertSameReply(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedReplyRequest,
+    recipients: readonly AgentTeamMemberId[],
+    replyToMessageRef: AgentTeamMessageRef | undefined,
+  ): asserts operation is AgentTeamThreadRepliedOperation {
     if (operation.kind !== 'team/thread-replied' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.message.replyToMessageRef !== replyToMessageRef
       || operation.data.workspaceId !== request.workspaceId
       || (request.threadRef !== undefined && operation.data.thread.threadRef !== request.threadRef)
       || (request.taskRef !== undefined && operation.data.task?.taskRef !== request.taskRef)
@@ -4322,6 +5402,37 @@ export class AgentTeamLedger {
       || (request.taskRef !== undefined && operation.data.task?.taskRef !== request.taskRef)
       || (request.threadRef === undefined && request.taskRef === undefined)
       || operation.data.action !== request.action) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameSessionTurn(operation: AgentTeamOperation, request: AgentTeamRecordSessionTurnRequest): asserts operation is AgentTeamSessionTurnRecordedOperation {
+    if (operation.kind !== 'team/session-turn-recorded' || !this.sameActor(operation.actor, request.actor)
+      || !this.sameSessionTurnData(operation.data, request)) this.throwRequestCollision(request.requestId)
+  }
+
+  /** Every recorded field must match; a retry that differs in any one of them is a collision. */
+  private sameSessionTurnData(data: AgentTeamSessionTurnRecordedData, request: AgentTeamRecordSessionTurnRequest): boolean {
+    return data.workspaceId === request.workspaceId && data.memberId === request.memberId && data.sessionId === request.sessionId
+      && data.parentSessionId === request.parentSessionId && data.turn === request.turn && data.startedAt === request.startedAt
+      && data.endedAt === request.endedAt && data.toolCalls === request.toolCalls && data.runMs === request.runMs
+      && isDeepStrictEqual(data.threadRefs, request.threadRefs) && isDeepStrictEqual(data.usage, request.usage)
+      && data.startSequence === request.startSequence && data.endSequence === request.endSequence
+  }
+
+  private assertSameThreadSessionBound(operation: AgentTeamOperation, request: AgentTeamBindThreadSessionRequest): asserts operation is AgentTeamThreadSessionBoundOperation {
+    const data = operation.kind === 'team/thread-session-bound' ? operation.data : undefined
+    if (data === undefined || !this.sameActor(operation.actor, request.actor)
+      || data.workspaceId !== request.workspaceId || data.threadRef !== request.threadRef || data.sessionId !== request.sessionId
+      || data.reason !== request.reason || data.parentSessionId !== request.parentSessionId || data.summaryGeneration !== request.summaryGeneration) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameThreadInstanceBound(operation: AgentTeamOperation, request: AgentTeamBindThreadInstanceRequest): asserts operation is AgentTeamThreadInstanceBoundOperation {
+    const data = operation.kind === 'team/thread-instance-bound' ? operation.data : undefined
+    if (data === undefined || !this.sameActor(operation.actor, request.actor) || data.workspaceId !== request.workspaceId
+      || data.threadRef !== request.threadRef || data.slot !== request.slot || data.boundAt !== request.boundAt) this.throwRequestCollision(request.requestId)
+  }
+
+  private threadSessionBinding(operation: AgentTeamThreadSessionBoundOperation): AgentTeamThreadSessionBinding {
+    return Object.freeze({ ...operation.data, sequence: operation.sequence })
   }
 
   private assertSameThreadRead(operation: AgentTeamOperation, request: AgentTeamAuthorizedThreadReadRequest): asserts operation is AgentTeamThreadReadOperation {

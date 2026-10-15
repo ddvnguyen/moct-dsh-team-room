@@ -27,13 +27,19 @@ import type {
   AgentTeamAddMemberResult,
   AgentTeamRecoverMemberRequest,
   AgentTeamRecoverMemberResult,
+  AgentTeamMemberActivityRequest,
+  AgentTeamMemberActivityResult,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
   AgentTeamReplyRequest,
   AgentTeamResolveTaskRefsRequest,
   AgentTeamResolveTaskRefsResult,
+  AgentTeamMemoryListRequest,
+  AgentTeamMemoryListResult,
   AgentTeamResolveThreadRefsRequest,
+  AgentTeamResolveMessageRefsRequest,
+  AgentTeamResolveMessageRefsResult,
   AgentTeamResolveThreadRefsResult,
   AgentTeamReplyResult,
   AgentTeamConfirmationRequired,
@@ -41,25 +47,32 @@ import type {
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadObservations,
   AgentTeamThreadObservationsRequest,
+  AgentTeamThreadAttentionRequest,
+  AgentTeamThreadAttentionResult,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
+  AgentTeamThreadReplyStat,
+  AgentTeamThreadRef,
+  AgentTeamThreadTurnFailure,
   AgentTeamPromoteThreadRequest,
   AgentTeamPromoteThreadResult,
   AgentTeamTaskRequest,
   AgentTeamTaskResult,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
+  AgentTeamSessionRun,
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateChannelResult,
   AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
-} from '@contexera/dsh-agent-team/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
 import type { TeamChangeListener, TeamChangeScope } from './team-changes.ts'
 import type { TeamDraftStore } from './drafts.ts'
 import type { TeamHumanIdentitySource } from './human-identity.ts'
+import type { TeamTriggerCatalogItem, TeamTriggerCatalogScope } from './trigger-catalog.ts'
 
 export interface TeamNavigationSource {
   getSnapshot: () => TeamNavigationSnapshot
@@ -129,8 +142,16 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
+    /** A14: the Member's Session runs, newest first, plus the seat's current Session. */
+    loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => Promise<RemoteResult<{ readonly current: AgentTeamClientMemberStatus['member']['sessionId'] | null; readonly runs: readonly AgentTeamSessionRun[] }>>
+    /** Names the Threads a Session run touched, for the Agent detail's Session rows. */
+    resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
+    /** Team memory read for Agent detail's Memory tab (the Human memory list; the Host adds the actor). */
+    loadMemory: (request: AgentTeamMemoryListRequest) => Promise<RemoteResult<AgentTeamMemoryListResult>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
+    /** A14: open the Agent's current Session natively; the Agent's detail tabs ride the conversation. */
+    openAgentDetail: (workspaceId: AgentTeamViewRequest['workspaceId'], memberId: AgentTeamClientMemberStatus['member']['memberId'], sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
     selectedChannelRef?: AgentTeamChannelRef
   }
 
@@ -138,6 +159,11 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   navigation: TeamNavigationSource
   /** Keyed composer draft cache; one store per Client context. */
   drafts: TeamDraftStore
+  /**
+   * Lazy read-only catalogs. Host commands come from the retained main
+   * Session; skills are scoped to the caller's selected Member session.
+   */
+  loadTriggerCatalog: (scope: TeamTriggerCatalogScope, signal: AbortSignal) => Promise<readonly TeamTriggerCatalogItem[]>
   /** The Human's own identity: the display name and avatar every seat that names or draws them reads. */
   humanIdentity: TeamHumanIdentitySource
   loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
@@ -149,18 +175,38 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   sendMessage: (request: AgentTeamSendMessageRequest) => Promise<RemoteResult<AgentTeamSendMessageResult>>
   joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
   removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
+  /** Archive a Channel from the Channel page's overflow menu (D1b). */
+  archiveChannel: (request: AgentTeamArchiveChannelRequest) => Promise<RemoteResult<AgentTeamArchiveChannelResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>
   changeTask: (request: AgentTeamTaskRequest) => Promise<RemoteResult<AgentTeamTaskResult>>
+  /** Human's own Thread Attention: follow/unfollow of this Thread as the reading Human. */
+  changeAttention: (request: AgentTeamThreadAttentionRequest) => Promise<RemoteResult<AgentTeamThreadAttentionResult>>
   promoteThread: (request: AgentTeamPromoteThreadRequest) => Promise<RemoteResult<AgentTeamPromoteThreadResult>>
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>
   resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
+  /** Quote context (author + excerpt) for the Messages replies cite; unknown refs are omitted. */
+  resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => Promise<RemoteResult<AgentTeamResolveMessageRefsResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+  /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
+  loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
   /** Human direct-only Inbox slice; the Inbox page merges one call per visible Workspace. */
   loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   /** Human-only Thread Attention observations; the Thread composer ranks the returned followers first. */
   threadObservations: (request: AgentTeamThreadObservationsRequest) => Promise<RemoteResult<AgentTeamThreadObservations>>
+  /** Per-reply usage of one Thread's agent replies; the page keys the rows by message ref. */
+  threadReplyStats: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadReplyStat[]>>
+  /** Errored-Turn notices of the Thread, every notice kept; the page merges them into the timeline by ledger sequence. */
+  threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
   /** Agent-card session jump, shared by every slot; message member chips reuse it. */
   openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
+  /**
+   * L1 (issue 57): whether the shell's left column is closed, read reactively.
+   * The frame publishes it on its element and hands the main seat no owner
+   * props, so the whole Channel/Thread surface reads it through this hook.
+   */
+  useSidebarCollapsed: () => boolean
+  /** Reopen the shell's left column through the shell's own action. */
+  openSidebar: () => void
 }
 
 export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'team'> & TeamNavigationActions & {

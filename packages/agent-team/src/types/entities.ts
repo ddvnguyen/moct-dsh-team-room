@@ -104,6 +104,12 @@ export interface AgentTeamAgentMember {
   readonly model?: AgentTeamModelSelection | undefined
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities | undefined
+  /**
+   * Concurrent instances (slots) this seat may run, one Session each; Threads
+   * bind to a slot (multi-instance contract v2). An integer from 1 to 5;
+   * absent reads as the default, 2 (`memberInstances` in member-instances.ts).
+   */
+  readonly instances?: number | undefined
   /** Host-internal namespace; never exposed through Client projections. */
   readonly privateMemoryPath: string
   /**
@@ -135,8 +141,21 @@ export interface AgentTeamCapabilityWarning {
  * helps (restart heals, restart is useless, transient), `detail` is the
  * human-readable reason, and a refused session carries its artifact location.
  */
+/** One instance slot of a seat (multi-instance contract v2). Slot 0 is the seat's home Session. */
+export interface AgentTeamMemberInstanceStatus {
+  readonly slot: number
+  /** The live Session behind the slot. Absent when nothing runs there: never spawned yet, or ended while idle. */
+  readonly sessionId?: SessionId
+  /** Slot 0 mirrors the seat's own presence. Extra slots never report 'error'. */
+  readonly presence: 'available' | 'working' | 'error' | 'unavailable'
+  /** Threads whose live binding (slot < N) points at this slot, in binding order. */
+  readonly threadRefs: readonly AgentTeamThreadRef[]
+}
+
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
+  /** Always present: length = the seat's instances (N), in slot order. N=1 gives [slot 0]. */
+  readonly instances: readonly AgentTeamMemberInstanceStatus[]
   readonly availability: 'active' | 'suspended' | 'inactive' | 'archived' | 'unavailable'
   readonly presence: 'available' | 'working' | 'error' | 'unavailable'
   readonly diagnostic?: AgentTeamMemberDiagnostic
@@ -226,6 +245,31 @@ export interface AgentTeamResolveThreadRefsResult {
   readonly resolved: readonly AgentTeamResolvedThreadRef[]
 }
 
+/**
+ * Look up the context of Messages cited by `replyToMessageRef`. A reply stores
+ * only its parent's identity, so the author and the excerpt a reader sees are
+ * resolved here from the ledger's own record — the quote can never disagree
+ * with the Message it points at, and a parent outside the reader's loaded
+ * history window still resolves.
+ */
+export interface AgentTeamResolveMessageRefsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly messageRefs: readonly AgentTeamMessageRef[]
+}
+
+/** One resolved Message; refs the workspace cannot resolve are omitted. */
+export interface AgentTeamResolvedMessageRef {
+  readonly messageRef: AgentTeamMessageRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly sender: AgentTeamMemberId
+  /** Body gist for the quote block: first line, trimmed, capped at 120 characters. */
+  readonly excerpt: string
+}
+
+export interface AgentTeamResolveMessageRefsResult {
+  readonly resolved: readonly AgentTeamResolvedMessageRef[]
+}
+
 export interface AgentTeamOperationBase {
   readonly sequence: number
   readonly operationId: AgentTeamOperationId
@@ -275,6 +319,15 @@ export interface AgentTeamMessage {
   readonly sender: AgentTeamMemberId
   readonly body: string
   readonly attachments?: readonly AgentTeamMessageAttachment[] | undefined
+  /**
+   * The Message this reply answers, inside the same Thread. Absent on every
+   * Message that is not a reply, including every Message recorded before
+   * replies existed, so an older ledger reads back unchanged and needs no
+   * normalization. It stores the parent's identity only: the author and the
+   * excerpt are resolved at read time from the ledger's own ref index, so a
+   * reply can never disagree with the Message it quotes.
+   */
+  readonly replyToMessageRef?: AgentTeamMessageRef
   readonly topLevel: boolean
   readonly sequence: number
   /** Wall-clock instant of the wrapping ledger operation; pre-occurredAt ledgers normalize on replay. */

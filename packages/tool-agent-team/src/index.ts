@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
-import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@contexera/dsh-agent-team/host'
-import { formatTeamTimestamp } from '@contexera/dsh-agent-team/time-format'
+import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@ddvnguyen/moct-dsh-team-room/host'
+import { formatTeamTimestamp } from '@ddvnguyen/moct-dsh-team-room/time-format'
 import { registerContextTools } from './context-tools.ts'
+import { registerMemoryTools } from './memory-tools.ts'
 import { service, workspaceOf, workspaceParam } from './host-access.ts'
 import type {
   AgentTeamClaimRef,
@@ -9,9 +10,10 @@ import type {
   AgentTeamRequestId,
   AgentTeamTaskRef,
   AgentTeamThreadRef,
-} from '@contexera/dsh-agent-team/types'
+  AgentTeamMessageRef,
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { AgentTeamContextAdvice } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamContextAdvice } from '@ddvnguyen/moct-dsh-team-room/types'
 
 export const name = 'wowyuarm-agent-team-tools'
 export const inject = ['tools']
@@ -44,6 +46,7 @@ interface MessageFactView {
   readonly sender: string
   readonly occurredAt?: string
   readonly mentions: string[]
+  readonly replyToMessageRef?: string
   readonly unread?: boolean
   readonly direct?: boolean
 }
@@ -112,6 +115,11 @@ function adviceView(advice: AgentTeamContextAdvice): ContextAdviceView {
 function boundedSubject(body: string): string {
   const collapsed = body.replaceAll(/\s+/gu, ' ').trim()
   return collapsed.length <= SUBJECT_BOUND ? collapsed : `${collapsed.slice(0, SUBJECT_BOUND - 1)}…`
+}
+
+/** The answered Message's ref, present only on a reply that links one. */
+function replyLink(message: { readonly replyToMessageRef?: string }): { replyToMessageRef?: string } {
+  return message.replyToMessageRef === undefined ? {} : { replyToMessageRef: message.replyToMessageRef }
 }
 
 /** Unread/direct markers sit on the fact line itself; a fact carrying neither renders neither. */
@@ -260,7 +268,7 @@ const teamThread = defineTool({
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
       } } },
       facts: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, occurredAt: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, activity: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
+        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, occurredAt: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, replyToMessageRef: { type: 'string' }, activity: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
       } } },
       contextAdvice: { type: 'object', additionalProperties: false, properties: {
         usageTokens: { type: 'number' }, taskBoundaryThreshold: { type: 'number' }, handoffAt: { type: 'number' }, hardLimit: { type: 'number' },
@@ -368,13 +376,13 @@ const teamThread = defineTool({
       const history = host.threadHistoryForAgent(agent, { ...base, ...(args.beforeSequence === undefined ? {} : { beforeSequence: args.beforeSequence }), ...(args.limit === undefined ? {} : { limit: args.limit }) })
       const status = host.attentionStatusForAgent(agent, base)
       return threadResult('history', base.workspaceId, history, status.attention, history.facts.map(fact => fact.kind === 'message'
-          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions], occurredAt: fact.occurredAt }
+          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions], ...replyLink(fact.message), occurredAt: fact.occurredAt }
           : activityFactView(fact.sequence, fact.activity, undefined, fact.occurredAt)), { cursor: history.cursor, hasMore: history.hasMore, ...taskNumberOf(history.task) })
     }
     if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('read takes no beforeSequence or limit — drop them and retry; use action history to page older facts')
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', base.workspaceId, read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
-        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], unread: entry.unread, direct: entry.direct, occurredAt: entry.fact.occurredAt }
+        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], ...replyLink(entry.fact.message), unread: entry.unread, direct: entry.direct, occurredAt: entry.fact.occurredAt }
         : activityFactView(entry.fact.sequence, entry.fact.activity, { unread: entry.unread, direct: entry.direct }, entry.fact.occurredAt)), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount, ...(read.earlierFactCount === undefined ? {} : { earlierFactCount: read.earlierFactCount }), ...(read.contextAdvice === undefined ? {} : { contextAdvice: adviceView(read.contextAdvice) }), ...taskNumberOf(read.task) })
   },
 })
@@ -383,7 +391,7 @@ const teamThread = defineTool({
 function factLine(fact: FactView): string {
   const at = fact.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(fact.occurredAt)}`
   return fact.kind === 'message'
-    ? `${fact.sequence}${at} [${fact.sender ?? 'unknown sender'}]${factMarkers(fact)} ${fact.body}`
+    ? `${fact.sequence}${at} [${fact.sender ?? 'unknown sender'}]${factMarkers(fact)}${fact.replyToMessageRef === undefined ? '' : ` Replies to: ${fact.replyToMessageRef} —`} ${fact.body}`
     : `${activityLine(fact)}${at}${factMarkers(fact)}`
 }
 
@@ -434,6 +442,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     memberRef: { type: 'string', description: "Full branded Member ref exactly as returned by Team tools, including the 'member:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves. Required for dm; the Member must be an enabled Agent in your Workspace (the Human cannot be DMed)." },
     asTask: { type: 'boolean', description: 'When true, start creates a Task with the Thread. Default false creates a taskless Thread.' },
     body: { type: 'string', required: true, description: "Markdown body. Lead with the conclusion or state. Mention the Human only when they must know or decide; when a decision is owed, say plainly what needs deciding and what happens by default if nobody answers — no fixed template. Keep it the shortest useful message for the recipients; mechanical detail follows below. Cite Team refs exactly as returned, as bare text with one colon (e.g. task:0f0a…) — never a double colon, never inside backticks or quotes. Unambiguous UUID abbreviations (first 6+ hex chars) also resolve. Mention a Member by writing `@Handle` (`@` required, case-insensitive) in the prose: that is what delivers the Message to them and renders the mention chip, and `@all` reaches the whole Channel." }, baseRevision: { type: 'number', description: "The next-write token from your latest fully drained team_thread read (or your own last committed mutation) on this Thread. Copy the explicitly rendered value verbatim; never increment, derive, compare, or cite it — it is an opaque concurrency token, not a fact about the Thread." },
+    replyToMessageRef: { type: 'string', description: "reply only: the Message ref (message:…) this reply answers, from a Thread read or notice. It must name a Message in the same Thread. The Host renders the link as a quote and delivers your reply to that Message's author the way a mention does. Use it only when answering that specific Message." },
     attachments: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths to share, e.g. screenshots or generated artifacts; images render as thumbnails for recipients. The Host validates each path and copies the file into the attachment cache, and members also receive one cached path per attachment; if any path fails validation the whole send is rejected.' },
     workspace: workspaceParam,
   },
@@ -482,15 +491,15 @@ const teamMessage = markAgentTeamPreset(defineTool({
     const attachmentPaths = Array.isArray(rawPaths) ? rawPaths.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : undefined
     const paths = attachmentPaths !== undefined && attachmentPaths.length > 0 ? { attachmentPaths } : {}
     if (args.action === 'start') {
-      if (args.channelRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined) throw new Error('start requires channelRef and does not accept threadRef, taskRef, or baseRevision')
+      if (args.channelRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined || args.replyToMessageRef !== undefined) throw new Error('start requires channelRef and does not accept threadRef, taskRef, baseRevision, or replyToMessageRef')
       const result = await host.sendMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
         channelRef: args.channelRef as never, body: args.body, asTask: args.asTask === true, ...paths })
       return messageOutcome(result, 'start')
     }
     if (args.action === 'dm') {
       if (args.memberRef === undefined || args.channelRef !== undefined || args.threadRef !== undefined || args.taskRef !== undefined
-        || args.baseRevision !== undefined || args.asTask !== undefined || attachmentPaths !== undefined) {
-        throw new Error('dm requires memberRef and body only; it does not accept channelRef, threadRef, taskRef, baseRevision, asTask, or attachments')
+        || args.baseRevision !== undefined || args.asTask !== undefined || attachmentPaths !== undefined || args.replyToMessageRef !== undefined) {
+        throw new Error('dm requires memberRef and body only; it does not accept channelRef, threadRef, taskRef, baseRevision, asTask, attachments, or replyToMessageRef')
       }
       try {
         const result = await host.dmForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
@@ -510,6 +519,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     const result = await host.replyForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
       ...(args.threadRef === undefined ? {} : { threadRef: args.threadRef as AgentTeamThreadRef }),
       ...(args.taskRef === undefined ? {} : { taskRef: args.taskRef as AgentTeamTaskRef }),
+      ...(args.replyToMessageRef === undefined ? {} : { replyToMessageRef: args.replyToMessageRef as AgentTeamMessageRef }),
       body: args.body, baseRevision, ...paths })
     return messageOutcome(result, 'reply')
   },
@@ -726,4 +736,5 @@ export function apply(ctx: Context): void {
   ctx.tools.register(teamClaim)
   ctx.tools.register(teamView)
   registerContextTools(ctx)
+  registerMemoryTools(ctx)
 }

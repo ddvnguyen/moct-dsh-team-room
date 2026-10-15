@@ -1,9 +1,9 @@
 import { RemoteStream, RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
-import type { AgentTeamChangesRequest } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamChangesRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import { afterEach, expect, vi } from 'vitest'
-import { useState } from 'react'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -50,22 +50,104 @@ afterEach(() => {
   expect(crashes, `slot entries crashed:\n${crashes.join('\n')}`).toEqual([])
 })
 
-type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main'>
-function Frame({ renderSlot, usePanelInfo }: FrameProps) {
-  const [collapsed, setCollapsed] = useState(false)
+/**
+ * The fixture frame's sidebar column state, shared with the layout double so a
+ * header control can observe the same collapse the column renders. The shipped
+ * AppFrame derives it from the layout store (sidebar === 0, or the narrow
+ * auto-collapse override) and publishes it as `data-sidebar-collapsed` on its
+ * own element; the Team headers read that attribute, so the fixture publishes
+ * the same one instead of a fixture-only prop.
+ */
+export interface FixtureSidebarState {
+  readonly collapsed: boolean
+  readonly subscribe: (listener: () => void) => () => void
+  readonly setCollapsed: (next: boolean) => void
+  /**
+   * The bare boolean, not a fresh object: useSyncExternalStore compares with
+   * Object.is, so an allocated snapshot reads as a change on every poll and
+   * re-renders forever.
+   */
+  readonly getSnapshot: () => boolean
+}
+
+function createFixtureSidebarState(): FixtureSidebarState {
+  const listeners = new Set<() => void>()
+  let collapsed = false
+  return {
+    get collapsed() { return collapsed },
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    setCollapsed: (next) => { if (collapsed === next) return; collapsed = next; for (const listener of [...listeners]) listener() },
+    getSnapshot: () => collapsed,
+  }
+}
+
+type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main'> & { sidebarState: FixtureSidebarState }
+function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
   // The shipped frame renders the keyed main cell for the selected global panel
   // and falls back to the conversation seat, so the bench follows the same rule
   // instead of pinning that seat.
   const panelId = usePanelInfo(info => info.activePanelId)
-  return <>
-    <button type="button" data-test-control onClick={() => { setCollapsed(value => !value) }}>Toggle fixture sidebar</button>
+  // Subscribed exactly as the shipped frame subscribes to its store, so a
+  // toggle from either side re-renders the column and re-publishes the
+  // attribute. A plain getter read would not: the Frame holds no subscription
+  // of its own.
+  const collapsed = useSyncExternalStore(sidebarState.subscribe, sidebarState.getSnapshot, sidebarState.getSnapshot)
+  // The window-chrome contract the real frame honours: the attribute is
+  // present while the column is closed and absent while it is open.
+  return <div {...(collapsed ? { 'data-sidebar-collapsed': true } : {})}>
+    <button type="button" data-test-control onClick={() => { sidebarState.setCollapsed(!collapsed) }}>Toggle fixture sidebar</button>
     {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280 })}
     {renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })}
-  </>
+  </div>
 }
 
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
+/**
+ * The automation plugin's native tab strip, reduced to what the Team tab reads:
+ * the private registry hung off the shipped workspace entry, and a body that
+ * renders every inserted tab under the baseline list the way the strip shows
+ * the active one.
+ */
+/**
+ * The real strip renders one tab body at a time; this renders the Team one and,
+ * with `agentsTab`, the Agents one beside it, so specs of either body do not
+ * read each other's controls.
+ */
+function nativeTabStrip(showAgents = false) {
+  const tabs: Array<{ readonly id: string; readonly render: (props: never) => unknown }> = []
+  const listeners = new Set<() => void>()
+  let version = 0
+  const notify = (): void => { version += 1; for (const listener of listeners) listener() }
+  const registry = {
+    version: 1,
+    getTabs: () => tabs,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    insert: (tab: (typeof tabs)[number]) => {
+      tabs.push(tab)
+      notify()
+      return () => { tabs.splice(tabs.indexOf(tab), 1); notify() }
+    },
+  }
+  // The strip hands each tab the shipped entry's own props, as the host does.
+  function StripWorkspace(props: Record<string, unknown>) {
+    useSyncExternalStore(registry.subscribe, () => version)
+    return <div data-baseline-workspaces>普通工作区{tabs.filter(tab => showAgents || tab.id !== 'agents').map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
+  }
+  return Object.assign(StripWorkspace, { __dshNativeTabs: registry })
+}
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
+/**
+ * The missing seat, served the way a seat-carrying shell serves it. The entry
+ * declares `sidebar.sections` as its own child — the ownership rule every
+ * outlet obeys — and renders it through the props-face renderSlot, so the
+ * Team's occupant mounts with the same outlet machinery, boundaries and all,
+ * as it does in a column whose shell carries the seat.
+ */
+function SectionsFootOutlet({ renderSlot, wide }: { renderSlot: (key: never, owner: object) => ReactNode; wide?: boolean }) {
+  // The shell hands its foot seat the same `wide` it hands the real seat, so
+  // the section picks the same presentation a column shell would give it.
+  return renderSlot('sidebar.sections' as never, { wide })
+}
 interface HumanProfileSeed {
   readonly name?: string
   readonly avatarRef?: string
@@ -89,9 +171,15 @@ interface SeededMessage {
   readonly occurredAt: string
   readonly sender?: 'human' | 'agent'
   readonly mentions?: readonly string[]
+  /** Reply-link parent, by seeded index: `message:seed-<n>`. */
+  readonly replyToMessageRef?: string
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string }) {
+export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
+  /** Replace the bench roster wholesale; the Thread roster spec needs archived/inactive states. */
+  readonly seedRoster?: readonly { readonly memberId: string; readonly workspaceId: string; readonly handle: string; readonly presence?: 'available' | 'working' | 'error' | 'unavailable'; readonly diagnostic?: AgentTeamMemberDiagnostic; readonly state?: 'enabled' | 'inactive' | 'archived' }[];
+  /** Seed Channel membership rows: which Members joined which Channel. */
+  readonly seedChannelMembers?: readonly { readonly channelRef: string; readonly memberId: string }[] }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -105,10 +193,13 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   // panelInfo source (the same one `usePanelInfo` reads), so a spec selects a
   // global panel exactly the way the shipped sidebar and plugin manager do.
   const selectPanel = vi.fn((panelId: string | null): void => { runtime.panelInfo.set({ activePanelId: panelId as never }) })
+  const sidebarState = createFixtureSidebarState()
+  const toggleSidebar = vi.fn((): void => { sidebarState.setCollapsed(!sidebarState.collapsed) })
   runtime.ctx.provide('layout', {
-    toggleSidebar: vi.fn(),
+    toggleSidebar,
     selectPanel,
     panelInfo: runtime.panelInfo,
+    sidebarState,
   } as never)
   // The shipped layout store drops a selection once no live `main` entry owns
   // its key (ui-layout's `retainMainPanels`, subscribed to the main slot): that
@@ -168,24 +259,34 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
     releaseDraftAttachments: () => {},
     rebindDraftFiles: () => {},
   } as never)
-  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: AgentTeamMemberDiagnostic) => ({
+  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: AgentTeamMemberDiagnostic, state: 'enabled' | 'inactive' | 'archived' = 'enabled', availability?: 'active' | 'archived' | 'inactive') => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
-      presetId: 'team-member', state: 'enabled', sessionId: `session:${memberId}`,
+      presetId: 'team-member', state, sessionId: `session:${memberId}`,
     },
     workspaceIds: [workspaceId],
-    availability: presence === 'unavailable' ? 'unavailable' : 'active',
+    instances: [],
+    availability: availability ?? (state === 'archived' ? 'archived' : state === 'inactive' ? 'inactive' : presence === 'unavailable' ? 'unavailable' : 'active'),
     presence,
     ...(diagnostic === undefined ? {} : { diagnostic }),
   })
-  let memberRows = [
+  let memberRows: Array<ReturnType<typeof status>> = [
     status('member:builder', 'w1', 'builder', 'available'),
     status('member:worker', 'w1', 'worker', 'working'),
     status('member:failed', 'w1', 'failed', 'error', { class: 'runtime', detail: 'model failed' }),
     status('member:offline', 'w1', 'offline', 'unavailable', { class: 'preset-composition', detail: 'preset missing' }),
     status('member:builder-beta', 'w2', 'builder', 'available'),
   ]
-  const members = vi.fn(async ({ workspaceId }: { workspaceId?: string }) => ({ ok: true, value: memberRows.filter(entry => workspaceId === undefined || entry.workspaceIds.includes(workspaceId)) }))
+  // A spec may replace the bench roster wholesale: the Thread roster spec
+  // needs a Thread-only participant, extra Workspace members, and
+  // archived/inactive states the default bench does not carry.
+  if (options?.seedRoster !== undefined) memberRows = options.seedRoster.map(entry => status(entry.memberId, entry.workspaceId, entry.handle, entry.presence ?? 'available', entry.diagnostic, entry.state))
+  // The writing Human is a Workspace seat too: the roster the bench serves carries
+  // them alongside the seeded Agents, so a surface that renders the Human by their
+  // own id (the Thread member dialog's follow row) has a row to draw. Seats that
+  // never select the Human — the mention roster — filter by id, not by presence.
+  const humanStatusRow = () => status('member:human', 'w1', 'human', 'available')
+  const members = vi.fn(async ({ workspaceId }: { workspaceId?: string }) => ({ ok: true, value: [...memberRows, humanStatusRow()].filter(entry => workspaceId === undefined || entry.workspaceIds.includes(workspaceId)) }))
   const joinWorkspace = vi.fn(async (request: { memberId: string; workspaceId: string }) => {
     const member = memberRows.find(entry => entry.member.memberId === request.memberId)!
     if (!member.workspaceIds.includes(request.workspaceId)) member.workspaceIds.push(request.workspaceId)
@@ -210,11 +311,11 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   let channels: Array<Record<string, unknown>> = options?.initialChannels === true
     ? [{ channelRef: 'channel:engineering', workspaceId: 'w1', name: 'engineering', description: 'Engineering work', createdAtSequence: 1 }]
     : []
-  let memberships: Array<Record<string, unknown>> = []
+  let memberships: Array<Record<string, unknown>> = (options?.seedChannelMembers ?? []).map(entry => ({ channelRef: entry.channelRef, memberId: entry.memberId }))
   const seedTaskRef = options?.seedTaskRef ?? 'task:1'
   const seedThreadRef = options?.seedThreadRef ?? 'thread:1'
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
-    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: seed.sender === 'agent' ? 'member:builder' : 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
+    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: seed.sender === 'agent' ? 'member:builder' : 'member:human', body: seed.body, ...(seed.replyToMessageRef === undefined ? {} : { replyToMessageRef: seed.replyToMessageRef }), topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
     mentions: seed.mentions ?? [],
     task: { taskRef: seedTaskRef, channelRef: 'channel:engineering', threadRef: seedThreadRef,
       status: options?.seedTaskStatus ?? 'todo', resolution: 'open' },
@@ -347,6 +448,61 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   }
   // One projection wake whose narrow scopes match nothing this app subscribed
   // to — a commit in another Workspace: only the scope-less waiters wake.
+  // One thread-scope wake: the Host's change for a Turn notice or a Turn attributed to this Thread.
+  const publishThreadUpdate = (threadRef: string): void => {
+    changeVersion += 1
+    for (const waiter of changeWaiters) if (waiter.request.scope === undefined || (waiter.request.scope.kind === 'thread' && waiter.request.scope.threadRef === threadRef)) waiter.wake()
+  }
+  // L1 item 4: the running-Turn feed double (A13 v2). Mutable, so a spec can
+  // start a Turn, advance it, and end it the way the Host folds session events.
+  // `revision` mirrors the Host's process-local activity epoch, which is what the
+  // client's activity query keys on.
+  let activityRowsNow: readonly {
+    readonly memberId: string
+    readonly handle: string
+    readonly threadRef?: string
+    readonly turnStartedAt: string
+    readonly stepCount: number
+    readonly toolCount: number
+    readonly current?: { readonly tool: string; readonly label: string }
+    readonly updatedAt: string
+  }[] = []
+  let activityRevisionValue = 0
+  const memberActivity = vi.fn(async (request: { workspaceId: string; threadRef?: string }) => ({
+    ok: true as const,
+    value: {
+      revision: activityRevisionValue,
+      activities: activityRowsNow
+        .filter(row => request.threadRef === undefined || row.threadRef === request.threadRef)
+        .map(row => ({ ...row, threadRef: row.threadRef })),
+    },
+  }))
+  /** Start (or replace) a seat's running Turn on one Thread; mirrors the Host's entryFor. */
+  const publishActivity = (row: { readonly memberId: string; readonly handle: string; readonly threadRef?: string; readonly stepCount?: number; readonly toolCount?: number; readonly current?: { readonly tool: string; readonly label: string } }): void => {
+    const time = new Date().toISOString()
+    activityRowsNow = [...activityRowsNow.filter(entry => entry.memberId !== row.memberId), {
+      memberId: row.memberId,
+      handle: row.handle,
+      ...(row.threadRef === undefined ? {} : { threadRef: row.threadRef }),
+      turnStartedAt: time,
+      stepCount: row.stepCount ?? 1,
+      toolCount: row.toolCount ?? 0,
+      ...(row.current === undefined ? {} : { current: row.current }),
+      updatedAt: time,
+    }]
+    activityRevisionValue += 1
+    for (const waiter of changeWaiters) if (waiter.request.scope?.kind === 'activity') waiter.wake()
+  }
+  /** End the seat's running Turn, as `agent/status` idle and `agent/error` do on the Host. */
+  const endActivity = (memberId: string): void => {
+    activityRowsNow = activityRowsNow.filter(entry => entry.memberId !== memberId)
+    activityRevisionValue += 1
+    for (const waiter of changeWaiters) if (waiter.request.scope?.kind === 'activity') waiter.wake()
+  }
+  const addTurnFailure = (failure: AgentTeamThreadTurnFailure): void => {
+    turnFailureRows = [...turnFailureRows, failure]
+    publishThreadUpdate(failure.threadRef)
+  }
   const publishGlobalUpdate = (): void => {
     changeVersion += 1
     for (const waiter of changeWaiters) if (waiter.request.scope === undefined) waiter.wake()
@@ -415,13 +571,48 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   /** One-shot history-read failure; cleared by the next successful read. */
   let threadHistoryFailure: string | undefined
   // The Human author follows every seeded Thread; tests override the set to
-  // drive the mention-candidate ranking.
+  // drive the mention-candidate ranking. `changeAttention` mutates it like the
+  // Host ledger does, so a follow/unfollow round-trip is observable.
+  // L1 item 3: the Human's own Thread Attention op double. It mirrors the Host
+  // contract exactly — the request carries no memberId and the double asserts the
+  // Human as the actor, so a client can never address another seat through it.
   const threadFollowers = [...(options?.seedFollowers ?? ['member:human'])]
+  const changeAttention = vi.fn(async (request: { requestId: string; workspaceId: string; threadRef?: string; taskRef?: string; action: 'follow' | 'unfollow' }) => {
+    if (request.action === 'follow') {
+      if (threadFollowers.includes('member:human')) throw new Error('Member is already following Thread')
+      threadFollowers.push('member:human')
+      return { ok: true as const, value: { receipt: { operationId: 'op:attention', sequence: 30, occurredAt: '2026-08-21T12:00:00.000Z' }, thread: { threadRef: 'thread:1', revision: 3 }, attention: { memberId: 'member:human', threadRef: 'thread:1', followedAtSequence: 30 } } }
+    }
+    if (!threadFollowers.includes('member:human')) throw new Error('Member is already unfollowed from Thread')
+    const kept = threadFollowers.filter(id => id !== 'member:human')
+    threadFollowers.length = 0
+    threadFollowers.push(...kept)
+    return { ok: true as const, value: { receipt: { operationId: 'op:attention', sequence: 31, occurredAt: '2026-08-21T12:00:00.000Z' }, thread: { threadRef: 'thread:1', revision: 4 } } }
+  })
   const threadObservations = vi.fn(async ({ taskRef, threadRef }: { taskRef?: string; threadRef?: string }) => {
     void taskRef
     void threadRef
     return { ok: true as const, value: { items: [], followers: threadFollowers } }
   })
+  // Per-reply usage of the Thread; a test seeds the rows it wants to see.
+  const threadReplyStats = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: options?.seedReplyStats ?? [] }))
+  // Failure notices of the Thread; a test seeds the notices it wants to see.
+  // Mutable, so a test can add a notice and wake the open Thread the way the Host's thread-scope change would.
+  let turnFailureRows: AgentTeamThreadTurnFailure[] = [...(options?.seedTurnFailures ?? [])]
+  const threadTurnFailures = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: turnFailureRows }))
+  // Reply-link quote context, derived from the seeded record like the Host's
+  // ledger lookup: author and first line; unknown refs are omitted.
+  const resolveMessageRefs = vi.fn(async (request: { workspaceId: string; messageRefs: readonly string[] }) => {
+    const messages = viewItems.map(item => item.message as { messageRef: string; threadRef: string; sender: string; body: string })
+    const resolved = request.messageRefs.flatMap(ref => {
+      const message = messages.find(candidate => candidate.messageRef === ref)
+      return message === undefined ? [] : [{ messageRef: message.messageRef, threadRef: message.threadRef, sender: message.sender, excerpt: message.body.split('\n', 1)[0]!.trim() }]
+    })
+    return { ok: true as const, value: { resolved } }
+  })
+  /** Session history in the real `{current, runs[]}` shape; no Member has run yet. */
+  const memberSessions = vi.fn(async () => ({ ok: true as const, value: { current: null, runs: [] } }))
+  const resolveThreadRefs = vi.fn(async () => ({ ok: true as const, value: { resolved: [] } }))
   const resolveTaskRefs = vi.fn(async (request: { workspaceId: string; taskRefs: readonly string[] }) => {
     const numbers = new Map(viewItems.flatMap((item, index) => {
       const taskRef = (item.task as { taskRef?: string } | undefined)?.taskRef
@@ -528,7 +719,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
   let humanProfileValue: { name: string; avatarRef?: string; version: string; repoUrl: string; updateAvailable: boolean; latestVersion?: string } = {
     name: 'human',
     version: '0.1.13',
-    repoUrl: 'https://github.com/Contexera/dsh-agent-team',
+    repoUrl: 'https://github.com/ddvnguyen/moct-dsh-team-room',
     updateAvailable: false,
     ...options?.humanProfile,
   }
@@ -596,13 +787,28 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
     environmentFailure = message
   }
 
+  // The bench Host runs without a MOCT backend, so every Team memory read
+  // answers the same BACKEND_UNAVAILABLE outcome the real Host gives then.
+  const memoryUnavailable = vi.fn(async () => ({
+    ok: true as const,
+    value: { ok: false as const, code: 'BACKEND_UNAVAILABLE', message: 'Team memory needs the MOCT Team Room backend.' },
+  }))
+  const memory = {
+    memoryList: memoryUnavailable, memoryRecord: memoryUnavailable, memoryRuleFeed: memoryUnavailable, memoryUsage: memoryUnavailable,
+    memorySettings: memoryUnavailable, updateMemorySettings: memoryUnavailable, memoryAct: memoryUnavailable,
+  }
+
   // rc.1: the runtime owns one TestRemote; the bench scripts the namespaces
   // the mounted features reach (remote.<name> injects included) and attaches
   // the change-stream and generated-remote-mount faces the shipped double
   // refuses by contract.
+  const commandList = vi.fn(async () => ({ ok: true as const, value: [] as const }))
+  const skillList = vi.fn(async () => ({ ok: true as const, value: { skills: [] as const } }))
   runtime.remote.provideNamespaces({
     session: { modelCatalog },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar },
+    commands: { list: commandList },
+    skills: { list: skillList },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -620,10 +826,11 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
       { workspaceId: 'w2' as WorkspaceId, title: 'Beta', path: '/work/beta', sessionIds: [], createdAt: '', updatedAt: '' },
     ] as never
   })
+  const FrameWithSidebar = (props: object): ReactNode => Frame({ ...(props as object), sidebarState } as never)
   await runtime.root.declare({
     sidebar: { kind: 'single', scope: 'root' },
     main: { kind: 'keyed', scope: 'root' },
-  } as never, Frame as never)
+  } as never, FrameWithSidebar as never)
   // The shipped store keeps a selection only while a live `main` entry owns that
   // key, so a requested panel gets a stand-in entry of its own instead of a
   // dangling id no page backs. The selection itself is set here rather than at
@@ -635,15 +842,26 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; mainPanelId?: s
     runtime.panelInfo.set({ activePanelId: options.mainPanelId as never })
   }
   await runtime.mount({ inject: [...injectSidebar], apply: applySidebar })
+  // A shell that ships the additive `sidebar.sections` seat serves it from its
+  // own column. CI's upstream tag does not carry the seat, and the Team's
+  // section registration is inert without a declared spec — the whole sidebar
+  // suite would otherwise exercise a sidebar that cannot mount. Stand in for
+  // the missing seat the way production declares it: a foot entry that owns
+  // the seat and renders it through the same outlet face, registered before
+  // the Team mounts. A seat-carrying shell declares it first, so this never
+  // registers there.
+  if (runtime.slots.spec('sidebar.sections' as never) === undefined) {
+    runtime.slots.register({ name: 'sidebar.footer.action', id: 'bench-sections', priority: 1000, children: { 'sidebar.sections': { kind: 'list', scope: 'root' } } } as never, SectionsFootOutlet as never)
+  }
   // The shipped ConversationRoot occupies the conversation seat — the same
   // surface production mounts — so member-session specs assert the
   // session-maybe seat's adoption semantics (remount on no-session) through
   // real element identity of the root's [data-phase] node.
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation })
-  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, BaselineWorkspace as never)
+  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip(options?.agentsTab === true)) as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

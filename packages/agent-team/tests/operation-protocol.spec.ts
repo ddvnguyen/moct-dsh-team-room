@@ -440,6 +440,56 @@ const threadRead: Op<'team/thread-read'> = {
   data: threadReadReceipt,
 }
 
+/** A Member binds its own Session for one Thread: the sessionId is the Member's Session in that Thread. */
+const threadSessionBound: Op<'team/thread-session-bound'> = {
+  ...opBase('operation:protocol-27', 'request:protocol-thread-session-bound', 27, memberActor),
+  previousOperationId,
+  kind: 'team/thread-session-bound',
+  data: { workspaceId: threadRead.data.workspaceId, threadRef: memberThread, memberId, sessionId: SessionId('session:protocol-thread'), reason: 'start' },
+}
+
+/** The host binds the seat's turns in one Thread to instance slot 1, under the seat's own actor. */
+const threadInstanceBound: Op<'team/thread-instance-bound'> = {
+  ...opBase('operation:protocol-31', 'request:protocol-thread-instance-bound', 31, memberActor),
+  previousOperationId,
+  kind: 'team/thread-instance-bound',
+  data: { workspaceId: threadRead.data.workspaceId, threadRef: memberThread, memberId, slot: 1, boundAt: '2026-10-13T00:45:00+08:00' },
+}
+
+/** One completed Turn of the Member's Session in its Thread; usage buckets are the reported counts. */
+const sessionTurnRecorded: Op<'team/session-turn-recorded'> = {
+  ...opBase('operation:protocol-28', 'request:protocol-session-turn', 28, memberActor),
+  previousOperationId,
+  kind: 'team/session-turn-recorded',
+  data: {
+    workspaceId: threadRead.data.workspaceId, memberId, sessionId: SessionId('session:protocol-thread'), threadRefs: [memberThread], turn: 1,
+    startedAt: '2026-10-11T01:00:00+08:00', endedAt: '2026-10-11T01:00:05+08:00', toolCalls: 2, runMs: 5000,
+    usage: { uncachedInputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: null, reasoningTokens: null, route: { provider: 'opencode-go', model: 'mimo-v2.6-flash' } },
+  },
+}
+
+// TEST-2 only (contract §6.0): fc28cd8 does not know this kind; see the rollback rule before shipping it.
+const turnFailureNotice: Op<'team/turn-failure-notice'> = {
+  ...opBase('operation:protocol-30', 'turn-failed:session:protocol-thread:1:protocol-thread', 30, memberActor),
+  previousOperationId,
+  kind: 'team/turn-failure-notice',
+  data: {
+    requestId: 'turn-failed:session:protocol-thread:1:protocol-thread' as AgentTeamRequestId, workspaceId: threadRead.data.workspaceId, threadRef: memberThread,
+    memberId, sessionId: SessionId('session:protocol-thread'), turn: 1, reason: 'provider returned 503',
+  },
+}
+
+const threadSummaryCommitted: Op<'team/thread-summary-committed'> = {
+  ...opBase('operation:protocol-29', 'request:protocol-thread-summary', 29, memberActor),
+  previousOperationId,
+  kind: 'team/thread-summary-committed',
+  data: {
+    workspaceId: threadRead.data.workspaceId, threadRef: memberThread, generation: 1, trigger: 'rolling', text: 'Summary of the protocol thread.',
+    coversThroughSequence: 3, transcriptTokens: 12, model: { provider: 'opencode-go', model: 'mimo-v2.6-flash' }, usage: { inputTokens: 40, outputTokens: 9 },
+    at: '2026-10-11T01:00:06+08:00',
+  },
+}
+
 /**
  * The pre-receipt snapshot: the same protocol kind in its legacy stored shape,
  * with a bare anchor Message (no `occurredAt`) exactly as ledgers written
@@ -1102,6 +1152,150 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
     },
     legacy: { normalize: 'pre-receipt-stamp', repair: 'none' },
     intent: { scopes: 'no-op', inbox: 'delta' },
+  },
+  'team/session-turn-recorded': {
+    stored: sessionTurnRecorded,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.recordSessionTurn({
+          requestId: sessionTurnRecorded.requestId,
+          workspaceId: sessionTurnRecorded.data.workspaceId,
+          memberId,
+          sessionId: sessionTurnRecorded.data.sessionId,
+          threadRefs: [memberThread],
+          turn: 1,
+          startedAt: sessionTurnRecorded.data.startedAt,
+          endedAt: sessionTurnRecorded.data.endedAt,
+          toolCalls: 2,
+          runMs: 5000,
+          usage: sessionTurnRecorded.data.usage,
+          actor: memberActor,
+        })
+        expect(out.value.receipt.operationId, 'the Turn record answers with its stored receipt').toBe(sessionTurnRecorded.operationId)
+        return out
+      },
+      changed: () => ledger.recordSessionTurn({
+        requestId: sessionTurnRecorded.requestId,
+        workspaceId: sessionTurnRecorded.data.workspaceId,
+        memberId,
+        sessionId: sessionTurnRecorded.data.sessionId,
+        threadRefs: [memberThread],
+        turn: 1,
+        startedAt: sessionTurnRecorded.data.startedAt,
+        endedAt: sessionTurnRecorded.data.endedAt,
+        toolCalls: 9,
+        runMs: 5000,
+        usage: sessionTurnRecorded.data.usage,
+        actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/turn-failure-notice': {
+    stored: turnFailureNotice,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.recordTurnFailureNotice({
+          requestId: turnFailureNotice.requestId, workspaceId: turnFailureNotice.data.workspaceId, threadRef: memberThread, memberId,
+          sessionId: turnFailureNotice.data.sessionId, turn: 1, reason: turnFailureNotice.data.reason, actor: memberActor,
+        })
+        expect(out.value.operationId, 'the failure notice answers with its stored receipt').toBe(turnFailureNotice.operationId)
+        return out
+      },
+      changed: () => ledger.recordTurnFailureNotice({
+        requestId: turnFailureNotice.requestId, workspaceId: turnFailureNotice.data.workspaceId, threadRef: memberThread, memberId,
+        sessionId: turnFailureNotice.data.sessionId, turn: 1, reason: 'changed', actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/thread-summary-committed': {
+    stored: threadSummaryCommitted,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.commitThreadSummary({
+          requestId: threadSummaryCommitted.requestId,
+          workspaceId: threadSummaryCommitted.data.workspaceId,
+          actor: memberActor,
+          threadRef: memberThread,
+          trigger: 'rolling',
+          text: threadSummaryCommitted.data.text,
+          coversThroughSequence: 3,
+          transcriptTokens: 12,
+          model: threadSummaryCommitted.data.model,
+          usage: threadSummaryCommitted.data.usage,
+        })
+        expect(out.value.receipt.operationId, 'the summary answers with its stored receipt').toBe(threadSummaryCommitted.operationId)
+        return out
+      },
+      changed: () => ledger.commitThreadSummary({
+        requestId: threadSummaryCommitted.requestId,
+        workspaceId: threadSummaryCommitted.data.workspaceId,
+        actor: memberActor,
+        threadRef: memberThread,
+        trigger: 'rolling',
+        text: 'A different summary.',
+        coversThroughSequence: 3,
+        transcriptTokens: 12,
+        model: threadSummaryCommitted.data.model,
+        usage: threadSummaryCommitted.data.usage,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
+  },
+  'team/thread-session-bound': {
+    stored: threadSessionBound,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.bindThreadSession({
+          requestId: threadSessionBound.requestId,
+          workspaceId: threadSessionBound.data.workspaceId,
+          threadRef: memberThread,
+          sessionId: SessionId('session:protocol-thread'),
+          reason: 'start',
+          actor: memberActor,
+        })
+        expect(out.value.binding.memberId, 'the binding answers with the recorded Member').toBe(memberId)
+        return out
+      },
+      changed: () => ledger.bindThreadSession({
+        requestId: threadSessionBound.requestId,
+        workspaceId: threadSessionBound.data.workspaceId,
+        threadRef: memberThread,
+        sessionId: SessionId('session:protocol-thread'),
+        reason: 'resume',
+        actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
+  },
+  'team/thread-instance-bound': {
+    stored: threadInstanceBound,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.bindThreadInstance({
+          requestId: threadInstanceBound.requestId, workspaceId: threadInstanceBound.data.workspaceId, threadRef: memberThread,
+          slot: 1, boundAt: threadInstanceBound.data.boundAt, actor: memberActor,
+        })
+        expect(out.value.binding.slot, 'the binding answers with the recorded slot').toBe(1)
+        return out
+      },
+      changed: () => ledger.bindThreadInstance({
+        requestId: threadInstanceBound.requestId, workspaceId: threadInstanceBound.data.workspaceId, threadRef: memberThread,
+        slot: 0, boundAt: threadInstanceBound.data.boundAt, actor: memberActor,
+      }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'no-op', inbox: 'none' },
   },
   'team/member-removed': {
     stored: memberRemoved,

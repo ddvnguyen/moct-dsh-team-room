@@ -1,7 +1,7 @@
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import type { ClientRemote, RemoteStream } from '@deepseek-ai/dsh-api-gateway/client'
-import type {} from '@contexera/dsh-agent-team/remote'
-import type { AgentTeamChangeScope, AgentTeamChangesResult } from '@contexera/dsh-agent-team/types'
+import type {} from '@ddvnguyen/moct-dsh-team-room/remote'
+import type { AgentTeamChangeScope, AgentTeamChangesResult } from '@ddvnguyen/moct-dsh-team-room/types'
 
 export type TeamChangeScope = AgentTeamChangeScope | undefined
 
@@ -17,6 +17,7 @@ function scopeKey(scope: TeamChangeScope): string {
     : scope.kind === 'workspace' ? `workspace:${scope.workspaceId}`
     : scope.kind === 'channel' ? `channel:${scope.channelRef}`
     : scope.kind === 'presence' ? `presence:${scope.workspaceId}`
+    : scope.kind === 'activity' ? `activity:${scope.workspaceId}`
     : `thread:${scope.threadRef}`
 }
 

@@ -5,7 +5,7 @@
  * rejection rather than a silent no-op. Both messages are user-facing text.
  */
 
-import AgentTeam from '@contexera/dsh-agent-team/host'
+import AgentTeam from '@ddvnguyen/moct-dsh-team-room/host'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
 /** The Agent shape every Team tool receives. */

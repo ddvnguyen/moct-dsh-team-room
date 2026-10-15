@@ -1,4 +1,4 @@
-# @contexera/dsh-agent-team/client
+# @ddvnguyen/moct-dsh-team-room/client
 
 English | [中文](README.zh.md)
 

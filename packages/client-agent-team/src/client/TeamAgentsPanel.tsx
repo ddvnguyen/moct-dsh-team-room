@@ -3,9 +3,9 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamClientMemberStatus,
   AgentTeamModelSelection,
-} from '@contexera/dsh-agent-team/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconArchiveOutlineRegular, IconEditOutlineRegular, IconPlayOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconClockOutlineRegular, IconCopyOutlineRegular, IconEditOutlineRegular, IconPlayOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberIdentity } from './TeamMemberRow.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
@@ -34,11 +34,12 @@ interface TeamAgentsPanelProps {
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  readonly openAgentDetail: TeamSidebarProps['openAgentDetail']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, openMemberSession, openAgentDetail, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -273,7 +274,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={refresh} t={t} />
+              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} openAgentDetail={openAgentDetail} onUpdated={refresh} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -293,7 +294,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, openMemberSession, openAgentDetail, onUpdated, t }: {
   readonly workspaceId: WorkspaceId
   readonly leaveWorkspace: TeamSidebarProps['leaveWorkspace']
   readonly status: AgentTeamClientMemberStatus
@@ -304,6 +305,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   readonly archiveMember: TeamSidebarProps['archiveMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  readonly openAgentDetail: TeamSidebarProps['openAgentDetail']
   readonly onUpdated: () => Promise<void> | void
   readonly t: TeamSidebarProps['t']
 }) {
@@ -316,6 +318,20 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   const withdrawing = workspaceId !== status.member.workspaceId
   // Both row actions ride the same runtime remote: the Host steers a live
   // session, rebuilds an orphaned composition, or re-runs a failed activation.
+  // Copy the seat's Session id; the clipboard is optional in some hosts, so a refusal is shown, not thrown.
+  const openDetail = (): void => {
+    openAgentDetail(workspaceId, status.member.memberId, status.member.sessionId, message => {
+      setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
+    })
+  }
+  const copySessionId = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(status.member.sessionId)
+    } catch {
+      setRowAlert(t('copySessionIdFailed'))
+    }
+  }
+
   const recover = async (): Promise<void> => {
     try {
       const result = await recoverMember({
@@ -361,11 +377,7 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
   return (
     <>
       <div className={css.agentRow} data-agent-row data-menu-open={menuOpen || undefined}>
-        <button type="button" className={css.agentSelect} aria-label={t('openAgentSession', { name: status.member.handle })} aria-current={current ? 'page' : undefined} disabled={status.availability !== 'active'} onClick={() => {
-          openMemberSession(status.member.sessionId, message => {
-            setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
-          })
-        }}>
+        <button type="button" className={css.agentSelect} aria-label={t('openAgentDetail', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { openDetail() }}>
           <TeamMemberIdentity status={status} name={status.member.handle.replace(/^@/, '')} className={css.agentCopy} t={t} />
         </button>
         <span className={css.rowMenu}>
@@ -373,12 +385,22 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
             label={t('actionsAgent', { name: status.member.handle })}
             items={[
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutlineRegular /> },
+              { id: 'copySession', label: t('copySessionId'), icon: <IconCopyOutlineRegular /> },
+              { id: 'details', label: t('agentDetails'), icon: <IconClockOutlineRegular /> },
+              { id: 'openSession', label: t('openCurrentSession'), icon: <IconPlayOutlineRegular />, disabled: status.availability !== 'active' },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutlineRegular /> }] : []),
               ...(status.availability === 'unavailable' && restartOffered(status) ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutlineRegular /> }] : []),
               { id: 'archive', label: t(withdrawing ? 'withdrawAgent' : 'archiveAgent'), icon: <IconArchiveOutlineRegular size={16} />, danger: true },
             ]}
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)
+              else if (id === 'copySession') void copySessionId()
+              else if (id === 'details') openDetail()
+              else if (id === 'openSession') {
+                openMemberSession(status.member.sessionId, message => {
+                  setRowAlert(t('openAgentSessionFailed', { name: status.member.handle.replace(/^@/, ''), message }))
+                })
+              }
               else if (id === 'archive') setArchiving(true)
               else void recover()
             }}

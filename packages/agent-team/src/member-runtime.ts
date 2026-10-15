@@ -11,7 +11,7 @@
  * (ledger, handles, notifications, recovery); this module owns per-Member
  * runtime invariants.
  *
- * @module @contexera/dsh-agent-team/member-runtime
+ * @module @ddvnguyen/moct-dsh-team-room/member-runtime
  */
 
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -51,6 +51,9 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'context_checkpoint',
   'context_status',
   'context_compact',
+  'memory_note',
+  'memory_search',
+  'memory_get',
 ] as const)
 
 /** Copy a Remote-supplied capability overlay into owned frozen storage. */
@@ -172,6 +175,19 @@ export class MemberRuntime {
     const dispose = agentCtx.tools.restrict({ allow })
     this.memberRestrictions.set(member.memberId, dispose)
     this.enforcedToolAllow.set(member.memberId, Object.freeze([...allow]))
+  }
+
+  /**
+   * The same allow-list restriction on an extra instance slot (contract v2), without the
+   * per-Member bookkeeping that tracks slot 0's live surface: the restriction lives and dies
+   * with the slot's Agent scope, and a later capability edit reaches a slot on its next spawn.
+   */
+  applySlotToolPolicy(agentCtx: Context, member: AgentTeamAgentMember): void {
+    const configured = member.capabilities?.tools?.allow
+    if (configured === undefined) return
+    const knownSet = new Set(this.deps.ctx.tools.schemas(scopeOf(agentCtx)).map(tool => tool.name))
+    const allow = [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])]
+    if (allow.length > 0) agentCtx.tools.restrict({ allow })
   }
 
   /** Whether the live surface is known to reflect exactly this capability intent; an absent record never matches. */

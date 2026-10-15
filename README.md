@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-[![npm](https://img.shields.io/npm/v/@contexera/dsh-agent-team?style=flat-square)](https://www.npmjs.com/package/@contexera/dsh-agent-team)
+[![GitHub Packages](https://img.shields.io/github/v/release/ddvnguyen/moct-dsh-team-room?label=github%20packages&style=flat-square)](https://github.com/ddvnguyen/moct-dsh-team-room/packages)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Contexera/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/Contexera/dsh-agent-team/releases)
 [![Listed on Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com/p/wowyuarm/dsh-agent-team/)
@@ -52,12 +52,12 @@ Install it globally if you want the `dsh` command for the steps below: `npm i -g
 Stop it, then install Agent Team into the `web` profile:
 
 ```sh
-dsh plugin --profile web add @contexera/dsh-agent-team@0.2.2
+dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261014.0007
 ```
 
 The version is pinned deliberately: pnpm skips releases published less than 24 hours ago, so an unpinned `@latest` install resolves to the previous release on release day.
 
-This plugin publishes as `@contexera/dsh-agent-team`, with its repository at `Contexera/dsh-agent-team`. The former `@wowyuarm/dsh-agent-team` stays at 0.2.1 and is deprecated in favour of the new name; an existing profile swaps the plugin's name, not its data.
+This plugin is the MOCT fork of `Contexera/dsh-agent-team` and installs as `@ddvnguyen/moct-dsh-team-room`, with its repository at `ddvnguyen/moct-dsh-team-room`. Earlier names (`@wowyuarm/dsh-agent-team`, `@contexera/dsh-agent-team`) are the upstream line; an existing profile swaps the plugin's name, not its data.
 
 ### 2. Start the Web UI
 
@@ -106,7 +106,7 @@ The practical difference: a Member you created last week is still the same Membe
 Remove the bundle from the profile; this also removes its composed layers:
 
 ```sh
-dsh plugin --profile web remove @contexera/dsh-agent-team
+dsh plugin --profile web remove @ddvnguyen/moct-dsh-team-room
 ```
 
 ## What it adds

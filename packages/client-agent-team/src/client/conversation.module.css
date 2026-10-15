@@ -7,6 +7,14 @@
   overflow: hidden;
 }
 
+/* Per-reply usage line under an agent reply; quiet, tabular, never a control. */
+.replyStats {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+
 .surfaceHeader {
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   min-width: 0;
@@ -553,4 +561,65 @@
   font-size: 11px;
   line-height: 17px;
   white-space: nowrap;
+}
+
+/* Reply-link quote: one muted line behind a rule, leading the body. The whole
+   line is the jump to the quoted Message, so it reads as a reference, not as
+   pasted content. */
+.quoteLine {
+  align-items: baseline;
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+  display: flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 6px;
+  line-height: 18px;
+  margin: 2px 0 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 0 0 8px;
+  text-align: left;
+}
+button.quoteLine { cursor: pointer; }
+button.quoteLine:hover .quoteLineText { color: var(--dsw-alias-label-secondary); }
+.quoteLineAuthor {
+  color: var(--dsw-alias-label-secondary);
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.quoteLineText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messageRow { position: relative; }
+/* The Human's quote action: hidden until the row is hovered or holds focus. */
+.quoteAction {
+  background: var(--dsw-alias-bg-l1, transparent);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+  opacity: 0;
+  padding: 0 8px;
+  position: absolute;
+  right: 0;
+  top: 6px;
+}
+.messageRow:hover .quoteAction,
+.messageRow:focus-within .quoteAction { opacity: 1; }
+.messageRow[data-replying-to],
+.messageRow[data-reply-flash] {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, transparent);
+  border-radius: 6px;
+}
+@media (hover: none) {
+  .quoteAction { opacity: 1; position: static; align-self: flex-start; }
 }

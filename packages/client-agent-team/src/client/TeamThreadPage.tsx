@@ -4,30 +4,39 @@ import type {
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
   AgentTeamMemberId,
+  AgentTeamMessageRef,
   AgentTeamRequestId,
   AgentTeamTaskRef,
   AgentTeamThreadFact,
   AgentTeamThreadReadFact,
   AgentTeamThreadRef,
+  AgentTeamThreadTurnFailure,
   AgentTeamView,
-} from '@contexera/dsh-agent-team/types'
+} from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
+import { useThreadAttention } from './team-attention.ts'
+import { TeamMemberRow } from './TeamMemberRow.tsx'
 import { TeamComposer } from './TeamComposer.tsx'
 import { diagnosticText, TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
+import { namedAvatarOwners, TeamAvatarStack, type TeamAvatarHuman } from './TeamAvatarStack.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
+import { replyStatsView, type ReplyStatsView } from './reply-stats.ts'
 import { firstSentence, formatActivity, formatClaimState, formatRiskClass, formatTaskStatus, formatTaskTitle, mentionNameOf, mentionNamesOf, mentionedMemberIds, taskStatusDot, type MentionHandle } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
+import { TeamActivityLine } from './TeamActivityLine.tsx'
 import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
+import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
 import css from './conversation.module.css'
+import channelCss from './channel.module.css'
 import threadCss from './thread.module.css'
 
 interface TeamThreadPageProps {
@@ -44,19 +53,30 @@ interface TeamThreadPageProps {
   readonly readThread: TeamConversationProps['readThread']
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   readonly threadObservations: TeamConversationProps['threadObservations']
+  readonly threadReplyStats: TeamConversationProps['threadReplyStats']
+  readonly threadTurnFailures: TeamConversationProps['threadTurnFailures']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
+  readonly loadMemberActivity: TeamConversationProps['loadMemberActivity']
   readonly drafts: TeamDraftStore
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
+  /** The Human's own Thread Attention op: follow/unfollow this Thread as the reading Human. */
+  readonly changeAttention: TeamConversationProps['changeAttention']
   readonly promoteThread: TeamConversationProps['promoteThread']
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly selectThread: TeamConversationProps['selectThread']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
+  readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
+  /** Whether the shell's left column is closed; the header offers the open control while it is. */
+  readonly sidebarCollapsed: boolean
+  /** Reopen the shell's left column through the shell's own action. */
+  readonly openSidebar: () => void
   readonly t: TeamConversationProps['t']
 }
 
@@ -107,9 +127,10 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, openMemberSession, putAttachment,
-    loadChannels, readThread, loadThreadHistory, threadObservations,
-    subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, promoteThread, t,
+    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
+    loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
+    changeAttention,
+    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
@@ -140,10 +161,21 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // Early acceptance: the Human may accept while Claims are still open; the
   // confirm dialog lists exactly what will be completed with the Task.
   const [confirmingAccept, setConfirmingAccept] = useState(false)
+  // L1 (issue 57, item 3): the Thread's member surface. Existing ops cap what it
+  // can offer — the Host's changeAttention is the Human's PERSONAL op, so it
+  // toggles only the reading Human's follow. The dialog therefore lists members
+  // and followers read-only, offers the Human's own follow/unfollow, and invites a
+  // Channel member by seeding an @mention into the composer draft.
+  const [managingThreadMembers, setManagingThreadMembers] = useState(false)
+  const [inviteNote, setInviteNote] = useState<string>()
+
   useEffect(() => {
     if (confirmingAccept && projection?.task?.resolution === 'accepted') setConfirmingAccept(false)
   }, [confirmingAccept, projection?.task?.resolution])
   const [replyRequestId, setReplyRequestId] = useState<AgentTeamRequestId>()
+  // The Message the next send answers; it rides the reply as replyToMessageRef.
+  const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef>()
+  const [flashedMessage, setFlashedMessage] = useState<AgentTeamMessageRef>()
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
   const [pending, setPending] = useState(false)
@@ -314,6 +346,52 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     }
   }
 
+  // L1 (issue 57, item 3): the Human's own follow of this Thread. The Host binds
+  // the actor, so the request names no memberId — this can only ever be the
+  // reading Human's own follow, never another seat's.
+  const attention = useThreadAttention({ changeAttention }, () => {
+    setInviteNote(undefined)
+    void refreshFollowers()
+  })
+  /** Seed an @mention into the live draft; sending it is the invitation. */
+  const inviteMember = (handle: string): void => {
+    const { draft } = drafts.getSnapshot(draftKey)
+    const inserted = `@${handle.replace(/^@/, '')} `
+    const nextDraft = draft === '' || draft.endsWith(' ') ? `${draft}${inserted}` : `${draft} ${inserted}`
+    drafts.writeDraft(draftKey, nextDraft)
+    setInviteNote(t('inviteInserted', { name: handle.replace(/^@/, '') }))
+  }
+
+  // Reply stats are keyed by message ref, so each agent row finds its own line.
+  // A failed read leaves the rows without their line rather than surfacing an error.
+  const [replyStats, setReplyStats] = useState<ReadonlyMap<string, ReplyStatsView>>(() => new Map())
+  const refreshReplyStats = async (): Promise<void> => {
+    try {
+      const result = await threadReplyStats({ workspaceId, threadRef })
+      if (!mountedRef.current || !result.ok) return
+      const views = new Map<string, ReplyStatsView>()
+      for (const stat of result.value) {
+        const view = replyStatsView(stat)
+        if (view !== undefined) views.set(stat.messageRef, view)
+      }
+      setReplyStats(views)
+    } catch {
+      // The next thread-scope wake retries; the rows stay without their line until then.
+    }
+  }
+
+  // Failure notices keep every notice a boot re-issues (no de-duplication); the timeline merges them by ledger sequence.
+  const [turnFailures, setTurnFailures] = useState<readonly AgentTeamThreadTurnFailure[]>([])
+  const refreshTurnFailures = async (): Promise<void> => {
+    try {
+      const result = await threadTurnFailures({ workspaceId, threadRef })
+      if (!mountedRef.current || !result.ok) return
+      setTurnFailures(result.value)
+    } catch {
+      // The next thread-scope wake retries; the notices stay as they were until then.
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true
     // The previous mount's supplemental round must not answer for this one.
@@ -324,6 +402,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setChannelView(undefined)
     setMembers([])
     setFollowerIds(new Set())
+    setReplyStats(new Map())
     setCurrentFacts([])
     currentFactsRef.current = []
     setOlderFacts([])
@@ -376,6 +455,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       await drainUnread()
     })()
     void refreshSupplemental()
+    void refreshReplyStats()
+    void refreshTurnFailures()
     const disposers = [
       subscribeChanges({ kind: 'thread', threadRef }, update => {
         if (!mountedRef.current) return
@@ -383,6 +464,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         void refreshPassiveFacts()
         // Attention changes wake this scope too; keep the mention ranking current.
         void refreshFollowers()
+        // A new reply or a finished Turn changes the usage lines.
+        void refreshReplyStats()
+        // A failed Turn adds its notice; the same wake covers it.
+        void refreshTurnFailures()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
         if (!mountedRef.current) return
@@ -448,7 +533,52 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const taskClaims = activeProjection?.claims ?? []
   const effectiveChannelRef = task?.channelRef ?? channelRef
   const channelMemberIds = useMemo(() => new Set(channelView?.members.filter(item => item.channelRef === effectiveChannelRef).map(item => item.memberId) ?? []), [channelView, effectiveChannelRef])
-  const channelMembers = members.filter(status => channelMemberIds.size === 0 || channelMemberIds.has(status.member.memberId))
+  const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor, activeProjection.anchorMentions)], currentFacts)
+  // This Thread's participants: every actor holding a Message in the loaded
+  // window, in first-appearance order, plus every Member the loaded facts name.
+  // A mention is a seat the Thread already reaches, so a freshly woken Member a
+  // message @-names is selectable in the composer before it ever posts. A Thread
+  // is where those actors belong, so their roster is the Channel's member set
+  // only as a fallback — a Channel with no joined Member once leaked its whole
+  // Workspace here.
+  const threadParticipantIds = useMemo(() => {
+    const seen = new Set<AgentTeamMemberId>()
+    const ids: AgentTeamMemberId[] = []
+    const add = (id: AgentTeamMemberId): void => {
+      if (seen.has(id)) return
+      seen.add(id)
+      ids.push(id)
+    }
+    for (const fact of currentFactsWithAnchor) {
+      if (fact.kind !== 'message') continue
+      add(fact.message.sender)
+      for (const mentioned of fact.mentions) add(mentioned)
+    }
+    return ids
+  }, [currentFactsWithAnchor])
+  // The seat's own roster, then the Thread's participants on top of it: the
+  // writing Human is a participant without holding a Message of their own, and
+  // a participant the Host has not projected yet still belongs to the Thread.
+  // The Task's claimers are Thread participants too: a seat that claimed this
+  // Task works it, so the composer must be able to name it.
+  const threadRosterIds = useMemo(() => {
+    if (threadParticipantIds.length === 0 && taskClaims.length === 0) return undefined
+    const ids = new Set<AgentTeamMemberId>(threadParticipantIds)
+    if (channelView?.humanMemberId !== undefined) ids.add(channelView.humanMemberId)
+    for (const claim of taskClaims) ids.add(claim.owner)
+    return ids
+  }, [threadParticipantIds, taskClaims, channelView?.humanMemberId])
+  // The same guard the Channel page applies (TeamChannelPage.tsx:220): an
+  // archived or inactive seat is not a selectable member anywhere.
+  const selectable = (status: { readonly member: { readonly state: string } }): boolean => status.member.state !== 'inactive' && status.member.state !== 'archived'
+  const channelMembers = useMemo(() => {
+    if (threadRosterIds !== undefined) return members.filter(status => threadRosterIds.has(status.member.memberId) && selectable(status))
+    // No Thread facts yet: fall back to the Channel's own members, the
+    // selectable ones only, so an empty membership yields an empty roster
+    // instead of every Workspace seat.
+    if (channelMemberIds.size === 0) return []
+    return members.filter(status => channelMemberIds.has(status.member.memberId) && selectable(status))
+  }, [members, threadRosterIds, channelMemberIds])
   const mentionHandlesMap = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')])), [members])
   const metadata = useMemo(() => readMeta(readFacts), [readFacts])
   const unreadIndex = useMemo(() => {
@@ -494,6 +624,40 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const lookupTaskRefs = useMemo(() => hostTaskRefLookup(resolveTaskRefs, workspaceId), [resolveTaskRefs, workspaceId])
   const lookupThreadRefs = useMemo(() => hostThreadRefLookup(resolveThreadRefs, workspaceId), [resolveThreadRefs, workspaceId])
+  // Reply parents resolve through the Host: a quote must fill in even when the
+  // Message it answers sits far outside the facts this page has loaded.
+  const lookupMessageRefs = useMemo(() => hostMessageRefLookup(resolveMessageRefs, workspaceId), [resolveMessageRefs, workspaceId])
+  const messageRefVersion = useResolvedMessageRefVersion()
+  useEffect(() => {
+    // Every rendered reply's parent (for its quote) and the composer's target
+    // (for its banner): the target is usually not itself a reply.
+    const refs = [...olderFacts, ...currentFacts].flatMap(fact => fact.kind === 'message' && fact.message.replyToMessageRef !== undefined ? [fact.message.replyToMessageRef] : [])
+    if (replyTarget !== undefined && !refs.includes(replyTarget)) refs.push(replyTarget)
+    if (refs.length > 0) void resolveUnknownMessageRefs(refs, lookupMessageRefs)
+  }, [olderFacts, currentFacts, replyTarget, lookupMessageRefs, messageRefVersion])
+  useEffect(() => {
+    if (flashedMessage === undefined) return
+    const timer = setTimeout(() => { setFlashedMessage(undefined) }, 1200)
+    return () => { clearTimeout(timer) }
+  }, [flashedMessage])
+  // One stable callback per action for every row: TeamMessage is memoized, so a
+  // fresh closure per row would re-render the whole timeline on any page render.
+  // A new target is a different request: the parent is part of the Host's
+  // retry identity, so a pending request id or confirmation must not carry over.
+  const changeReplyTarget = useCallback((messageRef: AgentTeamMessageRef | undefined): void => {
+    setReplyTarget(messageRef)
+    setReplyRequestId(undefined)
+    setConfirmation(undefined)
+    setStatusMessage(undefined)
+  }, [])
+  const handleReply = useCallback((messageRef: AgentTeamMessageRef): void => { changeReplyTarget(messageRef) }, [changeReplyTarget])
+  /** Take the reader to the Message a reply answers, when it is on screen. */
+  const handleOpenReplyTo = useCallback((messageRef: AgentTeamMessageRef): void => {
+    const node = document.querySelector(`[data-message-ref="${messageRef}"]`)
+    if (node === null) return
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setFlashedMessage(messageRef)
+  }, [])
   // Roster chips resolve synchronously from loaded data: channel names from
   // the Channel view, member facts from the member list. Anything outside the
   // loaded window stays plain text — the same rule unresolvable Task/Thread
@@ -514,6 +678,21 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     return (ref: AgentTeamMemberId) => rosterMember(members, humanMemberId, humanName, ref)
   }, [rosterKey, humanName])
 
+  // The quote line names the parent's author and excerpt from the Host's
+  // resolution; until it lands (or if it never does) the ref itself still
+  // travels, so the line can always say where it goes.
+  const replyContexts = useMemo(() => {
+    const contexts = new Map<AgentTeamMessageRef, { readonly senderName: string; readonly excerpt: string; readonly messageRef: AgentTeamMessageRef }>()
+    for (const fact of [...olderFacts, ...currentFacts]) {
+      if (fact.kind !== 'message' || fact.message.replyToMessageRef === undefined) continue
+      const parent = cachedResolvedMessageRef(fact.message.replyToMessageRef)
+      contexts.set(fact.message.messageRef, parent === undefined
+        ? { senderName: t('memberUnknown'), excerpt: '', messageRef: fact.message.replyToMessageRef }
+        : { senderName: memberName(parent.sender), excerpt: parent.excerpt, messageRef: parent.messageRef })
+    }
+    return contexts
+  }, [olderFacts, currentFacts, messageRefVersion, rosterKey, humanName, t])
+
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
       const sender = memberName(fact.message.sender)
@@ -527,6 +706,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {...(human && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {})}
         body={fact.message.body}
         attachments={fact.message.attachments}
+        {...(human ? {} : { replyStats: replyStats.get(fact.message.messageRef) })}
         loadAttachment={getAttachment}
         t={t}
         occurredAt={fact.message.occurredAt}
@@ -539,16 +719,22 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         onOpenMemberSession={openMemberSession}
         grouped={grouped}
         {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
+        messageRef={fact.message.messageRef}
+        onReply={handleReply}
+        {...(replyContexts.has(fact.message.messageRef) ? { replyTo: replyContexts.get(fact.message.messageRef)!, onOpenReplyTo: handleOpenReplyTo } : {})}
+        replyTarget={replyTarget === fact.message.messageRef}
+        replyFlash={flashedMessage === fact.message.messageRef}
       />
     }
     return <p className={threadCss.activityRow} key={factKey(fact)}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(fact.activity, { t, actorName: memberName, claims: taskClaims })}</span></p>
   }
 
   /** One run = one same-sender reply turn; activities, the unread boundary, and day changes break runs. */
-  const renderFactBlocks = (facts: readonly AgentTeamThreadFact[], boundaryIndex: number | undefined): ReactNode[] => {
+  const renderFactBlocks = (facts: readonly AgentTeamThreadFact[], boundaryIndex: number | undefined, failures: readonly AgentTeamThreadTurnFailure[] = []): ReactNode[] => {
     const nodes: ReactNode[] = []
     let run: AgentTeamThreadFact[] = []
     let lastDay: string | undefined
+    let nextFailure = 0
     const flushRun = () => {
       if (run.length > 0) {
         nodes.push(
@@ -566,7 +752,16 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       }
       run = []
     }
+    // A notice sits between the facts whose ledger sequence brackets it; it breaks a run like an activity does.
+    const emitFailuresBefore = (sequence: number | undefined): void => {
+      while (nextFailure < failures.length && (sequence === undefined || failures[nextFailure]!.sequence < sequence)) {
+        const failure = failures[nextFailure++]!
+        flushRun()
+        nodes.push(<p className={threadCss.activityRow} key={`failure-${failure.sequence}`}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{t('turnFailure', { handle: failure.handle, turn: failure.turn, reason: failure.reason })}</span></p>)
+      }
+    }
     facts.forEach((fact, index) => {
+      emitFailuresBefore(fact.sequence)
       const occurredAt = fact.kind === 'message' ? fact.message.occurredAt : undefined
       if (occurredAt !== undefined) {
         const day = timelineDayKey(occurredAt)
@@ -586,6 +781,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       if (sender !== undefined) run.push(fact)
       else nodes.push(<Fragment key={factKey(fact)}>{renderFact(fact)}</Fragment>)
     })
+    emitFailuresBefore(undefined)
     flushRun()
     return nodes
   }
@@ -704,7 +900,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         return
       }
       const attachmentIds = upload.attachmentIds
-      const result = await reply({ requestId: id, workspaceId, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }), body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
+      const result = await reply({ requestId: id, workspaceId, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }), ...(replyTarget === undefined ? {} : { replyToMessageRef: replyTarget }), body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
       if (!result.ok) {
         setError(result.error.message)
         return
@@ -723,6 +919,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setProjection(current => current === undefined ? current : { ...current, ...(committed.task === undefined ? {} : { task: committed.task }), thread: committed.thread })
         drafts.clear(draftKey)
         setPendingFiles([])
+        setReplyTarget(undefined)
         setReplyRequestId(undefined)
         setConfirmation(undefined)
         setStatusMessage(undefined)
@@ -753,7 +950,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     } finally { setPending(false) }
   }
 
-  const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor, activeProjection.anchorMentions)], currentFacts)
+  // Notices older than the first current fact belong to the history block when there is one; otherwise they lead the current block.
+  const firstCurrentSequence = currentFacts[0]?.sequence ?? Number.POSITIVE_INFINITY
+  const historyFailures = olderFacts.length > 0 ? turnFailures.filter(failure => failure.sequence < firstCurrentSequence) : []
+  const currentFailures = olderFacts.length > 0 ? turnFailures.filter(failure => failure.sequence >= firstCurrentSequence) : turnFailures
   const unreadBoundary = unreadIndex >= 0 ? unreadIndex : undefined
   // One row per erroring Member holding a live Claim. The row shows the
   // diagnostic's structured class — the localizable axis — beside the first
@@ -773,37 +973,81 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // Threads are always entered through a Channel page, so a Channel origin
   // returns to its timeline; a Thread restored without one returns further.
   const backLabel = channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
+  // Slim header participants: every actor holding a Message in the loaded
+  // window, in first-appearance order, drawn as the shared identity stack.
+  // The stack caps itself at three plus `+N`; the label names them all.
+  const participantIds = (() => {
+    const seen = new Set<AgentTeamMemberId>()
+    const ids: AgentTeamMemberId[] = []
+    for (const fact of currentFactsWithAnchor) {
+      if (fact.kind !== 'message' || seen.has(fact.message.sender)) continue
+      seen.add(fact.message.sender)
+      ids.push(fact.message.sender)
+    }
+    return ids
+  })()
+  const threadHuman: TeamAvatarHuman | undefined = channelView?.humanMemberId === undefined
+    ? undefined
+    : { memberId: channelView.humanMemberId, name: humanName, ...(humanAvatarUrl === undefined ? {} : { avatarUrl: humanAvatarUrl }) }
+  const participantOwners = namedAvatarOwners(participantIds.map(memberId => ({ memberId, name: memberName(memberId) })), threadHuman)
+  const channelName = channelView?.channels.find(entry => entry.channelRef === effectiveChannelRef)?.name
+  // The crumb keeps the old h1 content verbatim (Task number, never the
+  // free-text title): the number is what every entry row cross-references.
+  // A titled Task carries its title in the tooltip, the way the Channel row
+  // carries its description.
+  const crumbTitle = task === undefined ? t('threadLabel') : t('taskLabel', { number: resolvedTaskNumber ?? '…' })
+  const crumbText = t('threadCrumbLabel', { channel: channelName ?? '…', title: crumbTitle })
+  const crumbHint = taskTitle === undefined || taskTitle === '' ? crumbText : `${crumbText} — ${taskTitle}`
 
+  // The dialog's rows: the roster plus the writing Human, who is a participant
+  // without holding a Message of their own. The Human is matched by id, never
+  // assumed to be in the roster: a Workspace projection that serves no Human
+  // seat still gets the follow row.
+  const humanStatus = channelView?.humanMemberId === undefined
+    ? undefined
+    : members.find(status => status.member.memberId === channelView.humanMemberId)
+  const threadMemberRows: readonly AgentTeamClientMemberStatus[] = humanStatus === undefined
+    || channelMembers.some(status => status.member.memberId === humanStatus.member.memberId)
+    ? channelMembers
+    : [...channelMembers, humanStatus]
   return <main className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>
-      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} onClick={backToWorkspace}>{backLabel}</Button></div>
-      <header className={css.headerRow}>
-        <div className={css.headerCopy}>
-          <div className={threadCss.titleLine}>
-            <h1>{task === undefined ? t('threadLabel') : t('taskLabel', { number: resolvedTaskNumber ?? '…' })}</h1>
-            {task !== undefined && <Pill><TeamStateDot size={8} state={taskStatusDot(task.status)} />{formatTaskStatus(task.status, t)}</Pill>}
-          </div>
-          {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle} title={taskTitle}>{taskTitle}</p>}
-        </div>
-        {task === undefined && thread !== undefined && <div className={css.headerActions}>
-          <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
-        </div>}
-        {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
-            closed Thread lives only in the composer-slot closed notice. */}
-        {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <div className={css.headerActions}>
-          {(() => {
-            const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
-            const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
-            // todo Tasks accept directly: the work finished outside the
-            // ledger, so there is nothing to confirm and no Claims to list.
-            if (!(task.status === 'in_review' || task.status === 'todo' || earlyAccept) || task.resolution !== 'open') return null
-            return <Button size="sm" variant="primary" disabled={pending}
-              onClick={() => { if (earlyAccept) { setConfirmingAccept(true) } else { void mutateTask('accept') } }}>{t('acceptTask')}</Button>
-          })()}
-          {task.resolution === 'open'
-            ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
-            : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
-        </div>}
+      <header className={channelCss.slimHeader} data-team-slim-header="thread">
+        <h1 className={channelCss.slimHidden}>{crumbTitle}</h1>
+        {/* The shell reopen control leads the row rather than trailing it: the far
+            right belongs to the Task actions, and a collapsed column must not push
+            them off the edge. It shows only while the column is closed. */}
+        {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
+        <button type="button" className={channelCss.slimCrumb} aria-label={backLabel} title={crumbHint} onClick={backToWorkspace}>
+          <IconChevronLeftOutlineRegular size={14} />
+          <span className={channelCss.slimCrumbText}>{crumbText}</span>
+        </button>
+        {participantOwners.length > 0 && <span className={channelCss.slimParticipants}>
+          <TeamAvatarStack owners={participantOwners} label={t('participantsLabel', { names: participantIds.map(memberId => memberName(memberId)).join(', ') })} human={threadHuman} />
+        </span>}
+        {task !== undefined && <Pill><TeamStateDot size={8} state={taskStatusDot(task.status)} />{formatTaskStatus(task.status, t)}</Pill>}
+        {/* L1 (issue 57, item 3): the Thread member surface rides the row's own action
+            group — the same place the Channel header opens its members. It is a Thread
+            action, not a Task transition, so it leads the group and the Task transitions
+            follow it; the group keeps the row's last-child slot either way. */}
+        {thread !== undefined && <span className={channelCss.slimActions}>
+          <Button size="sm" variant="outline" onClick={() => { setManagingThreadMembers(true) }}>{t('threadMembers')}</Button>
+          {task === undefined
+            ? <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
+            : task.resolution !== 'closed' && (() => {
+              const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
+              const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
+              // todo Tasks accept directly: the work finished outside the
+              // ledger, so there is nothing to confirm and no Claims to list.
+              const acceptButton = !(task.status === 'in_review' || task.status === 'todo' || earlyAccept) || task.resolution !== 'open' ? null
+                : <Button size="sm" variant="primary" disabled={pending}
+                  onClick={() => { if (earlyAccept) { setConfirmingAccept(true) } else { void mutateTask('accept') } }}>{t('acceptTask')}</Button>
+              const transition = task.resolution === 'open'
+                ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
+                : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>
+              return <>{acceptButton}{transition}</>
+            })()}
+        </span>}
       </header>
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>
@@ -812,6 +1056,44 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           <span title={full}><strong className={threadCss.riskClass}>{label}</strong> · {t(sentenceKey, { member: status.member.handle })} — {reason}</span>
         </p>)}
       </section>}
+      {thread !== undefined && <Modal
+        open={managingThreadMembers}
+        onClose={() => { if (!attention.pending) setManagingThreadMembers(false) }}
+        title={t('threadMembers')}
+        closeLabel={t('close')}
+        contentClassName={threadCss.modalBody!}
+        description={t('threadMembersNotice')}
+      >
+        <div className={threadCss.memberList}>
+          {threadMemberRows.map(status => {
+            const following = followerIds.has(status.member.memberId)
+            const isHuman = channelView?.humanMemberId === status.member.memberId
+            // Invitation by mention: the composer draft gains @handle, and
+            // sending it notifies the seat through the existing mention path.
+            return <TeamMemberRow
+              key={status.member.memberId}
+              status={status}
+              action={isHuman
+                ? {
+                  label: attention.pending ? t('attentionUpdating') : following ? t('unfollowThread') : t('followThread'),
+                  disabled: attention.pending,
+                  onSelect: () => { void attention.change({ workspaceId, threadRef, action: following ? 'unfollow' : 'follow' }) },
+                }
+                : {
+                  label: t('inviteToThread'),
+                  onSelect: () => { inviteMember(status.member.handle) },
+                }}
+              t={t}
+            />
+          })}
+        </div>
+        <p className={threadCss.memberFoot}>
+          <span>{t('threadMembersCount', { count: channelMembers.length })}</span>
+          <span>{t('threadFollowersCount', { count: followerIds.size })}</span>
+        </p>
+        {inviteNote !== undefined && <p className={threadCss.inviteNote} role="status">{inviteNote}</p>}
+        {attention.error !== undefined && <p className={threadCss.inviteNote} role="alert">{attention.error}</p>}
+      </Modal>}
       {task !== undefined && thread !== undefined && (() => {
         // Recomputed here so the confirm list never shows stale rows.
         const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
@@ -862,10 +1144,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <div className={css.timelineContent}>
         {loading && projection === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p></div>}
         {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
-        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{renderFactBlocks(olderFacts, undefined)}</section>}
+        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{renderFactBlocks(olderFacts, undefined, historyFailures)}</section>}
         {historyHasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
         {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection}>
-          {renderFactBlocks(currentFactsWithAnchor, unreadBoundary)}
+          {renderFactBlocks(currentFactsWithAnchor, unreadBoundary, currentFailures)}
         </section>}
         {autoReadExhausted && <div className={css.timelineAction} role="alert">
           <span>{t('autoReadIncomplete')}</span>
@@ -891,6 +1173,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       members={channelMembers}
       followerMemberIds={followerIds}
       drafts={drafts}
+      loadTriggerCatalog={loadTriggerCatalog}
       draftKey={draftKey}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
@@ -900,6 +1183,17 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       placeholder={t('replyPlaceholder')}
       pendingFiles={pendingFiles}
       onFilesChange={setPendingFiles}
+      {...(replyTarget === undefined ? {} : {
+        replyTo: (() => {
+          const target = cachedResolvedMessageRef(replyTarget)
+          return target === undefined
+            ? { senderName: t('memberUnknown'), excerpt: '' }
+            : { memberId: target.sender, senderName: memberName(target.sender), excerpt: target.excerpt }
+        })(),
+        onCancelReply: () => { changeReplyTarget(undefined) },
+      })}
+      {...(channelView?.humanMemberId === undefined ? {} : { humanMemberId: channelView.humanMemberId })}
+      activity={<TeamActivityLine workspaceId={workspaceId} threadRef={threadRef} members={channelMembers} loadMemberActivity={loadMemberActivity} subscribeChanges={subscribeChanges} t={t} />}
       t={t}
     />
     ) : <div />}

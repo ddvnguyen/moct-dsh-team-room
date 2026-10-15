@@ -1,3 +1,4 @@
+import type { AgentTeamSessionRun, AgentTeamSessionTurnRecordedData } from "./operations.ts"
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
 import type { SessionId as AgentTeamMemberSessionId, SessionLogOffset as AgentTeamMemberSessionLogOffset, SessionSeq as AgentTeamMemberSessionSeq } from "@deepseek-ai/dsh-session"
 import type {
@@ -16,6 +17,7 @@ import type {
   AgentTeamDirectMarker,
   AgentTeamMemberCapabilities,
   AgentTeamMemberId,
+  AgentTeamMessageRef,
   AgentTeamMessage,
   AgentTeamModelSelection,
   AgentTeamOperationId,
@@ -69,6 +71,8 @@ export interface AgentTeamAddMemberRequest {
   readonly model?: AgentTeamModelSelection
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities
+  /** Concurrent instances, an integer from 1 to 5; absent takes the default (2). */
+  readonly instances?: number
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
 }
@@ -123,6 +127,8 @@ export interface AgentTeamUpdateMemberRequest {
   readonly model?: AgentTeamModelSelection | null
   /** Absent keeps the current override; `null` clears it back to the full surface. */
   readonly capabilities?: AgentTeamMemberCapabilities | null
+  /** Absent keeps the current count; `null` clears it back to the default (2). */
+  readonly instances?: number | null
 }
 
 /** Human intent to suspend or resume one Agent Member. */
@@ -187,6 +193,17 @@ export interface AgentTeamRecoverMemberRequest {
 /** Result of a recovery nudge; runtime-only steering, so there is no ledger receipt. */
 export interface AgentTeamRecoverMemberResult {
   readonly status: AgentTeamAgentMemberStatus
+  /**
+   * Present exactly when recovery refused to steer: the Member's Session is
+   * provider-poisoned (task-11 item 4) — its last consecutive Turns were all
+   * rejected by the provider with an identical signature before any usage, so
+   * re-queuing would replay the same error. The caller switches the model or
+   * starts the Member from a new context instead.
+   */
+  readonly sameError?: {
+    readonly detail: string
+    readonly failedTurns: number
+  }
 }
 
 /** Human intent to start one enabled Member's next turn from an empty context. */
@@ -502,6 +519,12 @@ export interface AgentTeamReplyRequest {
   readonly body: string
   readonly baseRevision: number
   readonly recipients?: readonly AgentTeamMemberId[]
+  /**
+   * The Message this reply answers. The Host resolves it against the ledger and
+   * refuses a ref that is unknown or belongs to another Thread; the parent's
+   * author then joins the recipients, so answering a Member reaches them.
+   */
+  readonly replyToMessageRef?: AgentTeamMessageRef
   /** Agent-supplied absolute file paths, resolved like sendMessage's. */
   readonly attachmentPaths?: readonly string[] | undefined
   /** Attachment cache IDs from the Human picker, resolved like sendMessage's. */
@@ -1035,6 +1058,44 @@ export type AgentTeamChangeScope =
    * durable projection changed.
    */
   | { readonly kind: 'presence'; readonly workspaceId: WorkspaceId }
+  /**
+   * Host activity wake (a running Turn's step/tool progress): its own epoch,
+   * shaped like presence. It never wakes a projection waiter.
+   */
+  | { readonly kind: 'activity'; readonly workspaceId: WorkspaceId }
+
+/** One running Member Turn, as the host folds it from session events. Never persisted. */
+export interface AgentTeamMemberActivity {
+  readonly memberId: AgentTeamMemberId
+  /** Instance slot running this Turn (multi-instance contract v2); absent for the seat's main Session (slot 0). */
+  readonly slot?: number
+  /** '@name' */
+  readonly handle: string
+  /** Thread the current Turn was delivered for; absent when unknown. */
+  readonly threadRef?: AgentTeamThreadRef
+  /** ISO-8601 */
+  readonly turnStartedAt: string
+  /** Model steps started in the current Turn. */
+  readonly stepCount: number
+  /** Tool calls started in the current Turn. */
+  readonly toolCount: number
+  /** label <= 80 chars; never arguments, command text, output, env or credentials. */
+  readonly current?: { readonly tool: string; readonly label: string }
+  /** ISO-8601, time of the last event folded in. */
+  readonly updatedAt: string
+}
+
+/** Running Member Turns in one Workspace; `threadRef` narrows to the Turns delivered for that Thread. */
+export interface AgentTeamMemberActivityRequest {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+}
+
+/** `revision` is the process-local activity epoch; it never advances the projection. */
+export interface AgentTeamMemberActivityResult {
+  readonly revision: number
+  readonly activities: readonly AgentTeamMemberActivity[]
+}
 
 /** Subscribe to lightweight invalidations; each connection starts with a current baseline. */
 export interface AgentTeamChangesRequest {
@@ -1056,4 +1117,102 @@ export interface AgentTeamStatus {
   readonly channelCount: number
   readonly agentMemberCount: number
   readonly humanMemberId: AgentTeamMemberId
+}
+
+/** One seat's Session runs in one Thread (contract §4 threadSessions). */
+export interface AgentTeamThreadSessionRuns {
+  readonly memberId: AgentTeamMemberId
+  readonly active: AgentTeamSessionRun | null
+  readonly history: readonly AgentTeamSessionRun[]
+}
+
+/** One reply's per-reply stats: the recorded Turn that holds it, and whether it is the Member's last reply in that Turn. */
+export interface AgentTeamThreadReplyStat {
+  readonly messageRef: AgentTeamMessageRef
+  readonly memberId: AgentTeamMemberId
+  readonly turn: AgentTeamSessionTurnRecordedData
+  readonly isLastOfTurn: boolean
+}
+
+/** One errored Turn of a Thread's seat, shown to the human; the ledger op's sequence orders it with Messages. */
+export interface AgentTeamThreadTurnFailure {
+  readonly sequence: number
+  readonly occurredAt: string
+  readonly threadRef: AgentTeamThreadRef
+  readonly memberId: AgentTeamMemberId
+  /** The Member's handle, or its memberId when the Member has no projection entry (removed or archived). */
+  readonly handle: string
+  readonly sessionId: AgentTeamMemberSessionId
+  readonly turn: number
+  /** The stored redacted reason: first line, at most 200 characters. */
+  readonly reason: string
+}
+
+/**
+ * Room-activity read request (contract §19.1): one Channel, or one Thread inside it. A Channel scope
+ * is the request without `threadRef`; a Thread scope names it and uses the Channel only to prove it.
+ */
+export interface AgentTeamRoomActivityRequest {
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  /** Present for a Thread scope; absent for the whole Channel. */
+  readonly threadRef?: AgentTeamThreadRef
+  /** Opaque continuation token from a previous page's `nextCursor`; absent for the newest page. */
+  readonly cursor?: string
+  /** Event rows per page, 1–200; over-limit is clamped server-side, never rejected. */
+  readonly limit?: number
+}
+
+/**
+ * One room-activity event: one committed operation projected into a row (contract §19.1).
+ * The summary is plain text bounded to 200 characters; a Message body is never returned whole.
+ */
+export interface AgentTeamRoomActivityEvent {
+  readonly sequence: number
+  readonly at: string
+  readonly kind: string
+  readonly actor: string
+  readonly summary: string
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
+  readonly messageRef?: AgentTeamMessageRef
+}
+
+/** One usage bucket of a room-activity scope. Every field is null while any contributing Turn left it unproven (contract §3.2). */
+export interface AgentTeamRoomActivityTotals {
+  readonly messages: number
+  readonly turns: number
+  readonly tokensIn: number | null
+  readonly tokensOut: number | null
+  readonly cacheRead: number | null
+  readonly cacheWrite: number | null
+  readonly toolCalls: number | null
+  readonly runMs: number | null
+  readonly failedTurns: number
+  readonly unrecordedTurns: number
+}
+
+/** One Member's share of a room-activity scope, plus every Session it ran in the scope. */
+export interface AgentTeamRoomActivityAgent {
+  readonly memberId: AgentTeamMemberId
+  readonly messages: number
+  readonly turns: number
+  readonly tokensIn: number | null
+  readonly tokensOut: number | null
+  readonly cacheRead: number | null
+  readonly cacheWrite: number | null
+  readonly toolCalls: number | null
+  readonly runMs: number | null
+  readonly failedTurns: number
+  readonly sessionIds: readonly AgentTeamMemberSessionId[]
+}
+
+/** The room-activity read result (contract §19.1): one scope's totals, per-seat shares, its Session runs and its bounded event feed. */
+export interface AgentTeamRoomActivityResult {
+  readonly scope: 'channel' | 'thread'
+  readonly totals: AgentTeamRoomActivityTotals
+  readonly perAgent: readonly AgentTeamRoomActivityAgent[]
+  readonly sessions: readonly AgentTeamSessionRun[]
+  readonly events: readonly AgentTeamRoomActivityEvent[]
+  readonly nextCursor?: string
 }

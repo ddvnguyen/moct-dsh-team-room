@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { IconAgentPresetOutlineRegular, IconListPenOutlineRegular, IconQueueOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AgentTeamAddMemberRequest } from '@contexera/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceSelector } from './TeamWorkspaceSelector.tsx'
 import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
@@ -24,7 +24,10 @@ function InboxMark({ unread }: { readonly unread: number }) {
   </span>
 }
 
-export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, openMemberSession }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, openMemberSession, openAgentDetail, channelsOnly }: TeamSidebarProps & {
+  /** The Team tab is the Channel view only: the Agents config lives on the rail's Team Settings page. The rail seat keeps its own Agents group. */
+  readonly channelsOnly?: boolean
+}) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -136,6 +139,12 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
     </nav>
   }
 
+  const agents = selectedId === undefined ? null : (
+    <div ref={agentsRef}>
+      <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} addMember={addMember} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} joinWorkspace={joinWorkspace} leaveWorkspace={leaveWorkspace} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} openMemberSession={openMemberSession} openAgentDetail={openAgentDetail} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
+    </div>
+  )
+
   return <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
     {/* The Inbox is the one destination that crosses Workspaces — its total sums
         every one of them — so it stands above the selector rather than inside
@@ -149,9 +158,7 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
       <div ref={channelsRef}>
         <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} subscribeChanges={subscribeChanges} createChannel={createChannel} updateChannel={updateChannel} archiveChannel={archiveChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.memberSessionId !== undefined || navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />
       </div>
-      <div ref={agentsRef}>
-        <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} addMember={addMember} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} joinWorkspace={joinWorkspace} leaveWorkspace={leaveWorkspace} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
-      </div>
+      {channelsOnly !== true && agents}
     </div>}
   </section>
 }

@@ -30,7 +30,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, isTsxDevMode, markAgentTeamPreset, teamPresetScopeMismatchMessage } from '../src/index.ts'
+import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, isTsxDevMode, markAgentTeamPreset, teamPresetScopeMismatchMessage, TeamMemoryClient } from '../src/index.ts'
 import { checkpointRefFor, foldTeamContextProjection } from '../src/context-projection.ts'
 import { AGENT_TEAM_PLUGIN_ID, continuationCheckpointRefOf, handoffOf, isCheckpointContinuationMessage, isHandoffMessage } from '../src/context-source.ts'
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
@@ -202,6 +202,7 @@ async function realHarness(
   adapter: LlmAdapter = new EmptyAdapter(),
   persistenceBackend: PersistenceBackend = 'jsonl',
   reopen?: { readonly root: string },
+  options: { readonly llm?: boolean } = {},
 ): Promise<{
   readonly ctx: Context
   readonly workspaceId: WorkspaceId
@@ -236,9 +237,9 @@ async function realHarness(
   // shipped cordis.patch.yml declares; bare internal loader names resolve
   // through the self-linked node_modules.
   const teamMemberPlugins: PresetDefinition['plugins'] = [
-    { id: 'member-context', name: '@contexera/dsh-agent-team/member-context' },
-    { id: 'member-time-context', name: '@contexera/dsh-agent-team/member-time-context' },
-    { id: 'team-tools', name: '@contexera/dsh-agent-team/tools' },
+    { id: 'member-context', name: '@ddvnguyen/moct-dsh-team-room/member-context' },
+    { id: 'member-time-context', name: '@ddvnguyen/moct-dsh-team-room/member-time-context' },
+    { id: 'team-tools', name: '@ddvnguyen/moct-dsh-team-room/tools' },
     { id: 'compaction', name: 'cordis:group', group: true, isolate: { compaction: true }, config: [
       { id: 'compaction-stub', name: pathToFileURL(compactionStub).href },
     ] },
@@ -252,8 +253,11 @@ async function realHarness(
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   ctx.loader.builtins.group = Group
-  await ctx.plugin(LlmRuntime)
-  ctx.llm.registerAdapter(['mock'], adapter)
+  // An LLM runtime is optional: a Host that does not mount one has no 'llm' service at all.
+  if (options.llm !== false) {
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter(['mock'], adapter)
+  }
   await ctx.plugin(SessionStore)
   // The preset registry injects 'sessionProjections'; the roster stays PENDING without it.
   await ctx.plugin(SessionProjectionRegistry)
@@ -1191,6 +1195,94 @@ describe('Agent Team Member lifecycle', () => {
     expect(await call('team_inbox', {})).toMatchObject({ totalUnreadCount: 0, items: [] })
   })
 
+  it('scopes the memory tools to the live Member: its Channels, its Threads, its identity', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const open = await ctx.agentTeam.createChannel({ requestId: requestId('memory-open'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const closed = await ctx.agentTeam.createChannel({ requestId: requestId('memory-closed'), workspaceId, name: 'leads', description: 'Not joined' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('memory-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [open.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const memberId = builder.status.member.memberId
+    const ownTask = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('memory-own-task'), workspaceId, channelRef: open.channel.channelRef, body: 'Memory work' })
+    const foreign = await ctx.agentTeam.sendMessage({ requestId: requestId('memory-foreign'), workspaceId, channelRef: closed.channel.channelRef, body: 'Leads only' })
+    if (ownTask.kind !== 'committed' || foreign.kind !== 'committed') throw new Error('expected committed Threads')
+    let callNumber = 0
+    const call = (name: string, args: unknown) => ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`memory-${++callNumber}`), name, arguments: args, agent })
+
+    // Without the MOCT backend the tools refuse with a stable code instead of guessing.
+    const unavailable = await call('memory_search', {})
+    expect(unavailable.isError && unavailable.error.message).toContain('BACKEND_UNAVAILABLE')
+
+    const requests: { method: string; url: URL; body?: Record<string, unknown> }[] = []
+    const fetchImpl = (async (input: string, init: RequestInit = {}) => {
+      const url = new URL(input)
+      requests.push({ method: init.method ?? 'GET', url, ...(init.body === undefined ? {} : { body: JSON.parse(String(init.body)) as Record<string, unknown> }) })
+      if (url.pathname === '/team/v1/memory/settings') return Response.json({ orchestrators: [] })
+      if (url.pathname === '/team/v1/memory') return init.method === 'POST'
+        ? Response.json({ record: null, nearMatches: [] })
+        : Response.json({ results: [], total: 0, nextCursor: null })
+      return Response.json({ ok: false, error: 'not found' }, { status: 404 })
+    }) as unknown as typeof fetch
+    Reflect.set(ctx.agentTeam, 'teamMemory', new TeamMemoryClient({ fetch: fetchImpl }))
+
+    const searched = await call('memory_search', { all: true, channels: [closed.channel.channelRef] })
+    expect(searched.isError).toBe(false)
+    const search = requests.find(request => request.url.pathname === '/team/v1/memory' && request.method === 'GET')!.url.searchParams
+    expect(Object.fromEntries(search)).toEqual({ workspaceId, expertId: memberId, channels: open.channel.channelRef })
+
+    const noted = await call('memory_note', { type: 'decision', title: 'Keep the reader scope in the Host', threadRef: ownTask.thread.threadRef, actor: { kind: 'human', id: 'human' } })
+    expect(noted.isError).toBe(false)
+    const post = requests.find(request => request.method === 'POST')!.body!
+    expect(post).toMatchObject({ actor: { kind: 'member', id: memberId }, workspaceId, home: { kind: 'task', ref: ownTask.task!.taskRef }, taskRef: ownTask.task!.taskRef })
+
+    // A Thread in a Channel the Member never joined cannot be named, so the scope cannot widen.
+    const widened = await call('memory_note', { type: 'rule', title: 'Leads rule', threadRef: foreign.thread.threadRef })
+    expect(widened.isError && widened.error.message).toContain('SCOPE_FORBIDDEN')
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1)
+  })
+
+  it('acts on Team memory as the ledger Human, whatever the Memory page sends', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('human-memory-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('human-memory-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = builder.status.member.memberId
+
+    // Without the MOCT backend the page reads a stable code, not an exception.
+    expect(await ctx.agentTeam.memoryList({ workspaceId })).toMatchObject({ ok: false, code: 'BACKEND_UNAVAILABLE' })
+
+    const record = { id: 'mem-1', type: 'rule', title: 'Stage only your files', body: null, attrs: null, home: { kind: 'channel', ref: channel.channel.channelRef }, status: 'pending', flag: null, pinned: false, priority: 100, version: 1, authorId: memberId, updatedAt: '', supersedes: null, supersededBy: null, conflictsWith: [] }
+    const requests: { method: string; url: URL; body?: Record<string, unknown> }[] = []
+    const fetchImpl = (async (input: string, init: RequestInit = {}) => {
+      const url = new URL(input)
+      requests.push({ method: init.method ?? 'GET', url, ...(init.body === undefined ? {} : { body: JSON.parse(String(init.body)) as Record<string, unknown> }) })
+      if (url.pathname === '/team/v1/memory/get') return Response.json({ records: [{ ...record, links: [] }], missing: [] })
+      if (url.pathname === '/team/v1/memory') return Response.json({ results: [], total: 0, nextCursor: null })
+      if (url.pathname === '/team/v1/memory/settings') return Response.json({ expertApproval: 'required', orchestrators: [memberId], injectLayerTokens: 1000 })
+      return Response.json({ ...record, status: 'active', version: 2 })
+    }) as unknown as typeof fetch
+    Reflect.set(ctx.agentTeam, 'teamMemory', new TeamMemoryClient({ fetch: fetchImpl }))
+
+    // Reads take the whole Workspace as the Human; a smuggled scope or actor goes nowhere.
+    const listed = await ctx.agentTeam.memoryList({ workspaceId, q: 'stage', all: false, expertId: memberId, channels: ['channel:forged'], actor: { kind: 'member', id: memberId } } as never)
+    expect(listed.ok).toBe(true)
+    const list = requests.find(request => request.url.pathname === '/team/v1/memory')!.url.searchParams
+    expect(Object.fromEntries(list)).toEqual({ workspaceId, expertId: AGENT_TEAM_HUMAN_MEMBER_ID, all: '1', q: 'stage' })
+
+    const approved = await ctx.agentTeam.memoryAct({ workspaceId, id: 'mem-1', action: { verb: 'approve', baseVersion: 1, actor: { kind: 'member', id: memberId } }, actor: { kind: 'member', id: memberId }, humanId: 'member:forged' } as never)
+    expect(approved).toMatchObject({ ok: true, value: { status: 'active' } })
+    const approve = requests.find(request => request.url.pathname === '/team/v1/memory/mem-1/approve')!
+    expect(approve.body).toEqual({ baseVersion: 1, actor: { kind: 'human', id: AGENT_TEAM_HUMAN_MEMBER_ID } })
+
+    // Orchestrators must be agent Members of this Workspace; the check runs before the backend hears anything.
+    const before = requests.length
+    expect(await ctx.agentTeam.updateMemorySettings({ workspaceId, orchestrators: [memberId, 'member:stranger'] })).toMatchObject({ ok: false, code: 'INVALID_SETTING' })
+    expect(requests).toHaveLength(before)
+    expect(await ctx.agentTeam.updateMemorySettings({ workspaceId, orchestrators: [memberId] })).toMatchObject({ ok: true })
+    expect(requests.at(-1)!.body).toEqual({ actor: { kind: 'human', id: AGENT_TEAM_HUMAN_MEMBER_ID }, orchestrators: [memberId] })
+
+    // A Workspace the Team does not have is fenced like every Human surface.
+    await expect(ctx.agentTeam.memoryList({ workspaceId: 'ws-unknown' as never })).rejects.toThrow()
+  })
+
   it('delivers a direct message through the tool and injects it into the live recipient session', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
@@ -1379,7 +1471,8 @@ describe('Agent Team Member lifecycle', () => {
     const adapter = new GatedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('safe-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    const builder = await ctx.agentTeam.addMember({ requestId: requestId('safe-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    // One Session collecting every Thread: single-instance delivery (multi-instance N=1 behaves as before).
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('safe-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef], instances: 1 })
     const agent = ctx.agents.get(builder.status.member.sessionId)!
     const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('safe-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate safe delivery' })
     if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
@@ -1884,7 +1977,7 @@ describe('Agent Team Member lifecycle', () => {
   })
 
   it('validates the final Team tool marker during unpublished setup', async () => {
-    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'context_rollover', 'context_checkpoint', 'context_status', 'context_compact'])
+    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'context_rollover', 'context_checkpoint', 'context_status', 'context_compact', 'memory_note', 'memory_search', 'memory_get'])
     const definition = markAgentTeamPreset({ name: 'team_message' })
     expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
   })
@@ -4159,7 +4252,8 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId, archived } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('tbound-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    const added = await ctx.agentTeam.addMember({ requestId: requestId('tbound-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    // One Session collecting every Thread: single-instance delivery (multi-instance N=1 behaves as before).
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('tbound-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef], instances: 1 })
     const memberId = added.status.member.memberId
     const sessionId = added.status.member.sessionId
     const live = ctx.agents.get(sessionId)!
@@ -4233,7 +4327,8 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('xseq-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    const added = await ctx.agentTeam.addMember({ requestId: requestId('xseq-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    // One Session collecting every Thread: single-instance delivery (multi-instance N=1 behaves as before).
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('xseq-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef], instances: 1 })
     const memberId = added.status.member.memberId
     const firstSessionId = added.status.member.sessionId
 
@@ -5287,6 +5382,18 @@ describe('Agent Team model route rejection (issue #43 #6)', () => {
       description: 'Builds the implementation', presetId: 'team-member', channelRefs: [],
       model: { provider: 'no-such-provider', model: 'whatever' },
     })).rejects.toThrow(/provider 'no-such-provider' is not registered/)
+  })
+
+  // Behaviour check, not a regression guard: the in-process harness does not throw on an
+  // undeclared read, so this passes on the old source too. The guard is ctx-service-reads.spec.ts.
+  it('behaviour: accepts a pinned model when no LLM service is mounted', async () => {
+    const { ctx, workspaceId } = await realHarness(new ScriptedAdapter(), 'jsonl', undefined, { llm: false })
+    const added = await ctx.agentTeam.addMember({
+      requestId: requestId('no-llm-add'), workspaceId, handle: 'builder',
+      description: 'Builds the implementation', presetId: 'team-member', channelRefs: [],
+      model: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
+    })
+    expect(added.status.member.model).toEqual({ provider: 'opencode-go', model: 'deepseek-v4-flash' })
   })
 
   it('rejects an unregistered provider on update too', async () => {

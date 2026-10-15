@@ -1,0 +1,325 @@
+/* The Team memory section of Team Settings: the same 760px column and token
+ * set as the Agents section above it. Record text keeps its own line breaks
+ * (pre-wrap) because it is shown as the characters it is, never as markup. */
+
+.memory {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.intro,
+.empty,
+.meta {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.unavailable,
+.error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.notice {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.viewTab {
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.viewTab:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.viewTab[aria-selected='true'] {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+  font-weight: 600;
+}
+
+/* Filter bar: a raised surface, labelled fields at one 32px control height,
+ * an active ring on any field off its default, and Clear + count at the end.
+ * At 390 the fields stack full width. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 12px 14px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.field[data-wide] {
+  flex: 1 1 220px;
+}
+
+.field > :not(.fieldLabel) {
+  box-sizing: border-box;
+  height: 32px;
+  width: 100%;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.select {
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.field[data-active] .select,
+.field[data-active] > span:not(.fieldLabel) {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 1px var(--dsw-alias-state-business-primary);
+}
+
+.filterEnd {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  min-height: 32px;
+}
+
+.count {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.levelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.purge {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+  margin-left: auto;
+}
+
+@media (max-width: 480px) {
+  .field,
+  .field[data-wide] {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .filterEnd {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+}
+
+.records,
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.list,
+.links,
+.versions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.record,
+.usage {
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  padding: 8px 0;
+}
+
+.usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.recordHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.status {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.status[data-status='pending'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.title {
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 0 12px;
+}
+
+.body,
+.versionText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.attrs {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.links li,
+.versions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.groupHeading {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dialogText {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.settingRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  margin: 0;
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  font: inherit;
+  font-size: 13px;
+}
