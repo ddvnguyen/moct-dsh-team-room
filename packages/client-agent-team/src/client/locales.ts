@@ -463,6 +463,8 @@ export const zh = {
   docFinal: '该文档已{status}，不再变化。',
   docNotSubmitted: '作者尚未提交评审。',
   docVerdictActions: '评审操作',
+  closeThreadLane: '关闭 Thread',
+  resizeThreadLane: '调整 Thread 宽度',
 } as const
 
 export const en = {
@@ -922,6 +924,8 @@ export const en = {
   docFinal: 'This document is {status}. It no longer changes.',
   docNotSubmitted: 'The author has not submitted this document for review yet.',
   docVerdictActions: 'Review actions',
+  closeThreadLane: 'Close Thread',
+  resizeThreadLane: 'Resize Thread',
 } as const
 
 export type TeamKey = keyof typeof zh
