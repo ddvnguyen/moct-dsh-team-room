@@ -185,6 +185,8 @@ import type {
   AgentTeamThreadSummaryCommittedData,
   AgentTeamRoomActivityRequest,
   AgentTeamRoomActivityResult,
+  AgentTeamColdFallback,
+  AgentTeamResumeMemberSessionResult,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -320,25 +322,6 @@ export function teamPresetScopeMismatchMessage(tsxDevMode: boolean): string {
   return 'selected preset is not team-enabled: this bundle and the harness resolved different physical copies of @deepseek-ai/dsh-scope; run pnpm install in the profile directory so node_modules matches the lockfile, then restart'
 }
 
-/**
- * Why a delivery took the cold fallback (task-16, ruling 3472: one try per Turn, then the
- * Turn fails). The cause rides this field and a log line, never the ledger op, because the
- * `thread.session.bind` data object is `.strict()` with a closed reason enum.
- */
-export interface AgentTeamColdFallback {
-  readonly cause: 'no-handle' | 'cache-cold' | 'resume-failed' | 'stale-binding'
-  /** Whether the warm resume was attempted before the fallback was taken. */
-  readonly triedWarm: boolean
-}
-
-/** `resumeMemberSession` result: the Session the Member now runs, plus any fallback taken. */
-export interface AgentTeamResumeMemberSessionResult {
-  readonly sessionId: SessionId
-  readonly cache: 'warm' | 'cold'
-  readonly action: 'resumed' | 'seeded-new'
-  /** Present only when this delivery took the cold fallback instead of the warm path. */
-  readonly coldFallback?: AgentTeamColdFallback
-}
 export interface AgentTeamCommitted {
   readonly receipt: AgentTeamOperationReceipt
 }
