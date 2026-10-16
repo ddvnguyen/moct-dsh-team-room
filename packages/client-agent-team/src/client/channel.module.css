@@ -43,34 +43,6 @@
   white-space: nowrap;
 }
 
-.slimChips {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-
-.slimChip {
-  align-items: center;
-  color: var(--dsw-alias-label-secondary);
-  display: inline-flex;
-  font-size: 12px;
-  gap: 4px;
-  line-height: 18px;
-  max-width: 96px;
-}
-
-.slimChipName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.slimOverflowCount {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
 .slimMeta {
   color: var(--dsw-alias-label-tertiary);
   display: flex;
@@ -155,7 +127,6 @@
 @media (max-width: 640px) {
   .slimHeader { gap: 6px; }
   .slimDesc { display: none; }
-  .slimChips { display: none; }
   .slimParticipants { display: none; }
 }
 
