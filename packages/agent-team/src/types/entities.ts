@@ -552,6 +552,64 @@ export type AgentTeamDocStatus = 'draft' | 'in_review' | 'changes_requested' | '
 /** The Human's verdict on a Doc: accept it, send the pending comments back for revision, or drop it. */
 export type AgentTeamDocVerdict = 'approve' | 'review' | 'cancel'
 
+/** Stable identifier of one decision card. */
+export type AgentTeamDecisionRef = Branded<'AgentTeamDecisionRef'>
+
+/** One choice on a decision question. */
+export interface AgentTeamDecisionOption {
+  /** One or two words, shown on the button. */
+  readonly label: string
+  /** One sentence: what happens if this option is picked. */
+  readonly description?: string
+}
+
+/**
+ * One question on a decision card. Every question also takes a free-text
+ * answer beside its options, so the Human is never boxed in.
+ */
+export interface AgentTeamDecisionQuestion {
+  readonly prompt: string
+  /** Whether several options may be picked together. */
+  readonly multiple: boolean
+  readonly options: readonly AgentTeamDecisionOption[]
+  /** Option indexes the asking Member will act on while the card is open; at most one for a single-choice question. */
+  readonly recommended: readonly number[]
+}
+
+/** The Human's answer to one question: the picked option indexes, free text, or both. */
+export interface AgentTeamDecisionAnswer {
+  readonly selected: readonly number[]
+  readonly text?: string
+}
+
+/**
+ * The decision event one Thread reply announces. A Member asks (the reply
+ * mentions the Human), the Human answers (the reply mentions the asker, so the
+ * existing mention wake carries the answer), or the asker withdraws a card it
+ * no longer needs.
+ */
+export type AgentTeamDecisionNotice =
+  | {
+    readonly decisionRef: AgentTeamDecisionRef
+    readonly event: 'asked'
+    /** Background the Human needs to answer, shown above the questions. */
+    readonly context?: string
+    readonly questions: readonly AgentTeamDecisionQuestion[]
+  }
+  | {
+    readonly decisionRef: AgentTeamDecisionRef
+    readonly event: 'answered'
+    /** One answer per question, in question order. */
+    readonly answers: readonly AgentTeamDecisionAnswer[]
+  }
+  | {
+    readonly decisionRef: AgentTeamDecisionRef
+    readonly event: 'withdrawn'
+  }
+
+/** Where a decision card stands: open until the Human answers it or its asker withdraws it. */
+export type AgentTeamDecisionStatus = 'open' | 'answered' | 'withdrawn'
+
 /** The Doc event one Thread reply announces; the Message is the notice, this is the fact it carries. */
 export type AgentTeamDocNotice =
   | {

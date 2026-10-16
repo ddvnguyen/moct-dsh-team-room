@@ -51,6 +51,16 @@ import type {
   AgentTeamDocSectionHistory,
   AgentTeamDocSectionHistoryRequest,
   AgentTeamDocCreatedOperation,
+  AgentTeamAnswerDecisionRequest,
+  AgentTeamAskDecisionRequest,
+  AgentTeamDecisionNotice,
+  AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRef,
+  AgentTeamDecisionRequest,
+  AgentTeamDecisionView,
+  AgentTeamDecisionsRequest,
+  AgentTeamDecisionsResult,
+  AgentTeamWithdrawDecisionRequest,
   AgentTeamDocNotice,
   AgentTeamDocNoticeResult,
   AgentTeamDocRef,
@@ -186,6 +196,18 @@ import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
 import type { AgentTeamRepliedThread } from './turn-threads.ts'
 import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
 import type { AgentTeamDocState } from './team-docs.ts'
+import type { AgentTeamDecisionState } from './team-decisions.ts'
+import {
+  askedDecisionState,
+  closedDecisionState,
+  decisionAnswerBody,
+  decisionAskBody,
+  decisionView,
+  decisionWithdrawBody,
+  normalizeDecisionAnswers,
+  normalizeDecisionContext,
+  normalizeDecisionQuestions,
+} from './team-decisions.ts'
 import {
   createdDocState,
   docReviewNoticeBody,
@@ -468,6 +490,18 @@ export interface AgentTeamAuthorizedCommentDocRequest extends AgentTeamCommentDo
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
 
+export interface AgentTeamAuthorizedAskDecisionRequest extends AgentTeamAskDecisionRequest {
+  readonly actor: AgentTeamMemberActor
+}
+
+export interface AgentTeamAuthorizedAnswerDecisionRequest extends AgentTeamAnswerDecisionRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedWithdrawDecisionRequest extends AgentTeamWithdrawDecisionRequest {
+  readonly actor: AgentTeamMemberActor
+}
+
 export interface AgentTeamAuthorizedSubmitDocRequest extends AgentTeamSubmitDocRequest {
   readonly actor: AgentTeamMemberActor
 }
@@ -480,7 +514,7 @@ export interface AgentTeamAuthorizedReviewDocRequest extends AgentTeamReviewDocR
 export interface AgentTeamLedgerOptions {
   readonly operationId?: () => AgentTeamOperationId
   readonly occurredAt?: () => string
-  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment') => string
+  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') => string
 }
 
 /** Internal append result indicating whether this call committed a new record. */
@@ -606,6 +640,10 @@ interface Projection {
   readonly docs: Map<AgentTeamDocRef, AgentTeamDocState>
   /** Docs per home Thread, in creation order. */
   readonly docsByThread: Map<AgentTeamThreadRef, AgentTeamDocRef[]>
+  /** Decision cards, folded from the ask, answer and withdraw notices on Thread replies. */
+  readonly decisions: Map<AgentTeamDecisionRef, AgentTeamDecisionState>
+  /** Decision cards per Thread, in ask order. */
+  readonly decisionsByThread: Map<AgentTeamThreadRef, AgentTeamDecisionRef[]>
 }
 
 /** Minimal replay-time Attention observation; the read projection adds the current Task ref. */
@@ -659,7 +697,7 @@ function emptyProjection(): Projection {
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map(),
-    docs: new Map(), docsByThread: new Map() }
+    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map() }
 }
 
 /**
@@ -853,7 +891,7 @@ export class AgentTeamLedger {
   private readonly confirmations = new Map<AgentTeamConfirmationToken, Confirmation>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
-  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment') => string
+  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') => string
   private operationTail: Promise<void> = Promise.resolve()
   /**
    * Runtime human display name. Durable identity stays `member:human`; only
@@ -2084,6 +2122,120 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * A Member asks the Human one to six questions on one card. The notice is a
+   * Thread reply that mentions the Human, so the open card reaches their Inbox.
+   * The asker keeps working on the recommended options while the card is open.
+   */
+  askDecision(request: AgentTeamAuthorizedAskDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
+    return this.enqueue(async () => {
+      const questions = normalizeDecisionQuestions(request.questions)
+      const context = normalizeDecisionContext(request.context)
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/thread-replied' || existing.data.decision?.event !== 'asked' || !this.sameActor(existing.actor, request.actor)
+          || existing.data.workspaceId !== request.workspaceId || !isDeepStrictEqual(existing.data.decision.questions, questions)
+          || existing.data.decision.context !== context) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.decisionNoticeResult(existing))
+      }
+      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId) as AgentTeamMemberActor
+      const { thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
+      this.assertThreadChannelActive(channelRef)
+      const decisionRef = this.ref('decision')
+      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef, event: 'asked' as const, ...(context === undefined ? {} : { context }), questions })
+      const body = decisionAskBody(this.humanHandle, decisionRef, context, questions)
+      const operation = this.noticeReplyOperation(request, thread.threadRef, channelRef, body, [this.initialization().data.humanMemberId], { decision: notice })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.decisionNoticeResult(operation))
+    })
+  }
+
+  /**
+   * The Human answers an open card. The notice mentions the asker, so the
+   * existing direct-mention wake carries the answer to it. A card answers once.
+   */
+  answerDecision(request: AgentTeamAuthorizedAnswerDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/thread-replied' || existing.data.decision?.event !== 'answered' || !this.sameActor(existing.actor, request.actor)
+          || existing.data.workspaceId !== request.workspaceId || existing.data.decision.decisionRef !== request.decisionRef) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.decisionNoticeResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const state = this.decisionForActor(request.actor, request.workspaceId, request.decisionRef)
+      this.assertDecisionOpen(state)
+      const answers = normalizeDecisionAnswers(state.questions, request.answers)
+      const asker = this.state.members.get(state.asker)
+      if (asker === undefined || !this.validMentionTarget(this.state, state.channelRef, asker.memberId)) {
+        throw new Error(`the card's asker can no longer be reached in Channel '${state.channelRef}'`)
+      }
+      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'answered' as const, answers })
+      const body = decisionAnswerBody(asker.handle, state.decisionRef, state.questions, answers)
+      const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId], { decision: notice })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.decisionNoticeResult(operation))
+    })
+  }
+
+  /** The asker takes back an open card it no longer needs; it wakes nobody. */
+  withdrawDecision(request: AgentTeamAuthorizedWithdrawDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/thread-replied' || existing.data.decision?.event !== 'withdrawn' || !this.sameActor(existing.actor, request.actor)
+          || existing.data.workspaceId !== request.workspaceId || existing.data.decision.decisionRef !== request.decisionRef) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.decisionNoticeResult(existing))
+      }
+      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId) as AgentTeamMemberActor
+      const state = this.decisionForActor(actor, request.workspaceId, request.decisionRef)
+      if (state.asker !== actor.memberId) throw new Error(`only the Member that asked can withdraw '${state.decisionRef}'`)
+      this.assertDecisionOpen(state)
+      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'withdrawn' as const })
+      const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, decisionWithdrawBody(state.decisionRef), [], { decision: notice })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.decisionNoticeResult(operation))
+    })
+  }
+
+  /** One decision card, for a reader allowed in its Channel. */
+  decision(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDecisionRequest): AgentTeamDecisionView {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    return decisionView(this.decisionForActor(authorized, request.workspaceId, request.decisionRef))
+  }
+
+  /** The decision cards of one Thread, oldest first. */
+  decisions(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDecisionsRequest): AgentTeamDecisionsResult {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    const { thread } = this.threadContextForActor(authorized, request.workspaceId, { threadRef: request.threadRef })
+    const decisions = (this.state.decisionsByThread.get(thread.threadRef) ?? []).flatMap(decisionRef => {
+      const state = this.state.decisions.get(decisionRef)
+      return state === undefined ? [] : [decisionView(state)]
+    })
+    return Object.freeze({ decisions: Object.freeze(decisions) })
+  }
+
+  private decisionForActor(actor: AgentTeamHumanActor | AgentTeamMemberActor, workspaceId: WorkspaceId, decisionRef: AgentTeamDecisionRef): AgentTeamDecisionState {
+    const state = this.state.decisions.get(this.requireRefKey(this.state.decisions, decisionRef, 'decision', 'decision card'))
+    if (state === undefined) throw new Error(`unknown decision card '${decisionRef}'${this.unknownRefHint(decisionRef, 'decision', 'decision card')}`)
+    if (this.state.channels.get(state.channelRef)?.workspaceId !== workspaceId) throw new Error(`decision card '${decisionRef}' does not belong to Workspace '${workspaceId}'`)
+    this.assertThreadChannelActive(state.channelRef)
+    if (actor.kind === 'member') this.requireMemberChannel(this.requireMember(actor.memberId), state.channelRef)
+    return state
+  }
+
+  private assertDecisionOpen(state: AgentTeamDecisionState): void {
+    if (state.status !== 'open') throw new Error(`decision card '${state.decisionRef}' is already ${state.status}`)
+  }
+
+  private decisionNoticeResult(operation: AgentTeamThreadRepliedOperation): AgentTeamDecisionNoticeResult {
+    if (operation.data.decision === undefined) throw new Error('operation is not a decision notice')
+    return Object.freeze({ receipt: this.receipt(operation), message: operation.data.message, thread: operation.data.thread, notice: operation.data.decision })
+  }
+
   /** One whole Doc, for a reader allowed in its Channel. */
   doc(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDocRequest): AgentTeamDocView {
     const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
@@ -2148,12 +2300,7 @@ export class AgentTeamLedger {
     return Object.freeze({ kind: 'stale_doc_revision' as const, docRef: state.doc.docRef, expectedRevision, revision: state.revision })
   }
 
-  /**
-   * The Thread reply that carries one Doc notice. It records the Thread's
-   * current revision as its base, because the notice is not a conversational
-   * write that read the Thread first; mentioned Agents that are not following
-   * start following, exactly as replay derives it.
-   */
+  /** The Thread reply that carries one Doc notice. */
   private docNoticeOperation(
     request: { readonly requestId: AgentTeamRequestId; readonly actor: AgentTeamHumanActor | AgentTeamMemberActor; readonly workspaceId: WorkspaceId },
     state: AgentTeamDocState,
@@ -2161,12 +2308,29 @@ export class AgentTeamLedger {
     mentions: readonly AgentTeamMemberId[],
     notice: AgentTeamDocNotice,
   ): AgentTeamThreadRepliedOperation {
-    const thread = this.requireThread(state.doc.threadRef)
+    return this.noticeReplyOperation(request, state.doc.threadRef, state.doc.channelRef, body, mentions, { doc: notice })
+  }
+
+  /**
+   * The Thread reply that carries one Doc or decision notice. It records the
+   * Thread's current revision as its base, because the notice is not a
+   * conversational write that read the Thread first; mentioned Agents that are
+   * not following start following, exactly as replay derives it.
+   */
+  private noticeReplyOperation(
+    request: { readonly requestId: AgentTeamRequestId; readonly actor: AgentTeamHumanActor | AgentTeamMemberActor; readonly workspaceId: WorkspaceId },
+    threadRef: AgentTeamThreadRef,
+    channelRef: AgentTeamChannelRef,
+    body: string,
+    mentions: readonly AgentTeamMemberId[],
+    notice: { readonly doc: AgentTeamDocNotice } | { readonly decision: AgentTeamDecisionNotice },
+  ): AgentTeamThreadRepliedOperation {
+    const thread = this.requireThread(threadRef)
     const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
     const sequence = this.nextSequence()
     const base = this.operationBase(request, sequence)
     const message: AgentTeamMessage = Object.freeze({
-      messageRef: this.ref('message'), channelRef: state.doc.channelRef, threadRef: thread.threadRef,
+      messageRef: this.ref('message'), channelRef, threadRef: thread.threadRef,
       ...(task === undefined ? {} : { taskRef: task.taskRef }), sender: request.actor.memberId, body,
       topLevel: false, sequence, occurredAt: base.occurredAt,
     })
@@ -2177,7 +2341,7 @@ export class AgentTeamLedger {
       ...base, kind: 'team/thread-replied',
       data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: thread.revision, mentions: sortedMentions, message,
         ...(task === undefined ? {} : { task }), thread: Object.freeze({ ...thread, revision: sequence }),
-        inbox: this.messageInboxDelta(message, request.actor.memberId, sortedMentions, started), doc: notice }),
+        inbox: this.messageInboxDelta(message, request.actor.memberId, sortedMentions, started), ...notice }),
     })
   }
 
@@ -3967,6 +4131,7 @@ export class AgentTeamLedger {
       this.validateInboxDelta(operation.data.inbox, projection, refs, [thread.threadRef], [message])
       this.validateMessageInbox(operation, projection)
       if (operation.kind === 'team/thread-replied' && operation.data.doc !== undefined) this.validateDocNotice(operation, operation.data.doc, projection, humanMemberId)
+      if (operation.kind === 'team/thread-replied' && operation.data.decision !== undefined) this.validateDecisionNotice(operation, operation.data.decision, projection, refs, humanMemberId)
       return
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
@@ -4310,6 +4475,28 @@ export class AgentTeamLedger {
       || !this.sameList(notice.commentRefs, pendingDocCommentRefs(state, humanMemberId))) throw new Error('invalid Doc review notice')
   }
 
+  private validateDecisionNotice(operation: AgentTeamThreadRepliedOperation, notice: AgentTeamDecisionNotice, projection: Projection,
+    refs: Set<string>, humanMemberId: AgentTeamMemberId): void {
+    const { message, mentions } = operation.data
+    if (operation.data.doc !== undefined || message.replyToMessageRef !== undefined || message.attachments !== undefined) throw new Error('invalid decision notice')
+    if (notice.event === 'asked') {
+      if (operation.actor.kind !== 'member' || projection.decisions.has(notice.decisionRef) || !this.sameList(mentions, [humanMemberId])
+        || normalizeDecisionContext(notice.context) !== notice.context || !isDeepStrictEqual(normalizeDecisionQuestions(notice.questions), notice.questions)) {
+        throw new Error('invalid decision ask notice')
+      }
+      this.addRef(refs, notice.decisionRef)
+      return
+    }
+    const state = projection.decisions.get(notice.decisionRef)
+    if (state === undefined || state.status !== 'open' || state.threadRef !== message.threadRef) throw new Error('invalid decision notice')
+    if (notice.event === 'answered') {
+      if (operation.actor.kind !== 'human' || !this.sameList(mentions, [state.asker])
+        || !isDeepStrictEqual(normalizeDecisionAnswers(state.questions, notice.answers), notice.answers)) throw new Error('invalid decision answer notice')
+      return
+    }
+    if (operation.actor.kind !== 'member' || operation.actor.memberId !== state.asker || mentions.length !== 0) throw new Error('invalid decision withdraw notice')
+  }
+
   private validateMessageInbox(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation, projection: Projection): void {
     const { message, mentions } = operation.data
     const mentionedAgents = mentions.filter(memberId => projection.members.has(memberId))
@@ -4497,6 +4684,15 @@ export class AgentTeamLedger {
       const notice = operation.kind === 'team/thread-replied' ? operation.data.doc : undefined
       const docState = notice === undefined ? undefined : target.docs.get(notice.docRef)
       if (notice !== undefined && docState !== undefined) target.docs.set(notice.docRef, withDocNotice(docState, notice, message.messageRef, operation.sequence, operation.occurredAt))
+      const decision = operation.kind === 'team/thread-replied' ? operation.data.decision : undefined
+      if (decision?.event === 'asked') {
+        target.decisions.set(decision.decisionRef, askedDecisionState(decision, { channelRef: message.channelRef, threadRef: message.threadRef, messageRef: message.messageRef },
+          operation.actor.memberId, message.occurredAt ?? operation.occurredAt))
+        target.decisionsByThread.set(message.threadRef, [...(target.decisionsByThread.get(message.threadRef) ?? []), decision.decisionRef])
+      } else if (decision !== undefined) {
+        const decisionState = target.decisions.get(decision.decisionRef)
+        if (decisionState !== undefined) target.decisions.set(decision.decisionRef, closedDecisionState(decisionState, decision, operation.actor.memberId, message.occurredAt ?? operation.occurredAt))
+      }
       return
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
@@ -6170,7 +6366,8 @@ export class AgentTeamLedger {
   private ref(kind: 'activity'): AgentTeamActivityRef
   private ref(kind: 'doc'): AgentTeamDocRef
   private ref(kind: 'comment'): AgentTeamDocCommentRef
-  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment') {
+  private ref(kind: 'decision'): AgentTeamDecisionRef
+  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') {
     return this.createRef(kind)
   }
 

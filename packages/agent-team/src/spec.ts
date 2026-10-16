@@ -12,6 +12,7 @@ import type {
   AgentTeamClaimRef,
   AgentTeamContextCheckpointRef,
   AgentTeamDocCommentRef,
+  AgentTeamDecisionRef,
   AgentTeamDocRef,
   AgentTeamMemberId,
   AgentTeamMessageRef,
@@ -39,6 +40,7 @@ const attachmentIdSchema = z.string().min(1).transform(value => value as AgentTe
 const docRefSchema = z.string().regex(/^doc:[^:]+$/).transform(value => value as AgentTeamDocRef)
 const docCommentRefSchema = z.string().regex(/^comment:[^:]+$/).transform(value => value as AgentTeamDocCommentRef)
 const docSectionIdSchema = z.string().regex(/^s[1-9][0-9]*$/)
+const decisionRefSchema = z.string().regex(/^decision:[^:]+$/).transform(value => value as AgentTeamDecisionRef)
 
 const actorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
@@ -229,6 +231,23 @@ const docCommentSchema = z.object({
   parentCommentRef: docCommentRefSchema.optional(),
   sequence: z.number().int().positive(),
 }).strict().transform(omitUndefined)
+
+const decisionQuestionSchema = z.object({
+  prompt: z.string().min(1),
+  multiple: z.boolean(),
+  options: z.array(z.object({ label: z.string().min(1), description: z.string().min(1).optional() }).strict()),
+  recommended: z.array(z.number().int().nonnegative()),
+}).strict()
+
+const decisionNoticeSchema = z.discriminatedUnion('event', [
+  z.object({ decisionRef: decisionRefSchema, event: z.literal('asked'), context: z.string().min(1).optional(), questions: z.array(decisionQuestionSchema) }).strict(),
+  z.object({
+    decisionRef: decisionRefSchema,
+    event: z.literal('answered'),
+    answers: z.array(z.object({ selected: z.array(z.number().int().nonnegative()), text: z.string().min(1).optional() }).strict()),
+  }).strict(),
+  z.object({ decisionRef: decisionRefSchema, event: z.literal('withdrawn') }).strict(),
+])
 
 const docNoticeSchema = z.discriminatedUnion('event', [
   z.object({ docRef: docRefSchema, event: z.literal('submitted'), docRevision: z.number().int().positive() }).strict(),
@@ -517,6 +536,8 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       inbox: inboxDeltaSchema,
       // Optional and forward-only: every reply recorded before Team Documents omits it.
       doc: docNoticeSchema.optional(),
+      // Optional and forward-only: every reply recorded before decision cards omits it.
+      decision: decisionNoticeSchema.optional(),
     }).strict().transform(omitUndefined),
   }).strict(),
   z.object({

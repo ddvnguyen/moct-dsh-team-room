@@ -37,6 +37,8 @@ import type {
   AgentTeamDocRequest,
   AgentTeamDocsRequest,
   AgentTeamReviewDocRequest,
+  AgentTeamAnswerDecisionRequest,
+  AgentTeamDecisionsRequest,
   AgentTeamResolveDocCommentRequest,
   AgentTeamDocSectionHistoryRequest,
   AgentTeamWriteDocSectionRequest,
@@ -452,6 +454,8 @@ function teamSeatInject(
       writeDocSection: (request: AgentTeamWriteDocSectionRequest) => ctx.remote.agentTeam.writeDocSection(request),
       resolveDocComment: (request: AgentTeamResolveDocCommentRequest) => ctx.remote.agentTeam.resolveDocComment(request),
       loadDocSectionHistory: (request: AgentTeamDocSectionHistoryRequest) => ctx.remote.agentTeam.docSectionHistory(request),
+      loadDecisions: (request: AgentTeamDecisionsRequest) => ctx.remote.agentTeam.decisions(request),
+      answerDecision: (request: AgentTeamAnswerDecisionRequest) => ctx.remote.agentTeam.answerDecision(request),
     } : {}),
     ...(name === 'sidebar.workspaces' ? {
       addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),

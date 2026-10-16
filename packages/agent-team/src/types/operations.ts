@@ -11,6 +11,7 @@ import type {
   AgentTeamClaimsReleasedActivity,
   AgentTeamDoc,
   AgentTeamDocComment,
+  AgentTeamDecisionNotice,
   AgentTeamDocNotice,
   AgentTeamDocRef,
   AgentTeamDocCommentRef,
@@ -285,7 +286,8 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
 /**
  * Durable existing-Thread reply and any invitation/direct-mention facts. A
  * reply that announces a Team Document submit or review carries that fact in
- * `doc`: the Message is the public notice and its mention is the wake.
+ * `doc`, and one that asks, answers or withdraws a decision card carries it in
+ * `decision`: the Message is the public notice and its mention is the wake.
  */
 export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/thread-replied'
@@ -299,6 +301,8 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
     readonly inbox: AgentTeamInboxDelta
     /** Absent on every ordinary reply, including every reply recorded before Team Documents. */
     readonly doc?: AgentTeamDocNotice
+    /** Absent on every ordinary reply, including every reply recorded before decision cards. */
+    readonly decision?: AgentTeamDecisionNotice
   }
 }
 

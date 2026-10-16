@@ -451,3 +451,26 @@
 }
 
 .danger { color: var(--dsw-alias-state-error-primary); }
+
+/* A Doc in review is the plan card: the Doc card with its verdict beside it. */
+.planCard {
+  align-items: center;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  max-width: 100%;
+  min-width: 0;
+  padding-right: 8px;
+}
+.planCard > .docCard { border-color: transparent; }
+
+.planActions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  padding: 4px 0 4px 12px;
+}
+
+.threadDocs > .notice { flex: 1 1 100%; margin: 0; }

@@ -148,6 +148,14 @@ import type {
   AgentTeamCreateDocResult,
   AgentTeamDocCommentResult,
   AgentTeamDocNoticeResult,
+  AgentTeamAnswerDecisionRequest,
+  AgentTeamAskDecisionRequest,
+  AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRequest,
+  AgentTeamDecisionView,
+  AgentTeamDecisionsRequest,
+  AgentTeamDecisionsResult,
+  AgentTeamWithdrawDecisionRequest,
   AgentTeamDocRequest,
   AgentTeamDocsRequest,
   AgentTeamDocsResult,
@@ -218,6 +226,7 @@ export { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIAL
 export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName } from './human-profile.ts'
 export { humanAvatarsRoot } from './human-avatar.ts'
 export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
+export { decisionAnswersText } from './team-decisions.ts'
 export { TEAM_MEMORY_HOMES, TEAM_MEMORY_STATUSES, TEAM_MEMORY_TYPES, TeamMemoryClient, TeamMemoryError } from './team-memory.ts'
 export { TeamMemoryHuman, memoryOutcome } from './team-memory-human.ts'
 export type { TeamMemoryHumanContext } from './team-memory-human.ts'
@@ -2680,6 +2689,22 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /** Human read of the decision cards of one Thread, oldest first. */
+  @Remote('decisions')
+  decisions(request: AgentTeamDecisionsRequest): AgentTeamDecisionsResult {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().decisions(agentTeamHumanActor(), request)
+  }
+
+  /** Human answer to one open decision card; its Thread notice wakes the asker. */
+  @Remote('answerDecision')
+  async answerDecision(request: AgentTeamAnswerDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().answerDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
@@ -2734,6 +2759,53 @@ export default class AgentTeam extends TypertRemoteService {
     const result = await this.requireLedger().submitDoc({ ...request, actor })
     this.emitCommittedOutcome(result)
     return result.value
+  }
+
+  /** Agent-only decision card; its Thread notice puts the card in the Human's Inbox. */
+  async askDecisionForAgent(agent: Agent, request: AgentTeamAskDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().askDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only withdrawal of a card the calling Member asked and no longer needs. */
+  async withdrawDecisionForAgent(agent: Agent, request: AgentTeamWithdrawDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().withdrawDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  decisionForAgent(agent: Agent, request: AgentTeamDecisionRequest): AgentTeamDecisionView {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().decision(actor, request)
+  }
+
+  /**
+   * Agent-only bounded wait for the Human on one Thread: resolves with the
+   * first value `settled` reads, or undefined once `timeoutMs` passes or the
+   * caller's signal aborts. The Thread's own change scope drives each check, so
+   * the wait reads nothing between commits and never holds the ledger.
+   */
+  async waitInThreadForAgent<T>(agent: Agent, request: { readonly workspaceId: WorkspaceId; readonly threadRef: AgentTeamThreadRef },
+    settled: () => T | undefined, timeoutMs: number, signal?: AbortSignal): Promise<T | undefined> {
+    this.requireAgentWorkspace(this.memberActor(agent), request.workspaceId)
+    const stop = new AbortController()
+    const timer = setTimeout(() => { stop.abort() }, timeoutMs)
+    const onAbort = (): void => { stop.abort() }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      for await (const _change of this.changes({ scope: { kind: 'thread', threadRef: request.threadRef } }, stop.signal)) {
+        const value = settled()
+        if (value !== undefined) return value
+      }
+      return settled()
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
   }
 
   docForAgent(agent: Agent, request: AgentTeamDocRequest): AgentTeamDocView {

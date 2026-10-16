@@ -609,6 +609,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const writeDocSection = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const resolveDocComment = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const docSectionHistory = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const decisions = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: { decisions: [] as unknown[] } }))
+  const answerDecision = vi.fn(async () => ({ ok: false as const, error: { message: 'no decision card in this fixture' } }))
   const resolveMessageRefs = vi.fn(async (request: { workspaceId: string; messageRefs: readonly string[] }) => {
     const messages = viewItems.map(item => item.message as { messageRef: string; threadRef: string; sender: string; body: string })
     const resolved = request.messageRefs.flatMap(ref => {
@@ -815,7 +817,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
