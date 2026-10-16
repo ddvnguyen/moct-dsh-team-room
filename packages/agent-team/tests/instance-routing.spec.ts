@@ -270,8 +270,9 @@ describe('multi-instance slot router (contract v2)', () => {
 })
 
 describe('per-Thread Sessions (#92 step 4)', () => {
-  it('gives a new Task Thread an extra slot even while slot 0 is idle; a plain Thread still takes slot 0', async () => {
+  it('with AGENT_TEAM_TASK_SESSIONS=own, gives a new Task Thread an extra slot even while slot 0 is idle; a plain Thread still takes slot 0', async () => {
     const { ctx } = await harness()
+    ctx.agentTeam['taskSessions'] = 'own'
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('pt-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
     const { memberId, slotZero, spawned } = await seat(ctx, channel.channel.channelRef, { slotZero: 'idle' })
     const ledger = ctx.agentTeam['ledger']!

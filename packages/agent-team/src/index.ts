@@ -768,6 +768,12 @@ export default class AgentTeam extends TypertRemoteService {
   // Unlimited until configured: a wake to an idle seat starts at once, as it always has. `DEFAULT_WARM_LIMIT`
   // (1 per 60 s, contract §4.2) is applied by `configureWarmLimit`.
   private warmLimit: WarmLimit = UNLIMITED_WARM_LIMIT
+  /**
+   * Where a new Task Thread goes on a multi-instance seat (#92 step 4). `home` (default) routes it like any
+   * Thread; `own` (`AGENT_TEAM_TASK_SESSIONS=own`) prefers an extra slot so Task work gets its own Session.
+   * Opt-in because extra slots carry no recovery, rollover or pressure management: slot 0 alone does.
+   */
+  private taskSessions: 'home' | 'own' = process.env.AGENT_TEAM_TASK_SESSIONS?.trim() === 'own' ? 'own' : 'home'
   /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
   private readonly slotErrors = new Set<string>()
 
@@ -4769,9 +4775,10 @@ export default class AgentTeam extends TypertRemoteService {
   /**
    * Multi-instance routing (contract v2 §2/§2a): split a seat's unread Threads across its slots.
    * Threads routed to an extra slot are delivered there (spawning it on demand); the subset for
-   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. A new Task
-   * Thread prefers an extra slot, so Task work gets its own Session and the home Session keeps DMs
-   * and coordination (#92). N=1 is today's behavior: everything stays on slot 0 and nothing is bound.
+   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. With
+   * `taskSessions` set to `own`, a new Task Thread prefers an extra slot, so Task work gets its own
+   * Session and the home Session keeps DMs and coordination (#92). N=1 is today's behavior: everything
+   * stays on slot 0 and nothing is bound.
    */
   private routeToInstances(member: AgentTeamAgentMember, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): ReturnType<AgentTeamLedger['notificationFacts']> {
     const instances = memberInstances(member)
@@ -4782,7 +4789,7 @@ export default class AgentTeam extends TypertRemoteService {
       instances,
       threadRef => this.routedSlots.get(routeKey(member.memberId, threadRef)) ?? ledger.threadInstanceOf(threadRef, member.memberId),
       slot => this.slotBusy(member.memberId, slot),
-      threadRef => notifications.some(entry => entry.item.thread.threadRef === threadRef && entry.item.thread.taskRef !== undefined),
+      threadRef => this.taskSessions === 'own' && notifications.some(entry => entry.item.thread.threadRef === threadRef && entry.item.thread.taskRef !== undefined),
     )
     const bySlot = new Map<number, ReturnType<AgentTeamLedger['notificationFacts']>[number][]>()
     routes.forEach((route, index) => {
