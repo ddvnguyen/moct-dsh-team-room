@@ -27,7 +27,7 @@ describe('Team Thread roster', () => {
   }
 
   const openPicker = async () => {
-    fireEvent.click(screen.getByRole('button', { name: '选择 Agent' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Agent：@/ }))
     return screen.getAllByRole('option').map(option => (option.textContent ?? '').trim())
   }
 
@@ -142,7 +142,7 @@ describe('Team Thread roster', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     await b.view.findByRole('heading', { name: '# engineering' })
     // Wait for the seeded Channel memberships to reach the composer's roster.
-    await screen.findByRole('button', { name: '选择 Agent' })
+    await screen.findByRole('button', { name: /^Agent：@/ })
     const options = await openPicker()
     expect(options).toHaveLength(2)
     expect(options.join('|')).toContain('@joined-a')

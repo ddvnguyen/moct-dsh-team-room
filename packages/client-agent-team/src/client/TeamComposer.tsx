@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
-import { IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineMedium, IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
@@ -641,14 +641,15 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
           <button
             type="button"
             className={css.agentPickerButton}
-            aria-label={t('selectAgent')}
+            aria-label={selectedMember === undefined ? t('selectAgent') : t('agentSelectedLabel', { handle: selectedMember.member.handle.replace(/^@/, '') })}
+            title={selectedMember === undefined ? t('selectAgent') : t('changeAgent')}
             aria-haspopup="listbox"
             aria-expanded={agentMenuOpen}
             disabled={pending}
             onClick={() => { setAgentMenuOpen(open => !open) }}
           >
-            <IconChecklistOutlineMedium size={14} />
-            <span className={css.agentPickerLabel}>{t('selectAgent')}</span>
+            <IconAgentPresetOutlineMedium size={14} />
+            {selectedMember === undefined && <span className={css.agentPickerLabel}>{t('selectAgent')}</span>}
             <span className={css.agentPickerCurrent} data-team-agent-picker-current="">{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
           </button>
           {agentMenuOpen && <div className={css.agentMenu} role="listbox" aria-label={t('selectAgent')} ref={agentMenuRef}>
