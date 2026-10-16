@@ -3057,12 +3057,66 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     const sessionB = (agentB as unknown as { session: never }).session
     ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
     await host.sendMessageForAgent(agentB as never, { requestId: requestId('rpc-cold-start'), workspaceId: alpha, channelRef, body: 'cold me', asTask: false } as never)
+    const threadRef = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string; threadRef: string } } })
+      .find(operation => operation.kind === 'team/message-sent' && operation.data.message?.body === 'cold me')!.data.message!.threadRef as never
     // A Turn an hour old: past the TTL, so cold.
     for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - 3_600_000 })) test.ctx.emit('session/event', sessionB, event as never)
     await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
     ;(host as unknown as { handles: Map<unknown, unknown> }).handles.delete(seatB.memberId)
-    await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }))
-      .rejects.toThrow(/no live Session to start a fresh context from/)
+    // Task-16: a cold verdict with no live Session no longer fails the call; it is the
+    // cold fallback, reported on the result so the delivery keeps its one try per Turn.
+    await expect(host.resumeMemberSession({ requestId: requestId('resume-cold'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId, threadRef }))
+      .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: { cause: 'no-handle', triedWarm: false } })
+  })
+
+  // The cold-fallback causes (task-16): one try per Turn, the cause on the result and the log only.
+  async function resumeSetup(turnAgeMs: number, tag: string) {
+    const setup = await seatedHost()
+    const { test, host, channelRef, seatB, agentB } = setup
+    const sessionB = (agentB as unknown as { session: never }).session
+    ;(test.ctx as unknown as { sessionPersistence: { list: () => Promise<unknown[]> } }).sessionPersistence.list = async () => [{ header: { id: seatB.sessionId } }]
+    await host.sendMessageForAgent(agentB as never, { requestId: requestId(`rpc-${tag}`), workspaceId: alpha, channelRef, body: tag, asTask: false } as never)
+    for (const event of completeTurnEvents({ turn: 1, startTime: Date.now() - turnAgeMs })) test.ctx.emit('session/event', sessionB, event as never)
+    await vi.waitFor(() => expect(host.sessionStats({ workspaceId: alpha, sessionId: seatB.sessionId }).run?.turns).toBe(1))
+    return setup
+  }
+  const renewed = (sessionId: string) => ({ status: { member: { sessionId } } })
+
+  it('names cache-cold when the verdict is cold and a live Session takes the one cold start (§4.2)', async () => {
+    const { host, seatB } = await resumeSetup(3_600_000, 'cause-cold')
+    const clear = vi.spyOn(host as never as { clearMemberContext: () => Promise<unknown> }, 'clearMemberContext').mockResolvedValue(renewed('session:fresh'))
+    const result = await host.resumeMemberSession({ requestId: requestId('cause-cold-resume'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId })
+    expect(result).toEqual({ sessionId: 'session:fresh', cache: 'cold', action: 'seeded-new', coldFallback: { cause: 'cache-cold', triedWarm: false } })
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('names resume-failed when the warm resume throws, then takes the single cold start (§4.2)', async () => {
+    const { host, seatB } = await resumeSetup(4000, 'cause-warm')
+    // The Member's live handle runs another Session, so the warm path must re-activate the home Session, and that throws.
+    ;(host as unknown as { handles: Map<unknown, unknown> }).handles.set(seatB.memberId, { agent: { session: { id: 'session:other' } }, dispose: async () => {} })
+    const activate = vi.spyOn(host as never as { activateMember: () => Promise<unknown> }, 'activateMember').mockRejectedValue(new Error('provider session is gone'))
+    const clear = vi.spyOn(host as never as { clearMemberContext: () => Promise<unknown> }, 'clearMemberContext').mockResolvedValue(renewed('session:fresh'))
+    const result = await host.resumeMemberSession({ requestId: requestId('cause-warm-resume'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId })
+    expect(result).toEqual({ sessionId: 'session:fresh', cache: 'cold', action: 'seeded-new', coldFallback: { cause: 'resume-failed', triedWarm: true } })
+    expect(activate).toHaveBeenCalledTimes(1)
+    expect(clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('posts one failed-seat card and fails the Turn when the cold fallback also fails, without a second retry (§4.2)', async () => {
+    const { test, host, seatB } = await resumeSetup(3_600_000, 'cause-twice')
+    const clear = vi.spyOn(host as never as { clearMemberContext: () => Promise<unknown> }, 'clearMemberContext').mockRejectedValue(new Error('renewal refused'))
+    const request = { requestId: requestId('cause-twice-resume'), workspaceId: alpha, memberId: seatB.memberId, sessionId: seatB.sessionId }
+    await expect(host.resumeMemberSession(request)).rejects.toThrow(/renewal refused/)
+    // Repeating the same failed resume resolves to the card already posted: one card, one cold start per Turn.
+    await expect(host.resumeMemberSession(request)).rejects.toThrow(/renewal refused/)
+    expect(clear).toHaveBeenCalledTimes(2)
+    const cards = [...test.facility.get('agent_team')!.table('operations').entries()]
+      .map(([, operation]) => operation as unknown as { kind: string; data: { message?: { body: string } } })
+      .filter(operation => operation.kind === 'team/message-sent' && operation.data.message?.body.startsWith('[agent-team host] Seat could not be started') === true)
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.data.message!.body).toContain('cache-cold')
+    expect(cards[0]!.data.message!.body).toContain('renewal refused')
   })
 })
 
