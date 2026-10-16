@@ -45,6 +45,11 @@ import type {
   AgentTeamDocCommentAddedOperation,
   AgentTeamDocCommentRef,
   AgentTeamDocCommentResult,
+  AgentTeamDocCommentResolvedOperation,
+  AgentTeamResolveDocCommentRequest,
+  AgentTeamResolveDocCommentResult,
+  AgentTeamDocSectionHistory,
+  AgentTeamDocSectionHistoryRequest,
   AgentTeamDocCreatedOperation,
   AgentTeamDocNotice,
   AgentTeamDocNoticeResult,
@@ -184,14 +189,17 @@ import type { AgentTeamDocState } from './team-docs.ts'
 import {
   createdDocState,
   docReviewNoticeBody,
+  docSectionHistory,
   docSubmitNoticeBody,
   docSummary,
   docView,
+  humanEditedDocHeadings,
   isFinalDocStatus,
   nextDocSectionId,
   outlineSections,
   pendingDocCommentRefs,
   withDocComment,
+  withDocCommentResolved,
   withDocNotice,
   withDocSection,
 } from './team-docs.ts'
@@ -449,7 +457,11 @@ export interface AgentTeamAuthorizedCreateDocRequest extends AgentTeamCreateDocR
 }
 
 export interface AgentTeamAuthorizedWriteDocSectionRequest extends AgentTeamWriteDocSectionRequest {
-  readonly actor: AgentTeamMemberActor
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+}
+
+export interface AgentTeamAuthorizedResolveDocCommentRequest extends AgentTeamResolveDocCommentRequest {
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
 
 export interface AgentTeamAuthorizedCommentDocRequest extends AgentTeamCommentDocRequest {
@@ -1888,7 +1900,11 @@ export class AgentTeamLedger {
     })
   }
 
-  /** Member write of one section, fenced by the Doc revision the Member last saw. */
+  /**
+   * Write of one section, fenced by the Doc revision the writer last saw. The
+   * author writes; the Human may edit a section too, and the next verdict tells
+   * the author which sections the Human rewrote.
+   */
   writeDocSection(request: AgentTeamAuthorizedWriteDocSectionRequest): Promise<AgentTeamLedgerResult<AgentTeamWriteDocSectionResult>> {
     return this.enqueue(async () => {
       const heading = request.heading.trim()
@@ -1900,7 +1916,7 @@ export class AgentTeamLedger {
           || (request.sectionId !== undefined && existing.data.section.sectionId !== request.sectionId)) this.throwRequestCollision(request.requestId)
         return this.resolved(this.writeDocSectionResult(existing))
       }
-      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId) as AgentTeamMemberActor
+      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const state = this.docForActor(actor, request.workspaceId, request.docRef)
       this.assertDocOpen(state)
       if (heading === '') throw new Error('Doc section heading must not be empty')
@@ -1963,6 +1979,37 @@ export class AgentTeamLedger {
   }
 
   /**
+   * Close one comment thread by its root comment. Anyone who may comment may
+   * resolve; a resolved Human comment that no verdict delivered is withdrawn.
+   * Like a comment, it wakes nobody.
+   */
+  resolveDocComment(request: AgentTeamAuthorizedResolveDocCommentRequest): Promise<AgentTeamLedgerResult<AgentTeamResolveDocCommentResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        if (existing.kind !== 'team/doc-comment-resolved' || !this.sameActor(existing.actor, request.actor) || existing.data.workspaceId !== request.workspaceId
+          || existing.data.docRef !== request.docRef || existing.data.commentRef !== request.commentRef) this.throwRequestCollision(request.requestId)
+        return this.resolved(this.resolveDocCommentResult(existing))
+      }
+      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
+      const state = this.docForActor(actor, request.workspaceId, request.docRef)
+      this.assertDocOpen(state)
+      const comment = state.comments.find(entry => entry.comment.commentRef === request.commentRef)?.comment
+      if (comment === undefined) throw new Error(`Doc '${state.doc.docRef}' has no comment '${request.commentRef}'`)
+      if (comment.parentCommentRef !== undefined) throw new Error('resolve a comment thread by its first comment, not a reply')
+      if (state.resolved.has(comment.commentRef)) throw new Error(`comment '${comment.commentRef}' is already resolved`)
+      const sequence = this.nextSequence()
+      const operation: AgentTeamDocCommentResolvedOperation = Object.freeze({
+        ...this.operationBase(request, sequence), kind: 'team/doc-comment-resolved',
+        data: Object.freeze({ workspaceId: request.workspaceId, threadRef: state.doc.threadRef, docRef: state.doc.docRef, commentRef: comment.commentRef }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.resolveDocCommentResult(operation))
+    })
+  }
+
+  /**
    * The author asks the Human to review the Doc at its current revision. The
    * notice is a Thread reply that mentions the Human, so the Doc reaches their
    * Inbox; it is not gated on the author's unread work, because it adds no
@@ -2021,7 +2068,7 @@ export class AgentTeamLedger {
       }
       const notice: AgentTeamDocNotice = Object.freeze({ docRef: state.doc.docRef, event: 'reviewed', docRevision: state.revision,
         verdict: request.verdict, commentRefs: Object.freeze([...commentRefs]) })
-      const body = docReviewNoticeBody(state.doc, author.handle, notice, request.note)
+      const body = docReviewNoticeBody(state.doc, author.handle, notice, request.note, humanEditedDocHeadings(state, humanMemberId))
       const operation = this.docNoticeOperation(request, state, body, [author.memberId], notice)
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
@@ -2035,8 +2082,14 @@ export class AgentTeamLedger {
     return docView(this.docForActor(authorized, request.workspaceId, request.docRef), this.initialization().data.humanMemberId)
   }
 
+  /** Every version of one section, newest first, for a reader allowed in its Channel. */
+  docSectionHistory(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDocSectionHistoryRequest): AgentTeamDocSectionHistory {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    return docSectionHistory(this.docForActor(authorized, request.workspaceId, request.docRef), request.sectionId)
+  }
+
   /**
-   * Doc rows for one Thread, or for refs cited in Message bodies. Refs that do
+   * Doc rows for one Thread or one Channel, or for refs cited in Message bodies. Refs that do
    * not resolve to a Doc this reader may see are omitted, like the other
    * resolve calls.
    */
@@ -2047,6 +2100,11 @@ export class AgentTeamLedger {
     if (request.threadRef !== undefined) {
       const { thread } = this.threadContextForActor(authorized, request.workspaceId, { threadRef: request.threadRef })
       for (const docRef of this.state.docsByThread.get(thread.threadRef) ?? []) refs.add(docRef)
+    }
+    if (request.channelRef !== undefined) {
+      const channel = this.state.channels.get(request.channelRef)
+      if (channel === undefined || channel.workspaceId !== request.workspaceId) throw new Error(`unknown Channel ref '${request.channelRef}'`)
+      for (const state of this.state.docs.values()) if (state.doc.channelRef === request.channelRef) refs.add(state.doc.docRef)
     }
     for (const ref of request.docRefs ?? []) {
       const key = this.uniqueRefKey(this.state.docs, ref, 'doc')
@@ -2129,6 +2187,10 @@ export class AgentTeamLedger {
 
   private docCommentResult(operation: AgentTeamDocCommentAddedOperation): AgentTeamDocCommentResult {
     return Object.freeze({ receipt: this.receipt(operation), comment: operation.data.comment })
+  }
+
+  private resolveDocCommentResult(operation: AgentTeamDocCommentResolvedOperation): AgentTeamResolveDocCommentResult {
+    return Object.freeze({ receipt: this.receipt(operation), docRef: operation.data.docRef, commentRef: operation.data.commentRef })
   }
 
   private docNoticeResult(operation: AgentTeamThreadRepliedOperation): AgentTeamDocNoticeResult {
@@ -2838,6 +2900,11 @@ export class AgentTeamLedger {
         const summary = operation.kind === 'team/doc-section-written' ? `wrote "${operation.data.section.heading}" in doc "${doc.title}"` : `commented on doc "${doc.title}"`
         return event(operation.kind, summary, { threadRef: doc.threadRef })
       }
+      case 'team/doc-comment-resolved': {
+        const doc = this.state.docs.get(operation.data.docRef)?.doc
+        if (doc === undefined || !threadRefs.has(doc.threadRef)) return undefined
+        return event(operation.kind, `resolved a comment on doc "${doc.title}"`, { threadRef: doc.threadRef })
+      }
       case 'team/dm-sent':
       case 'team/channel-created':
       case 'team/channel-updated':
@@ -3437,9 +3504,11 @@ export class AgentTeamLedger {
         // runtime effect, so no change waiter has anything to refetch.
         return []
       case 'team/doc-created':
-        return [{ kind: 'thread', threadRef: operation.data.doc.threadRef }]
+        // The Channel lists its Docs, so a new Doc refreshes the Channel page too.
+        return [{ kind: 'thread', threadRef: operation.data.doc.threadRef }, { kind: 'channel', channelRef: operation.data.doc.channelRef }]
       case 'team/doc-section-written':
       case 'team/doc-comment-added':
+      case 'team/doc-comment-resolved':
         // A Doc page subscribes to its home Thread's scope, so each write refreshes it.
         return [{ kind: 'thread', threadRef: operation.data.threadRef }]
       default:
@@ -3510,6 +3579,7 @@ export class AgentTeamLedger {
       case 'team/doc-created':
       case 'team/doc-section-written':
       case 'team/doc-comment-added':
+      case 'team/doc-comment-resolved':
         return []
       default:
         return assertUnhandledKind(operation)
@@ -3998,13 +4068,13 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/doc-section-written') {
-      const member = assertMember()
+      const member = operation.actor.kind === 'member' ? assertMember() : (assertHuman(), undefined)
       const state = projection.docs.get(operation.data.docRef)
       const { section } = operation.data
       if (state === undefined || isFinalDocStatus(state.status) || operation.data.baseDocRevision !== state.revision
         || operation.data.threadRef !== state.doc.threadRef
         || projection.channels.get(state.doc.channelRef)?.workspaceId !== operation.data.workspaceId
-        || !this.isChannelMemberFrom(projection, state.doc.channelRef, member.memberId)
+        || (member !== undefined && !this.isChannelMemberFrom(projection, state.doc.channelRef, member.memberId))
         || (section.sectionId !== nextDocSectionId(state) && !state.sections.some(candidate => candidate.sectionId === section.sectionId))
         || section.heading === '' || section.heading !== section.heading.trim()) throw new Error('invalid Doc section write')
       return
@@ -4024,6 +4094,16 @@ export class AgentTeamLedger {
         throw new Error('invalid Doc comment')
       }
       this.addRef(refs, comment.commentRef)
+      return
+    }
+    if (operation.kind === 'team/doc-comment-resolved') {
+      const member = operation.actor.kind === 'member' ? assertMember() : (assertHuman(), undefined)
+      const state = projection.docs.get(operation.data.docRef)
+      const comment = state?.comments.find(entry => entry.comment.commentRef === operation.data.commentRef)?.comment
+      if (state === undefined || comment === undefined || isFinalDocStatus(state.status) || operation.data.threadRef !== state.doc.threadRef
+        || projection.channels.get(state.doc.channelRef)?.workspaceId !== operation.data.workspaceId
+        || (member !== undefined && !this.isChannelMemberFrom(projection, state.doc.channelRef, member.memberId))
+        || comment.parentCommentRef !== undefined || state.resolved.has(comment.commentRef)) throw new Error('invalid Doc comment resolution')
       return
     }
     if (operation.kind === 'team/dm-sent') {
@@ -4473,7 +4553,12 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/doc-section-written') {
       const state = target.docs.get(operation.data.docRef)
-      if (state !== undefined) target.docs.set(operation.data.docRef, withDocSection(state, operation.data.section, operation.sequence, operation.occurredAt))
+      if (state !== undefined) target.docs.set(operation.data.docRef, withDocSection(state, operation.data.section, operation.actor.memberId, operation.sequence, operation.occurredAt))
+      return
+    }
+    if (operation.kind === 'team/doc-comment-resolved') {
+      const state = target.docs.get(operation.data.docRef)
+      if (state !== undefined) target.docs.set(operation.data.docRef, withDocCommentResolved(state, operation.data.commentRef, operation.occurredAt))
       return
     }
     if (operation.kind === 'team/doc-comment-added') {

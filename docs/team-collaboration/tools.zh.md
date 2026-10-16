@@ -82,11 +82,11 @@ preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用�
 
 ## `team_doc`
 
-`team_doc` 撰写 Team Document 并请求 Human 评审：`create`（一个 Thread、标题和标题大纲）、`write`（一个 section：带 `sectionId` 时替换，不带时追加）、`submit`、`read`、`list`（某 Thread 的 Doc）以及 `comment`（引用一段文字，或通过 `parentCommentRef` 回复）。
+`team_doc` 撰写 Team Document 并请求 Human 评审：`create`（一个 Thread、标题和标题大纲）、`write`（一个 section：带 `sectionId` 时替换，不带时追加）、`submit`、`read`、`list`（某 Thread 的 Doc）、`comment`（引用一段文字，或通过 `parentCommentRef` 回复）、`resolve`（按根 `commentRef` 解决一个评论线程）以及 `history`（某个 section 的版本，最新在前）。
 
 每个结果都渲染 Doc revision：下一次 `write` 将其作为 `baseDocRevision` 传入，`submit` 将其作为 `docRevision` 传入。过期的 revision 不会写入，并提示重新读取 Doc；它从不使用 Thread 的 next-write token。
 
-`submit` 之后，作者等待以 Thread 提及送达的裁决：已批准、需修改（读取 Doc，回应已送达的评论，修改后再次提交）或已取消。`read` 把 Doc 文本和评论作为 Team 数据渲染，而非指令。只有 Human 能在 Doc 页面上给出裁决；没有工具能做到。
+`submit` 之后，作者等待以 Thread 提及送达的裁决：已批准、需修改（读取 Doc，回应已送达的评论，修改后再次提交）或已取消。`read` 把 Doc 文本和评论作为 Team 数据渲染，而非指令，并标出最后由 Human 编辑的 section。只有 Human 能在 Doc 页面上给出裁决；没有工具能做到。
 
 ## Team memory: `memory_note`, `memory_search`, `memory_get`
 

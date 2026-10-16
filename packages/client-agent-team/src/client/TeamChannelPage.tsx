@@ -24,6 +24,7 @@ import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
 import { chunkRunsWithDays, isRunGap } from './team-separators.ts'
 import { TeamActivityLine } from './TeamActivityLine.tsx'
+import { TeamThreadDocs } from './TeamThreadDocs.tsx'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -49,6 +50,8 @@ interface TeamChannelPageProps {
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
   readonly archiveChannel: TeamConversationProps['archiveChannel']
   readonly selectThread: TeamConversationProps['selectThread']
+  readonly loadDocs: TeamConversationProps['loadDocs']
+  readonly selectDoc: TeamConversationProps['selectDoc']
   /** The Thread open in the lane beside this Channel; its entry row shows it is the open one. */
   readonly openThreadRef?: AgentTeamThreadRef
   readonly selectChannel: TeamConversationProps['selectChannel']
@@ -116,8 +119,9 @@ function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, nu
   return new Map(inbox.items.filter(item => item.unreadCount > 0).map(item => [item.thread.threadRef, item.unreadCount]))
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, openThreadRef, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, sidebarCollapsed, openSidebar, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, openThreadRef, loadDocs, selectDoc, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, sidebarCollapsed, openSidebar, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
+  const [docsVersion, setDocsVersion] = useState(0)
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
   const [actionError, setError] = useState<string>()
@@ -297,6 +301,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
       subscribeChanges({ kind: 'channel', channelRef }, update => {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setLoadError(update.message); return }
+        setDocsVersion(version => version + 1)
         void refresh()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
@@ -447,6 +452,8 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
           />
         </span>}
       </header>
+      <TeamThreadDocs workspaceId={workspaceId} home={{ channelRef }} loadDocs={loadDocs} changeVersion={docsVersion} t={t}
+        openDoc={summary => { selectDoc(summary.docRef, summary.threadRef, summary.channelRef) }} />
     </div>
 
     {archiving && channel !== undefined && (

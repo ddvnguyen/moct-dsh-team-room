@@ -1058,7 +1058,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             })()}
         </span>}
       </header>
-      <TeamThreadDocs workspaceId={workspaceId} threadRef={threadRef} loadDocs={loadDocs} changeVersion={docsVersion} t={t}
+      <TeamThreadDocs workspaceId={workspaceId} home={{ threadRef }} loadDocs={loadDocs} changeVersion={docsVersion} t={t}
         openDoc={summary => { selectDoc(summary.docRef, threadRef, summary.channelRef) }} />
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>

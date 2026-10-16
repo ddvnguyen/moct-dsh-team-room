@@ -48,6 +48,12 @@ import type {
   AgentTeamDocsResult,
   AgentTeamDocView,
   AgentTeamReviewDocRequest,
+  AgentTeamResolveDocCommentRequest,
+  AgentTeamResolveDocCommentResult,
+  AgentTeamDocSectionHistory,
+  AgentTeamDocSectionHistoryRequest,
+  AgentTeamWriteDocSectionRequest,
+  AgentTeamWriteDocSectionResult,
   AgentTeamResolveThreadRefsResult,
   AgentTeamReplyResult,
   AgentTeamConfirmationRequired,
@@ -194,7 +200,7 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
   /** Quote context (author + excerpt) for the Messages replies cite; unknown refs are omitted. */
   resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => Promise<RemoteResult<AgentTeamResolveMessageRefsResult>>
-  /** Team Document rows of one Thread; the Thread page shows them as cards. */
+  /** Team Document rows of one Thread or one Channel; both pages show them as cards. */
   loadDocs: (request: AgentTeamDocsRequest) => Promise<RemoteResult<AgentTeamDocsResult>>
   /** One whole Team Document for its page. */
   loadDoc: (request: AgentTeamDocRequest) => Promise<RemoteResult<AgentTeamDocView>>
@@ -202,6 +208,12 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   commentDoc: (request: AgentTeamCommentDocRequest) => Promise<RemoteResult<AgentTeamDocCommentResult>>
   /** The Human's Approve, Review or Cancel verdict, fenced by the Doc revision on screen. */
   reviewDoc: (request: AgentTeamReviewDocRequest) => Promise<RemoteResult<AgentTeamDocNoticeResult>>
+  /** The Human's edit of one section, or a restore of an earlier version, fenced by the Doc revision on screen. */
+  writeDocSection: (request: AgentTeamWriteDocSectionRequest) => Promise<RemoteResult<AgentTeamWriteDocSectionResult>>
+  /** Close one comment thread; a pending Human comment in it is withdrawn. */
+  resolveDocComment: (request: AgentTeamResolveDocCommentRequest) => Promise<RemoteResult<AgentTeamResolveDocCommentResult>>
+  /** Every version of one section, newest first. */
+  loadDocSectionHistory: (request: AgentTeamDocSectionHistoryRequest) => Promise<RemoteResult<AgentTeamDocSectionHistory>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
   loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>

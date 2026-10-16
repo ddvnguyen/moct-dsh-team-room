@@ -31,6 +31,7 @@ describe('Agent Team generated Typert boundary', () => {
       'contextJudge',
       'createChannel',
       'doc',
+      'docSectionHistory',
       'docs',
       'environment',
       'forkMemberSession',
@@ -58,6 +59,7 @@ describe('Agent Team generated Typert boundary', () => {
       'removeChannelMember',
       'removeHumanAvatar',
       'reply',
+      'resolveDocComment',
       'resolveMessageRefs',
       'resolveTaskRefs',
       'resolveThreadRefs',
@@ -77,6 +79,7 @@ describe('Agent Team generated Typert boundary', () => {
       'updateMember',
       'updateMemorySettings',
       'view',
+      'writeDocSection',
     ]
     expect(host.invocations.map(invocation => invocation.method).sort()).toEqual(expected)
     expect(client.descriptors.map(invocation => invocation.method).sort()).toEqual(expected)

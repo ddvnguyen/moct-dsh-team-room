@@ -25,6 +25,7 @@ const UI07_SHOTS = join(BROWSER_ARTIFACTS, 'ui-07')
 const UI08_SHOTS = join(BROWSER_ARTIFACTS, 'ui-08')
 const UI09_SHOTS = join(BROWSER_ARTIFACTS, 'ui-09')
 const TWO_LANE_SHOTS = join(BROWSER_ARTIFACTS, 'two-lane')
+const TEAM_DOC_SHOTS = join(BROWSER_ARTIFACTS, 'team-docs')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -2944,5 +2945,112 @@ it('keeps the Channel beside its open Thread in real Web', async () => {
   await page.setViewportSize({ width: 1440, height: 960 })
   await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
 
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * Issue 95: a Team Document reviewed in real Web. The Doc is seeded through the
+ * Host's own ledger as its author would write it; the Human then finds it on
+ * the Channel, comments on a passage, edits a section, restores a version from
+ * its history, resolves a thread and asks for changes.
+ */
+it('reviews a Team Document in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-docs')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Docs')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-planner'
+  const author = { kind: 'member', memberId, handle: 'planner' }
+  await ledger.addMember({ requestId: 'docs-member', actor: human, workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:team-docs', workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', privateMemoryPath: join(HOME, 'planner'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'docs-channel', actor: human, workspaceId: workspace.id, name: 'delivery', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'docs-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: '@planner 请写一份 1.2 发布计划，我审批后再动手。', asTask: false, recipients: [memberId] })).value
+  const created = (await ledger.createDoc({ requestId: 'docs-doc', actor: author, workspaceId: workspace.id, threadRef: opened.thread.threadRef,
+    title: '1.2 发布计划', outline: ['目标', '步骤', '风险'] })).value
+  let revision = created.revision
+  for (const [sectionId, heading, markdown] of [
+    ['s1', '目标', '在**周五**发布 1.2，包含 Team Documents 与评论。'],
+    ['s2', '步骤', '1. 冻结 `integration/test-4`\n2. 跑完整测试与浏览器测试\n3. 在 TEST 上验收 30 分钟\n4. 打 tag 并发布'],
+    ['s3', '风险', '- TEST 上的写入卡住问题可能复现\n- 浏览器测试依赖相邻 Harness 构建'],
+  ] as const) {
+    revision = (await ledger.writeDocSection({ requestId: `docs-${sectionId}`, actor: author, workspaceId: workspace.id, docRef: created.doc.docRef,
+      baseDocRevision: revision, sectionId, heading, markdown })).value.revision
+  }
+  await ledger.submitDoc({ requestId: 'docs-submit', actor: author, workspaceId: workspace.id, docRef: created.doc.docRef, docRevision: revision })
+  await ledger.commentDoc({ requestId: 'docs-c1', actor: human, workspaceId: workspace.id, docRef: created.doc.docRef, sectionId: 's1', quote: '周五', body: '能提前到周四吗？' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(([workspaceId, channelRef]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, channelRef }))
+  }, [workspace.id, channel.channelRef])
+  await page.reload()
+
+  // The Channel lists its Doc; the card opens the Doc page.
+  const card = page.locator(`[data-team-channel] [data-team-doc-card="${created.doc.docRef}"]`)
+  await card.waitFor({ timeout: 20_000 })
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'channel-doc-card-desktop.png') })
+  await card.click()
+  await page.getByRole('heading', { name: '目标' }).waitFor()
+  // The open comment's passage is painted, not rewritten.
+  await expect.poll(() => page.evaluate(() => (CSS as unknown as { highlights?: Map<string, { size: number }> }).highlights?.get('team-doc-comment')?.size ?? 0)).toBe(1)
+
+  // Comment on a selected passage; it waits as pending.
+  await page.locator('[data-doc-section="s2"] li').nth(2).evaluate(node => {
+    const range = document.createRange(); range.selectNodeContents(node)
+    const selection = document.getSelection()!; selection.removeAllRanges(); selection.addRange(range)
+  })
+  await page.getByText('针对「在 TEST 上验收 30 分钟」').waitFor()
+  await page.getByRole('textbox', { name: '评论内容' }).fill('验收改成 1 小时。')
+  await page.getByRole('button', { name: '添加评论' }).click()
+  await expect.poll(() => page.locator('[data-team-doc-comment]').count()).toBe(2)
+
+  // Edit a section, then read its history and restore the author's version.
+  await page.getByRole('button', { name: '编辑「风险」' }).click()
+  const editorBody = page.getByRole('textbox', { name: '段落正文（Markdown）' })
+  await editorBody.fill('- 浏览器测试依赖相邻 Harness 构建')
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-section-editor-desktop.png') })
+  await editorBody.press('Control+Enter')
+  await page.getByText('human 编辑过').waitFor()
+  await page.getByRole('button', { name: '「风险」的历史' }).click()
+  const history = page.locator('[data-team-doc-history="s3"]')
+  await expect.poll(() => history.locator('[data-doc-version]').count()).toBe(3)
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-history-desktop.png') })
+  await history.locator('[data-doc-version]').nth(1).getByRole('button', { name: '恢复此版本' }).click()
+  await expect.poll(() => history.locator('[data-doc-version]').count()).toBe(4)
+  await page.locator('[data-doc-section="s3"] [data-doc-section-body]').getByText('TEST 上的写入卡住问题可能复现').waitFor()
+
+  // Resolve the first thread: its pending comment is withdrawn and folded away.
+  await page.locator('[data-team-doc-comment]').first().getByRole('button', { name: '解决' }).click()
+  await page.getByRole('button', { name: '显示已解决（1）' }).waitFor()
+  await page.getByText('「评审」会把 1 条待发评论退回给作者修改。').waitFor()
+
+  // 390: one column, nothing wider than the screen.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-page-390.png') })
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // Review sends the one pending comment and names the section the Human rewrote.
+  await page.getByRole('button', { name: '评审', exact: true }).click()
+  await page.getByText('需修改').first().waitFor()
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-reviewed-desktop.png') })
+  const verdict = ledger.doc(human, { workspaceId: workspace.id, docRef: created.doc.docRef })
+  expect(verdict.status).toBe('changes_requested')
+  expect(verdict.reviews[0].commentRefs).toHaveLength(1)
+  const threadHistory = ledger.threadHistory(human, { workspaceId: workspace.id, threadRef: opened.thread.threadRef })
+  const bodies = threadHistory.facts.flatMap((fact: any) => fact.kind === 'message' ? [fact.message.body as string] : [])
+  expect(bodies.at(-1)).toContain('The Human edited "风险" since your submit')
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)

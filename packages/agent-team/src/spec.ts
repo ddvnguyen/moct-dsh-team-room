@@ -707,6 +707,17 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       comment: docCommentSchema,
     }).strict(),
   }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-comment-resolved'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      docRef: docRefSchema,
+      commentRef: docCommentRefSchema,
+    }).strict(),
+  }).strict(),
 ])
 
 /** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */

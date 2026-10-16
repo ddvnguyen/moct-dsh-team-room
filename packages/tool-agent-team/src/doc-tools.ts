@@ -65,12 +65,13 @@ function docText(view: AgentTeamDocView, handleOf: (memberId: AgentTeamMemberId)
     DATA_NOTE,
   ]
   for (const section of view.sections) {
-    lines.push('', `## [${section.sectionId}] ${section.heading}`, section.markdown === '' ? '(empty)' : section.markdown)
+    const editor = section.writer === view.doc.author ? '' : ` (last edited by ${handleOf(section.writer)})`
+    lines.push('', `## [${section.sectionId}] ${section.heading}${editor}`, section.markdown === '' ? '(empty)' : section.markdown)
   }
   const roots = view.comments.filter(comment => comment.parentCommentRef === undefined)
   if (roots.length > 0) lines.push('', 'Comments')
   for (const root of roots) {
-    const state = root.pending ? 'pending' : 'delivered'
+    const state = root.resolved ? 'resolved' : root.pending ? 'pending' : 'delivered'
     lines.push(`- ${root.commentRef} [${root.sectionId}] ${handleOf(root.author)} (${state}) on "${root.quote}": ${root.body}`)
     for (const reply of view.comments.filter(comment => comment.parentCommentRef === root.commentRef)) {
       lines.push(`  - ${reply.commentRef} ${handleOf(reply.author)}: ${reply.body}`)
@@ -98,15 +99,15 @@ function positiveRevision(value: unknown, name: string): number {
 
 const teamDoc = defineTool({
   name: 'team_doc',
-  description: 'Write a Team Document in a Thread and get the Human\'s review on it. Use a Doc for a plan, spec or proposal the Human should approve before you act; keep chat-sized answers in team_message. Workflow: create with a title and an outline of section headings; write one section per call (sectionId to replace one, omit it to append), each write fenced by the Doc revision the previous call rendered; submit when the Doc is ready, which mentions the Human. Then stop and wait: the Human comments on passages and answers with a verdict that reaches you as a Thread mention — approved (go ahead), changes requested (read the Doc, answer or address each delivered comment, revise, submit again), or cancelled (stop). read shows the whole Doc with its comments; list shows the Docs of a Thread. comment answers a comment (parentCommentRef) or notes a passage (quote).',
+  description: 'Write a Team Document in a Thread and get the Human\'s review on it. Use a Doc for a plan, spec or proposal the Human should approve before you act; keep chat-sized answers in team_message. Workflow: create with a title and an outline of section headings; write one section per call (sectionId to replace one, omit it to append), each write fenced by the Doc revision the previous call rendered; submit when the Doc is ready, which mentions the Human. Then stop and wait: the Human comments on passages and answers with a verdict that reaches you as a Thread mention — approved (go ahead), changes requested (read the Doc, answer or address each delivered comment, revise, submit again), or cancelled (stop). read shows the whole Doc with its comments, and marks a section the Human edited; history shows every version of one section; list shows the Docs of a Thread. comment answers a comment (parentCommentRef) or notes a passage (quote); resolve closes a comment thread once your revision answered it.',
   parameters: {
-    action: { type: 'string', required: true, enum: ['create', 'write', 'submit', 'read', 'list', 'comment'] },
+    action: { type: 'string', required: true, enum: ['create', 'write', 'submit', 'read', 'list', 'comment', 'resolve', 'history'] },
     threadRef: { type: 'string', description: "create and list: the Thread the Doc belongs to, as a full branded ref ('thread:…')." },
     title: { type: 'string', description: 'create: the Doc title.' },
     outline: { type: 'array', items: { type: 'string' }, description: 'create: section headings in order; each starts as an empty section.' },
-    docRef: { type: 'string', description: "write, submit, read, comment: the Doc ref ('doc:…') exactly as returned." },
+    docRef: { type: 'string', description: "write, submit, read, comment, resolve, history: the Doc ref ('doc:…') exactly as returned." },
     baseDocRevision: { type: 'number', description: 'write: the Doc revision your latest team_doc read or write rendered. A stale revision writes nothing.' },
-    sectionId: { type: 'string', description: "write: the section to replace ('s1', 's2', …); omit to append a new section. comment: the section the comment is about." },
+    sectionId: { type: 'string', description: "write: the section to replace ('s1', 's2', …); omit to append a new section. comment: the section the comment is about. history: the section to show." },
     heading: { type: 'string', description: 'write: the section heading.' },
     markdown: { type: 'string', description: 'write: the whole new section body in Markdown. It replaces the previous body.' },
     docRevision: { type: 'number', description: 'submit: the Doc revision you are asking the Human to review — the one your latest write or read rendered.' },
@@ -114,6 +115,7 @@ const teamDoc = defineTool({
     quote: { type: 'string', description: 'comment: the exact passage the comment is about. Not needed when replying with parentCommentRef.' },
     body: { type: 'string', description: 'comment: the comment text.' },
     parentCommentRef: { type: 'string', description: "comment: the comment ('comment:…') this one answers; it must be in the same section." },
+    commentRef: { type: 'string', description: "resolve: the first comment ('comment:…') of the thread to close." },
     workspace: workspaceParam,
   },
   output: {
@@ -180,6 +182,20 @@ const teamDoc = defineTool({
           sectionId: args.sectionId, quote: args.quote ?? '', body: args.body,
           ...(args.parentCommentRef === undefined ? {} : { parentCommentRef: args.parentCommentRef as AgentTeamDocCommentRef }) })
         return { kind: 'committed', docRef: result.comment.docRef, text: `Committed — ${result.comment.commentRef} added to [${result.comment.sectionId}] of ${result.comment.docRef}.` }
+      }
+      case 'resolve': {
+        if (args.docRef === undefined || args.commentRef === undefined) throw new Error('resolve requires docRef and commentRef')
+        const result = await host.resolveDocCommentForAgent(agent, { requestId: id, workspaceId, docRef: args.docRef as AgentTeamDocRef,
+          commentRef: args.commentRef as AgentTeamDocCommentRef })
+        return { kind: 'committed', docRef: result.docRef, text: `Committed — comment thread ${result.commentRef} in ${result.docRef} resolved.` }
+      }
+      case 'history': {
+        if (args.docRef === undefined || args.sectionId === undefined) throw new Error('history requires docRef and sectionId')
+        const history = host.docSectionHistoryForAgent(agent, { workspaceId, docRef: args.docRef as AgentTeamDocRef, sectionId: args.sectionId })
+        return { kind: 'read', docRef: history.docRef, text: [
+          `[${history.sectionId}] of ${history.docRef}: ${history.versions.length} version(s), newest first. ${DATA_NOTE}`,
+          ...history.versions.flatMap(version => ['', `### sequence ${version.sequence} by ${handleOf(version.writer)} — ${version.heading}`, version.markdown === '' ? '(empty)' : version.markdown]),
+        ].join('\n') }
       }
     }
   },
