@@ -14,7 +14,7 @@ import type {
   AgentTeamView,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, IconCloseOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { useThreadAttention } from './team-attention.ts'
@@ -80,6 +80,8 @@ interface TeamThreadPageProps {
   readonly sidebarCollapsed: boolean
   /** Reopen the shell's left column through the shell's own action. */
   readonly openSidebar: () => void
+  /** Open beside its Channel rather than alone: the back crumb closes the lane, and the page is a region, not the seat's main landmark. */
+  readonly inLane?: boolean
   readonly t: TeamConversationProps['t']
 }
 
@@ -133,7 +135,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
     changeAttention, loadDocs, selectDoc,
-    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, t,
+    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, inLane = false, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
@@ -978,7 +980,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   })
   // Threads are always entered through a Channel page, so a Channel origin
   // returns to its timeline; a Thread restored without one returns further.
-  const backLabel = channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
+  const backLabel = inLane ? t('closeThreadLane') : channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
   // Slim header participants: every actor holding a Message in the loaded
   // window, in first-appearance order, drawn as the shared identity stack.
   // The stack caps itself at three plus `+N`; the label names them all.
@@ -1016,7 +1018,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     || channelMembers.some(status => status.member.memberId === humanStatus.member.memberId)
     ? channelMembers
     : [...channelMembers, humanStatus]
-  return <main className={css.surface} data-team-thread={threadRef}>
+  // One element type in both faces, so crossing the two-lane width never remounts the Thread.
+  return <div role={inLane ? 'region' : 'main'} aria-label={inLane ? crumbText : undefined} className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>
       <header className={channelCss.slimHeader} data-team-slim-header="thread">
         <h1 className={channelCss.slimHidden}>{crumbTitle}</h1>
@@ -1025,7 +1028,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             them off the edge. It shows only while the column is closed. */}
         {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
         <button type="button" className={channelCss.slimCrumb} aria-label={backLabel} title={crumbHint} onClick={backToWorkspace}>
-          <IconChevronLeftOutlineRegular size={14} />
+          {inLane ? <IconCloseOutlineRegular size={14} /> : <IconChevronLeftOutlineRegular size={14} />}
           <span className={channelCss.slimCrumbText}>{crumbText}</span>
         </button>
         {participantOwners.length > 0 && <span className={channelCss.slimParticipants}>
@@ -1205,5 +1208,5 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       t={t}
     />
     ) : <div />}
-  </main>
+  </div>
 }

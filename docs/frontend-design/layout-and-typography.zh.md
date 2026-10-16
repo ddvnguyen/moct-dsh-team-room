@@ -15,6 +15,15 @@
 - 侧栏两个面板（Agents/Channels）都订阅 `{kind:'workspace'}` 变更。`TeamChangeStream` 在每个页面内按 scope 共享一个流式订阅，每次开场或重连基线都触发补读，之后响应匹配的通知。Channel 刷新成功后清除加载错误，不清除无关的操作错误。
 - 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。Channel composer 的「作为任务」是默认关闭的原生 pressed control。chip 自绘，任何宽度都保留文字。选中态为 primary 底色，hover 不改变按压底色。形态与座位见设计语言表的「模式控件」行。新发送显式携带 taskless 意图，选中时才原子创建 Task。`committed` 与确定性拒绝（如 `unread_required`、`stale_revision`）后换新 id。`confirmation_required` 保留同 id 续发同一操作。传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。成功发送后「作为任务」复位为关闭。
 
+## 双栏
+Channel 有打开的 Thread 且 Team 座位宽度不小于 900px 时，`TeamLanes` 把 Channel 放在主栏，Thread 放在其旁的侧栏。座位更窄时 Thread 独占整页，保留返回 crumb。navigation 快照本就让 Channel 与其 Thread 同行，刷新后两栏都会恢复。
+
+拆分由 Team 在自己的座位内完成。Harness 右侧栏（`rightbar`、`rightbar.session`）绑定当前 Harness Session，而 Team 模式不是 Session，所以侧栏不能挂在那里。
+
+分隔线是竖向 separator：可拖动，也可聚焦后用左右方向键调整。侧栏至少 360px，并给 Channel 留至少 400px；宽度是本浏览器的偏好，不是 Team 事实。在侧栏中 crumb 变为「关闭 Thread」，在输入框外按 Escape 也会关闭侧栏。
+
+在 Channel 旁打开 Thread 时焦点移入侧栏，其入口行带 `aria-current`；关闭侧栏时焦点回到该行。嵌入的 Member Session 仍替换整个座位；关闭后回到双栏。
+
 ## 排版与身份
 | 元素 | 规格 |
 | --- | --- |

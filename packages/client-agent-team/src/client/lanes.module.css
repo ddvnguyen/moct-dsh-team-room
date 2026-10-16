@@ -1,0 +1,55 @@
+/* The Team seat: one lane, or the Channel with its open Thread beside it. */
+.seat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.lane {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.lane:focus { outline: none; }
+
+/* The Thread lane reads as a side lane: a hairline on its leading edge and a
+   faint wash, the same layer the shell gives its side columns. */
+.twoLanes > [data-team-lane='thread'] {
+  background: var(--dsw-alias-bg-layer-1, transparent);
+}
+
+/* A wide grab area around a 1px rule, so the split is easy to catch with a
+   pointer while drawing only a hairline. */
+.separator {
+  cursor: col-resize;
+  height: 100%;
+  position: relative;
+  touch-action: none;
+  width: 9px;
+  margin: 0 -4px;
+  z-index: 1;
+}
+.separator::before {
+  background: var(--dsw-alias-border-l2);
+  bottom: 0;
+  content: '';
+  left: 4px;
+  position: absolute;
+  top: 0;
+  transition: background-color 100ms ease;
+  width: 1px;
+}
+.separator:hover::before,
+.separator:focus-visible::before {
+  background: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-secondary));
+  left: 3px;
+  width: 3px;
+}
+.separator:focus-visible { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .separator::before { transition: none; }
+}
