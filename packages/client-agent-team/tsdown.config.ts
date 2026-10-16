@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 // One pointer for every consumer: scripts/harness-dir.mjs owns the checkout
@@ -8,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 const { harnessDir } = await import('../../scripts/harness-dir.mjs')
 const { clientBundle } = await import(pathToFileURL(resolve(harnessDir, 'packages/client/tsdown.client.ts')).href)
 
-const bundle = clientBundle('@ddvnguyen/moct-dsh-team-room', [
+const bundle = clientBundle(resolve(import.meta.dirname, '../..'), [
   'lib/types/index.js',
 ])
 
@@ -25,10 +26,37 @@ const bundle = clientBundle('@ddvnguyen/moct-dsh-team-room', [
 // one level deeper than the repository root the string was written for, so it
 // silently pointed outside the repository.
 const teamRemoteTarget = resolve(import.meta.dirname, '../agent-team/lib/typert.remote-client.js')
+// Runtime subpaths: the typecheck facades map this package's subpaths to its
+// declaration twins (src/x.ts → lib/types/x.d.ts) — right for tsc, wrong for
+// bundling, because alpha.5 moved the typert construction onto subpaths whose
+// source IS runtime: '@deepseek-ai/dsh-typert-protocol/remote-info' lazily
+// assembles the generated Remote with caller-supplied Zod, and its
+// declaration file is declaration-only (`export declare function` carries no
+// runtime export). The generated remote clients import these subpaths for
+// value, so the client bundle resolves them to their Harness source instead.
+// The mapping is classified from the manifest's exports map — every subpath
+// exported under a "default" (runtime) condition whose source twin exists is
+// pinned to that twin — so the next runtime subpath the package adds lands
+// the same way without a name list. tsc keeps the declaration twins: all three
+// packages typecheck against the same facade, preserving type identity.
+const typertManifest = JSON.parse(
+  readFileSync(resolve(harnessDir, 'packages/typert/protocol/package.json'), 'utf8'),
+)
+const runtimeSubpathSources: Record<string, string> = {}
+for (const [key, entry] of Object.entries(typertManifest.exports ?? {})) {
+  if (!key.startsWith('./') || key.endsWith('*')) continue
+  const runtime = typeof entry === 'string' ? entry : entry.default
+  if (typeof runtime !== 'string' || !/\.js$/.test(runtime)) continue
+  const source = runtime.replace(/^\.\//, '').replace(/^lib\/(?:types\/)?/, 'src/').replace(/\.js$/, '.ts')
+  if (!existsSync(resolve(harnessDir, 'packages/typert/protocol', source))) continue
+  runtimeSubpathSources['@deepseek-ai/dsh-typert-protocol' + key.slice(1)] =
+    resolve(harnessDir, 'packages/typert/protocol', source)
+}
 const teamRemote = {
   name: 'dsh-agent-team-remote-entrypoint',
   resolveId(source: string) {
-    return source === '@ddvnguyen/moct-dsh-team-room/remote' ? teamRemoteTarget : null
+    if (source === '@ddvnguyen/moct-dsh-team-room/remote') return teamRemoteTarget
+    return runtimeSubpathSources[source] ?? null
   },
 }
 
