@@ -274,6 +274,30 @@ export interface AgentTeamResolveMessageRefsResult {
   readonly resolved: readonly AgentTeamResolvedMessageRef[]
 }
 
+/** Read one Message back verbatim, inside the Thread that carries it. */
+export interface AgentTeamReadMessageRequest {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly messageRef: AgentTeamMessageRef
+}
+
+/**
+ * One Message read back in full.
+ *
+ * The body is verbatim: a reader that needs the whole of what it is answering
+ * gets the whole of it, not a summary. The quote a Message renders is
+ * deliberately not this — see `AgentTeamResolvedMessageRef`.
+ */
+export interface AgentTeamReadMessageResult {
+  readonly messageRef: AgentTeamMessageRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly channelRef: AgentTeamChannelRef
+  readonly sender: AgentTeamMemberId
+  readonly sequence: number
+  readonly occurredAt?: string | undefined
+  readonly body: string
+}
+
 export interface AgentTeamOperationBase {
   readonly sequence: number
   readonly operationId: AgentTeamOperationId

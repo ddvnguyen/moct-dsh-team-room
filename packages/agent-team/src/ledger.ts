@@ -109,6 +109,8 @@ import type {
   AgentTeamRequestId,
   AgentTeamResolvedTaskRef,
   AgentTeamResolvedThreadRef,
+  AgentTeamReadMessageRequest,
+  AgentTeamReadMessageResult,
   AgentTeamResolvedMessageRef,
   AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
@@ -3187,6 +3189,39 @@ export class AgentTeamLedger {
       }))
     }
     return resolved
+  }
+
+  /**
+   * Read one Message back verbatim, inside the Thread that carries it.
+   *
+   * Authorization comes first and comes from the Thread: a reader must be able
+   * to address the Thread at all, which is where membership and Channel
+   * archival are decided, so this opens no path that reading the Thread did
+   * not already open. The Message is then looked up by identity in the index —
+   * never by position — so a ref resolves the same Message whatever else has
+   * been written since. Abbreviated refs resolve like other refs.
+   *
+   * The body is returned whole. The quote a Message renders is a bounded
+   * summary by design; this is the other thing, for the reader that has to
+   * answer it.
+   */
+  readMessage(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReadMessageRequest): AgentTeamReadMessageResult {
+    const context = this.threadContextForActor(actor, request.workspaceId, { threadRef: request.threadRef })
+    const key = this.uniqueRefKey(this.state.messagesByRef, request.messageRef, 'message')
+    const message = key === undefined ? undefined : this.state.messagesByRef.get(key)
+    if (message === undefined) {
+      throw new Error(`unknown Message '${request.messageRef}'${this.unknownRefHint(request.messageRef, 'message', 'Message')} — ${recoveryFor('unknown_ref').sentence({ refused: `Message '${request.messageRef}'` })}`)
+    }
+    if (message.threadRef !== context.thread.threadRef) throw new Error(`Message '${message.messageRef}' belongs to another Thread; pass the threadRef that carries it`)
+    return Object.freeze({
+      messageRef: message.messageRef,
+      threadRef: message.threadRef,
+      channelRef: context.channelRef,
+      sender: message.sender,
+      sequence: message.sequence,
+      ...(message.occurredAt === undefined ? {} : { occurredAt: message.occurredAt }),
+      body: message.body,
+    })
   }
 
   /** Navigation facts for message-body Task refs; unknown refs are omitted. */

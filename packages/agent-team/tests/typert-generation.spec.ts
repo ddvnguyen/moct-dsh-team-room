@@ -54,6 +54,7 @@ describe('Agent Team generated Typert boundary', () => {
       'promoteThread',
       'putAttachment',
       'putHumanAvatar',
+      'readMessage',
       'readThread',
       'recoverMember',
       'removeChannelMember',

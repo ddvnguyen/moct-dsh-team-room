@@ -794,6 +794,73 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(replayLedger(test).inbox(actor, { workspaceId: alpha })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1 })
   })
 
+  it('reads one Message back verbatim, by identity rather than by its neighbours', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
+    // A body whose summary cannot stand in for it: a short first line, a
+    // mention, and more than the quote's 120-character bound behind it.
+    const longBody = `Please investigate this\n第二行 @reviewer 提到别人\n${'x'.repeat(200)}`
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('anchor'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: longBody, actor: agentTeamHumanActor() })).value)
+    const middle = committed((await ledger.reply({ requestId: requestId('middle'), workspaceId: alpha,
+      threadRef: sent.thread.threadRef, baseRevision: sent.thread.revision, body: 'A middle message', actor: agentTeamHumanActor() })).value)
+    const last = committed((await ledger.reply({ requestId: requestId('last'), workspaceId: alpha,
+      threadRef: sent.thread.threadRef, baseRevision: middle.thread.revision, body: 'The newest message', actor: agentTeamHumanActor() })).value)
+
+    const readBack = ledger.readMessage(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: sent.message.messageRef })
+    // Verbatim: no ellipsis, no first-line-only summary, nothing trimmed.
+    expect(readBack.body).toBe(longBody)
+    expect(readBack.body.length).toBeGreaterThan(120)
+    expect(readBack.body).not.toContain('…')
+    expect(readBack).toMatchObject({ messageRef: sent.message.messageRef, threadRef: sent.thread.threadRef, channelRef: channel.channel.channelRef, sender: AGENT_TEAM_HUMAN_MEMBER_ID, sequence: sent.message.sequence })
+
+
+    // Identity, not position: the Message before and the Message after come
+    // back as themselves, so a ref can never quietly resolve to a neighbour.
+    expect(ledger.readMessage(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: middle.message.messageRef }).body).toBe('A middle message')
+    expect(ledger.readMessage(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: last.message.messageRef }).body).toBe('The newest message')
+    // The quote's own bound still applies to the quote: the two are different
+    // things and neither is derived from the other.
+    expect(ledger.resolveMessageRefs(alpha, [sent.message.messageRef])[0]!.excerpt).toBe('Please investigate this')
+  })
+
+  it('reads one Message back through the Client Remote, on the Host\'s own ledger', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const longBody = `Please investigate this\n${'y'.repeat(200)}`
+    const sent = committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('remote-anchor'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: longBody }))
+    const readBack = test.ctx.agentTeam.readMessage({ workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: sent.message.messageRef })
+    expect(readBack.body).toBe(longBody)
+    expect(readBack).toMatchObject({ threadRef: sent.thread.threadRef, channelRef: channel.channel.channelRef, sender: AGENT_TEAM_HUMAN_MEMBER_ID, sequence: sent.message.sequence })
+  })
+
+  it('refuses an unknown Message, another Thread\'s Message, and an archived Channel\'s — distinguishably', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
+    const first = committed((await ledger.sendMessage({ requestId: requestId('first'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'First thread', actor: agentTeamHumanActor() })).value)
+    const second = committed((await ledger.sendMessage({ requestId: requestId('second'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Second thread', actor: agentTeamHumanActor() })).value)
+
+    // Each refusal names its own cause, so a reader can tell a wrong ref from a
+    // closed Thread — and none of them returns a substitute body.
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: first.thread.threadRef, messageRef: 'message:missing' as never }))
+      .toThrow(/unknown Message/)
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: first.thread.threadRef, messageRef: second.message.messageRef }))
+      .toThrow(/belongs to another Thread/)
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: 'thread:missing' as never, messageRef: first.message.messageRef }))
+      .toThrow(/unknown Thread ref/)
+
+    await ledger.archiveChannel({ requestId: requestId('archive'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: first.thread.threadRef, messageRef: first.message.messageRef }))
+      .toThrow(/is archived/)
+  })
+
   it('serves the Human Inbox with row previews and whole-unread totals', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

@@ -250,17 +250,21 @@ const teamInbox = defineTool({
 
 const teamThread = defineTool({
   name: 'team_thread',
-  description: `Read or manage your Attention on one Thread. read acknowledges one chronological batch of unread facts and is the only read-side source of a next-write token — and only once no unread remains; your own committed public mutations hand off the token as well. A read orients on the Thread anchor and that batch, never the whole Thread: a Member re-entering one it has read before gets no background at all, so the facts between are its own to page back to. history pages older facts without changing read state; status, follow, and unfollow change or report Attention only and render no Thread timeline. beforeSequence and limit are history-only: read, status, follow, and unfollow reject them — ${recoveryFor('history_only_arguments').sentence({ action: 'those actions' })} Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.`,
+  description: `Read or manage your Attention on one Thread. message reads one Message back verbatim by ref — the way to answer a \`Replies to:\` line or a \`(replies to …)\` marker whose original sits outside the facts you have. read acknowledges one chronological batch of unread facts and is the only read-side source of a next-write token — and only once no unread remains; your own committed public mutations hand off the token as well. A read orients on the Thread anchor and that batch, never the whole Thread: a Member re-entering one it has read before gets no background at all, so the facts between are its own to page back to. history pages older facts without changing read state; status, follow, and unfollow change or report Attention only and render no Thread timeline. beforeSequence and limit are history-only: read, status, follow, unfollow, and message reject them — ${recoveryFor('history_only_arguments').sentence({ action: 'those actions' })} Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.`,
   parameters: {
-    action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history'] },
+    action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history', 'message'] },
     threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     taskRef: { type: 'string', description: "Optional Task ref alias for released clients. Prefer threadRef; if both are given they must identify the same Thread." },
-    beforeSequence: { type: 'number', description: 'history only: the oldest fact sequence to page before (exclusive). read, status, follow, and unfollow reject it.' }, limit: { type: 'number', description: 'history only: max older facts to return. read, status, follow, and unfollow reject it.' }, workspace: workspaceParam,
+    messageRef: { type: 'string', description: "For action `message`: the full branded Message ref to read back, exactly as rendered by this tool or by an inbox notice — including the `message:` prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
+    beforeSequence: { type: 'number', description: 'history only: the oldest fact sequence to page before (exclusive). read, status, follow, unfollow, and message reject it.' }, limit: { type: 'number', description: 'history only: max older facts to return. read, status, follow, unfollow, and message reject it.' }, workspace: workspaceParam,
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
       workspaceId: { type: 'string', required: true }, channelRef: { type: 'string', required: true },
       kind: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, taskRef: { type: 'string' },
+      message: { type: 'object', additionalProperties: false, properties: {
+        messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, sequence: { type: 'number', required: true }, occurredAt: { type: 'string' }, body: { type: 'string', required: true },
+      } },
       revision: { type: 'number', required: true }, status: { type: 'string' }, resolution: { type: 'string' }, taskNumber: { type: 'number' },
       following: { type: 'boolean', required: true }, readThroughSequence: { type: 'number' }, remainingUnreadCount: { type: 'number' }, earlierFactCount: { type: 'number' }, cursor: { type: 'number' }, hasMore: { type: 'boolean' },
       anchor: { type: 'object', required: true, additionalProperties: false, properties: {
@@ -291,6 +295,19 @@ const teamThread = defineTool({
       }
       if (value.kind === 'follow' || value.kind === 'unfollow') {
         return [{ type: 'text', text: `${source}\nAttention changed — ${value.following ? 'now following' : 'no longer following'} ${value.threadRef}${standing === '' ? '' : ` · ${standing}`}.` }]
+      }
+      if (value.kind === 'message') {
+        // Verbatim, and the only action that is: the reader asked for this one
+        // Message because it has to answer it, so nothing is trimmed here.
+        const message = value.message!
+        const at = message.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(message.occurredAt)}`
+        return [{ type: 'text', text: [
+          source,
+          `Message ${message.messageRef}`,
+          `${message.sequence}${at} [${message.sender}]`,
+          '',
+          message.body,
+        ].join('\n') }]
       }
       if (value.kind === 'history') {
         const facts = value.facts as FactView[]
@@ -381,6 +398,27 @@ const teamThread = defineTool({
           ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions], ...replyLink(fact.message), occurredAt: fact.occurredAt }
           : activityFactView(fact.sequence, fact.activity, undefined, fact.occurredAt)), { cursor: history.cursor, hasMore: history.hasMore, ...taskNumberOf(history.task) })
     }
+    if (args.action === 'message') {
+      if (args.messageRef === undefined) throw new Error(recoveryFor('missing_message_ref').sentence({ refused: 'for action message' }))
+      // Reading one Message is authorized by the Thread that carries it, so the
+      // Thread ref is required here even though taskRef addresses the same
+      // Thread elsewhere in this tool.
+      if (args.threadRef === undefined) throw new Error(`message needs threadRef — ${recoveryFor('missing_thread_identity').sentence({})}`)
+      if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(recoveryFor('history_only_arguments').sentence({ action: 'message' }))
+      const readBack = host.readMessageForAgent(agent, {
+        workspaceId: base.workspaceId,
+        threadRef: args.threadRef as AgentTeamThreadRef,
+        messageRef: args.messageRef as AgentTeamMessageRef,
+      })
+      // The ordinary orientation is still returned, so every action of this tool
+      // answers with one shape; the Message read back rides alongside it.
+      const snapshot = host.threadHistoryForAgent(agent, { ...base, beforeSequence: 1, limit: 1 })
+      const status = host.attentionStatusForAgent(agent, base)
+      return threadResult('message', base.workspaceId, snapshot, status.attention, [], {
+        message: { messageRef: readBack.messageRef, sender: readBack.sender, sequence: readBack.sequence, ...(readBack.occurredAt === undefined ? {} : { occurredAt: readBack.occurredAt }), body: readBack.body },
+        ...taskNumberOf(snapshot.task),
+      })
+    }
     if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(recoveryFor('history_only_arguments').sentence({ action: 'read' }))
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', base.workspaceId, read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
@@ -403,13 +441,13 @@ function claimLine(claim: { claimRef: string; owner: string; direction: string }
 }
 
 function threadResult(
-  kind: 'status' | 'follow' | 'unfollow' | 'read' | 'history',
+  kind: 'status' | 'follow' | 'unfollow' | 'read' | 'history' | 'message',
   workspaceId: string,
   snapshot: Awaited<ReturnType<AgentTeam['readThreadForAgent']>> | ReturnType<AgentTeam['threadHistoryForAgent']>,
   attention: Awaited<ReturnType<AgentTeam['readThreadForAgent']>>['attention'],
   facts: FactView[],
-  extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number; earlierFactCount?: number; contextAdvice?: ContextAdviceView; taskNumber?: number } = {},
-): { workspaceId: string; channelRef: string; anchor: { messageRef: string; sender: string; body: string; sequence: number; occurredAt?: string }; threadRef: string; revision: number; kind: string; following: boolean; taskRef?: string; status?: string; resolution?: string; taskNumber?: number; readThroughSequence?: number; remainingUnreadCount?: number; earlierFactCount?: number; cursor?: number; hasMore?: boolean; claims: ClaimView[]; facts: FactView[]; contextAdvice?: ContextAdviceView } {
+  extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number; earlierFactCount?: number; contextAdvice?: ContextAdviceView; taskNumber?: number; message?: { messageRef: string; sender: string; sequence: number; occurredAt?: string; body: string } } = {},
+): { workspaceId: string; channelRef: string; anchor: { messageRef: string; sender: string; body: string; sequence: number; occurredAt?: string }; message?: { messageRef: string; sender: string; sequence: number; occurredAt?: string; body: string }; threadRef: string; revision: number; kind: string; following: boolean; taskRef?: string; status?: string; resolution?: string; taskNumber?: number; readThroughSequence?: number; remainingUnreadCount?: number; earlierFactCount?: number; cursor?: number; hasMore?: boolean; claims: ClaimView[]; facts: FactView[]; contextAdvice?: ContextAdviceView } {
   return {
     workspaceId, channelRef: snapshot.anchor.channelRef,
     kind, threadRef: snapshot.thread.threadRef, revision: snapshot.thread.revision,

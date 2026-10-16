@@ -128,6 +128,8 @@ import type {
   AgentTeamResolveTaskRefsResult,
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveThreadRefsResult,
+  AgentTeamReadMessageRequest,
+  AgentTeamReadMessageResult,
   AgentTeamResolveMessageRefsRequest,
   AgentTeamResolveMessageRefsResult,
   AgentTeamTaskRef,
@@ -2557,6 +2559,11 @@ export default class AgentTeam extends TypertRemoteService {
     return this.replyAs(this.humanCall(request.workspaceId), request)
   }
 
+  @Remote('readMessage')
+  readMessage(request: AgentTeamReadMessageRequest): AgentTeamReadMessageResult {
+    return this.requireLedger().readMessage(this.humanCall(request.workspaceId), request)
+  }
+
   /** Human's personal Attention operation. */
   @Remote('changeAttention')
   async changeAttention(request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult> {
@@ -2723,6 +2730,11 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+  }
+
+  /** Read one Message back verbatim, for the reader that has to answer it. */
+  readMessageForAgent(agent: Agent, request: AgentTeamReadMessageRequest): AgentTeamReadMessageResult {
+    return this.requireLedger().readMessage(this.memberCall(agent, request.workspaceId), request)
   }
 
   /** Agent-only start of one Team Document in a Thread the Member can work in. */
