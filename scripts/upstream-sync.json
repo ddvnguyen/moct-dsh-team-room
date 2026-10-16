@@ -1,0 +1,177 @@
+{
+  "$comment": "Upstream sync state. Read by scripts/upstream-sync.mjs; procedure in docs/development/upstream-sync.md. Update lastReviewed, taken and skipped in the same PR that syncs.",
+  "upstream": {
+    "remote": "upstream",
+    "url": "https://github.com/Contexera/dsh-agent-team",
+    "branch": "master"
+  },
+  "forkPoint": "7167bf9ac6476c58d984d071575698a2cec2c7e1",
+  "lastReviewed": "c6d7d133fd2ea6d888d98e10030bc5d9b182dab7",
+  "lastReviewedOn": "2026-10-16",
+  "renames": {
+    "@contexera/dsh-agent-team": "@ddvnguyen/moct-dsh-team-room"
+  },
+  "hotspots": [
+    "packages/agent-team/src/index.ts",
+    "packages/agent-team/src/ledger.ts",
+    "packages/agent-team/src/member-runtime.ts",
+    "packages/tool-agent-team/src/index.ts",
+    "packages/agent-team/preset/cordis.patch.yml",
+    "packages/client-agent-team/src/client/TeamThreadPage.tsx",
+    "packages/client-agent-team/src/client/TeamChannelPage.tsx",
+    "packages/client-agent-team/src/client/TeamComposer.tsx",
+    "packages/client-agent-team/src/client/TeamMessage.tsx",
+    "packages/client-agent-team/src/client/locales.ts",
+    "package.json",
+    "CHANGELOG.md"
+  ],
+  "taken": [
+    {
+      "commit": "2195764302dbb7b29aae01b4a530e5d0c8208c15",
+      "batch": 1
+    },
+    {
+      "commit": "58565695afe07533160dc7a01b261796bc2923ae",
+      "batch": 1
+    },
+    {
+      "commit": "cf3bc1972c7ff7c1f2ecc4f2284ff1cbaf388499",
+      "batch": 1
+    },
+    {
+      "commit": "4c9dae74f9eff767ceabe90274290bb9533ca5e0",
+      "batch": 1
+    },
+    {
+      "commit": "5ff1e8afa8553b811b4019b8807055a7f968f2b4",
+      "batch": 1
+    },
+    {
+      "commit": "05646d7ff9aa9bac4a90fa4748dbbba6a9b2993f",
+      "batch": 2,
+      "note": "partial: readMessage and team_thread message only, ported by hand; reply-link was already ported in MOCT #28/#29"
+    },
+    {
+      "commit": "9a29b27904ecebcd27b4d49b25c5878cd0a62310",
+      "batch": 2
+    },
+    {
+      "commit": "3a8865d0e0d46ee8281ef2e190a20878c3c8fb2b",
+      "batch": 2
+    },
+    {
+      "commit": "498cb09ed0dbf35888f0637766d9e336dd2bc049",
+      "batch": 2
+    },
+    {
+      "commit": "9d577da813e123ac526bf71096acde7f809a14f6",
+      "batch": 2
+    },
+    {
+      "commit": "c6d7d133fd2ea6d888d98e10030bc5d9b182dab7",
+      "batch": 2
+    },
+    {
+      "commit": "f5c85877f19c4e656328f081634510d13102e9c9",
+      "batch": 3
+    },
+    {
+      "commit": "7f6ea4f85c429071faab5f4926ce5dffd4657d5c",
+      "batch": 3
+    },
+    {
+      "commit": "dde2e5f367deddcb1e97b3e5f661546c0b344f5b",
+      "batch": 3
+    },
+    {
+      "commit": "de7bfb98ece278df5321b2f66d78800624529047",
+      "batch": 3
+    },
+    {
+      "commit": "15c0d4780f630d0eece83e53e63fbf76845b3ade",
+      "batch": 3
+    }
+  ],
+  "skipped": [
+    {
+      "commit": "157c02ed260ff7aa6a9956dbad9dc63da198b666",
+      "reason": "reply-link client: MOCT built its own (#28/#29)"
+    },
+    {
+      "commit": "95ade983bab9f71110fcc57658e631ac0f6991b0",
+      "reason": "reply-link client: MOCT built its own; the \"Mentioned you\" badge could still be lifted"
+    },
+    {
+      "commit": "a4f28335290bb83c64afdfe1b168b1aeedda81b5",
+      "reason": "docs for the upstream reply-link UI MOCT does not use"
+    },
+    {
+      "commit": "d22efdb976c29b0d55cf0e47b66cf996970dc8d4",
+      "reason": "reply-link client: MOCT built its own"
+    },
+    {
+      "commit": "5dd861c08164a80e7749c0d5f3d41e66029894dd",
+      "reason": "docs-only; take text only alongside the code it describes"
+    },
+    {
+      "commit": "4a06202e2c6f36b83cd525d23ee401a19ba01cb7",
+      "reason": "reply-link client: MOCT built its own"
+    },
+    {
+      "commit": "50c3916a08b43f1b99864a1b89f3e672bd57f114",
+      "reason": "already in MOCT (the LLM service is read via ctx.get('llm'))"
+    },
+    {
+      "commit": "fcf561f0e2eccaff8b021c01bb9b3a7f3f737dca",
+      "reason": "internal refactor with no behavior change; no later pick needs it"
+    },
+    {
+      "commit": "71c6908d646f855334ba4385d9f2914a7f191e5c",
+      "reason": "internal refactor with no behavior change; no later pick needs it"
+    },
+    {
+      "commit": "ac378e82a6c9e8db53636b43104cee81a09a0c88",
+      "reason": "docs wording churn"
+    },
+    {
+      "commit": "0e3fdf3c4346af3f884e05b7fbfff688c4876c06",
+      "reason": "docs drift fix for upstream text; MOCT docs carry their own counts"
+    },
+    {
+      "commit": "bbcf294d9685f4e7edc60ac1ebe0db99b35aa1cb",
+      "reason": "upstream release commit"
+    },
+    {
+      "commit": "4e43bcc13ecb5ae0bb243aea4272cd70598d1127",
+      "reason": "upstream sandbox setup and test-comment trim; conflicts with MOCT test edits"
+    },
+    {
+      "commit": "e61ab4ff28027cc54313260f3874c4610c7c8ffa",
+      "reason": "drops tests MOCT still relies on"
+    },
+    {
+      "commit": "0468cf510f830453b6b4673a5dfe5b6b3cdc7d18",
+      "reason": "upstream merge commit"
+    },
+    {
+      "commit": "789dfb49349b412cf928c1c28fbe892c1731436e",
+      "reason": "pins upstream's Remote method list; MOCT has more Remote methods"
+    },
+    {
+      "commit": "d9719d0f8d49435c2938cd4f3cd8248d72b5534f",
+      "reason": "test import cleanup in a spec MOCT changed"
+    },
+    {
+      "commit": "71462b44c0af69b5d277c0d11eab77cdc3f41f95",
+      "reason": "CHANGELOG wording for upstream releases"
+    },
+    {
+      "commit": "22d250618805019ecfda6bf335f5c615961bc620",
+      "reason": ".scratch record of an upstream work item"
+    },
+    {
+      "commit": "9925683050acf9a03e99c66f68c7fe062015fc0c",
+      "reason": "34px Message avatar; conflicts with MOCT A14 UI work"
+    }
+  ]
+}
