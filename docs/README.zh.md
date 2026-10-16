@@ -13,6 +13,7 @@
 | [`development/generated-and-seams.zh.md`](development/generated-and-seams.zh.md) | 浏览器证据、生成文件、package 接缝与新增 Host operation | 修改生成物、package 接缝或 Host operation |
 | [`development/environments-and-install.zh.md`](development/environments-and-install.zh.md) | 沙箱/CI 环境与外部安装验证 | 在 CI 里跑，或验证已安装的 bundle |
 | [`development/storage-and-delivery.zh.md`](development/storage-and-delivery.zh.md) | Ledger 存储路由、通知回归与交付前核对 | 修改存储路由、通知，或准备交付 |
+| [`development/upstream-sync.zh.md`](development/upstream-sync.zh.md) | 把上游 Contexera/dsh-agent-team 的改动带进本 fork：同步记录、报告脚本、流程，以及 MOCT 独有区域 | 从上游同步，或解决紧挨 MOCT 独有代码的冲突 |
 | [`dsh-release-compatibility.zh.md`](dsh-release-compatibility.zh.md) | DSH 新版本的评估、隔离认证、安装验证和发布门槛 | DSH 发版、更新 peerDependencies 或排查跨版本安装失败 |
 | [`release-runbook.zh.md`](release-runbook.zh.md) | 发布一个 bundle 版本的完整流程：前置检查、检查阶梯、发布材料、打 tag 与发布、发布后核验 | 要发布某个版本，或复核一次发布在出货前必须证明什么 |
 | [`architecture/README.zh.md`](architecture/README.zh.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
@@ -47,4 +48,5 @@
 - **改 tools、preset 或 `/team`：** 查 [`architecture/README.zh.md`](architecture/README.zh.md) 的对应章节，再查 Harness cookbook 和 subsystem 文档。
 - **改 Client 或 UI：** UI 体系查 [`frontend-design/README.zh.md`](frontend-design/README.zh.md)，跨仓库路线查 [`harness-navigation.zh.md`](harness-navigation.zh.md)。
 - **改安装、构建、测试或 Remote 生成：** 查 [`development/README.zh.md`](development/README.zh.md)，再看对应 `package.json` / script 的实际实现。
+- **从上游同步：** 流程查 [`development/upstream-sync.zh.md`](development/upstream-sync.zh.md)，新增内容运行 `node scripts/upstream-sync.mjs` 查看。
 - **发布一个版本：** 流程与各道门查 [`release-runbook.zh.md`](release-runbook.zh.md)；放宽 peer 范围之前必须先做的认证查 [`dsh-release-compatibility.zh.md`](dsh-release-compatibility.zh.md)。
