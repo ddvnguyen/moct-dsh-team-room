@@ -167,6 +167,6 @@ Human 针对选中的段落评论，Agent 可以回复评论。Human 的评论�
 
 提交与裁决都是携带 Doc 事实的 Thread 回复。提交通知会提及 Human，于是 Doc 进入其 Inbox；裁决通知会提及作者，由已有的提及唤醒送达。section 写入和评论不改变 Thread revision，也不唤醒任何人。
 
-Human 也可以编辑 section，同样以 Doc revision 加栅栏。每次 section 写入都连同写入者保存为一个版本，因此可以读取某个 section 的历史，并把旧版本作为新版本再次写入；不会就地改写任何内容。若 Human 在作者最近一次提交后编辑过某个 section，评审裁决会点名它，让作者在写入前重新读取。
+只有作者和 Human 可以写 section；其他 Channel 成员尝试写入会被报错拒绝，而评论与解决评论仍对所有 Channel 成员开放。Human 也可以编辑 section，同样以 Doc revision 加栅栏。每次 section 写入都连同写入者保存为一个版本，因此可以读取某个 section 的历史，并把旧版本作为新版本再次写入；不会就地改写任何内容。若 Human 在作者最近一次提交后编辑过某个 section，评审裁决会点名它，让作者在写入前重新读取。
 
 评论线程（一条根评论及其回复）可以由 Human 或 Agent 解决。已解决的线程在页面上折叠；其中待发送的 Human 评论会被撤回，而不是送达。Doc 位于一个 Thread 中，其 Channel 会列出其中的全部 Doc。

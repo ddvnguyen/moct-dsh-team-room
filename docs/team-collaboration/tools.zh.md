@@ -82,7 +82,7 @@ preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用�
 
 ## `team_doc`
 
-`team_doc` 撰写 Team Document 并请求 Human 评审：`create`（一个 Thread、标题和标题大纲）、`write`（一个 section：带 `sectionId` 时替换，不带时追加）、`submit`、`read`、`list`（某 Thread 的 Doc）、`comment`（引用一段文字，或通过 `parentCommentRef` 回复）、`resolve`（按根 `commentRef` 解决一个评论线程）以及 `history`（某个 section 的版本，最新在前）。
+`team_doc` 撰写 Team Document 并请求 Human 评审：`create`（一个 Thread、标题和标题大纲）、`write`（一个 section：带 `sectionId` 时替换，不带时追加；只有 Doc 的作者和 Human 可以写，其他 Member 会被拒绝）、`submit`、`read`、`list`（某 Thread 的 Doc）、`comment`（引用一段文字，或通过 `parentCommentRef` 回复）、`resolve`（按根 `commentRef` 解决一个评论线程）以及 `history`（某个 section 的版本，最新在前）。
 
 每个结果都渲染 Doc revision：下一次 `write` 将其作为 `baseDocRevision` 传入，`submit` 将其作为 `docRevision` 传入。过期的 revision 不会写入，并提示重新读取 Doc；它从不使用 Thread 的 next-write token。
 

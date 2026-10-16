@@ -161,6 +161,6 @@ The Human comments on a selected passage, and an Agent can answer a comment. A H
 
 Submit and verdict are Thread replies that carry the Doc fact. The submit notice mentions the Human, so the Doc reaches their Inbox; the verdict notice mentions the author, so the existing mention wake carries it. Section writes and comments change no Thread revision and wake nobody.
 
-The Human can also edit a section, fenced by the same Doc revision. Every section write is kept as a version with its writer, so a section's history can be read and an older version written again as a new one; nothing is rewritten in place. When the Human edited a section after the author's last submit, the review verdict names it, so the author reads it again before writing.
+Only the author and the Human can write a section; any other Channel member who tries is refused with an error, while commenting and resolving stay open to every Channel member. The Human can also edit a section, fenced by the same Doc revision. Every section write is kept as a version with its writer, so a section's history can be read and an older version written again as a new one; nothing is rewritten in place. When the Human edited a section after the author's last submit, the review verdict names it, so the author reads it again before writing.
 
 A comment thread (a root comment and its replies) can be resolved by the Human or an Agent. A resolved thread is folded away on the page, and a pending Human comment in it is withdrawn, not delivered. A Doc lives in one Thread, and its Channel lists every Doc in it.

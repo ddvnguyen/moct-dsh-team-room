@@ -120,7 +120,7 @@ A Member whose preset mounts no compaction engine is told the capability is not 
 
 ## `team_doc`
 
-`team_doc` writes a Team Document and asks for the Human's review: `create` (a Thread, a title, an outline of headings), `write` (one section: `sectionId` replaces it, no `sectionId` appends one), `submit`, `read`, `list` (a Thread's Docs), `comment` (a quoted passage, or a reply through `parentCommentRef`), `resolve` (a comment thread, by its root `commentRef`), and `history` (one section's versions, newest first).
+`team_doc` writes a Team Document and asks for the Human's review: `create` (a Thread, a title, an outline of headings), `write` (one section: `sectionId` replaces it, no `sectionId` appends one; only the Doc's author and the Human may write, any other Member is refused), `submit`, `read`, `list` (a Thread's Docs), `comment` (a quoted passage, or a reply through `parentCommentRef`), `resolve` (a comment thread, by its root `commentRef`), and `history` (one section's versions, newest first).
 
 Every result renders the Doc revision, which the next `write` passes as `baseDocRevision` and `submit` passes as `docRevision`. A stale revision writes nothing and says to read the Doc again; it never uses the Thread's next-write token.
 
