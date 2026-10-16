@@ -353,6 +353,15 @@ describe('per-Thread Sessions (#92 step 4)', () => {
     await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-foreign'), workspaceId: alpha, memberId, fromSessionId: SessionId('session:someone-else'), threadRef: threadB, seed: 'summary' })).rejects.toThrow(/not a Session of/)
     await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-full'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: threadB, seed: 'full' })).rejects.toThrow(/not supported yet/)
 
+    // A refused session bind fails the fork before the Session is seeded or claims the Thread.
+    spawned[1]!.fake.setStatus('idle')
+    const bind = vi.spyOn(ledger, 'bindThreadSession').mockRejectedValueOnce(new Error('backend refused'))
+    await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-refused'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: threadB, seed: 'summary' })).rejects.toThrow(/backend refused/)
+    bind.mockRestore()
+    expect(spawned).toHaveLength(3)
+    expect(spawned[2]!.fake.calls).toHaveLength(0)
+    expect(ctx.agentTeam['seededSlotThreads'].get(spawned[2]!.fake.agent.id)).toBeUndefined()
+
     const single = await seat(ctx, channel.channel.channelRef, { instances: 1, slotZero: 'idle', handle: 'solo' })
     await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-one'), workspaceId: alpha, memberId: single.memberId, fromSessionId: ledger.getMember(single.memberId)!.sessionId, threadRef: threadB, seed: 'summary' })).rejects.toThrow(/raise its Instances/)
   })

@@ -1713,6 +1713,12 @@ export default class AgentTeam extends TypertRemoteService {
       ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
       messages: tail.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
     })
+    // The session binding commits before any in-memory claim, so a refused bind leaves the fork unseeded and the
+    // ledger authoritative; its wake is emitted only after the seed, so the seed stays the Session's first input.
+    const session = await ledger.bindThreadSession({
+      requestId: `${request.requestId}:session` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef, sessionId, reason: 'fork',
+      parentSessionId: request.fromSessionId, ...(latest === undefined ? {} : { summaryGeneration: latest.generation }), actor,
+    })
     const note = `The Human started this Session for Thread ${threadRef}: you are instance ${slot} of @${member.handle.replace(/^@/, '')}, and new messages in that Thread now come here. Read the Thread before acting, then continue its open work.`
     // The seed covers the Thread: a later delivery to this Session does not seed it again.
     this.seededSlotThreads.set(sessionId, new Set([...(this.seededSlotThreads.get(sessionId) ?? []), threadRef]))
@@ -1721,10 +1727,6 @@ export default class AgentTeam extends TypertRemoteService {
       content: [{ type: 'text', text: `${seed}\n\n${note}` }],
       source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Forked Thread Session' },
     }))
-    const session = await ledger.bindThreadSession({
-      requestId: `${request.requestId}:session` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef, sessionId, reason: 'fork',
-      parentSessionId: request.fromSessionId, ...(latest === undefined ? {} : { summaryGeneration: latest.generation }), actor,
-    })
     if (session.committed) this.emitCommitted(session.value.receipt)
     this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' forked from Session '${request.fromSessionId}' onto instance slot ${slot}, seeded from ${latest === undefined ? 'no summary' : `summary generation ${latest.generation}`} + ${tail.length} Message(s)`)
     return Object.freeze({ sessionId, slot })
