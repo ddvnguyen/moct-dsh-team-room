@@ -128,8 +128,11 @@ function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], store
   return members[0]!.member.memberId
 }
 
-export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
+export function TeamComposer({ members, pickerMembers = members, followerMemberIds, channelPeerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
+  /** Every Member a mention can name: the whole Workspace, since Channel participation is derived from it. */
   readonly members: readonly AgentTeamClientMemberStatus[]
+  /** The seats the agent picker offers; the conversation's own roster, so a pick never pulls in a stranger. Defaults to `members`. */
+  readonly pickerMembers?: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
   /** Members taking part in the Channel but not following this Thread; they rank above the rest of the Workspace. */
@@ -208,8 +211,8 @@ export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds,
   // The selected agent, resolved against this scope's roster every render: a
   // pick that is no longer a member here falls back to the first member rather
   // than lingering as a dead selection.
-  const currentMemberId = selectedMemberId(members, pickedMemberId)
-  const selectedMember = members.find(status => status.member.memberId === currentMemberId)
+  const currentMemberId = selectedMemberId(pickerMembers, pickedMemberId)
+  const selectedMember = pickerMembers.find(status => status.member.memberId === currentMemberId)
   const triggerOptions = [...triggerGroups.commands, ...triggerGroups.skills].filter(item => item.kind !== 'notice')
   const activeTriggerOption = triggerOptions[triggerHighlight]
   const triggerListId = 'team-trigger-suggestions'
@@ -547,13 +550,13 @@ export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds,
                   <div className={css.triggerGroupHeading}>{t('triggerCommands')}</div>
                   {triggerGroups.commands.map((option, index) => renderTriggerOption(option, index))}
                 </div>}
-                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0 || members.length === 0) && <div role="group" aria-label={t('triggerSkills')}>
+                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0 || pickerMembers.length === 0) && <div role="group" aria-label={t('triggerSkills')}>
                   <div className={css.triggerGroupHeading}>{t('triggerSkills')}</div>
                   {triggerGroups.skills.map((option, index) => renderTriggerOption(option, triggerGroups.commands.length + index))}
                   {triggerGroups.notices.map(notice => <p key={notice.name} className={css.triggerNotice} data-trigger-notice={notice.name}>
                     {t(notice.name === 'skills-unavailable' ? 'triggerSkillsUnavailable' : 'triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
                   </p>)}
-                  {members.length === 0 && <p className={css.triggerNotice} data-trigger-notice="no-agents">{t('triggerNoAgents')}</p>}
+                  {pickerMembers.length === 0 && <p className={css.triggerNotice} data-trigger-notice="no-agents">{t('triggerNoAgents')}</p>}
                 </div>}
               </>}
         </div>}
@@ -673,7 +676,7 @@ export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds,
           </button>
         )}
 
-        {members.length > 0 && <div className={css.agentPicker} data-team-agent-picker="">
+        {pickerMembers.length > 0 && <div className={css.agentPicker} data-team-agent-picker="">
           <button
             type="button"
             className={css.agentPickerButton}
@@ -689,7 +692,7 @@ export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds,
             <span className={css.agentPickerCurrent} data-team-agent-picker-current="">{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
           </button>
           {agentMenuOpen && <div className={css.agentMenu} role="listbox" aria-label={t('selectAgent')} ref={agentMenuRef}>
-            {members.map(status => {
+            {pickerMembers.map(status => {
               const chosen = status.member.memberId === currentMemberId
               return <button
                 key={status.member.memberId}

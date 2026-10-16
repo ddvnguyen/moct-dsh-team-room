@@ -515,6 +515,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
     {channel !== undefined ? <TeamComposer
       key={draftKey}
       members={members}
+      pickerMembers={channelMembers}
       channelPeerMemberIds={channelMemberIds}
       drafts={drafts}
       loadTriggerCatalog={loadTriggerCatalog}
