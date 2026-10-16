@@ -46,24 +46,3 @@ export function routeThreads(
     return { threadRef, slot: chosen, bind: true }
   })
 }
-
-/** Tools that only read; every other tool that names the seat-memory directory is refused on slots 1..N-1. */
-const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(['read', 'read_image', 'grep', 'glob', 'lsp'])
-
-/**
- * Contract v2 §2b: only slot 0 writes seat memory, enforced by the host. A call from an extra
- * slot is refused when its arguments name the memory directory and the tool is not read-only.
- * Extra slots still see the memory: the member-context row injects it into every step.
- */
-export function memoryWriteRefusal(toolName: string, args: unknown, memoryDirectory: string): string | undefined {
-  if (READ_ONLY_TOOLS.has(toolName)) return undefined
-  let text: string
-  try {
-    text = JSON.stringify(args) ?? ''
-  } catch {
-    return undefined
-  }
-  const directory = memoryDirectory.replace(/[\\/]+$/, '')
-  if (directory === '' || !text.includes(directory)) return undefined
-  return 'Seat memory is written only by the main instance (slot 0) of this seat. Put what is worth remembering in your Thread DELIVERABLE instead.'
-}

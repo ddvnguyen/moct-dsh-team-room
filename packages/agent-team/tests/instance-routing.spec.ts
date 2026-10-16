@@ -20,7 +20,7 @@ import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.
 import { completeTurnEvents } from './helpers/turn-events.ts'
 import AgentTeam from '../src/index.ts'
 import { agentTeamHumanActor } from '../src/ledger.ts'
-import { memoryWriteRefusal, routeThreads } from '../src/instance-router.ts'
+import { routeThreads } from '../src/instance-router.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
@@ -363,14 +363,4 @@ describe('routeThreads (pure)', () => {
   })
 })
 
-describe('memoryWriteRefusal (contract v2 §2b, host-enforced)', () => {
-  const dir = '/home/u/.dsh/agent-team/members/member-x'
-  it('refuses a writing tool that names the seat-memory directory', () => {
-    expect(memoryWriteRefusal('write', { path: `${dir}/memory.md`, content: 'x' }, dir)).toMatch(/main instance/)
-    expect(memoryWriteRefusal('bash', { command: `echo hi >> ${dir}/notes/a.md` }, `${dir}/`)).toMatch(/main instance/)
-  })
-  it('allows read-only tools and calls that do not touch the directory', () => {
-    expect(memoryWriteRefusal('read', { path: `${dir}/memory.md` }, dir)).toBeUndefined()
-    expect(memoryWriteRefusal('write', { path: '/mnt/workspace/x.md', content: 'x' }, dir)).toBeUndefined()
-  })
-})
+

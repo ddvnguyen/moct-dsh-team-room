@@ -694,3 +694,23 @@ export type AgentTeamOperation =
   | AgentTeamDocSectionWrittenOperation
   | AgentTeamDocCommentAddedOperation
 
+/**
+ * Why a delivery took the cold fallback (task-16, ruling 3472: one try per Turn, then the
+ * Turn fails). The cause rides this field and a log line, never the ledger op, because the
+ * `thread.session.bind` data object is `.strict()` with a closed reason enum.
+ */
+export interface AgentTeamColdFallback {
+  readonly cause: 'no-handle' | 'cache-cold' | 'resume-failed' | 'stale-binding'
+  /** Whether the warm resume was attempted before the fallback was taken. */
+  readonly triedWarm: boolean
+}
+
+/** `resumeMemberSession` result: the Session the Member now runs, plus any fallback taken. */
+export interface AgentTeamResumeMemberSessionResult {
+  readonly sessionId: SessionId
+  readonly cache: 'warm' | 'cold'
+  /** `not-resumed`: the Member had no live Session, so nothing was resumed or seeded. */
+  readonly action: 'resumed' | 'seeded-new' | 'not-resumed'
+  /** Present only when this delivery took the cold fallback instead of the warm path. */
+  readonly coldFallback?: AgentTeamColdFallback
+}
