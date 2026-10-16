@@ -732,3 +732,9 @@ export interface AgentTeamResumeMemberSessionResult {
   /** Present only when this delivery took the cold fallback instead of the warm path. */
   readonly coldFallback?: AgentTeamColdFallback
 }
+
+/** `forkMemberSession` result: the fresh Session that now carries the Thread, and its instance slot. */
+export interface AgentTeamForkMemberSessionResult {
+  readonly sessionId: SessionId
+  readonly slot: number
+}
