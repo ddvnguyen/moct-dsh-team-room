@@ -14,7 +14,8 @@ import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, THREAD_SEED_TOKEN_BUDGET, buildThreadSeed, estimateTokens, selectSummaryWindow, summaryDue, type SummaryMessageLine, type ThreadSeed, type ThreadSummaryPolicy } from './thread-summary.ts'
-import { buildThreadContextSeed } from './thread-context-seed.ts'
+import { THREAD_CONTEXT_SEED_TOKEN_BUDGET, buildThreadContextSeed } from './thread-context-seed.ts'
+import { buildThreadTreeSeed } from './thread-memory-tree.ts'
 import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
@@ -1677,8 +1678,10 @@ export default class AgentTeam extends TypertRemoteService {
    * Human fork of one Thread onto a fresh Session of the same seat (#92 step 4). The new Session is an
    * extra instance slot: a slot with no live Session is preferred, else an idle one is ended first (its
    * other Threads respawn seeded on their next message). The Thread is rebound to that slot and Session
-   * durably, and the Session opens with the Thread's summary and last 10 Messages. The previous Session
-   * keeps its history and finishes any running Turn; new facts on the Thread go to the fork. Only the
+   * durably, and the Session opens with the Thread's bounded memory view: the latest summary plus the
+   * newest contiguous lines of its memory tree (one line per Message, oldest lines merged) inside the
+   * A7b seed budget. The previous Session keeps its history and finishes any running Turn; new facts
+   * on the Thread go to the fork. Only the
    * `summary` seed is supported; a seat with one instance has no slot to fork onto.
    */
   @Remote('forkMemberSession')
@@ -1714,11 +1717,15 @@ export default class AgentTeam extends TypertRemoteService {
     if (handle === undefined) throw new Error(`instance slot ${slot} of '${member.handle}' did not start`)
     const sessionId = handle.agent.id
     const latest = ledger.latestThreadSummary(threadRef)
-    const tail = ledger.threadMessagesAfter(threadRef, 0).slice(-10)
-    const seed = buildThreadContextSeed({
+    // The fork's seed is the Thread's bounded memory view instead of the A7b flat tail: the newest
+    // contiguous tree lines cover the whole Thread at the same seed budget, so the fork does not
+    // lose what happened between the summary horizon and its last Messages.
+    const threadMessages = ledger.threadMessagesAfter(threadRef, 0)
+    const seed = buildThreadTreeSeed({
+      threadRef,
       ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
-      messages: tail.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
-    })
+      messages: threadMessages.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
+    }, { tokens: THREAD_CONTEXT_SEED_TOKEN_BUDGET })
     // The session binding commits before any in-memory claim, so a refused bind leaves the fork unseeded and the
     // ledger authoritative; its wake is emitted only after the seed, so the seed stays the Session's first input.
     const session = await ledger.bindThreadSession({
@@ -1734,7 +1741,7 @@ export default class AgentTeam extends TypertRemoteService {
       source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Forked Thread Session' },
     }))
     if (session.committed) this.emitCommitted(session.value.receipt)
-    this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' forked from Session '${request.fromSessionId}' onto instance slot ${slot}, seeded from ${latest === undefined ? 'no summary' : `summary generation ${latest.generation}`} + ${tail.length} Message(s)`)
+    this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' forked from Session '${request.fromSessionId}' onto instance slot ${slot}, seeded from ${latest === undefined ? 'no summary' : `summary generation ${latest.generation}`} + ${threadMessages.length} Message(s)`)
     return Object.freeze({ sessionId, slot })
   }
 
