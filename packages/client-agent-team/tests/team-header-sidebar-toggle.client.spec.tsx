@@ -52,6 +52,23 @@ describe('Team header open-sidebar control', () => {
     expect(reopen.nextElementSibling).toBe(title)
     await b.runtime.dispose()
   })
+  it('shows the control on the Inbox header only while the shell sidebar is collapsed', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    fireEvent.click(await b.view.findByRole('button', { name: '收件箱' }))
+    const header = await waitFor(() => b.view.container.querySelector('[data-team-inbox] header') as HTMLElement)
+    expect(header).toBeTruthy()
+    // Expanded: the column is open, so the header offers nothing.
+    expect(within(header).queryByRole('button', { name: '打开侧边栏' })).toBeNull()
+
+    fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
+    await waitFor(() => expect(document.querySelector('[data-sidebar-collapsed]')).toBeTruthy())
+    await waitFor(() => expect(within(header).getByRole('button', { name: '打开侧边栏' })).toBeTruthy())
+    // The control opens the column again through the shell's own action.
+    fireEvent.click(within(header).getByRole('button', { name: '打开侧边栏' }))
+    await waitFor(() => expect(b.view.getByRole('button', { name: '工作区，Alpha' })).toBeTruthy())
+    expect(within(header).queryByRole('button', { name: '打开侧边栏' })).toBeNull()
+    await b.runtime.dispose()
+  })
   it('shows the control on the Thread header only while the shell sidebar is collapsed', async () => {
     const b = await runtimeWithTeam({
       mode: 'team', workspaceId: 'w1', initialChannels: true,

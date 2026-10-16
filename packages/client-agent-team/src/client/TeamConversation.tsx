@@ -25,7 +25,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // this face owns the seat while the flag stands. The Human identity rides
     // along for the same reason it rides on the other two faces: a row that
     // names or draws the reader must draw the one identity every seat draws.
-    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
+    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} sidebarCollapsed={sidebarCollapsed} openSidebar={openSidebar} t={t} />
   }
   if (current !== undefined && navigationState.threadRef !== undefined && navigationState.docRef !== undefined) {
     const { threadRef, channelRef, taskRef, taskNumber } = navigationState
