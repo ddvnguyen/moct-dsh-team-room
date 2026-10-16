@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
-import { IconAgentPresetOutlineMedium, IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineMedium, IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
@@ -128,7 +128,7 @@ function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], store
   return members[0]!.member.memberId
 }
 
-export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, onManageMembers, activity, t }: {
+export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
@@ -166,8 +166,6 @@ export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds,
   /** Channel-only: create a real Task with the top-level Message. Default off. */
   readonly asTask?: boolean
   readonly onAsTaskChange?: (asTask: boolean) => void
-  /** Channel-only: opens Manage members, so an agent-less composer can offer the way to add one. */
-  readonly onManageMembers?: () => void
   /** A13 activity line, overlaid directly above the card (see TeamActivityLine). */
   readonly activity?: ReactNode
   readonly t: TeamConversationProps['t']
@@ -714,22 +712,6 @@ export function TeamComposer({ members, followerMemberIds, channelPeerMemberIds,
                 <span className={css.agentOptionDescription}>{status.member.description}</span>
               </button>
             })}
-            {/* Human directive (thread:063981a9 fact 3996): one control only, so
-                the way to Manage members lives inside the picker rather than as
-                a second chip on the toolbar row. It is a popup-internal action,
-                not a pick, so it closes the list and calls back. */}
-            {onManageMembers !== undefined && (
-              <button
-                type="button"
-                className={css.agentOption}
-                data-team-manage-members=""
-                onMouseDown={event => { event.preventDefault() }}
-                onClick={() => { setAgentMenuOpen(false); onManageMembers() }}
-              >
-                <IconUserOutlineRegular size={14} />
-                <span className={css.agentOptionHandle}>{t('manageMembers')}</span>
-              </button>
-            )}
           </div>}
         </div>}
         <button

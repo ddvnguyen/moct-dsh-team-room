@@ -106,8 +106,8 @@ function printedActivityAt(item: AgentTeamViewItem): string | undefined {
 }
 
 /** Seat chips on the slim header: the first five Channel seats, then `+N`.
-   The overflow menu carries Manage members and (D1b) Archive, both routed
-   through remotes the seat already receives. */
+   The overflow menu carries (D1b) Archive, routed through a remote the seat
+   already receives. */
 const MAX_SEAT_CHIPS = 5
 
 /** Host unread per Thread, keyed for the feed's rows: zero unread is the absence of a badge, not a row. */
