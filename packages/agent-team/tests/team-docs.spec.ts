@@ -182,6 +182,21 @@ describe('Team Documents', () => {
     expect(replay.doc(human, { workspaceId: alpha, docRef })).toEqual(ledger.doc(human, { workspaceId: alpha, docRef }))
   })
 
+  it('only the Doc author and the Human write a section; another Channel Member is refused and commits nothing', async () => {
+    const { ledger, pool, ann, bob, threadRef } = await room()
+    const { docRef, revision } = await draftedDoc(ledger, ann, threadRef)
+    const before = storedOperations(pool).length
+    await expect(ledger.writeDocSection({ requestId: requestId('bob-write'), workspaceId: alpha, docRef, actor: bob,
+      baseDocRevision: revision, heading: 'Risks', markdown: 'Bob was here.' })).rejects.toThrow(`only the Doc's author or the Human can write Doc '${docRef}'`)
+    expect(storedOperations(pool)).toHaveLength(before)
+    // The author and the Human still write.
+    const byAuthor = committed((await ledger.writeDocSection({ requestId: requestId('ann-write'), workspaceId: alpha, docRef, actor: ann,
+      baseDocRevision: revision, heading: 'Risks', markdown: 'Ann wrote this.' })).value)
+    const byHuman = committed((await ledger.writeDocSection({ requestId: requestId('human-write'), workspaceId: alpha, docRef, actor: human,
+      baseDocRevision: byAuthor.revision, heading: 'Risks', markdown: 'Human edited this.', sectionId: byAuthor.section.sectionId })).value)
+    expect(byHuman.revision).toBeGreaterThan(byAuthor.revision)
+  })
+
   it('only the author submits, only the Human reviews, and asking for changes needs something to say', async () => {
     const { ledger, ann, bob, threadRef } = await room()
     const { docRef, revision } = await draftedDoc(ledger, ann, threadRef)

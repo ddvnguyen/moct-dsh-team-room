@@ -1901,9 +1901,16 @@ export class AgentTeamLedger {
   }
 
   /**
-   * Write of one section, fenced by the Doc revision the writer last saw. The
-   * author writes; the Human may edit a section too, and the next verdict tells
-   * the author which sections the Human rewrote.
+   * Write of one section, fenced by the Doc revision the writer last saw. Only
+   * the author and the Human write: a Member who is neither is refused (human
+   * decision, 2026-10-16). The Human may edit a section too, and the next
+   * verdict tells the author which sections the Human rewrote. Commenting and
+   * resolving stay open to any Channel Member.
+   *
+   * Write-time enforcement only: replay validation deliberately does NOT
+   * re-check the writer. A non-author section write committed before this
+   * rule shipped must still replay, because a stricter replay would stop the
+   * domain from opening, and a lenient replay costs nothing.
    */
   writeDocSection(request: AgentTeamAuthorizedWriteDocSectionRequest): Promise<AgentTeamLedgerResult<AgentTeamWriteDocSectionResult>> {
     return this.enqueue(async () => {
@@ -1918,6 +1925,7 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const state = this.docForActor(actor, request.workspaceId, request.docRef)
+      if (actor.kind === 'member' && actor.memberId !== state.doc.author) throw new Error(`only the Doc's author or the Human can write Doc '${state.doc.docRef}'`)
       this.assertDocOpen(state)
       if (heading === '') throw new Error('Doc section heading must not be empty')
       if (request.sectionId !== undefined && !state.sections.some(section => section.sectionId === request.sectionId)) {
