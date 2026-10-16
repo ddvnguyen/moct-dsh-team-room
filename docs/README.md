@@ -13,6 +13,7 @@ This directory contains the maintained engineering documentation for this reposi
 | [`development/generated-and-seams.md`](development/generated-and-seams.md) | Browser evidence, generated files, package seams, and adding a Host operation | Touching generated files, package seams, or a Host operation |
 | [`development/environments-and-install.md`](development/environments-and-install.md) | Sandbox/CI environments and external installation verification | Running in CI, or verifying an installed bundle |
 | [`development/storage-and-delivery.md`](development/storage-and-delivery.md) | Ledger storage routing, notification regression, and the delivery checklist | Changing storage routing, notifications, or preparing a delivery |
+| [`development/upstream-sync.md`](development/upstream-sync.md) | Bringing upstream Contexera/dsh-agent-team changes into this fork: the sync record, the report script, the procedure, and the MOCT-only areas | Syncing from upstream, or resolving a conflict next to MOCT-only code |
 | [`dsh-release-compatibility.md`](dsh-release-compatibility.md) | Evaluating new DSH versions, isolated certification, installation checks, and release gates | DSH releases, updating `peerDependencies`, or investigating cross-version installation failures |
 | [`release-runbook.md`](release-runbook.md) | The end-to-end procedure for publishing a bundle version: pre-flight, check ladder, release material, tag and publish, post-publish verification | Publishing a version, or reviewing what a release must prove before it ships |
 | [`architecture/README.md`](architecture/README.md) | Host, tools, command, typed Remote, Client plugin, and authority boundaries | Changing runtime, RPC, preset, Client, or persistence |
@@ -47,4 +48,5 @@ Editing or adding a document under `docs/`? Routing branches and the maintenance
 - **Tools, preset, or `/team` changes:** the relevant sections of [`architecture/README.md`](architecture/README.md), then the Harness cookbook and subsystem docs.
 - **Client or UI changes:** [`frontend-design/README.md`](frontend-design/README.md) for the UI system, [`harness-navigation.md`](harness-navigation.md) for the cross-repository route.
 - **Installation, build, tests, or Remote generation:** [`development/README.md`](development/README.md), then the actual `package.json` or script implementation.
+- **Syncing from upstream:** [`development/upstream-sync.md`](development/upstream-sync.md) for the procedure, then `node scripts/upstream-sync.mjs` for what is new.
 - **Publishing a release:** [`release-runbook.md`](release-runbook.md) for the procedure and its gates, then [`dsh-release-compatibility.md`](dsh-release-compatibility.md) for the certification that must precede any peer-range change.

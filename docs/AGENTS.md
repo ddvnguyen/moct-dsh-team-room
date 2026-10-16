@@ -29,6 +29,7 @@ A change that invalidates a documented fact updates the owning document in the s
 | Browser evidence, generated files, package seams, or adding a Host operation | [`development/generated-and-seams.md`](development/generated-and-seams.md) |
 | Sandbox/CI environments, external installation, or release cadence | [`development/environments-and-install.md`](development/environments-and-install.md) |
 | Ledger storage routing, notification regression, or a delivery checklist | [`development/storage-and-delivery.md`](development/storage-and-delivery.md) |
+| Syncing from upstream, the sync record, or the MOCT-only areas | [`development/upstream-sync.md`](development/upstream-sync.md) |
 | Publishing a release, release gates, or release material | [`release-runbook.md`](release-runbook.md) |
 | DSH certification, `peerDependencies`, or installation checks | [`dsh-release-compatibility.md`](dsh-release-compatibility.md) |
 | Cross-repository lookup | [`harness-navigation.md`](harness-navigation.md) |
