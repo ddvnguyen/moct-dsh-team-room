@@ -63,6 +63,14 @@ export async function checkTeamTabSidebar({ origin, cookie, channels }) {
       const dismiss = page.getByRole('button', { name, exact: true })
       if (await dismiss.count() > 0) { await dismiss.first().click(); await page.waitForTimeout(1000) }
     }
+    // alpha.5's second first-run dialog ("Get started/Sign in") only closes
+    // through its corner close button — Escape and the named buttons above do
+    // not reach it, and its mask swallows every later click.
+    const cornerClose = page.locator('[role="dialog"] button').filter({ has: page.locator('svg, span') }).locator('xpath=self::*[contains(@class, "close")]')
+    if (await page.locator('[role="dialog"]').count() > 0) {
+      const close = page.locator('[role="dialog"] button[class*="close"]')
+      if (await close.count() > 0) { await close.first().click(); await page.waitForTimeout(1000) }
+    }
 
     const snapshot = () => page.evaluate(rows => {
       const sidebar = document.querySelector('[data-slot="sidebar"]')
