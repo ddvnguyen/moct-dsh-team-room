@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
-import { IconAgentPresetOutlineMedium, IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineMedium, IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, rankByName, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { mentionSurfaceOf, mentionTierIsParticipant } from './mention-presentation.ts'
 import { allMentionMembers, containsAllMention, containsMention, mentionedMemberIds } from './team-formatters.ts'
 import css from './composer.module.css'
 import { formatByteSize } from './attachment-preview.ts'
@@ -23,7 +24,15 @@ interface TriggerMatch {
 }
 
 /** One pickable row: the fixed @all expansion or one concrete member. */
-type MentionOption = { readonly kind: 'all' } | { readonly kind: 'member'; readonly status: AgentTeamClientMemberStatus }
+/**
+ * How directly a mention reaches a Member: 0 = follows this Thread (a pick
+ * delivers at once), 1 = takes part in the Channel but not this Thread, 2 = the
+ * rest of the Workspace. Ranking and row styling both read this, so the two can
+ * never disagree about which tier a Member is in.
+ */
+export type MentionTier = 0 | 1 | 2
+
+type MentionOption = { readonly kind: 'all' } | { readonly kind: 'member'; readonly status: AgentTeamClientMemberStatus; readonly tier: MentionTier }
 
 function findMention(draft: string, caret: number): MentionMatch | undefined {
   const beforeCaret = draft.slice(0, caret)
@@ -72,10 +81,25 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
-/** Thread followers rank first: mentioning them delivers directly, while a non-follower enters the two-send invite flow. */
-function rankMentionCandidates(candidates: readonly AgentTeamClientMemberStatus[], followers: ReadonlySet<AgentTeamMemberId> | undefined): readonly AgentTeamClientMemberStatus[] {
-  if (followers === undefined || followers.size === 0) return candidates
-  return [...candidates].sort((left, right) => Number(followers.has(right.member.memberId)) - Number(followers.has(left.member.memberId)))
+/**
+ * Ranks mention candidates by how directly a pick reaches them: this Thread's
+ * followers first (a mention delivers there at once), then Members taking part
+ * in the Channel through another Thread, then the rest of the Workspace. The
+ * order is a hint for the picker only — every tier stays eligible, because the
+ * ledger accepts all of them; a lower tier only means the Host may ask the
+ * Human to confirm before the Member is pulled in.
+ */
+function mentionTier(status: AgentTeamClientMemberStatus, followers: ReadonlySet<AgentTeamMemberId> | undefined,
+  channelPeers: ReadonlySet<AgentTeamMemberId> | undefined): MentionTier {
+  if (followers?.has(status.member.memberId) === true) return 0
+  if (channelPeers?.has(status.member.memberId) === true) return 1
+  return 2
+}
+
+function rankMentionCandidates(candidates: readonly AgentTeamClientMemberStatus[], followers: ReadonlySet<AgentTeamMemberId> | undefined,
+  channelPeers: ReadonlySet<AgentTeamMemberId> | undefined): readonly AgentTeamClientMemberStatus[] {
+  if ((followers === undefined || followers.size === 0) && (channelPeers === undefined || channelPeers.size === 0)) return candidates
+  return [...candidates].sort((left, right) => mentionTier(left, followers, channelPeers) - mentionTier(right, followers, channelPeers))
 }
 
 /** One object URL per draft file; revoked when the draft is removed. */
@@ -104,10 +128,15 @@ function selectedMemberId(members: readonly AgentTeamClientMemberStatus[], store
   return members[0]!.member.memberId
 }
 
-export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, onManageMembers, activity, t }: {
+export function TeamComposer({ members, pickerMembers = members, followerMemberIds, channelPeerMemberIds, drafts, loadTriggerCatalog, draftKey, pending, confirmation, error, onEdit, onSubmit, placeholder, pendingFiles, onFilesChange, replyTo, onCancelReply, humanMemberId, asTask, onAsTaskChange, activity, t }: {
+  /** Every Member a mention can name: the whole Workspace, since Channel participation is derived from it. */
   readonly members: readonly AgentTeamClientMemberStatus[]
+  /** The seats the agent picker offers; the conversation's own roster, so a pick never pulls in a stranger. Defaults to `members`. */
+  readonly pickerMembers?: readonly AgentTeamClientMemberStatus[]
   /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
   readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
+  /** Members taking part in the Channel but not following this Thread; they rank above the rest of the Workspace. */
+  readonly channelPeerMemberIds?: ReadonlySet<AgentTeamMemberId>
   /**
    * The draft cache this composer subscribes to: owning the subscription here
    * instead of in the hosting page keeps a keystroke from re-rendering the
@@ -140,8 +169,6 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   /** Channel-only: create a real Task with the top-level Message. Default off. */
   readonly asTask?: boolean
   readonly onAsTaskChange?: (asTask: boolean) => void
-  /** Channel-only: opens Manage members, so an agent-less composer can offer the way to add one. */
-  readonly onManageMembers?: () => void
   /** A13 activity line, overlaid directly above the card (see TeamActivityLine). */
   readonly activity?: ReactNode
   readonly t: TeamConversationProps['t']
@@ -172,10 +199,10 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   const [triggerHighlight, setTriggerHighlight] = useState(0)
   // @all is a composer-layer expansion of the same eligibility filter a
   // handle pick uses; the fixed row stays on top of the matching members.
-  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query, humanMemberId), followerMemberIds)
+  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query, humanMemberId), followerMemberIds, channelPeerMemberIds)
   const options: readonly MentionOption[] = mention !== undefined && 'all'.startsWith(mention.query.toLocaleLowerCase())
-    ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status }))]
-    : memberCandidates.map(status => ({ kind: 'member' as const, status }))
+    ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status, tier: mentionTier(status, followerMemberIds, channelPeerMemberIds) }))]
+    : memberCandidates.map(status => ({ kind: 'member' as const, status, tier: mentionTier(status, followerMemberIds, channelPeerMemberIds) }))
   const menuOpen = mention !== undefined && options.length > 0
   const activeOption = options[highlight]
   const activeOptionKey = activeOption === undefined ? undefined : activeOption.kind === 'all' ? 'all' : activeOption.status.member.memberId
@@ -184,12 +211,18 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
   // The selected agent, resolved against this scope's roster every render: a
   // pick that is no longer a member here falls back to the first member rather
   // than lingering as a dead selection.
-  const currentMemberId = selectedMemberId(members, pickedMemberId)
-  const selectedMember = members.find(status => status.member.memberId === currentMemberId)
+  const currentMemberId = selectedMemberId(pickerMembers, pickedMemberId)
+  const selectedMember = pickerMembers.find(status => status.member.memberId === currentMemberId)
   const triggerOptions = [...triggerGroups.commands, ...triggerGroups.skills].filter(item => item.kind !== 'notice')
   const activeTriggerOption = triggerOptions[triggerHighlight]
   const triggerListId = 'team-trigger-suggestions'
-  const allCount = allMentionMembers(members).length
+  // `@all` stands for the Channel's own participants, not every name the body
+  // could address — the same split the Host's allRecipientsFor makes.
+  const allMembers = channelPeerMemberIds === undefined ? members : members.filter(status => channelPeerMemberIds.has(status.member.memberId))
+  const allCount = allMentionMembers(allMembers).length
+  // The surface comes from the draft key this composer already writes to, so
+  // the weight cannot disagree with the conversation the draft belongs to.
+  const mentionSurface = mentionSurfaceOf(draftKey)
   const listId = 'team-mention-suggestions'
   const suggestionOpen = menuOpen || triggerMenuOpen
   const activeSuggestionKey = menuOpen ? activeOptionKey : activeTriggerOption === undefined ? undefined : activeTriggerOption.kind + ':' + activeTriggerOption.name
@@ -378,7 +411,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
       const nextDraft = `${draft.slice(0, mention.start)}@all ${draft.slice(mention.end)}`
       const nextCaret = mention.start + '@all '.length
       const nextRecipients = new Set(recipients)
-      for (const status of allMentionMembers(members)) nextRecipients.add(status.member.memberId)
+      for (const status of allMentionMembers(allMembers)) nextRecipients.add(status.member.memberId)
       commitMention(nextDraft, nextCaret, nextRecipients)
       return
     }
@@ -517,13 +550,13 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                   <div className={css.triggerGroupHeading}>{t('triggerCommands')}</div>
                   {triggerGroups.commands.map((option, index) => renderTriggerOption(option, index))}
                 </div>}
-                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0 || members.length === 0) && <div role="group" aria-label={t('triggerSkills')}>
+                {(triggerGroups.skills.length > 0 || triggerGroups.notices.length > 0 || pickerMembers.length === 0) && <div role="group" aria-label={t('triggerSkills')}>
                   <div className={css.triggerGroupHeading}>{t('triggerSkills')}</div>
                   {triggerGroups.skills.map((option, index) => renderTriggerOption(option, triggerGroups.commands.length + index))}
                   {triggerGroups.notices.map(notice => <p key={notice.name} className={css.triggerNotice} data-trigger-notice={notice.name}>
                     {t(notice.name === 'skills-unavailable' ? 'triggerSkillsUnavailable' : 'triggerNoMemberSession', { handle: notice.memberHandle ?? notice.description.replace(/^@/, '') })}
                   </p>)}
-                  {members.length === 0 && <p className={css.triggerNotice} data-trigger-notice="no-agents">{t('triggerNoAgents')}</p>}
+                  {pickerMembers.length === 0 && <p className={css.triggerNotice} data-trigger-notice="no-agents">{t('triggerNoAgents')}</p>}
                 </div>}
               </>}
         </div>}
@@ -557,6 +590,12 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                   ref={selected ? activeOptionRef : undefined}
                   onMouseDown={event => { event.preventDefault() }}
                   onClick={() => { selectOption(option) }}
+                  // How directly a pick reaches this Member; the row's styling
+                  // and the sort order read the same tier.
+                  data-mention-tier={option.tier}
+                  // Whether the pick lands inside the conversation being
+                  // written into; the name drops a weight when it does not.
+                  data-mention-inside={String(mentionTierIsParticipant(option.tier, mentionSurface))}
                 >
                   <TeamPresenceDot status={option.status} t={t} />
                   <span className={css.mentionName}>@{option.status.member.handle}</span>
@@ -637,7 +676,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
           </button>
         )}
 
-        {members.length > 0 && <div className={css.agentPicker} data-team-agent-picker="">
+        {pickerMembers.length > 0 && <div className={css.agentPicker} data-team-agent-picker="">
           <button
             type="button"
             className={css.agentPickerButton}
@@ -653,7 +692,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
             <span className={css.agentPickerCurrent} data-team-agent-picker-current="">{selectedMember === undefined ? t('memberUnknown') : '@' + selectedMember.member.handle.replace(/^@/, '')}</span>
           </button>
           {agentMenuOpen && <div className={css.agentMenu} role="listbox" aria-label={t('selectAgent')} ref={agentMenuRef}>
-            {members.map(status => {
+            {pickerMembers.map(status => {
               const chosen = status.member.memberId === currentMemberId
               return <button
                 key={status.member.memberId}
@@ -676,22 +715,6 @@ export function TeamComposer({ members, followerMemberIds, drafts, loadTriggerCa
                 <span className={css.agentOptionDescription}>{status.member.description}</span>
               </button>
             })}
-            {/* Human directive (thread:063981a9 fact 3996): one control only, so
-                the way to Manage members lives inside the picker rather than as
-                a second chip on the toolbar row. It is a popup-internal action,
-                not a pick, so it closes the list and calls back. */}
-            {onManageMembers !== undefined && (
-              <button
-                type="button"
-                className={css.agentOption}
-                data-team-manage-members=""
-                onMouseDown={event => { event.preventDefault() }}
-                onClick={() => { setAgentMenuOpen(false); onManageMembers() }}
-              >
-                <IconUserOutlineRegular size={14} />
-                <span className={css.agentOptionHandle}>{t('manageMembers')}</span>
-              </button>
-            )}
           </div>}
         </div>}
         <button

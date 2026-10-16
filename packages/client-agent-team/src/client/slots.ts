@@ -17,8 +17,6 @@ import type {
   AgentTeamJoinWorkspaceResult,
   AgentTeamLeaveWorkspaceRequest,
   AgentTeamLeaveWorkspaceResult,
-  AgentTeamJoinChannelRequest,
-  AgentTeamJoinChannelResult,
   AgentTeamGetAttachmentRequest,
   AgentTeamGetAttachmentResult,
   AgentTeamPutAttachmentRequest,
@@ -30,8 +28,6 @@ import type {
   AgentTeamMemberActivityRequest,
   AgentTeamMemberActivityResult,
   AgentTeamMembersRequest,
-  AgentTeamRemoveChannelMemberRequest,
-  AgentTeamRemoveChannelMemberResult,
   AgentTeamReplyRequest,
   AgentTeamResolveTaskRefsRequest,
   AgentTeamResolveTaskRefsResult,
@@ -152,8 +148,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     archiveMember: (request: AgentTeamArchiveMemberRequest) => Promise<RemoteResult<AgentTeamArchiveMemberResult>>
     joinWorkspace: (request: AgentTeamJoinWorkspaceRequest) => Promise<RemoteResult<AgentTeamJoinWorkspaceResult>>
     leaveWorkspace: (request: AgentTeamLeaveWorkspaceRequest) => Promise<RemoteResult<AgentTeamLeaveWorkspaceResult>>
-    joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
-    removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
     /** A14: the Member's Session runs, newest first, plus the seat's current Session. */
@@ -187,8 +181,6 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   putAttachment: (request: AgentTeamPutAttachmentRequest) => Promise<RemoteResult<AgentTeamPutAttachmentResult>>
   getAttachment: (request: AgentTeamGetAttachmentRequest) => Promise<RemoteResult<AgentTeamGetAttachmentResult>>
   sendMessage: (request: AgentTeamSendMessageRequest) => Promise<RemoteResult<AgentTeamSendMessageResult>>
-  joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
-  removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
   /** Archive a Channel from the Channel page's overflow menu (D1b). */
   archiveChannel: (request: AgentTeamArchiveChannelRequest) => Promise<RemoteResult<AgentTeamArchiveChannelResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>

@@ -23,7 +23,7 @@ const catalog: readonly TeamTriggerCatalogItem[] = [
 afterEach(() => cleanup())
 beforeEach(() => { localStorage.clear() })
 
-function renderComposer(loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog'], members: readonly AgentTeamClientMemberStatus[] = [], options?: { onManageMembers?: () => void }) {
+function renderComposer(loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog'], members: readonly AgentTeamClientMemberStatus[] = []) {
   const drafts = new TeamDraftStore()
   const onSubmit = vi.fn()
   const view = render(<TeamComposer
@@ -33,7 +33,6 @@ function renderComposer(loadTriggerCatalog: TeamConversationProps['loadTriggerCa
     draftKey={draftKey}
     pending={false}
     onSubmit={onSubmit}
-    {...(options?.onManageMembers === undefined ? {} : { onManageMembers: options.onManageMembers })}
     t={translate}
   />)
   return { ...view, drafts, onSubmit, input: screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement }
@@ -269,11 +268,11 @@ describe('Team composer agent selector', () => {
     expect(toolbar.contains(screen.getByRole('button', { name: 'Agent: @builder, change' }))).toBe(true)
   })
 
-  it('renders no agent control at all when the scope has no agent and no manage-members action', async () => {
+  it('renders no agent control at all when the scope has no agent', async () => {
     const loadTriggerCatalog = vi.fn(async () => [{ kind: 'command', name: 'compact', description: 'Compact' }]) as unknown as TeamConversationProps['loadTriggerCatalog']
     const b = renderComposer(loadTriggerCatalog, [])
 
-    // With nothing selected and nowhere to manage members, the composer carries
+    // With nothing selected the composer carries
     // no agent affordance at all — the chip, its button and the picker are gone.
     expect(document.querySelector('[data-team-agent-indicator]')).toBeNull()
     expect(document.querySelector('[data-team-no-agent]')).toBeNull()
@@ -283,33 +282,6 @@ describe('Team composer agent selector', () => {
     fireEvent.change(b.input, { target: { value: '/' } })
     await waitFor(() => expect(document.querySelector('[data-trigger-notice="no-agents"]')).toBeTruthy())
     expect(await screen.findByRole('option', { name: /compact/ })).toBeTruthy()
-  })
-
-  it('offers the Manage members row inside the picker only when the callback exists', () => {
-    const manageMembers = vi.fn()
-    const loadTriggerCatalog = vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog']
-    // Without the callback the picker lists members and nothing else — no
-    // Manage members row, even with members present.
-    cleanup()
-    renderComposer(loadTriggerCatalog, roster)
-    fireEvent.click(screen.getByRole('button', { name: 'Agent: @builder, change' }))
-    expect(screen.queryByRole('option', { name: 'Manage members' })).toBeNull()
-    expect(screen.getAllByRole('option')).toHaveLength(2)
-    cleanup()
-
-    // With the callback the row sits inside the popup, after the member
-    // options. It is an action, not a pick, so it is a plain button there: the
-    // listbox's options stay exactly the two members.
-    const withMembers = renderComposer(loadTriggerCatalog, roster, { onManageMembers: manageMembers })
-    fireEvent.click(within(withMembers.container).getByRole('button', { name: 'Agent: @builder, change' }))
-    expect(within(withMembers.container).getAllByRole('option')).toHaveLength(2)
-    const row = within(withMembers.container).getByRole('button', { name: 'Manage members' })
-    expect(row.getAttribute('data-team-manage-members')).toBe('')
-    fireEvent.click(row)
-    // It closes the list and calls back.
-    expect(manageMembers).toHaveBeenCalledTimes(1)
-    expect(within(withMembers.container).queryByRole('button', { name: 'Manage members' })).toBeNull()
-    expect(within(withMembers.container).queryAllByRole('option')).toHaveLength(0)
   })
 
   it('changes the current handle and the scoped slash catalog when a second agent is picked', async () => {
