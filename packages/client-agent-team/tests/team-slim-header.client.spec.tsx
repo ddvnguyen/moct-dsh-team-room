@@ -22,7 +22,7 @@ async function pickChannelMember(view: RenderResult, pattern: RegExp): Promise<v
 }
 
 describe('D1 slim conversation header', () => {
-  it('renders the Channel header as one slim row: back, title, seats, counts, overflow', async () => {
+  it('renders the Channel header as one slim row: back, title, counts, actions', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
@@ -47,9 +47,10 @@ describe('D1 slim conversation header', () => {
     // The description keeps its full text as a tooltip while the row compresses it.
     const desc = within(header).getByText('API and workers')
     expect(desc.getAttribute('title')).toBe('API and workers')
-    // Three seats fit the five-chip cap, so every seat shows and no +N follows.
-    const chips = [...header.querySelectorAll('[class*="slimChipName"]')]
-    expect(chips.map(chip => chip.textContent).sort()).toEqual(['builder', 'failed', 'worker'])
+    // Human directive (thread:bf28e46d): no agent names in the header — the
+    // seat-chip row is gone; presence/meta counts stay on the slimMeta line.
+    expect(header.querySelector('[class*="slimChips"]')).toBeNull()
+    expect(header.querySelector('[class*="slimChipName"]')).toBeNull()
     expect(header.querySelector('[class*="slimOverflowCount"]')).toBeNull()
     // Only the working seat counts as working; the feed is empty and nothing is unread.
     expect(within(header).getByText('1 位工作中')).toBeTruthy()

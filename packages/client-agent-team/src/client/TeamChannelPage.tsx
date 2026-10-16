@@ -13,7 +13,6 @@ import { TeamMessage } from './TeamMessage.tsx'
 import { namedAvatarOwners, TeamAvatarStack, type TeamAvatarHuman, type TeamAvatarOwner } from './TeamAvatarStack.tsx'
 import { TeamCountBadge } from './TeamCountBadge.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
-import { presenceDotState, presenceLabel } from './TeamPresenceDot.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { claimersLabel, formatAbsoluteTime, formatInboxTime, formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
@@ -108,11 +107,6 @@ function printedActivityAt(item: AgentTeamViewItem): string | undefined {
   const status = item.task?.status
   return status === 'done' || status === 'closed' ? undefined : followUpAt(item)
 }
-
-/** Seat chips on the slim header: the first five Channel seats, then `+N`.
-   The overflow menu carries Manage members and (D1b) Archive, both routed
-   through remotes the seat already receives. */
-const MAX_SEAT_CHIPS = 5
 
 /** Host unread per Thread, keyed for the feed's rows: zero unread is the absence of a badge, not a row. */
 function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, number> {
@@ -424,15 +418,6 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
         {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
         <h1 className={channelCss.slimTitle}>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
         {channel !== undefined && channel.description !== '' && <p className={channelCss.slimDesc} title={channel.description}>{channel.description}</p>}
-        {channel !== undefined && channelMembers.length > 0 && <span className={channelCss.slimChips} role="img" aria-label={t('headerSeatsLabel', { names: channelMembers.map(status => `@${status.member.handle}`).join(', ') })}>
-          {channelMembers.slice(0, MAX_SEAT_CHIPS).map(status => (
-            <span key={status.member.memberId} className={channelCss.slimChip} title={`@${status.member.handle} · ${presenceLabel(status, t)}`}>
-              <TeamStateDot size={8} state={presenceDotState(status.presence)} />
-              <span className={channelCss.slimChipName}>{status.member.handle}</span>
-            </span>
-          ))}
-          {channelMembers.length > MAX_SEAT_CHIPS && <span className={channelCss.slimOverflowCount}>+{channelMembers.length - MAX_SEAT_CHIPS}</span>}
-        </span>}
         {channel !== undefined && <div className={channelCss.slimMeta}>
           <span>{t('headerWorking', { count: workingCount })}</span>
           <span>{t('headerOpenThreads', { count: view?.items.length ?? 0 })}</span>
