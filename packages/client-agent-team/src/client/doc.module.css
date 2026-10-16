@@ -1,0 +1,344 @@
+/* Team Documents: the Thread's Doc cards and the Doc page. */
+
+/* Doc cards ride under the Thread header, one row that wraps. */
+.threadDocs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px auto 0;
+  max-width: 880px;
+}
+
+.docCard {
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 2px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 8px 12px;
+  text-align: left;
+}
+.docCard:hover { background: var(--dsw-alias-fill-l1, rgba(127, 127, 127, 0.08)); }
+.docCard:focus-visible { outline: 2px solid var(--dsw-alias-focus-ring, currentColor); outline-offset: 2px; }
+
+.docCardTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docCardMeta {
+  align-items: center;
+  color: var(--dsw-alias-label-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 6px;
+  line-height: 18px;
+}
+
+/* Doc page header: status pill and revision trail the back crumb. */
+.headerMeta {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.revision {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Text beside its comments on a wide seat; the comments fall below it on a narrow one. */
+.layout {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  margin: 0 auto;
+  max-width: 1120px;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.document { min-width: 0; }
+
+.title {
+  color: var(--dsw-alias-label-primary);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 30px;
+  margin: 4px 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.section { margin: 0 0 20px; }
+
+.sectionHeading {
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  margin: 0 0 6px;
+}
+
+.markdown {
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: calc(22px + var(--dsh-content-font-delta, 0px));
+}
+.markdown > div:first-child { color: var(--dsw-alias-label-primary); font: inherit; }
+.markdown p { margin: 6px 0; }
+.markdown :where(ul, ol) { margin: 6px 0; padding-left: 22px; }
+
+.emptySection {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  font-style: italic;
+  margin: 0;
+}
+
+.side {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+
+@media (max-width: 760px) {
+  .side { position: static; }
+}
+
+.panel {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.panelHeading {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  margin: 0 0 8px;
+}
+
+.hint {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.notice {
+  color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-primary));
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0 0 6px;
+}
+
+.selectionQuote {
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-left: 8px;
+}
+
+/* The comment box is a small chat box: one rounded card, a borderless input
+   that grows with its text, and a round send button in its bottom corner. */
+.chatCard {
+  background: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1));
+  border-radius: 16px;
+  box-shadow: var(--dsw-elevation-soft);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 8px 6px 12px;
+}
+
+.chatQuoteRow {
+  align-items: flex-start;
+  display: flex;
+  gap: 6px;
+}
+
+.chatClear {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 16px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0;
+  width: 22px;
+}
+.chatClear:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.chatClear:focus-visible { outline: 2px solid var(--dsw-alias-focus-ring, currentColor); outline-offset: 1px; }
+
+.chatInput {
+  background: transparent;
+  border: 0;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-primary);
+  display: block;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  max-height: 180px;
+  min-height: 22px;
+  outline: 0;
+  overflow-y: auto;
+  padding: 2px 4px 0 0;
+  resize: none;
+  width: 100%;
+}
+.chatInput::placeholder { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); }
+.chatInput:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.chatToolbar,
+.reviewToolbar {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.reviewToolbar {
+  flex-wrap: wrap;
+  min-height: 34px;
+  padding: 2px 8px 8px 16px;
+}
+
+.chatHint {
+  color: var(--dsw-alias-label-tertiary);
+  flex: 1 1 160px;
+  font-size: 12px;
+  line-height: 18px;
+  min-width: 0;
+}
+
+.reviewHint {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+  padding: 0 16px;
+}
+
+.reviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.commentList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.commentThread + .commentThread {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 8px;
+}
+
+.comment,
+.commentReply { min-width: 0; }
+.commentReply {
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  margin-left: 6px;
+  padding-left: 8px;
+}
+
+.commentHead {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.commentAuthor {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.commentSection {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge,
+.badgePending {
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  margin-left: auto;
+  padding: 0 6px;
+}
+.badge { color: var(--dsw-alias-label-tertiary); }
+.badgePending {
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.commentQuote {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.commentQuote::before { content: '“'; }
+.commentQuote::after { content: '”'; }
+
+.commentBody {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* The verdict box sits where the Thread composer sits and borrows its card,
+   so reviewing a Doc reads like replying in the Thread. */
+.reviewBar {
+  gap: 6px;
+  padding-top: 8px;
+}
+
+.danger { color: var(--dsw-alias-state-error-primary); }

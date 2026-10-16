@@ -602,6 +602,10 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const threadTurnFailures = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: turnFailureRows }))
   // Reply-link quote context, derived from the seeded record like the Host's
   // ledger lookup: author and first line; unknown refs are omitted.
+  const docs = vi.fn(async (_request: { workspaceId: string; threadRef?: string }) => ({ ok: true as const, value: { docs: [] as unknown[] } }))
+  const doc = vi.fn(async (_request: { workspaceId: string; docRef: string }) => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const commentDoc = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const reviewDoc = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const resolveMessageRefs = vi.fn(async (request: { workspaceId: string; messageRefs: readonly string[] }) => {
     const messages = viewItems.map(item => item.message as { messageRef: string; threadRef: string; sender: string; body: string })
     const resolved = request.messageRefs.flatMap(ref => {
@@ -808,7 +812,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
