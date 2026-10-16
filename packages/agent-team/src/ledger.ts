@@ -109,6 +109,8 @@ import type {
   AgentTeamRequestId,
   AgentTeamResolvedTaskRef,
   AgentTeamResolvedThreadRef,
+  AgentTeamReadMessageRequest,
+  AgentTeamReadMessageResult,
   AgentTeamResolvedMessageRef,
   AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
@@ -482,6 +484,16 @@ export interface AgentTeamLedgerOptions {
   readonly operationId?: () => AgentTeamOperationId
   readonly occurredAt?: () => string
   readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment') => string
+  /**
+   * Whether one unread fact is already on the named Member's model-visible
+   * surface, in full. The Host supplies it: it owns the live Agent sessions,
+   * the ledger owns durable state and must never reach into a runtime.
+   *
+   * Returning false keeps today's behaviour exactly — refuse the write. A
+   * true answer exempts this one write only: nothing is persisted, no
+   * watermark advances, no marker is consumed.
+   */
+  readonly isFactVisible?: ((memberId: AgentTeamMemberId, fact: AgentTeamThreadReadFact) => boolean) | undefined
 }
 
 /** Internal append result indicating whether this call committed a new record. */
@@ -855,6 +867,8 @@ export class AgentTeamLedger {
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
   private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment') => string
+  /** Host-supplied surface visibility probe; absent means no write is ever exempt. */
+  private readonly isFactVisible?: ((memberId: AgentTeamMemberId, fact: AgentTeamThreadReadFact) => boolean) | undefined
   private operationTail: Promise<void> = Promise.resolve()
   /**
    * Runtime human display name. Durable identity stays `member:human`; only
@@ -895,6 +909,7 @@ export class AgentTeamLedger {
     this.createOperationId = options.operationId ?? (() => `operation:${randomUUID()}` as AgentTeamOperationId)
     this.createOccurredAt = options.occurredAt ?? (() => new Date().toISOString())
     this.createRef = options.ref ?? (kind => `${kind}:${randomUUID()}`)
+    this.isFactVisible = options.isFactVisible
     this.replay()
     const head = this.state.ordered.at(-1)
     this.bootValidation = Object.freeze({
@@ -3189,6 +3204,39 @@ export class AgentTeamLedger {
     return resolved
   }
 
+  /**
+   * Read one Message back verbatim, inside the Thread that carries it.
+   *
+   * Authorization comes first and comes from the Thread: a reader must be able
+   * to address the Thread at all, which is where membership and Channel
+   * archival are decided, so this opens no path that reading the Thread did
+   * not already open. The Message is then looked up by identity in the index —
+   * never by position — so a ref resolves the same Message whatever else has
+   * been written since. Abbreviated refs resolve like other refs.
+   *
+   * The body is returned whole. The quote a Message renders is a bounded
+   * summary by design; this is the other thing, for the reader that has to
+   * answer it.
+   */
+  readMessage(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReadMessageRequest): AgentTeamReadMessageResult {
+    const context = this.threadContextForActor(actor, request.workspaceId, { threadRef: request.threadRef })
+    const key = this.uniqueRefKey(this.state.messagesByRef, request.messageRef, 'message')
+    const message = key === undefined ? undefined : this.state.messagesByRef.get(key)
+    if (message === undefined) {
+      throw new Error(`unknown Message '${request.messageRef}'${this.unknownRefHint(request.messageRef, 'message', 'Message')} — ${recoveryFor('unknown_ref').sentence({ refused: `Message '${request.messageRef}'` })}`)
+    }
+    if (message.threadRef !== context.thread.threadRef) throw new Error(`Message '${message.messageRef}' belongs to another Thread; pass the threadRef that carries it`)
+    return Object.freeze({
+      messageRef: message.messageRef,
+      threadRef: message.threadRef,
+      channelRef: context.channelRef,
+      sender: message.sender,
+      sequence: message.sequence,
+      ...(message.occurredAt === undefined ? {} : { occurredAt: message.occurredAt }),
+      body: message.body,
+    })
+  }
+
   /** Navigation facts for message-body Task refs; unknown refs are omitted. */
   resolveTaskRefs(workspaceId: WorkspaceId, taskRefs: readonly AgentTeamTaskRef[]): AgentTeamResolvedTaskRef[] {
     const numbers = this.taskNumbers(workspaceId)
@@ -5163,12 +5211,58 @@ export class AgentTeamLedger {
 
   private unreadRequired(task: AgentTeamTask | undefined, thread: AgentTeamThread, unread: readonly AgentTeamThreadReadFact[]): AgentTeamUnreadRequired {
     return Object.freeze({ kind: 'unread_required', ...(task === undefined ? {} : { taskRef: task.taskRef }), threadRef: thread.threadRef,
-      revision: thread.revision, unreadCount: unread.length, directCount: unread.filter(item => item.direct).length })
+      revision: thread.revision, unreadCount: unread.length, directCount: unread.filter(item => item.direct).length,
+      facts: unread })
   }
 
-  private staleRevision(task: AgentTeamTask | undefined, thread: AgentTeamThread, expectedRevision: number): AgentTeamStaleRevision {
+  private staleRevision(actorMemberId: AgentTeamMemberId, task: AgentTeamTask | undefined, thread: AgentTeamThread, expectedRevision: number): AgentTeamStaleRevision {
     return Object.freeze({ kind: 'stale_revision', ...(task === undefined ? {} : { taskRef: task.taskRef }), threadRef: thread.threadRef,
-      expectedRevision, revision: thread.revision })
+      expectedRevision, revision: thread.revision,
+      ...(this.tokenNeverReached(thread, expectedRevision) ? { tokenUnrecognized: true } : {}),
+      facts: this.factsAfter(actorMemberId, thread.threadRef, expectedRevision) })
+  }
+
+  /**
+   * Whether a write token was never a revision this Thread reached. A token
+   * the Thread did reach is an insertion race; one it never reached is a
+   * copied or invented number, and the model needs the difference — hunting
+   * for the insertion that supposedly invalidated a token this Thread never
+   * issued is time nobody gets back.
+   *
+   * Answered against the Thread's own facts, each of which is the sequence of
+   * the operation that committed it, so "was this ever a revision here" is
+   * "was this ever a fact here". Deliberately fail-closed: a token older than
+   * the Thread's first retained fact is unknowable, not confirmed absent, and
+   * the model is told the ordinary race instead of a certainty the ledger does
+   * not hold.
+   */
+  private tokenNeverReached(thread: AgentTeamThread, expectedRevision: number): boolean {
+    const facts = this.threadFactsFrom(this.state, thread.threadRef)
+    const first = facts[0]?.sequence
+    if (first === undefined || expectedRevision < first) return false
+    return !facts.some(fact => fact.sequence === expectedRevision)
+  }
+
+  /**
+   * The facts committed strictly after `sequence` — the increment a stale
+   * writer never saw. `unread_required` already carries its own batch through
+   * `unreadFor`; this is the revision gate's equivalent, where the missed
+   * facts are simply those past the obsolete token. `unread` is true by
+   * construction (the writer's token predates them) and `direct` resolves
+   * through the same marker lookup a read uses, so the two surfaces can never
+   * disagree about which facts were aimed at this reader.
+   */
+  private factsAfter(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef, sequence: number): readonly AgentTeamThreadReadFact[] {
+    const projection = this.state
+    const directKeys = new Set(this.directMarkersForFrom(projection, memberId, threadRef).map(marker => this.directMarkerKey(marker)))
+    const result: AgentTeamThreadReadFact[] = []
+    for (const fact of this.threadFactsFrom(projection, threadRef)) {
+      if (fact.sequence <= sequence) continue
+      const direct = fact.kind === 'message' && directKeys.has(this.directMarkerKey({ memberId, threadRef,
+        messageRef: fact.message.messageRef, sequence: fact.sequence }))
+      result.push(Object.freeze({ fact, unread: true, direct }))
+    }
+    return Object.freeze(result)
   }
 
   private releaseSummaries(
@@ -5254,12 +5348,34 @@ export class AgentTeamLedger {
     return { task, thread }
   }
 
-  /** Business outcomes that defer a thread write: unread work first, then a stale revision. */
+  /**
+   * Business outcomes that defer a thread write: unread work first, then a
+   * stale revision.
+   *
+   * The unread gate has a second chance before it refuses: when every unread
+   * fact is already on this Member's model-visible surface in full, the model
+   * has genuinely read the content, and refusing the write would buy nothing
+   * but a round-trip. That exemption writes no ledger state — no watermark
+   * advance, no marker consumed — it only declines to refuse this one write,
+   * so the durable "has this been read" answer stays exactly what it was.
+   */
   private deferredThreadWrite(actorMemberId: AgentTeamMemberId, task: AgentTeamTask | undefined, thread: AgentTeamThread, baseRevision: number): AgentTeamUnreadRequired | AgentTeamStaleRevision | undefined {
     const unread = this.unreadFor(actorMemberId, thread.threadRef)
-    if (unread.length > 0) return this.unreadRequired(task, thread, unread)
-    if (baseRevision !== thread.revision) return this.staleRevision(task, thread, baseRevision)
+    if (unread.length > 0 && !this.visibleSurfaceExempts(actorMemberId, unread)) return this.unreadRequired(task, thread, unread)
+    if (baseRevision !== thread.revision) return this.staleRevision(actorMemberId, task, thread, baseRevision)
     return undefined
+  }
+
+  /**
+   * Whether every unread fact is already on this Member's visible surface.
+   * Fail-closed in every direction: an absent probe, an empty answer, or one
+   * fact the surface cannot show means the write is not exempt. The probe is
+   * the Host's, because the surface is runtime state the ledger never holds.
+   */
+  private visibleSurfaceExempts(memberId: AgentTeamMemberId, unread: readonly AgentTeamThreadReadFact[]): boolean {
+    const probe = this.isFactVisible
+    if (probe === undefined) return false
+    return unread.every(fact => probe(memberId, fact))
   }
 
   /** Commit projections shared by the Message-sent and Thread-replied results. */

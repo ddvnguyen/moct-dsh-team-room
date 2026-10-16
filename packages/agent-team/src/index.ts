@@ -45,6 +45,7 @@ import { createTeamContextManagement, TeamPressurePolicy, TEAM_CONTEXT_CODEC, TE
 import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_TOKENS, anchorCandidates, anchorRejection, readContextTimeline, retainedPrice, type ContextProjectionConfig, type ContextTimelineItem, type ContextTimelineSource, type PressureGate, type SurfaceMeasurement, type TransitionPlan } from '@contexera/dsh-context-continuity'
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
+import { surfaceVisibilityProbe } from './surface-visibility.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
 import { cacheVerdict, type CacheVerdict } from './cache-verdict.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
@@ -128,6 +129,8 @@ import type {
   AgentTeamResolveTaskRefsResult,
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveThreadRefsResult,
+  AgentTeamReadMessageRequest,
+  AgentTeamReadMessageResult,
   AgentTeamResolveMessageRefsRequest,
   AgentTeamResolveMessageRefsResult,
   AgentTeamTaskRef,
@@ -1302,7 +1305,12 @@ export default class AgentTeam extends TypertRemoteService {
         })
       : domain.table('operations')
     if (mocUrl) this.teamMemory = new TeamMemoryClient({ baseUrl: mocUrl })
-    const ledger = new AgentTeamLedger(operationsTable)
+    // A multi-instance seat shares one Member id across its slots, so the main
+    // seat's surface says nothing about what the writing slot has seen: no
+    // write is exempted while the seat has live slots.
+    const ledger = new AgentTeamLedger(operationsTable, {
+      isFactVisible: surfaceVisibilityProbe(memberId => (this.slotHandles.get(memberId)?.size ?? 0) > 0 ? undefined : this.handles.get(memberId)?.agent),
+    })
     this.ledger = ledger
     // A live Config edit in the constructor's window may have arrived before
     // the ledger existed; sync once here so @ matching starts from the stored
@@ -2557,6 +2565,11 @@ export default class AgentTeam extends TypertRemoteService {
     return this.replyAs(this.humanCall(request.workspaceId), request)
   }
 
+  @Remote('readMessage')
+  readMessage(request: AgentTeamReadMessageRequest): AgentTeamReadMessageResult {
+    return this.requireLedger().readMessage(this.humanCall(request.workspaceId), request)
+  }
+
   /** Human's personal Attention operation. */
   @Remote('changeAttention')
   async changeAttention(request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult> {
@@ -2723,6 +2736,11 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+  }
+
+  /** Read one Message back verbatim, for the reader that has to answer it. */
+  readMessageForAgent(agent: Agent, request: AgentTeamReadMessageRequest): AgentTeamReadMessageResult {
+    return this.requireLedger().readMessage(this.memberCall(agent, request.workspaceId), request)
   }
 
   /** Agent-only start of one Team Document in a Thread the Member can work in. */

@@ -149,40 +149,47 @@ describe('team_inbox renders triage, not a read', () => {
   })
 })
 
-describe('team_thread status/follow/unfollow render Attention only', () => {
+describe('team_attention renders Attention only', () => {
   const base = {
     workspaceId: 'workspace:alpha', channelRef: CHANNEL,
     kind: 'status', threadRef: THREAD, taskRef: TASK, taskNumber: 7, revision: 8394, status: 'in_progress', resolution: 'open', following: true,
-    anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor body', sequence: 1 },
-    claims: [{ claimRef: CLAIM, direction: 'renderer fidelity', state: 'active', owner: 'member:6e8a5b10-df16-4ec0-943a-63738010953f' }],
-    facts: [],
   }
   it('status renders one Attention outcome line under its Workspace/Channel source', () => {
-    const text = renderText(teamTools().get('team_thread')!, { action: 'status', threadRef: THREAD }, base)
+    const text = renderText(teamTools().get('team_attention')!, { action: 'status', threadRef: THREAD }, base)
     expect(text).toBe(`Workspace: workspace:alpha · Channel: ${CHANNEL}\nAttention status — following ${THREAD} · ${TASK} (#7), in_progress/open.`)
   })
 
   it('follow/unfollow render one Attention-changed line; no anchor, Claims, facts, revision label, or token', () => {
-    const follow = renderText(teamTools().get('team_thread')!, { action: 'follow', threadRef: THREAD }, { ...base, kind: 'follow' })
+    const follow = renderText(teamTools().get('team_attention')!, { action: 'follow', threadRef: THREAD }, { ...base, kind: 'follow' })
     expect(follow).toBe(`Workspace: workspace:alpha · Channel: ${CHANNEL}\nAttention changed — now following ${THREAD} · ${TASK} (#7), in_progress/open.`)
-    const unfollow = renderText(teamTools().get('team_thread')!, { action: 'unfollow', threadRef: THREAD }, { ...base, kind: 'unfollow', following: false })
+    const unfollow = renderText(teamTools().get('team_attention')!, { action: 'unfollow', threadRef: THREAD }, { ...base, kind: 'unfollow', following: false })
     expect(unfollow).toBe(`Workspace: workspace:alpha · Channel: ${CHANNEL}\nAttention changed — no longer following ${THREAD} · ${TASK} (#7), in_progress/open.`)
     for (const text of [follow, unfollow]) {
-      expect(text).not.toContain('anchor body')
-      expect(text).not.toContain(CLAIM)
       expect(text).not.toContain('revision')
       expect(text).not.toContain('baseRevision')
     }
   })
 
   it('a taskless Attention render omits Task standing', () => {
-    const text = renderText(teamTools().get('team_thread')!, { action: 'status', threadRef: THREAD }, {
+    const text = renderText(teamTools().get('team_attention')!, { action: 'status', threadRef: THREAD }, {
       workspaceId: 'workspace:alpha', channelRef: CHANNEL,
       kind: 'status', threadRef: THREAD, revision: 8394, following: false,
-      anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor body', sequence: 1 },
-      claims: [], facts: [],
     })
     expect(text).toBe(`Workspace: workspace:alpha · Channel: ${CHANNEL}\nAttention status — not following ${THREAD}.`)
+  })
+
+  it('the output schema carries no read surface at all, because Attention is not reading', () => {
+    // The whole point of the split: the Attention result shape cannot name a
+    // fact, an anchor, a watermark, or a write token, so no render of it can
+    // drift into showing Thread content.
+    const schema = teamTools().get('team_attention')!.output.schema as Record<string, any>
+    for (const absent of ['facts', 'anchor', 'claims', 'readThroughSequence', 'remainingUnreadCount', 'message', 'cursor', 'hasMore', 'contextAdvice']) {
+      expect(schema.properties[absent]).toBeUndefined()
+    }
+    // The Attention state itself is the one required field: an Attention result
+    // that does not say whether you follow the Thread answers nothing.
+    // `required` is hoisted onto the schema's top-level list, not the field.
+    expect(schema.required).toContain('following')
   })
 })
 
@@ -386,11 +393,11 @@ describe('team_message renders its outcome', () => {
   })
 
   it('dm: Delivered vs Recorded-not-delivered with the no-blind-duplicate warning', () => {
-    const delivered = renderText(teamTools().get('team_message')!, { action: 'dm', memberRef: 'member:peer', body: 'x' }, {
+    const delivered = renderText(teamTools().get('team_dm')!, { memberRef: 'member:peer', body: 'x' }, {
       kind: 'dm-sent', recipientMemberId: 'member:peer', recipientHandle: 'Cole', delivered: true,
     })
     expect(delivered).toBe('Delivered — DM to @Cole (member:peer).')
-    const recorded = renderText(teamTools().get('team_message')!, { action: 'dm', memberRef: 'member:peer', body: 'x' }, {
+    const recorded = renderText(teamTools().get('team_dm')!, { memberRef: 'member:peer', body: 'x' }, {
       kind: 'dm-sent', recipientMemberId: 'member:peer', recipientHandle: 'Cole', delivered: false, deliveryNote: 'no live session',
     })
     expect(recorded).toContain('Recorded, not delivered — DM to @Cole (member:peer).')
@@ -398,24 +405,57 @@ describe('team_message renders its outcome', () => {
     expect(recorded).toContain('Reason: no live session')
   })
 
-  it('typed rejections begin Not committed, keep refs/counts/recovery, and render no numeric revision or token', () => {
+  it('team_dm takes no Thread, Task, token, or attachment parameter at all', () => {
+    // The split's whole point, asserted rather than assumed: a private note has
+    // no Thread to address, so the parameter pocket cannot invite one. A model
+    // that reaches for a threadRef here gets a schema refusal, not a runtime one.
+    const parameters = teamTools().get('team_dm')!.parameters as Record<string, any>
+    for (const absent of ['threadRef', 'taskRef', 'channelRef', 'baseRevision', 'asTask', 'attachments', 'replyToMessageRef', 'action']) {
+      expect(parameters.properties[absent]).toBeUndefined()
+    }
+    expect(parameters.required).toContain('memberRef')
+    expect(parameters.required).toContain('body')
+  })
+
+  it('typed rejections begin Not committed, keep refs/counts/recovery, and hand back the current revision', () => {
     const unread = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 8000, body: 'x' }, {
       kind: 'unread_required', threadRef: THREAD, taskRef: TASK, revision: 8394, unreadCount: 2, directCount: 1,
+      facts: [{ sequence: 8394, kind: 'message', body: 'the gated fact', sender: 'human', mentions: [], unread: true, direct: true }],
     })
     expect(unread).toContain('Not committed — unread_required.')
     expect(unread).toContain(`${THREAD} · ${TASK} · 2 unread, 1 direct`)
     expect(unread).toContain('team_thread read')
-    expect(unread).not.toContain('8394')
-    expect(unread).not.toContain('baseRevision')
+    // Channel C: the gated facts render in the rejection itself, and the
+    // current revision comes back as the next write token. This inverted the
+    // old contract, which held that a rejection carried no facts and no token.
+    expect(unread).toContain('the gated fact')
+    expect(unread).toContain('Next write — baseRevision: 8394')
 
     const stale = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 8387, body: 'x' }, {
       kind: 'stale_revision', threadRef: THREAD, expectedRevision: 8387, revision: 8394,
+      facts: [{ sequence: 8394, kind: 'message', body: 'the increment', sender: 'human', mentions: [], unread: true, direct: false }],
     })
     expect(stale).toContain('Not committed — the Thread changed after your last read (stale_revision).')
     expect(stale).toContain('Read the Thread, reconsider the new facts')
-    expect(stale).not.toContain('8387')
-    expect(stale).not.toContain('8394')
-    expect(stale).not.toContain('baseRevision')
+    expect(stale).toContain('the increment')
+    expect(stale).toContain('Next write — baseRevision: 8394')
+
+    // A token this Thread never reached is not a race. The ordinary sentence
+    // would send a model re-reading to find an insertion that never happened,
+    // so the refusal names the copying mistake and drops the increment lines,
+    // which would otherwise present facts as missed when none were.
+    const copied = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 4711, body: 'x' }, {
+      kind: 'stale_revision', threadRef: THREAD, expectedRevision: 4711, revision: 8394, tokenUnrecognized: true,
+      facts: [{ sequence: 8394, kind: 'message', body: 'the increment', sender: 'human', mentions: [], unread: true, direct: false }],
+    })
+    expect(copied).toContain('Not committed — that write token was never a revision this Thread reached (stale_revision).')
+    expect(copied).toContain('not a revision this Thread reached')
+    // The headline must not contradict the way out: the first line can no
+    // longer claim the Thread changed, and the race sentence is gone with it.
+    expect(copied).not.toContain('the Thread changed')
+    expect(copied).not.toContain('Read the Thread, reconsider the new facts')
+    expect(copied).not.toContain('the increment')
+    expect(copied).toContain('Next write — baseRevision: 8394')
 
     const notFollowing = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 8394, body: 'x' }, {
       kind: 'member_not_following', memberIds: ['member:6d5ac10d-3ef6-4466-a1f7-d105ca1b6da5'], threadRef: THREAD, revision: 8394,
@@ -423,7 +463,8 @@ describe('team_message renders its outcome', () => {
     expect(notFollowing).toContain('Not committed — member_not_following.')
     expect(notFollowing).toContain('member:6d5ac10d-3ef6-4466-a1f7-d105ca1b6da5 not following')
     expect(notFollowing).toContain('Only a Human can invite an unfollowed Agent')
-    // The structured revision stays present for compatibility and never renders.
+    // An unfollowed write is gated on membership, not on facts or a token: it
+    // still carries neither, so the structured revision never renders here.
     expect(notFollowing).not.toContain('8394')
     expect(notFollowing).not.toContain('baseRevision')
   })
@@ -488,25 +529,42 @@ describe('team_claim renders the affected Claim', () => {
     }
   })
 
-  it('claim rejections share the outcome-first form with no numeric revision or token', () => {
+  it('claim rejections share the outcome-first form and hand back the current revision', () => {
     const unread = renderText(teamTools().get('team_claim')!, { action: 'claim', taskRef: TASK, baseRevision: 8000, direction: 'd' }, {
       kind: 'unread_required', taskRef: TASK, threadRef: THREAD, revision: 8394, status: 'in_progress', unreadCount: 2, directCount: 1,
       claims: [{ claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }],
+      facts: [{ sequence: 8394, kind: 'message', body: 'the gated fact', sender: 'human', mentions: [], unread: true, direct: true }],
     })
     expect(unread).toContain('Not committed — unread_required.')
     expect(unread).toContain(`${THREAD} · ${TASK} · 2 unread, 1 direct`)
     expect(unread).toContain('team_thread read')
-    expect(unread).not.toContain('8394')
-    expect(unread).not.toContain('baseRevision')
+    expect(unread).toContain('the gated fact')
+    expect(unread).toContain('Next write — baseRevision: 8394')
+    // The Claim archive still never rides along with a rejection: the affected
+    // Claim and the facts are the decision surface, not the whole history.
     expect(unread).not.toContain('Active Claims')
 
     const stale = renderText(teamTools().get('team_claim')!, { action: 'done', taskRef: TASK, baseRevision: 8387, claimRef: CLAIM }, {
       kind: 'stale_revision', taskRef: TASK, threadRef: THREAD, expectedRevision: 8387, revision: 8394, status: 'in_progress',
       claims: [{ claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }],
+      facts: [{ sequence: 8394, kind: 'message', body: 'the increment', sender: 'human', mentions: [], unread: true, direct: false }],
     })
     expect(stale).toContain('Not committed — the Thread changed after your last read (stale_revision).')
-    expect(stale).not.toContain('8387')
-    expect(stale).not.toContain('8394')
+    expect(stale).toContain('the increment')
+    expect(stale).toContain('Next write — baseRevision: 8394')
+
+    // The copied-token refusal on the Claim side, because the Claim tool
+    // renders its own rejections: a member that closes a Claim with a token
+    // from another Thread gets the same correction, not the race sentence.
+    const copied = renderText(teamTools().get('team_claim')!, { action: 'done', taskRef: TASK, baseRevision: 4711, claimRef: CLAIM }, {
+      kind: 'stale_revision', taskRef: TASK, threadRef: THREAD, expectedRevision: 4711, revision: 8394, status: 'in_progress', tokenUnrecognized: true,
+      claims: [{ claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }],
+      facts: [{ sequence: 8394, kind: 'message', body: 'the increment', sender: 'human', mentions: [], unread: true, direct: false }],
+    })
+    expect(copied).toContain('Not committed — that write token was never a revision this Thread reached (stale_revision).')
+    expect(copied).not.toContain('the Thread changed')
+    expect(copied).not.toContain('the increment')
+    expect(copied).toContain('Next write — baseRevision: 8394')
   })
 })
 
@@ -610,7 +668,7 @@ describe('team tools render absolute event instants in UTC+8', () => {
       claim: { claimRef: CLAIM, direction: 'x', state: 'active', owner: 'member:me' }, claims: [], occurredAt: '2026-09-08T09:00:00.000Z',
     })
     expect(claim).toContain('Committed at 2026-09-08T17:00:00+08:00')
-    const dm = renderText(teamTools().get('team_message')!, { action: 'dm', memberRef: 'member:peer', body: 'x' }, {
+    const dm = renderText(teamTools().get('team_dm')!, { memberRef: 'member:peer', body: 'x' }, {
       kind: 'dm-sent', recipientMemberId: 'member:peer', recipientHandle: 'Cole', delivered: true, occurredAt: '2026-09-08T09:00:00.000Z',
     })
     expect(dm).toBe('Delivered — DM to @Cole (member:peer) at 2026-09-08T17:00:00+08:00.')

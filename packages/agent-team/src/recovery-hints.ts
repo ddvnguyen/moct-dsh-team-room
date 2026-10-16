@@ -35,6 +35,10 @@ export interface RecoveryContext {
   readonly taskRef?: string | undefined
   /** The tool action whose parameter shape was wrong, when the fault is a shape. */
   readonly action?: string | undefined
+  /** The parameter that belongs to another action, when the fault is that one. */
+  readonly parameter?: string | undefined
+  /** The action that parameter does belong to, when the fault is that one. */
+  readonly owner?: string | undefined
 }
 
 /** One registered way out: a stable id, the situations it answers, and its words. */
@@ -73,6 +77,21 @@ export const RECOVERY_REGISTRY: readonly RecoveryEntry[] = Object.freeze([
     sentence: () => 'Read the Thread, reconsider the new facts, then retry with the token that read returns.',
   },
   {
+    // Not a new fault kind — the ledger still answers `stale_revision`. This is
+    // the same refusal with a different cause: the token was never a revision
+    // this Thread reached, so it was copied from another Thread or invented.
+    // The ordinary race sentence sends a model hunting for an insertion that
+    // never happened, so this one names the actual mistake and where a real
+    // token comes from. A distinct id and kind keep the lookup by exact kind
+    // honest: two entries sharing one kind would make the second unreachable.
+    id: 'stale_revision_token_unrecognized',
+    kinds: ['stale_revision_token_unrecognized'],
+    sentence: ({ threadRef }: RecoveryContext) => [
+      'That write token is not a revision this Thread reached — nobody inserted anything, so there is nothing to go and re-read.',
+      `Take a current token from ${threadRef === undefined ? 'the Thread' : threadRef} with team_thread read, or reuse the one your own last committed mutation rendered.`,
+    ].join(' '),
+  },
+  {
     id: 'member_not_following',
     kinds: ['member_not_following'],
     sentence: () => 'Only a Human can invite an unfollowed Agent — retry without mentioning them, or ask the Human.',
@@ -91,6 +110,14 @@ export const RECOVERY_REGISTRY: readonly RecoveryEntry[] = Object.freeze([
     id: 'history_only_arguments',
     kinds: ['history_only_arguments'],
     sentence: ({ action }: RecoveryContext) => `${action ?? 'read'} drains unread and cannot page — drop beforeSequence and limit, or call action: history to page older facts.`,
+  },
+  {
+    id: 'action_only_arguments',
+    kinds: ['action_only_arguments'],
+    // The same fault class as `history_only_arguments`, named by the parameter
+    // rather than hard-coded: `messageRef` belongs to `message` alone, and a
+    // read that carried it would otherwise drop it in silence.
+    sentence: ({ action, parameter, owner }: RecoveryContext) => `${action ?? 'read'} does not accept ${parameter ?? 'that parameter'} — drop it, or call action: ${owner ?? 'message'} where it belongs.`,
   },
   {
     id: 'missing_write_token',

@@ -794,6 +794,73 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(replayLedger(test).inbox(actor, { workspaceId: alpha })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1 })
   })
 
+  it('reads one Message back verbatim, by identity rather than by its neighbours', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
+    // A body whose summary cannot stand in for it: a short first line, a
+    // mention, and more than the quote's 120-character bound behind it.
+    const longBody = `Please investigate this\n第二行 @reviewer 提到别人\n${'x'.repeat(200)}`
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('anchor'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: longBody, actor: agentTeamHumanActor() })).value)
+    const middle = committed((await ledger.reply({ requestId: requestId('middle'), workspaceId: alpha,
+      threadRef: sent.thread.threadRef, baseRevision: sent.thread.revision, body: 'A middle message', actor: agentTeamHumanActor() })).value)
+    const last = committed((await ledger.reply({ requestId: requestId('last'), workspaceId: alpha,
+      threadRef: sent.thread.threadRef, baseRevision: middle.thread.revision, body: 'The newest message', actor: agentTeamHumanActor() })).value)
+
+    const readBack = ledger.readMessage(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: sent.message.messageRef })
+    // Verbatim: no ellipsis, no first-line-only summary, nothing trimmed.
+    expect(readBack.body).toBe(longBody)
+    expect(readBack.body.length).toBeGreaterThan(120)
+    expect(readBack.body).not.toContain('…')
+    expect(readBack).toMatchObject({ messageRef: sent.message.messageRef, threadRef: sent.thread.threadRef, channelRef: channel.channel.channelRef, sender: AGENT_TEAM_HUMAN_MEMBER_ID, sequence: sent.message.sequence })
+
+
+    // Identity, not position: the Message before and the Message after come
+    // back as themselves, so a ref can never quietly resolve to a neighbour.
+    expect(ledger.readMessage(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: middle.message.messageRef }).body).toBe('A middle message')
+    expect(ledger.readMessage(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: last.message.messageRef }).body).toBe('The newest message')
+    // The quote's own bound still applies to the quote: the two are different
+    // things and neither is derived from the other.
+    expect(ledger.resolveMessageRefs(alpha, [sent.message.messageRef])[0]!.excerpt).toBe('Please investigate this')
+  })
+
+  it('reads one Message back through the Client Remote, on the Host\'s own ledger', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const longBody = `Please investigate this\n${'y'.repeat(200)}`
+    const sent = committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('remote-anchor'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: longBody }))
+    const readBack = test.ctx.agentTeam.readMessage({ workspaceId: alpha, threadRef: sent.thread.threadRef, messageRef: sent.message.messageRef })
+    expect(readBack.body).toBe(longBody)
+    expect(readBack).toMatchObject({ threadRef: sent.thread.threadRef, channelRef: channel.channel.channelRef, sender: AGENT_TEAM_HUMAN_MEMBER_ID, sequence: sent.message.sequence })
+  })
+
+  it('refuses an unknown Message, another Thread\'s Message, and an archived Channel\'s — distinguishably', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
+    const first = committed((await ledger.sendMessage({ requestId: requestId('first'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'First thread', actor: agentTeamHumanActor() })).value)
+    const second = committed((await ledger.sendMessage({ requestId: requestId('second'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Second thread', actor: agentTeamHumanActor() })).value)
+
+    // Each refusal names its own cause, so a reader can tell a wrong ref from a
+    // closed Thread — and none of them returns a substitute body.
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: first.thread.threadRef, messageRef: 'message:missing' as never }))
+      .toThrow(/unknown Message/)
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: first.thread.threadRef, messageRef: second.message.messageRef }))
+      .toThrow(/belongs to another Thread/)
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: 'thread:missing' as never, messageRef: first.message.messageRef }))
+      .toThrow(/unknown Thread ref/)
+
+    await ledger.archiveChannel({ requestId: requestId('archive'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })
+    expect(() => ledger.readMessage(actor, { workspaceId: alpha, threadRef: first.thread.threadRef, messageRef: first.message.messageRef }))
+      .toThrow(/is archived/)
+  })
+
   it('serves the Human Inbox with row previews and whole-unread totals', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
@@ -1253,6 +1320,53 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(stale).toMatchObject({ kind: 'stale_revision', revision: update.thread.revision })
     expect(committed((await ledger.reply({ requestId: requestId('current'), workspaceId: alpha, taskRef: started.task.taskRef,
       body: 'Reply after read', baseRevision: update.thread.revision, actor })).value).message.body).toBe('Reply after read')
+    ledger.validate()
+  })
+
+  it('a rejected write carries the facts it gated on and the token to retry with', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const followed = await ledger.changeAttention({ requestId: requestId('agent-follow'), workspaceId: alpha, taskRef: started.task.taskRef, action: 'follow', actor })
+    expect(followed.value.attention).toMatchObject({ readThroughSequence: started.thread.revision })
+    const update = committed((await ledger.reply({ requestId: requestId('human-update'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'New evidence', baseRevision: started.thread.revision, actor: agentTeamHumanActor() })).value)
+
+    // The unread gate answers with the very facts that gated it, in the same
+    // shape a read returns — so the rejected writer sees WHAT is unread without
+    // paying a separate read round-trip.
+    const blocked = (await ledger.reply({ requestId: requestId('blocked'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'Reply without read', baseRevision: started.thread.revision, actor })).value
+    expect(blocked).toMatchObject({ kind: 'unread_required', revision: update.thread.revision, unreadCount: 1 })
+    expect(blocked.kind === 'unread_required' && blocked.facts?.map(entry => entry.fact.sequence)).toEqual([update.message.sequence])
+    expect(blocked.kind === 'unread_required' && blocked.facts?.[0]?.unread).toBe(true)
+
+    // Reading drains the gate, so the NEXT write is gated by revision alone —
+    // and that rejection answers with the increment past the obsolete token.
+    const drained = (await ledger.readThread({ requestId: requestId('agent-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    expect(drained.remainingUnreadCount).toBe(0)
+    // A member write advances the revision without adding unread for that same
+    // member, so the only thing left to gate on is the stale token.
+    const own = committed((await ledger.reply({ requestId: requestId('own-write'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'My own reply', baseRevision: update.thread.revision, actor })).value)
+    const stale = (await ledger.reply({ requestId: requestId('stale'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'Reply with obsolete revision', baseRevision: update.thread.revision, actor })).value
+    expect(stale).toMatchObject({ kind: 'stale_revision', expectedRevision: update.thread.revision, revision: own.thread.revision })
+    // The increment is exactly the facts committed after the token the writer
+    // used — nothing before it, nothing the writer already knew about.
+    expect(stale.kind === 'stale_revision' && stale.facts?.map(entry => entry.fact.sequence)).toEqual([own.message.sequence])
+    // A retry with the revision the rejection named succeeds without any
+    // further read: the round-trip the rejection used to force is gone.
+    const readCount = () => [...test.facility.get('agent_team')!.table('operations').entries()]
+      .filter(([, operation]) => (operation as AgentTeamOperation).kind === 'team/thread-read').length
+    const readsBeforeRetry = readCount()
+    expect(committed((await ledger.reply({ requestId: requestId('retry'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'Retry with the named revision', baseRevision: own.thread.revision, actor })).value).message.body).toBe('Retry with the named revision')
+    // The whole point of the channel: the retry committed with zero additional
+    // read operations, so the reject → read → write chain is now reject → write.
+    expect(readCount()).toBe(readsBeforeRetry)
     ledger.validate()
   })
 
