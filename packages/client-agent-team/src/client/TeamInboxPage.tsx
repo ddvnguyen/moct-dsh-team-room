@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentTeamInboxItem, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { claimersLabel, formatAbsoluteTime, formatInboxTime, formatTaskStatus, taskStatusDot } from './team-formatters.ts'
 import { namedAvatarOwners, TeamAvatarStack, type TeamAvatarHuman } from './TeamAvatarStack.tsx'
@@ -26,6 +26,10 @@ interface TeamInboxPageProps {
   /** The Human's display name, from the Client's one identity projection. */
   readonly humanName: string
   readonly humanAvatarUrl?: string | undefined
+  /** L1: the shell column's collapse state; the header offers the open control while it is. */
+  readonly sidebarCollapsed?: boolean | undefined
+  /** L1: reopens the shell column through the shell's own action. */
+  readonly openSidebar?: (() => void) | undefined
   readonly t: TeamConversationProps['t']
 }
 
@@ -65,7 +69,7 @@ function compareInboxRows(left: TeamInboxRow, right: TeamInboxRow): number {
  * holding unread is only ever in the queue: the Host already excludes it from
  * the tail, and this page never re-derives that judgement.
  */
-export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, selectWorkspace, selectThread, humanName, humanAvatarUrl, t }: TeamInboxPageProps) {
+export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, selectWorkspace, selectThread, humanName, humanAvatarUrl, sidebarCollapsed, openSidebar, t }: TeamInboxPageProps) {
   const workspaces = useWorkspaces(state => state.items)
   const [rows, setRows] = useState<readonly TeamInboxRow[]>()
   const [recentRows, setRecentRows] = useState<readonly TeamInboxRow[]>([])
@@ -157,6 +161,7 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, sele
     <div className={css.surfaceHeader}>
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
+          {sidebarCollapsed === true && openSidebar !== undefined && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
           <h1>{t('inboxTitle')}</h1>
           {rows !== undefined && rows.length > 0 && <p className={inboxCss.headerMeta}>
             <span>{t('inboxHeaderThreads', { count: rows.length })}</span>
