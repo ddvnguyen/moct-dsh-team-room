@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 const { harnessDir } = await import('../../scripts/harness-dir.mjs')
 const { clientBundle } = await import(pathToFileURL(resolve(harnessDir, 'packages/client/tsdown.client.ts')).href)
 
-const bundle = clientBundle('@ddvnguyen/moct-dsh-team-room', [
+const bundle = clientBundle(resolve(import.meta.dirname, '../..'), [
   'lib/types/index.js',
 ])
 
