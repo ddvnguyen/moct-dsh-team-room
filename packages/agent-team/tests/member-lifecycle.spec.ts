@@ -370,6 +370,115 @@ describe('Agent Team Member lifecycle', () => {
     ctx.agentTeam.validateLedger()
   })
 
+  it('accepts a unique Workspace id abbreviation and points at the fix when the abbreviation is not unique', async () => {
+    const { ctx, workspaces } = await realHarness()
+    // Two Workspaces sharing a UUID prefix: the abbreviation is ambiguous, so
+    // only the full id resolves. A unique prefix must resolve like the branded
+    // refs do, instead of demanding an exact string.
+    const homeId = WorkspaceId('workspace:1a2b3c4d-0000-4000-8000-000000000001')
+    const otherId = WorkspaceId('workspace:1a2b3c4d-0000-4000-8000-000000000002')
+    workspaces.set(homeId, { id: homeId, path: '/tmp/other-project', attachSession: async () => {} })
+    workspaces.set(otherId, { id: otherId, path: '/tmp/other-project', attachSession: async () => {} })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('abbrev-add'), workspaceId: homeId,
+      handle: 'builder', description: '', presetId: 'team-member', channelRefs: [] })
+    const agent = ctx.agents.get(added.status.member.sessionId)!
+    await ctx.agentTeam.joinWorkspace({ requestId: requestId('abbrev-join'), workspaceId: otherId, memberId: added.status.member.memberId })
+    const call = (name: string, args: unknown) => ctx.tools.execute({ signal: new AbortController().signal,
+      callId: ToolCallId(`abbrev-${name}-${JSON.stringify(args)}`), name, arguments: args, agent })
+
+    // The unique abbreviation resolves — the same tolerance the branded refs
+    // already have, so a Member echoing a prefix is not rejected.
+    const abbreviated = await call('team_view', { workspace: 'workspace:1a2b3c4d-0000-4000-8000-000000000001' })
+    expect(abbreviated.isError, abbreviated.isError ? abbreviated.error.message : '').toBe(false)
+
+    // The ambiguous prefix is refused with a message that names both
+    // candidates and says what to do, rather than a bare lookup failure. The
+    // assertions pin that contract — every candidate named, and a route out —
+    // never one word of the sentence, which the recovery registry owns.
+    const ambiguous = await call('team_view', { workspace: 'workspace:1a2b3c4d' })
+    expect(ambiguous.isError).toBe(true)
+    if (!ambiguous.isError) throw new Error('expected an ambiguous-Workspace rejection')
+    expect(ambiguous.error.message).toContain(homeId)
+    expect(ambiguous.error.message).toContain(otherId)
+    expect(ambiguous.error.message).toMatch(/longer prefix|full Workspace id/i)
+    // The rendered sentence states the refusal once. A doubled verb is the
+    // signature of a sentence rewritten around its own interpolated value
+    // instead of composing with it.
+    expect(ambiguous.error.message.match(/matches/g) ?? []).toHaveLength(1)
+
+    // An unknown-but-unambiguous-shaped id still says it is not participated,
+    // and still lists the choices.
+    const unknown = await call('team_view', { workspace: 'workspace:9f8e7d6c-0000-4000-8000-000000000009' })
+    expect(unknown.isError).toBe(true)
+    if (!unknown.isError) throw new Error('expected an unknown-Workspace rejection')
+    expect(unknown.error.message).toContain('Not participating in Workspace')
+    expect(unknown.error.message).toContain(homeId)
+  })
+
+  /**
+   * Every argument-shape rejection a Member can actually trigger must carry the
+   * next action, not merely name the fault. These are the ten templates the
+   * offline session census recorded as hit at least once; asserting each one
+   * keeps a future edit from silently dropping the recovery clause again.
+   */
+  it('every argument-shape rejection names the next action', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('shape-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('shape-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(added.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('shape-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Shape the argument contract', recipients: [added.status.member.memberId], asTask: true })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const threadRef = started.thread!.threadRef
+    const taskRef = started.task!.taskRef
+    const rejected = async (name: string, args: unknown): Promise<string> => {
+      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`shape-${name}-${JSON.stringify(args)}`), name, arguments: args, agent })
+      expect(result.isError, `${name} ${JSON.stringify(args)} unexpectedly succeeded`).toBe(true)
+      if (!result.isError) throw new Error('expected a rejection')
+      return result.error.message
+    }
+
+    // read drains unread and cannot page: the fix is the history action.
+    const historyArgs = await rejected('team_thread', { action: 'read', threadRef, beforeSequence: 1, limit: 5 })
+    expect(historyArgs).toContain('action: history')
+    expect(historyArgs).toMatch(/read .*(drain|unread)/i)
+    // A missing mutation basis says which token to copy and where from. Both
+    // tools refuse it on their own argument shape, before the Host ever sees
+    // the call, and both name the same drain-and-copy route.
+    expect(await rejected('team_message', { action: 'reply', threadRef, body: 'no token' })).toMatch(/team_thread read/)
+    expect(await rejected('team_claim', { action: 'done', taskRef, claimRef: 'claim:missing' })).toMatch(/team_thread read/)
+    // A missing identity says which parameter is absent and where to get it.
+    expect(await rejected('team_claim', { action: 'done', baseRevision: 1, claimRef: 'claim:missing' })).toContain('taskRef')
+    expect(await rejected('team_claim', { action: 'list' })).toContain('taskRef')
+    // A wrong action combination says what the action accepts instead.
+    expect(await rejected('team_claim', { action: 'claim', taskRef, baseRevision: 1, direction: 'd', claimRef: 'claim:missing' })).toContain('direction')
+    expect(await rejected('team_claim', { action: 'done', taskRef, baseRevision: 1, direction: 'd' })).toContain('claimRef')
+    // An unusable target says what it must be.
+    expect(await rejected('team_message', { action: 'reply', threadRef, baseRevision: 1, replyToMessageRef: 'message:23011', body: 'bad target' })).toContain('recorded Message')
+    expect(await rejected('team_message', { action: 'reply', threadRef, baseRevision: 1, attachments: ['relative/shot.png'], body: 'bad attachment' })).toMatch(/absolute|does not exist/)
+    // A start/dm addressed the wrong way says which parameter it wants.
+    expect(await rejected('team_message', { action: 'start', body: 'no channel' })).toContain('channelRef')
+    expect(await rejected('team_message', { action: 'dm', body: 'no recipient' })).toContain('memberRef')
+
+    // Another Member's Claim: the refusal names the owner rule and the route
+    // to the Member's own Claims, rather than only stating the restriction.
+    // The builder's own claim on the Task is what it tries to close here, so
+    // the target is unambiguously someone else's.
+    const peer = await ctx.agentTeam.addMember({ requestId: requestId('shape-peer'), workspaceId, handle: 'peer', description: 'Reviews changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const peerAgent = ctx.agents.get(peer.status.member.sessionId)!
+    const peerRead = await ctx.agentTeam.readThreadForAgent(peerAgent, { requestId: requestId('shape-peer-read'), workspaceId, threadRef })
+    const peerClaim = await ctx.agentTeam.changeClaimForAgent(peerAgent, { requestId: requestId('shape-peer-claim'), workspaceId, taskRef, action: 'claim', baseRevision: peerRead.thread.revision, direction: 'Peer claim on this Task' })
+    if (peerClaim.kind !== 'committed') throw new Error(`expected committed peer claim, received ${peerClaim.kind}`)
+    // The peer's claim advanced the Thread, so the builder reads once more to
+    // hold a current token: the only thing standing between it and the peer's
+    // Claim is ownership, which is what this assertion is about.
+    const builderRead = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('shape-builder-read'), workspaceId, threadRef })
+    const ownAttempt = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('shape-own-claim'), name: 'team_claim', arguments: { action: 'done', taskRef, baseRevision: builderRead.thread.revision, claimRef: peerClaim.claim.claimRef }, agent })
+    expect(ownAttempt.isError).toBe(true)
+    if (!ownAttempt.isError) throw new Error('expected an ownership rejection')
+    expect(ownAttempt.error.message).toContain('own Claim')
+    expect(ownAttempt.error.message).toContain('team_claim list')
+  })
+
   it('archives a Member: session disposed and archived, private memory kept, claims released', async () => {
     const { ctx, workspaceId, archived } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('archive-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -437,14 +546,15 @@ describe('Agent Team Member lifecycle', () => {
     const added = await ctx.agentTeam.addMember({ requestId: requestId('clear-retry-add'), workspaceId,
       handle: 'builder', description: '', presetId: 'team-member', channelRefs: [] })
     const memberId = added.status.member.memberId
-    const target = SessionId(`agent-team-${requestId('clear-retry')}`)
     archiveFailures.remaining = 1
 
     await expect(ctx.agentTeam.clearMemberContext({ requestId: requestId('clear-retry'), workspaceId, memberId }))
       .rejects.toThrow('workspace archive failed')
     const stranded = ctx.agentTeam.members().find(item => item.member.memberId === memberId)
-    expect(stranded?.member.sessionId).toBe(target)
     expect(stranded?.availability).toBe('unavailable')
+    // The renewal mints its own Session id: read it back from the recorded
+    // binding rather than predicting what the caller asked for.
+    const target = stranded!.member.sessionId
     // The retire half disposed the old generation but never archived it, so
     // the recorded binding and the live effects disagree until it is finished.
     expect(archived).toEqual([])
@@ -469,18 +579,46 @@ describe('Agent Team Member lifecycle', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
+  it('mints an opaque Session id instead of one derived from the requestId', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('opaque-add'), workspaceId,
+      handle: 'builder', description: '', presetId: 'team-member', channelRefs: [] })
+    const memberId = added.status.member.memberId
+    // A caller-shaped request id: the colons it carries, and the escaping they
+    // attract, are what a fresh mint keeps out of the Session directory name
+    // and the Client's Session list.
+    const callerId = requestId('team-bridge:clear:cl1')
+
+    const renewed = await ctx.agentTeam.clearMemberContext({ requestId: callerId, workspaceId, memberId })
+    const sessionId = renewed.status.member.sessionId
+
+    expect(sessionId).not.toBe(added.status.member.sessionId)
+    expect(sessionId).toMatch(/^agent-team-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(sessionId).not.toContain('team-bridge')
+    expect(sessionId).not.toContain('~')
+
+    // An exact retry still resolves to the recorded binding: the mint is not
+    // restatable by the caller, so the ledger's requestId record answers.
+    const again = await ctx.agentTeam.clearMemberContext({ requestId: callerId, workspaceId, memberId })
+    expect(again.receipt.operationId).toBe(renewed.receipt.operationId)
+    expect(again.status.member.sessionId).toBe(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('finishes an interrupted context renewal during startup', async () => {
     const { ctx, workspaceId, archived, archiveFailures, teamFiber } = await realHarness()
     const added = await ctx.agentTeam.addMember({ requestId: requestId('clear-boot-add'), workspaceId,
       handle: 'builder', description: '', presetId: 'team-member', channelRefs: [] })
     const memberId = added.status.member.memberId
-    const target = SessionId(`agent-team-${requestId('clear-boot')}`)
     archiveFailures.remaining = 1
 
     await expect(ctx.agentTeam.clearMemberContext({ requestId: requestId('clear-boot'), workspaceId, memberId }))
       .rejects.toThrow('workspace archive failed')
     expect(archived).toEqual([])
     expect(ctx.agentTeam.members().find(item => item.member.memberId === memberId)?.availability).toBe('unavailable')
+    // The renewal mints its own Session id; read it back from the recorded
+    // binding rather than predicting what the caller asked for.
+    const target = ctx.agentTeam.members().find(item => item.member.memberId === memberId)!.member.sessionId
 
     // Restarting replays the same ledger through the boot path: no live handle
     // survives a restart, so startup itself must archive the retired Session
@@ -501,14 +639,15 @@ describe('Agent Team Member lifecycle', () => {
     const added = await ctx.agentTeam.addMember({ requestId: requestId('clear-activation-add'), workspaceId,
       handle: 'builder', description: '', presetId: 'team-member', channelRefs: [] })
     const memberId = added.status.member.memberId
-    const target = SessionId(`agent-team-${requestId('clear-activation')}`)
     presets.failingMount = true
 
     await expect(ctx.agentTeam.clearMemberContext({ requestId: requestId('clear-activation'), workspaceId, memberId }))
       .rejects.toThrow('failed to start a new context')
     const stranded = ctx.agentTeam.members().find(item => item.member.memberId === memberId)
-    expect(stranded?.member.sessionId).toBe(target)
     expect(stranded?.availability).toBe('unavailable')
+    // The renewal mints its own Session id; read it back from the recorded
+    // binding rather than predicting what the caller asked for.
+    const target = stranded!.member.sessionId
     // Here the retire half completed and the target never started — the two
     // failure windows are distinguishable, which is what reconciliation reads.
     expect(archived).toEqual([added.status.member.sessionId])
@@ -908,6 +1047,44 @@ describe('Agent Team Member lifecycle', () => {
     expect(after?.presence).toBe('error')
     expect(after?.diagnostic).toMatchObject({ class: 'runtime' })
     expect(after?.diagnostic?.detail).toContain('401')
+  })
+
+  it('reports an unexpected Team wake cancellation before turn start without blaming ordinary notice replacement', async () => {
+    const adapter = new EmptyAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('pre-turn-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('pre-turn-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef], instances: 1 })
+    const agent = ctx.agents.get(added.status.member.sessionId)!
+    const discarded: string[] = []
+    ctx.on('agent/inbox/discarded', ({ message }) => { discarded.push(message.id) })
+    // Park every Team wake instead of letting an idle Agent run and claim it:
+    // the reproduced bug is a wake that is queued and then discarded with no
+    // turn/start, which the live loop only produces from a maintenance-latched
+    // wake cleared before convergence. Parking reaches that end-state directly.
+    const steer = vi.spyOn(agent, 'steer').mockImplementation(input => { agent.inbox.append('next-turn', input) })
+
+    const first = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('pre-turn-first'), workspaceId, channelRef: channel.channel.channelRef, body: '@builder investigate' })
+    expect(first.kind).toBe('committed')
+    const firstNotice = agent.inbox.nextTurn.at(-1)!
+    expect(firstNotice.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'notice' })
+    expect((ctx.agentTeam as unknown as { pendingTeamWakes: Map<string, unknown> }).pendingTeamWakes.has(firstNotice.id)).toBe(true)
+
+    const second = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('pre-turn-second'), workspaceId, channelRef: channel.channel.channelRef, body: '@builder investigate again' })
+    expect(second.kind).toBe('committed')
+    const replacement = ctx.agentTeam.members().find(status => status.member.memberId === added.status.member.memberId)!
+    expect(replacement.diagnostic).toBeUndefined()
+    expect(agent.inbox.nextTurn).toHaveLength(1)
+    const replacementNotice = agent.inbox.nextTurn[0]!
+    expect(replacementNotice.id).not.toBe(firstNotice.id)
+    expect(agent.inbox.remove(replacementNotice.id)).toBe(true)
+    expect(discarded).toContain(replacementNotice.id)
+
+    const failed = ctx.agentTeam.members().find(status => status.member.memberId === added.status.member.memberId)!
+    expect(failed).toMatchObject({ presence: 'error', diagnostic: {
+      class: 'runtime', source: 'agent/inbox/discarded', sessionId: added.status.member.sessionId,
+    } })
+    expect(failed.diagnostic?.occurredAt).toEqual(expect.any(String))
+    steer.mockRestore()
   })
 
   it('restarts a Member whose activation failed and rejects restart for suspended Members', async () => {

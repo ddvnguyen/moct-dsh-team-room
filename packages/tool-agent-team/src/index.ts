@@ -5,6 +5,7 @@ import { registerContextTools } from './context-tools.ts'
 import { registerMemoryTools } from './memory-tools.ts'
 import { registerDocTools } from './doc-tools.ts'
 import { service, workspaceOf, workspaceParam } from './host-access.ts'
+import { recoveryFor } from '@ddvnguyen/moct-dsh-team-room/recovery-hints'
 import type {
   AgentTeamClaimRef,
   AgentTeamMemberId,
@@ -177,20 +178,20 @@ function rejectionLines(
     return [
       'Not committed — unread_required.',
       `${identity}${identity === '' ? '' : ' · '}${value.unreadCount ?? 0} unread, ${value.directCount ?? 0} direct`,
-      `Read the pending updates with team_thread read before reconsidering this ${noun}.`,
+      recoveryFor('unread_required').sentence({ threadRef: value.threadRef, taskRef: value.taskRef }),
     ]
   }
   if (value.kind === 'stale_revision') {
     return [
       'Not committed — the Thread changed after your last read (stale_revision).',
       identity,
-      `Read the Thread, reconsider the new facts, then retry this ${noun} with the token that read returns.`,
+      recoveryFor('stale_revision').sentence({}),
     ]
   }
   return [
     'Not committed — member_not_following.',
     `${(value.memberIds ?? []).join(', ')} not following${value.threadRef === undefined ? '' : ` ${value.threadRef}`}${value.taskRef === undefined ? '' : ` (${value.taskRef})`}; no message was added.`,
-    'Only a Human can invite an unfollowed Agent — retry without mentioning them, or ask the Human.',
+    recoveryFor('member_not_following').sentence({}),
   ]
 }
 
@@ -249,7 +250,7 @@ const teamInbox = defineTool({
 
 const teamThread = defineTool({
   name: 'team_thread',
-  description: 'Read or manage your Attention on one Thread. read acknowledges one chronological batch of unread facts and is the only read-side source of a next-write token — and only once no unread remains; your own committed public mutations hand off the token as well. A read orients on the Thread anchor and that batch, never the whole Thread: a Member re-entering one it has read before gets no background at all, so the facts between are its own to page back to. history pages older facts without changing read state; status, follow, and unfollow change or report Attention only and render no Thread timeline. beforeSequence and limit are history-only: read, status, follow, and unfollow reject them — drop them, or call history to page older facts. Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.',
+  description: `Read or manage your Attention on one Thread. read acknowledges one chronological batch of unread facts and is the only read-side source of a next-write token — and only once no unread remains; your own committed public mutations hand off the token as well. A read orients on the Thread anchor and that batch, never the whole Thread: a Member re-entering one it has read before gets no background at all, so the facts between are its own to page back to. history pages older facts without changing read state; status, follow, and unfollow change or report Attention only and render no Thread timeline. beforeSequence and limit are history-only: read, status, follow, and unfollow reject them — ${recoveryFor('history_only_arguments').sentence({ action: 'those actions' })} Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.`,
   parameters: {
     action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history'] },
     threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
@@ -338,7 +339,7 @@ const teamThread = defineTool({
       lines.push('', 'Facts')
       if (facts.length === 0) lines.push('No new facts to acknowledge.')
       else lines.push(...facts.map(fact => factLine(fact)))
-      lines.push('', `Read through sequence ${value.readThroughSequence}; ${remaining} unread update(s) remaining${remaining > 0 ? ' — call team_thread read again.' : '.'}`)
+      lines.push('', `Read through sequence ${value.readThroughSequence}; ${remaining} unread update(s) remaining${remaining > 0 ? ` — ${recoveryFor('unread_remaining').sentence({})}` : '.'}`)
       // What this bounded read answered with is the newest batch; the span
       // before the watermark is the orientation it did not supply. Rendering
       // the count is what lets a returning reader see the size of that span
@@ -354,7 +355,7 @@ const teamThread = defineTool({
     const agent = exec.agent
     if (agent === undefined) throw new Error('team_thread requires an Agent session')
     const host = service(agent)
-    if (args.threadRef === undefined && args.taskRef === undefined) throw new Error('team_thread needs threadRef (or taskRef on a Taskful Thread); copy one from team_inbox or team_view, then retry')
+    if (args.threadRef === undefined && args.taskRef === undefined) throw new Error(`team_thread needs threadRef (or taskRef on a Taskful Thread) — ${recoveryFor('missing_thread_identity').sentence({})}`)
     const base = { workspaceId: workspaceOf(args, agent), ...(args.threadRef === undefined ? {} : { threadRef: args.threadRef as AgentTeamThreadRef }), ...(args.taskRef === undefined ? {} : { taskRef: args.taskRef as AgentTeamTaskRef }) }
     const taskNumberOf = (task: { taskRef: AgentTeamTaskRef } | undefined): { taskNumber?: number } => {
       if (task === undefined) return {}
@@ -362,13 +363,13 @@ const teamThread = defineTool({
       return resolved === undefined ? {} : { taskNumber: resolved.taskNumber }
     }
     if (args.action === 'status') {
-      if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('status takes no beforeSequence or limit — drop them and retry')
+      if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(recoveryFor('history_only_arguments').sentence({ action: 'status' }))
       const status = host.attentionStatusForAgent(agent, base)
       const snapshot = host.threadHistoryForAgent(agent, { ...base, beforeSequence: 1, limit: 1 })
       return threadResult('status', base.workspaceId, snapshot, status.attention, [], taskNumberOf(snapshot.task))
     }
     if (args.action === 'follow' || args.action === 'unfollow') {
-      if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(`${args.action} takes no beforeSequence or limit — drop them and retry`)
+      if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(recoveryFor('history_only_arguments').sentence({ action: args.action }))
       const result = await host.changeAttentionForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base, action: args.action })
       const snapshot = host.threadHistoryForAgent(agent, { ...base, beforeSequence: 1, limit: 1 })
       return threadResult(args.action, base.workspaceId, snapshot, result.attention, [], taskNumberOf(snapshot.task))
@@ -380,7 +381,7 @@ const teamThread = defineTool({
           ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions], ...replyLink(fact.message), occurredAt: fact.occurredAt }
           : activityFactView(fact.sequence, fact.activity, undefined, fact.occurredAt)), { cursor: history.cursor, hasMore: history.hasMore, ...taskNumberOf(history.task) })
     }
-    if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('read takes no beforeSequence or limit — drop them and retry; use action history to page older facts')
+    if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(recoveryFor('history_only_arguments').sentence({ action: 'read' }))
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', base.workspaceId, read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
         ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], ...replyLink(entry.fact.message), unread: entry.unread, direct: entry.direct, occurredAt: entry.fact.occurredAt }
@@ -492,7 +493,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     const attachmentPaths = Array.isArray(rawPaths) ? rawPaths.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : undefined
     const paths = attachmentPaths !== undefined && attachmentPaths.length > 0 ? { attachmentPaths } : {}
     if (args.action === 'start') {
-      if (args.channelRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined || args.replyToMessageRef !== undefined) throw new Error('start requires channelRef and does not accept threadRef, taskRef, baseRevision, or replyToMessageRef')
+      if (args.channelRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined || args.replyToMessageRef !== undefined) throw new Error(`start requires channelRef and does not accept threadRef, taskRef, baseRevision, or replyToMessageRef — ${recoveryFor('start_requires_channel').sentence({})}`)
       const result = await host.sendMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
         channelRef: args.channelRef as never, body: args.body, asTask: args.asTask === true, ...paths })
       return messageOutcome(result, 'start')
@@ -500,7 +501,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     if (args.action === 'dm') {
       if (args.memberRef === undefined || args.channelRef !== undefined || args.threadRef !== undefined || args.taskRef !== undefined
         || args.baseRevision !== undefined || args.asTask !== undefined || attachmentPaths !== undefined || args.replyToMessageRef !== undefined) {
-        throw new Error('dm requires memberRef and body only; it does not accept channelRef, threadRef, taskRef, baseRevision, asTask, attachments, or replyToMessageRef')
+        throw new Error(`dm requires memberRef and body only; it does not accept channelRef, threadRef, taskRef, baseRevision, asTask, attachments, or replyToMessageRef — ${recoveryFor('dm_requires_member').sentence({})}`)
       }
       try {
         const result = await host.dmForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
@@ -515,7 +516,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     }
     const baseRevision = args.baseRevision
     if ((args.threadRef === undefined && args.taskRef === undefined) || args.channelRef !== undefined || args.asTask !== undefined || typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) {
-      throw new Error('reply requires threadRef and a positive baseRevision; drain the Thread with team_thread read and copy the token it renders, or reuse the one your own last committed mutation rendered')
+      throw new Error(`reply requires threadRef and a positive baseRevision — ${recoveryFor('missing_write_token').sentence({})}`)
     }
     const result = await host.replyForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
       ...(args.threadRef === undefined ? {} : { threadRef: args.threadRef as AgentTeamThreadRef }),
@@ -597,15 +598,15 @@ const teamClaim = defineTool({
     const host = service(agent)
     const base = { workspaceId: workspaceOf(args, agent), taskRef: args.taskRef as AgentTeamTaskRef }
     if (args.action === 'list') {
-      if (args.baseRevision !== undefined || args.direction !== undefined || args.claimRef !== undefined) throw new Error('list takes only taskRef — drop baseRevision, direction, and claimRef, then retry')
+      if (args.baseRevision !== undefined || args.direction !== undefined || args.claimRef !== undefined) throw new Error(recoveryFor('list_takes_task_only').sentence({}))
       const listed = host.listClaimsForAgent(agent, base)
       return { kind: 'listed', taskRef: listed.task.taskRef, threadRef: listed.thread.threadRef, revision: listed.thread.revision, status: listed.task.status,
         claims: listed.claims.map(claimView) }
     }
     const baseRevision = args.baseRevision
-    if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error('claim mutation requires a positive baseRevision; drain the Thread with team_thread read and copy the token it renders, or reuse the one your own last committed mutation rendered')
-    if (args.action === 'claim' && (args.direction === undefined || args.claimRef !== undefined)) throw new Error('claim requires direction and does not accept claimRef')
-    if ((args.action === 'done' || args.action === 'release') && (args.claimRef === undefined || args.direction !== undefined)) throw new Error(`${args.action} requires claimRef and does not accept direction`)
+    if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error(recoveryFor('missing_write_token').sentence({}))
+    if (args.action === 'claim' && (args.direction === undefined || args.claimRef !== undefined)) throw new Error(recoveryFor('claim_requires_direction').sentence({}))
+    if ((args.action === 'done' || args.action === 'release') && (args.claimRef === undefined || args.direction !== undefined)) throw new Error(recoveryFor('claim_close_requires_ref').sentence({ action: args.action }))
     const result = await host.changeClaimForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base, action: args.action,
       baseRevision, ...(args.direction === undefined ? {} : { direction: args.direction }), ...(args.claimRef === undefined ? {} : { claimRef: args.claimRef as AgentTeamClaimRef }) })
     // Structured compatibility: every mutation outcome re-reads the real
