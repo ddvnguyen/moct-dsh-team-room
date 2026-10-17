@@ -29,6 +29,28 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.nameLine {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Role is a label, not a status: quiet, uppercase, and never the first thing
+   the eye lands on. */
+.rolePill {
+  border: 1px solid var(--dsw-alias-border-l2, #e5e5e7);
+  border-radius: 999px;
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 14px;
+  padding: 0 6px;
+  text-transform: uppercase;
+}
+
 .copy {
   display: grid;
   min-width: 0;

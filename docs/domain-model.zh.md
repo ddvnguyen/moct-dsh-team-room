@@ -26,6 +26,10 @@ Member 与 workspace 之间是可 join、可 leave 的关系。每次变动都�
 
 写在 Member 实体上的持久能力意图（可选 `capabilities` 字段：`tools.allow` 与 `skills.allow`），随全部 lifecycle operation 原样流转，Host restart 后重放恢复。它只是意图（intent）：allow-list 里的名字在 commit 时不做白名单校验——Harness 升级改名或删除工具，都不能让旧 ledger 失去重放能力。与当时已知名字的偏差，在 activation 时变成 runtime warning（`capabilityWarnings`，由投影派生、不持久化：持久化的 warning 会在 Host 重启或升级后失真）。
 
+## Member Role
+
+Member 实体上的可选 `role` 字段（`architect`、`leader`、`worker` 或 `orchestrator`）。它只是一个标签，并在 Member 的 identity 块中追加一段固定 prompt，从不用于路由：未分配的 Task 保持未分配，Orchestrator 只报告。`addMember` 设置它，`updateMember` 修改它，`null` 清除它。它随 `team/member-added` 与 `team/member-updated` 落账，因此不含该字段的旧 ledger 仍可原样重放，并渲染此前的 identity 块。
+
 ## Workspace
 
 一个项目及其共享工作目录。Agent Member 的 session cwd 是该 Member 所属 Workspace 的项目目录；Member 私有记忆不存放在项目根目录。

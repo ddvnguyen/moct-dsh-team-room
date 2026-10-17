@@ -1,8 +1,16 @@
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AgentTeamClientMemberStatus } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamClientMemberStatus, AgentTeamMemberRole } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import css from './member-row.module.css'
+
+/** Locale key per role label, shared by the row pill and the editor. */
+export const ROLE_LABEL_KEY = {
+  architect: 'roleArchitect',
+  leader: 'roleLeader',
+  worker: 'roleWorker',
+  orchestrator: 'roleOrchestrator',
+} as const satisfies Readonly<Record<AgentTeamMemberRole, string>>
 
 /** One membership action: what it says and which Member it acts on. */
 export interface TeamMemberAction {
@@ -33,7 +41,10 @@ export function TeamMemberIdentity({ status, name, className, t }: {
   return <>
     <TeamMemberAvatar status={status} t={t} />
     <span className={className === undefined ? css.copy : `${css.copy} ${className}`}>
-      <strong>{name ?? `@${status.member.handle.replace(/^@/, '')}`}</strong>
+      <span className={css.nameLine}>
+        <strong>{name ?? `@${status.member.handle.replace(/^@/, '')}`}</strong>
+        {status.member.role !== undefined && <span className={css.rolePill} data-member-role={status.member.role}>{t(ROLE_LABEL_KEY[status.member.role])}</span>}
+      </span>
       <small>{status.member.description}</small>
     </span>
   </>

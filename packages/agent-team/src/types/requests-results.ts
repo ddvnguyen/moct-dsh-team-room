@@ -30,6 +30,7 @@ import type {
   AgentTeamDocVerdict,
   AgentTeamMemberCapabilities,
   AgentTeamMemberId,
+  AgentTeamMemberRole,
   AgentTeamMessageRef,
   AgentTeamMessage,
   AgentTeamModelSelection,
@@ -87,6 +88,8 @@ export interface AgentTeamAddMemberRequest {
   readonly capabilities?: AgentTeamMemberCapabilities
   /** Concurrent instances, an integer from 1 to 5; absent takes the default (2). */
   readonly instances?: number
+  /** Role label and prompt section; absent reads as `worker` for display. */
+  readonly role?: AgentTeamMemberRole
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
 }
@@ -143,6 +146,8 @@ export interface AgentTeamUpdateMemberRequest {
   readonly capabilities?: AgentTeamMemberCapabilities | null
   /** Absent keeps the current count; `null` clears it back to the default (2). */
   readonly instances?: number | null
+  /** Absent keeps the current role; `null` clears it. */
+  readonly role?: AgentTeamMemberRole | null
 }
 
 /** Human intent to suspend or resume one Agent Member. */

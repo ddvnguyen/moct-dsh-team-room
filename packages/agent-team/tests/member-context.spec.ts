@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderMemberIdentity, renderMemberMemory } from '../src/member-context.ts'
+import { MEMBER_ROLE_PROMPTS, renderMemberIdentity, renderMemberMemory } from '../src/member-context.ts'
 
 describe('Team Member private memory context', () => {
   it('escapes framing and preserves a bounded private index', () => {
@@ -58,6 +58,26 @@ describe('Team Member identity context', () => {
   })
 
   it('omits the description segment when the description is empty', () => {
+    expect(renderMemberIdentity({ handle: 'Builder', description: '' }))
+      .toBe('Team identity: you are @Builder.')
+  })
+
+  it('appends exactly one role section after the identity line', () => {
+    for (const role of ['architect', 'leader', 'worker', 'orchestrator'] as const) {
+      const rendered = renderMemberIdentity({ handle: 'Builder', description: '', role })
+      expect(rendered).toBe(`Team identity: you are @Builder.\n\n${MEMBER_ROLE_PROMPTS[role]}`)
+    }
+  })
+
+  it('renders a role section without dropping a non-empty description', () => {
+    expect(renderMemberIdentity({ handle: 'Lead', description: 'tech lead', role: 'leader' }))
+      .toBe(`Team identity: you are @Lead — tech lead\n\n${MEMBER_ROLE_PROMPTS.leader}`)
+  })
+
+  it('keeps the pre-role prompt byte-for-byte when no role is set', () => {
+    // Absent role is how every Member written before roles existed reads.
+    expect(renderMemberIdentity({ handle: 'Builder', description: '', role: undefined }))
+      .toBe('Team identity: you are @Builder.')
     expect(renderMemberIdentity({ handle: 'Builder', description: '' }))
       .toBe('Team identity: you are @Builder.')
   })

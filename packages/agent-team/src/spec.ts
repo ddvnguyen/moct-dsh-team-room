@@ -90,6 +90,8 @@ const memberSchema = z.object({
   model: modelSelectionSchema.optional(),
   // Ledgers written before member capabilities existed omit the field.
   capabilities: memberCapabilitiesSchema.optional(),
+  // Ledgers written before roles existed omit the field.
+  role: z.union([z.literal('architect'), z.literal('leader'), z.literal('worker'), z.literal('orchestrator')]).optional(),
   privateMemoryPath: z.string().min(1),
   state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive'), z.literal('archived')]),
 }).strict()

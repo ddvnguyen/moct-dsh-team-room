@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamClientMemberStatus,
+  AgentTeamMemberRole,
   AgentTeamModelSelection,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -15,7 +16,7 @@ import { mintRequestId } from './requests.ts'
 import { diagnosticText, restartOffered } from './TeamPresenceDot.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
-import { AgentEditorDialog, ModelPickerField, sameModel, warmModelCatalog } from './TeamMemberEditor.tsx'
+import { AgentEditorDialog, ModelPickerField, RoleField, sameModel, warmModelCatalog } from './TeamMemberEditor.tsx'
 import { TeamAgentImport } from './TeamAgentImport.tsx'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
@@ -48,6 +49,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
   const [handle, setHandle] = useState('')
   const [description, setDescription] = useState('')
   const [model, setModel] = useState<AgentTeamModelSelection | undefined>(undefined)
+  const [role, setRole] = useState<AgentTeamMemberRole | undefined>(undefined)
   const [creating, setCreating] = useState(false)
   const [retryRequest, setRetryRequest] = useState<AgentTeamAddMemberRequest>()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -190,6 +192,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         setHandle('')
         setDescription('')
         setModel(undefined)
+        setRole(undefined)
         setFormOpen(false)
         if (result.value.status.presence === 'unavailable') {
           setError(diagnosticText(result.value.status) || t('statusUnavailable'))
@@ -217,6 +220,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     const sameRequest = retryRequest !== undefined && retryRequest.workspaceId === workspaceId
       && retryRequest.handle === normalizedHandle && retryRequest.description === normalizedDescription
       && sameModel(retryRequest.model, model)
+      && retryRequest.role === role
       && retryRequest.channelRefs.length === 0
     void provision(sameRequest ? retryRequest : {
       requestId: mintRequestId(),
@@ -228,6 +232,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
       // the Channel side and stays reachable through its DM view meanwhile.
       channelRefs: [],
       ...(model === undefined ? {} : { model }),
+      ...(role === undefined ? {} : { role }),
     })
   }
 
@@ -251,6 +256,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
             <span>{t('agentDescription')}{t('optionalSuffix')}</span>
             <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); setRetryRequest(undefined) }} disabled={creating} />
           </label>
+          <RoleField value={role} onChange={next => { setRole(next); setRetryRequest(undefined) }} disabled={creating} t={t} />
           <ModelPickerField model={model} onModelChange={choice => { setModel(choice); setRetryRequest(undefined) }} loadModels={loadModels} disabled={creating} t={t} />
           {formOpen && error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>}

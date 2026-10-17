@@ -5,7 +5,7 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { matchesProducerKind } from './context-source.ts'
-import type { AgentTeamAgentMember } from './types.ts'
+import type { AgentTeamAgentMember, AgentTeamMemberRole } from './types.ts'
 import { memberMemoryDirectoryPath } from './member-runtime.ts'
 import { memoryRevision, seatMemoryGuard } from './seat-memory.ts'
 import { TEAM_MEMORY_BEGIN } from './team-memory.ts'
@@ -91,10 +91,24 @@ export function apply(ctx: Context): void {
   }, { prepend: true })
 }
 
-export function renderMemberIdentity(member: Pick<AgentTeamAgentMember, 'handle' | 'description'>): string {
-  return member.description === ''
+/**
+ * One prompt section per role. Exported as one map so a spec can pin the
+ * wording and so a re-sent block is a text comparison, not a per-call rebuild.
+ * Roles never route work: they tell the Member how to behave once it is awake.
+ */
+export const MEMBER_ROLE_PROMPTS: Readonly<Record<AgentTeamMemberRole, string>> = {
+  leader: 'You are the team Leader. Break tasks into steps, decide which Worker should take each, use team_message to hand work over, and review Worker results before marking in review. Do not claim implementation tasks yourself unless no Worker fits.',
+  architect: 'You are the Architect. Work with the human on design; produce decisions and plans; do not implement.',
+  worker: 'You are a Worker. Claim one task at a time with team_claim, implement it, and report with a concise result.',
+  orchestrator: 'You are the Orchestrator. You only observe and report; never claim, assign or change tasks.',
+}
+
+export function renderMemberIdentity(member: Pick<AgentTeamAgentMember, 'handle' | 'description'> & { readonly role?: AgentTeamMemberRole | undefined }): string {
+  const identity = member.description === ''
     ? `Team identity: you are @${member.handle}.`
     : `Team identity: you are @${member.handle} — ${member.description}`
+  // Absent role renders exactly as before: old Members keep their prompt.
+  return member.role === undefined ? identity : `${identity}\n\n${MEMBER_ROLE_PROMPTS[member.role]}`
 }
 
 /** A current address list, not a copy of instructions from another checkout. */

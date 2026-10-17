@@ -28,6 +28,10 @@ A Member created and managed by Team. Created inside one Workspace (its creation
 
 Durable capability intent on the Member entity (optional `capabilities` field: `tools.allow` and `skills.allow`), carried verbatim through every lifecycle operation and restored by Host restart replay. Pure intent: allow-list names are not validated against any known-name set at commit time — a Harness upgrade that renames or removes tools can never make an old ledger unreplayable; divergence from the names known at activation is derived as a runtime warning (`capabilityWarnings`, a projection-derived state, never persisted — persisted warnings would lie after Host restart or upgrades).
 
+## Member Role
+
+An optional `role` field (`architect`, `leader`, `worker`, or `orchestrator`) on the Member entity. It is a label plus a fixed prompt section in the Member's identity block, never a routing rule: unassigned Tasks stay unassigned, and the Orchestrator only reports. `addMember` sets it, `updateMember` changes it, and `null` clears it. It rides `team/member-added` and `team/member-updated`, so an older ledger without it replays unchanged and renders the identity block it had before.
+
 ## Workspace
 
 A project and shared working directory. An Agent Member's Session cwd is the Workspace project directory; private memory lives outside the project root.
