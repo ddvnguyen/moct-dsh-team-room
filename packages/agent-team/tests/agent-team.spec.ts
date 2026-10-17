@@ -3036,7 +3036,7 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
     await expect(host.bindThreadSessionForAgent(stranger, { requestId: requestId('a4-bind-stranger'), workspaceId: alpha, threadRef, sessionId: SessionId('session:stranger'), reason: 'start' })).rejects.toThrow(/not an active Team Member/)
   })
 
-  it('resumes the home Session warm inside its cache TTL, and refuses fork and non-home Sessions (§4.2)', async () => {
+  it('resumes the home Session warm inside its cache TTL, and refuses a full-seed fork and non-home Sessions (§4.2)', async () => {
     const { test, host, channelRef, seatB, agentB } = await seatedHost()
     const sessionB = (agentB as unknown as { session: never }).session
     // The provider still holds the home Session, so the verdict is decided by the clock alone.
@@ -3049,7 +3049,7 @@ describe('AgentTeam host seat identity (A4, §4.1)', () => {
       .resolves.toEqual({ sessionId: seatB.sessionId, cache: 'warm', action: 'resumed' })
     await expect(host.resumeMemberSession({ requestId: requestId('resume-other'), workspaceId: alpha, memberId: seatB.memberId, sessionId: SessionId('session:not-home') }))
       .rejects.toThrow(/per-Thread sessions are not supported yet/)
-    expect(() => host.forkMemberSession({ workspaceId: alpha, memberId: seatB.memberId, fromSessionId: seatB.sessionId, seed: 'full' })).toThrow(/not supported yet/)
+    await expect(host.forkMemberSession({ requestId: requestId('fork-full'), workspaceId: alpha, memberId: seatB.memberId, fromSessionId: seatB.sessionId, threadRef: 'thread:any' as never, seed: 'full' })).rejects.toThrow(/not supported yet/)
   })
 
   it('refuses a cold restart when the Member has no live Session to start a fresh context from (§4.2)', async () => {
