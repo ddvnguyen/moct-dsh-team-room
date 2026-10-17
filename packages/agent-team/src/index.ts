@@ -204,6 +204,7 @@ import type {
   AgentTeamRoomActivityResult,
   AgentTeamColdFallback,
   AgentTeamResumeMemberSessionResult,
+  AgentTeamForkMemberSessionResult,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -767,6 +768,12 @@ export default class AgentTeam extends TypertRemoteService {
   // Unlimited until configured: a wake to an idle seat starts at once, as it always has. `DEFAULT_WARM_LIMIT`
   // (1 per 60 s, contract §4.2) is applied by `configureWarmLimit`.
   private warmLimit: WarmLimit = UNLIMITED_WARM_LIMIT
+  /**
+   * Where a new Task Thread goes on a multi-instance seat (#92 step 4). `home` (default) routes it like any
+   * Thread; `own` (`AGENT_TEAM_TASK_SESSIONS=own`) prefers an extra slot so Task work gets its own Session.
+   * Opt-in because extra slots carry no recovery, rollover or pressure management: slot 0 alone does.
+   */
+  private taskSessions: 'home' | 'own' = process.env.AGENT_TEAM_TASK_SESSIONS?.trim() === 'own' ? 'own' : 'home'
   /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
   private readonly slotErrors = new Set<string>()
 
@@ -1666,11 +1673,69 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /** Deferred past TEST (contract §4): a Session for one Thread needs a per-Session live handle, which is not built yet. */
+  /**
+   * Human fork of one Thread onto a fresh Session of the same seat (#92 step 4). The new Session is an
+   * extra instance slot: a slot with no live Session is preferred, else an idle one is ended first (its
+   * other Threads respawn seeded on their next message). The Thread is rebound to that slot and Session
+   * durably, and the Session opens with the Thread's summary and last 10 Messages. The previous Session
+   * keeps its history and finishes any running Turn; new facts on the Thread go to the fork. Only the
+   * `summary` seed is supported; a seat with one instance has no slot to fork onto.
+   */
   @Remote('forkMemberSession')
-  forkMemberSession(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef?: AgentTeamThreadRef; seed: 'summary' | 'full' }): never {
+  async forkMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef: AgentTeamThreadRef; seed: 'summary' | 'full' }): Promise<AgentTeamForkMemberSessionResult> {
+    this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    throw new Error(`forkMemberSession is not supported yet (seed '${request.seed}'): per-Thread sessions are deferred past TEST`)
+    if (request.seed !== 'summary') throw new Error(`forkMemberSession seed '${request.seed}' is not supported yet: only 'summary' is`)
+    const ledger = this.requireLedger()
+    const member = ledger.getMember(request.memberId)
+    if (member === undefined || !ledger.participatesIn(request.memberId, request.workspaceId)) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
+    if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can fork a Session`)
+    if (!this.handles.has(member.memberId)) throw new Error(`Agent Member '${member.handle}' has no live Session; resume it before forking`)
+    const threadRef = ledger.resolveThreadRefs(request.workspaceId, [request.threadRef])[0]?.threadRef
+    if (threadRef === undefined) throw new Error(`unknown Thread '${request.threadRef}' in workspace '${request.workspaceId}'`)
+    const ownsSource = request.fromSessionId === member.sessionId
+      || this.slotBySessionId.get(request.fromSessionId)?.memberId === member.memberId
+      || ledger.threadSessionsOf(threadRef, member.memberId).some(binding => binding.sessionId === request.fromSessionId)
+    if (!ownsSource) throw new Error(`Session '${request.fromSessionId}' is not a Session of '${member.handle}'`)
+    const instances = memberInstances(member)
+    if (instances < 2) throw new Error(`Agent Member '${member.handle}' runs one instance; raise its Instances to fork a Session`)
+    const extra = Array.from({ length: instances - 1 }, (_, index) => index + 1)
+    const absent = extra.find(slot => !this.slotSpawns.has(slotKey(member.memberId, slot)) && this.slotHandles.get(member.memberId)?.get(slot) === undefined)
+    const slot = absent ?? extra.find(candidate => !this.slotBusy(member.memberId, candidate))
+    if (slot === undefined) throw new Error(`every extra instance of '${member.handle}' is busy; wait for one to finish or raise its Instances`)
+    if (absent === undefined && !(await this.endSlot(member.memberId, slot))) throw new Error(`instance slot ${slot} of '${member.handle}' started work while forking; try again`)
+    const actor = { kind: 'member' as const, memberId: member.memberId, handle: member.handle }
+    // Like the router's own binding, the instance bind wakes nobody; the seed below is the fork's first input.
+    await ledger.bindThreadInstance({
+      requestId: `${request.requestId}:instance` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef, slot, boundAt: new Date().toISOString(), actor,
+    })
+    this.routedSlots.set(routeKey(member.memberId, threadRef), slot)
+    const handle = await this.ensureSlot(member, slot)
+    if (handle === undefined) throw new Error(`instance slot ${slot} of '${member.handle}' did not start`)
+    const sessionId = handle.agent.id
+    const latest = ledger.latestThreadSummary(threadRef)
+    const tail = ledger.threadMessagesAfter(threadRef, 0).slice(-10)
+    const seed = buildThreadContextSeed({
+      ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
+      messages: tail.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
+    })
+    // The session binding commits before any in-memory claim, so a refused bind leaves the fork unseeded and the
+    // ledger authoritative; its wake is emitted only after the seed, so the seed stays the Session's first input.
+    const session = await ledger.bindThreadSession({
+      requestId: `${request.requestId}:session` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef, sessionId, reason: 'fork',
+      parentSessionId: request.fromSessionId, ...(latest === undefined ? {} : { summaryGeneration: latest.generation }), actor,
+    })
+    const note = `The Human started this Session for Thread ${threadRef}: you are instance ${slot} of @${member.handle.replace(/^@/, '')}, and new messages in that Thread now come here. Read the Thread before acting, then continue its open work.`
+    // The seed covers the Thread: a later delivery to this Session does not seed it again.
+    this.seededSlotThreads.set(sessionId, new Set([...(this.seededSlotThreads.get(sessionId) ?? []), threadRef]))
+    this.slotActivityThreads.set(slotKey(member.memberId, slot), threadRef)
+    handle.agent.followup(createUserMessage({
+      content: [{ type: 'text', text: `${seed}\n\n${note}` }],
+      source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Forked Thread Session' },
+    }))
+    if (session.committed) this.emitCommitted(session.value.receipt)
+    this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' forked from Session '${request.fromSessionId}' onto instance slot ${slot}, seeded from ${latest === undefined ? 'no summary' : `summary generation ${latest.generation}`} + ${tail.length} Message(s)`)
+    return Object.freeze({ sessionId, slot })
   }
 
   /**
@@ -4710,8 +4775,10 @@ export default class AgentTeam extends TypertRemoteService {
   /**
    * Multi-instance routing (contract v2 §2/§2a): split a seat's unread Threads across its slots.
    * Threads routed to an extra slot are delivered there (spawning it on demand); the subset for
-   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. N=1 is
-   * today's behavior: everything stays on slot 0 and nothing is bound.
+   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. With
+   * `taskSessions` set to `own`, a new Task Thread prefers an extra slot, so Task work gets its own
+   * Session and the home Session keeps DMs and coordination (#92). N=1 is today's behavior: everything
+   * stays on slot 0 and nothing is bound.
    */
   private routeToInstances(member: AgentTeamAgentMember, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): ReturnType<AgentTeamLedger['notificationFacts']> {
     const instances = memberInstances(member)
@@ -4722,6 +4789,7 @@ export default class AgentTeam extends TypertRemoteService {
       instances,
       threadRef => this.routedSlots.get(routeKey(member.memberId, threadRef)) ?? ledger.threadInstanceOf(threadRef, member.memberId),
       slot => this.slotBusy(member.memberId, slot),
+      threadRef => this.taskSessions === 'own' && notifications.some(entry => entry.item.thread.threadRef === threadRef && entry.item.thread.taskRef !== undefined),
     )
     const bySlot = new Map<number, ReturnType<AgentTeamLedger['notificationFacts']>[number][]>()
     routes.forEach((route, index) => {

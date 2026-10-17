@@ -79,16 +79,17 @@ function fakeAgent(sessionId: string, status: 'idle' | 'running'): FakeAgent {
 }
 
 /** One enabled seat in the channel with a live slot 0, and a recording slot spawner. */
-async function seat(ctx: Context, channelRef: AgentTeamChannelRef, options: { readonly instances?: number; readonly slotZero: 'idle' | 'running' }) {
+async function seat(ctx: Context, channelRef: AgentTeamChannelRef, options: { readonly instances?: number; readonly slotZero: 'idle' | 'running'; readonly handle?: string }) {
   const memberId = `member:agent-${crypto.randomUUID()}` as AgentTeamMemberId
   const sessionId = SessionId(`session:${memberId}`)
+  const handle = options.handle ?? 'worker'
   const member = {
-    memberId, sessionId, workspaceId: alpha, handle: 'worker', description: 'Works', presetId: 'team-member',
+    memberId, sessionId, workspaceId: alpha, handle, description: 'Works', presetId: 'team-member',
     privateMemoryPath: '/mnt/workspace/fake-memory/worker', state: 'enabled' as const,
     ...(options.instances === undefined ? {} : { instances: options.instances }),
   }
   await ctx.agentTeam['ledger']!.addMember({
-    requestId: requestId(`ledger-member-${memberId}`), workspaceId: alpha, handle: 'worker', description: 'Works', presetId: 'team-member',
+    requestId: requestId(`ledger-member-${memberId}`), workspaceId: alpha, handle, description: 'Works', presetId: 'team-member',
     channelRefs: [channelRef], actor: agentTeamHumanActor(), member,
   })
   const slotZero = fakeAgent(sessionId, options.slotZero)
@@ -268,6 +269,105 @@ describe('multi-instance slot router (contract v2)', () => {
   })
 })
 
+describe('per-Thread Sessions (#92 step 4)', () => {
+  it('with AGENT_TEAM_TASK_SESSIONS=own, gives a new Task Thread an extra slot even while slot 0 is idle; a plain Thread still takes slot 0', async () => {
+    const { ctx } = await harness()
+    ctx.agentTeam['taskSessions'] = 'own'
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('pt-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const { memberId, slotZero, spawned } = await seat(ctx, channel.channel.channelRef, { slotZero: 'idle' })
+    const ledger = ctx.agentTeam['ledger']!
+    const task = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('pt-task'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Build the importer, @worker', recipients: [memberId] })
+    if (task.kind !== 'committed') throw new Error('send must commit')
+    const taskThread = task.thread.threadRef as AgentTeamThreadRef
+    await vi.waitFor(() => { expect(spawned[0]?.fake.calls).toHaveLength(1) })
+    expect(spawned.map(entry => entry.slot)).toEqual([1])
+    expect(noticeText(spawned[0]!.fake.calls[0])).toContain(taskThread)
+    expect(slotZero.calls.some(message => noticeText(message).includes(taskThread))).toBe(false)
+    await vi.waitFor(() => { expect(ledger.threadInstanceOf(taskThread, memberId)).toBe(1) })
+
+    const chat = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId('pt-chat'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Quick question, @worker', recipients: [memberId] })
+    if (chat.kind !== 'committed') throw new Error('send must commit')
+    await vi.waitFor(() => { expect(ledger.threadInstanceOf(chat.thread.threadRef as AgentTeamThreadRef, memberId)).toBe(0) })
+    expect(slotZero.calls.some(message => noticeText(message).includes(chat.thread.threadRef))).toBe(true)
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('forks a Thread from the home Session onto a fresh seeded slot Session and routes its next message there', async () => {
+    const { ctx } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('fork-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const { memberId, slotZero, spawned } = await seat(ctx, channel.channel.channelRef, { slotZero: 'idle' })
+    const ledger = ctx.agentTeam['ledger']!
+    const sent = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId('fork-send'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Plan the migration, @worker', recipients: [memberId] })
+    if (sent.kind !== 'committed') throw new Error('send must commit')
+    const thread = sent.thread.threadRef as AgentTeamThreadRef
+    await vi.waitFor(() => { expect(ledger.threadInstanceOf(thread, memberId)).toBe(0) })
+    const home = ledger.getMember(memberId)!.sessionId
+
+    const forked = await ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-1'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: thread, seed: 'summary' })
+    expect(spawned.map(entry => entry.slot)).toEqual([1])
+    expect(forked).toEqual({ sessionId: spawned[0]!.fake.agent.id, slot: 1 })
+    expect(ledger.threadInstanceOf(thread, memberId)).toBe(1)
+    expect(ledger.threadSessionsOf(thread, memberId).at(-1)).toMatchObject({ sessionId: forked.sessionId, reason: 'fork', parentSessionId: home })
+    // The fork opens with the Thread's context and says why it exists.
+    const opening = noticeText(spawned[0]!.fake.calls[0])
+    expect(opening).toContain('Plan the migration')
+    expect(opening).toContain(`The Human started this Session for Thread ${thread}: you are instance 1 of @worker`)
+
+    // The Thread's unread facts follow it to the fork, then its next message does, unseeded; the home Session hears nothing more of it.
+    const homeCalls = slotZero.calls.length
+    const replied = await ctx.agentTeam.reply({ requestId: requestId('fork-reply'), workspaceId: alpha,
+      threadRef: thread, body: 'Use the new schema, @worker', recipients: [memberId], baseRevision: sent.thread.revision })
+    expect(replied.kind).toBe('committed')
+    await vi.waitFor(() => { expect(noticeText(spawned[0]!.fake.calls.at(-1))).toContain('Use the new schema') })
+    expect(spawned[0]!.fake.calls.slice(1).some(message => noticeText(message).includes('Thread context for'))).toBe(false)
+    expect(slotZero.calls).toHaveLength(homeCalls)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('ends an idle slot to fork onto it, and refuses a one-instance seat, a foreign Session and a full seed', async () => {
+    const { ctx } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('fork-x-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const { memberId, spawned } = await seat(ctx, channel.channel.channelRef, { slotZero: 'running' })
+    const ledger = ctx.agentTeam['ledger']!
+    const first = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId('fork-x-a'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Thread A, @worker', recipients: [memberId] })
+    if (first.kind !== 'committed') throw new Error('send must commit')
+    await vi.waitFor(() => { expect(spawned[0]?.fake.calls).toHaveLength(1) })
+    const home = ledger.getMember(memberId)!.sessionId
+    const second = await ctx.agentTeam.sendMessage({ asTask: false, requestId: requestId('fork-x-b'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Thread B, @worker', recipients: [] })
+    if (second.kind !== 'committed') throw new Error('send must commit')
+    const threadB = second.thread.threadRef as AgentTeamThreadRef
+
+    // Slot 1 is live and idle with Thread A: forking B ends it and starts a fresh Session there.
+    const forked = await ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-1'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: threadB, seed: 'summary' })
+    expect(spawned.map(entry => entry.slot)).toEqual([1, 1])
+    expect(forked.sessionId).toBe(spawned[1]!.fake.agent.id)
+    expect(ledger.threadInstanceOf(first.thread.threadRef as AgentTeamThreadRef, memberId)).toBe(1)
+
+    // A busy fork target is refused rather than interrupted.
+    spawned[1]!.fake.setStatus('running')
+    await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-busy'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: threadB, seed: 'summary' })).rejects.toThrow(/every extra instance/)
+    await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-foreign'), workspaceId: alpha, memberId, fromSessionId: SessionId('session:someone-else'), threadRef: threadB, seed: 'summary' })).rejects.toThrow(/not a Session of/)
+    await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-full'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: threadB, seed: 'full' })).rejects.toThrow(/not supported yet/)
+
+    // A refused session bind fails the fork before the Session is seeded or claims the Thread.
+    spawned[1]!.fake.setStatus('idle')
+    const bind = vi.spyOn(ledger, 'bindThreadSession').mockRejectedValueOnce(new Error('backend refused'))
+    await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-refused'), workspaceId: alpha, memberId, fromSessionId: home, threadRef: threadB, seed: 'summary' })).rejects.toThrow(/backend refused/)
+    bind.mockRestore()
+    expect(spawned).toHaveLength(3)
+    expect(spawned[2]!.fake.calls).toHaveLength(0)
+    expect(ctx.agentTeam['seededSlotThreads'].get(spawned[2]!.fake.agent.id)).toBeUndefined()
+
+    const single = await seat(ctx, channel.channel.channelRef, { instances: 1, slotZero: 'idle', handle: 'solo' })
+    await expect(ctx.agentTeam.forkMemberSession({ requestId: requestId('fork-x-one'), workspaceId: alpha, memberId: single.memberId, fromSessionId: ledger.getMember(single.memberId)!.sessionId, threadRef: threadB, seed: 'summary' })).rejects.toThrow(/raise its Instances/)
+  })
+})
+
 describe('Thread seed for an extra slot (A7b)', () => {
   it('opens a fresh slot Session with the summary and the read Messages before the notice facts, once per Session', async () => {
     const { ctx } = await harness()
@@ -354,6 +454,17 @@ describe('routeThreads (pure)', () => {
   it('queues on slot 0 and binds there when every slot is busy; a slot past N reads as unbound', () => {
     expect(routeThreads([c], 2, () => undefined, () => true)).toEqual([{ threadRef: c, slot: 0, bind: true }])
     expect(routeThreads([a], 2, () => 3, slot => slot === 0)).toEqual([{ threadRef: a, slot: 1, bind: true }])
+  })
+
+  it('a Thread marked for its own Session takes an idle extra slot first, and queues on slot 1 when all are busy', () => {
+    const task = (threadRef: AgentTeamThreadRef) => threadRef === a
+    expect(routeThreads([a, b], 3, () => undefined, () => false, task)).toEqual([
+      { threadRef: a, slot: 1, bind: true }, { threadRef: b, slot: 0, bind: true },
+    ])
+    expect(routeThreads([a], 2, () => undefined, slot => slot === 1, task)).toEqual([{ threadRef: a, slot: 0, bind: true }])
+    expect(routeThreads([a], 2, () => undefined, () => true, task)).toEqual([{ threadRef: a, slot: 1, bind: true }])
+    // One instance has no extra slot: the mark changes nothing.
+    expect(routeThreads([a], 1, () => undefined, () => false, task)).toEqual([{ threadRef: a, slot: 0, bind: true }])
   })
 
   it('a slot held by a bound Thread in the same pass is not given to a new Thread', () => {
