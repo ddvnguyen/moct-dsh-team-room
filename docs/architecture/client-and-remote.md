@@ -35,6 +35,12 @@ Activation mounts `agentTeamRemote`, waits for `remote.agentTeam`, then register
 
 The panel row and Team mode are one fact: the row is the shell's own rail button, selecting it enters the mode, and another panel taking the column leaves it. A null selection is left alone — an embedded Member Session view clears the panel to own the column and the mode has to survive that — while the mode's own foot row clears the panel itself. A restored mode re-selects its panel unless a panel was already selected at mount, in which case that panel keeps the column and the mode stands down.
 
+The Team and Agents tabs live in the sidebar's tab strip. The strip has no public registration API: its owner attaches a private `__dshNativeTabs` registry to its `sidebar.workspaces` component, and `team-tab.ts` inserts into it, standing down (rail row kept) when none is found.
+
+Two hosts own a strip. The official sidebar with `@michengai/dsh-automation` attaches the registry. `@michengai/dsh-codex-ui` replaces the official sidebar, which makes automation stand down, and as of 1.1.33 attaches nothing, so the tabs need codex-ui to host the registry (same key, same attach site, same `{ id, label, order, matchSession, render }` descriptor).
+
+Team registers no second `sidebar.workspaces` entry for this: codex-ui's patch warns that duplicate child slots fail its activation.
+
 A slot parent's `children` declaration is both render site and authority. Team's `sidebar.workspaces` shadow must not redeclare shipped `sidebar.workspaces.directoryFlow`; Harness SlotCore rejects duplicate live declarations. Do not copy private WorkspaceBrowser, ConversationRoot, Shell, or private CSS. Use public Harness services and exports, such as `ctx.workspaces.pickDirectory()`, and record limitations rather than depending silently on private implementation.
 
 ## Client data and presentation boundary
