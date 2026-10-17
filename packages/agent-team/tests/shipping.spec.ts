@@ -318,6 +318,12 @@ describe('Agent Team shipping contract', () => {
     expect(manifest.dependencies).toEqual({
       '@contexera/dsh-context-continuity': '^0.4.0',
       '@contexera/dsh-jev': '^0.1.1',
+      // The board's drag and virtualisation libraries are regular dependencies
+      // for the same reason: the assembled client bundle has no other provider.
+      '@dnd-kit/core': '6.3.1',
+      '@dnd-kit/sortable': '10.0.0',
+      '@dnd-kit/utilities': '3.2.2',
+      'react-virtuoso': '4.18.7',
       yaml: '^2.9.1',
       zod: '^4.4.3',
     })

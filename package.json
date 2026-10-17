@@ -66,6 +66,10 @@
   "dependencies": {
     "@contexera/dsh-context-continuity": "^0.4.0",
     "@contexera/dsh-jev": "^0.1.1",
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
+    "@dnd-kit/utilities": "3.2.2",
+    "react-virtuoso": "4.18.7",
     "yaml": "^2.9.1",
     "zod": "^4.4.3"
   },
@@ -159,10 +163,10 @@
     "@deepseek-ai/dsh-agent-preset": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-agent-tool-presentation": ">=0.2.0-rc.2 <0.2.1",
-    "@deepseek-ai/dsh-app-boot": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-api-remotes": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-api-session-controller": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-api-workspace-controller": ">=0.2.0-rc.2 <0.2.1",
+    "@deepseek-ai/dsh-app-boot": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-brand": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-client-locale": ">=0.2.0-rc.2 <0.2.1",
     "@deepseek-ai/dsh-client-ui-conversation": ">=0.2.0-rc.2 <0.2.1",

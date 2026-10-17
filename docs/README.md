@@ -32,6 +32,7 @@ This directory contains the maintained engineering documentation for this reposi
 | [`frontend-design/principles-and-language.md`](frontend-design/principles-and-language.md) | Design principles and DSH design-language alignment | Deciding which primitives to reuse, or aligning with the DSH language |
 | [`frontend-design/layout-and-typography.md`](frontend-design/layout-and-typography.md) | Layout skeleton, typography, colour, and identity | Changing layout, type scale, or colour |
 | [`frontend-design/components.md`](frontend-design/components.md) | The per-component contracts | Changing a Team component or its states |
+| [`frontend-design/multica-look.md`](frontend-design/multica-look.md) | The Multica look layer: scoped tokens, ported helpers, and attribution | Porting a Multica component or changing `--ml-*` |
 | [`frontend-design/thread-and-composer.md`](frontend-design/thread-and-composer.md) | Timeline scrolling, composer and mentions, entry rows, status pills | Changing scrolling, the composer, entry rows, or status pills |
 | [`frontend-design/sidebar-browser.md`](frontend-design/sidebar-browser.md) | The sidebar browser and the Inbox surface | Changing the sidebar browser or the Inbox surface |
 | [`frontend-design/refresh-copy-accessibility.md`](frontend-design/refresh-copy-accessibility.md) | Refresh semantics, copy, accessibility, and evolution | Changing refresh behavior, copy, or accessibility |
