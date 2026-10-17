@@ -42,6 +42,7 @@
   border: 1px solid var(--dsw-alias-border-l2, #e5e5e7);
   border-radius: 999px;
   color: var(--dsw-alias-label-tertiary);
+  corner-shape: round;
   flex: none;
   font-size: 10px;
   font-weight: 500;

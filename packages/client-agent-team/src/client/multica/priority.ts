@@ -27,13 +27,13 @@ export const PRIORITY_BARS: Readonly<Record<TaskPriority, number>> = {
   none: 0,
 }
 
-export const PRIORITY_LABEL_KEY: Readonly<Record<TaskPriority, string>> = {
+export const PRIORITY_LABEL_KEY = {
   urgent: 'priorityUrgent',
   high: 'priorityHigh',
   medium: 'priorityMedium',
   low: 'priorityLow',
   none: 'priorityNone',
-}
+} as const satisfies Readonly<Record<TaskPriority, string>>
 
 export function isTaskPriority(value: string): value is TaskPriority {
   return (PRIORITY_ORDER as readonly string[]).includes(value)

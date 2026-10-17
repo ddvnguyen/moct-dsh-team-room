@@ -23,6 +23,21 @@ import { harnessDir } from './harness-dir.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const clientDir = join(root, 'packages/client-agent-team/src/client')
+
+/**
+ * Every matching client source file, relative to `clientDir`. The ported
+ * Multica components live in subdirectories, so the audit has to walk the tree
+ * rather than read one directory — a sheet the scan cannot see is a sheet that
+ * silently drifts.
+ */
+function clientFiles(extensions, dir = clientDir, prefix = '') {
+  const suffixes = Array.isArray(extensions) ? extensions : [extensions]
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = prefix + entry.name
+    if (entry.isDirectory()) return clientFiles(suffixes, join(dir, entry.name), `${path}/`)
+    return suffixes.some(suffix => entry.name.endsWith(suffix)) ? [path] : []
+  })
+}
 const shippedDir = join(harnessDir, 'packages/client')
 
 const findings = []
@@ -109,7 +124,7 @@ function stripNestedAtRules(css, file) {
   return kept.join('\n')
 }
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = readFileSync(join(clientDir, file), 'utf8')
   const rules = collectRules(css)
   const interactive = new Set()
@@ -150,7 +165,7 @@ const RING_GRADE = [
   /text-decoration\s*:\s*(?!\s*none\b)/,
 ]
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = readFileSync(join(clientDir, file), 'utf8')
   for (const rule of collectRules(css)) {
     if (!/:focus-visible/.test(rule.selector)) continue
@@ -174,7 +189,7 @@ for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.
 //     one such drift). `outline: none` is section 2's business, not this one.
 // ---------------------------------------------------------------------------
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = readFileSync(join(clientDir, file), 'utf8')
   for (const rule of collectRules(css)) {
     if (!/:focus-visible/.test(rule.selector)) continue
@@ -205,8 +220,8 @@ const colorExceptions = new Set([
   'avatar-stack.module.css', // entry-stack avatar text #fff on the hue fill
 ])
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
-  if (colorExceptions.has(file)) continue
+for (const file of clientFiles('.module.css')) {
+  if (colorExceptions.has(file.split('/').pop())) continue
   const css = readFileSync(join(clientDir, file), 'utf8')
   for (const match of css.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)) {
     note('warn', `${file}`, `hardcoded color '${match[0]}' (only --dsw-alias-* tokens or documented exceptions)`)
@@ -332,7 +347,7 @@ if (shippedPrimitives.size === 0) {
   note('error', 'shipped primitives', `cannot read exported names from ${primitivesBarrel} — re-verify the parity baseline`)
 } else {
   const seen = new Set()
-  for (const file of readdirSync(clientDir).filter(name => name.endsWith('.tsx'))) {
+  for (const file of clientFiles('.tsx')) {
     const src = readFileSync(join(clientDir, file), 'utf8')
     for (const match of src.matchAll(/import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+'@deepseek-ai\/dsh-client-ui-primitives'/g)) {
       for (const entry of match[1].split(',')) {
@@ -423,7 +438,7 @@ for (const [file, selector, expected, what] of GEOMETRY) {
 // The same rule, applied to every sheet rather than the canonical controls:
 // a fractional border width promises a thinner line than the platform can
 // paint. Fractional shadow offsets and radii are legitimate and not scanned.
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = stripNestedAtRules(readFileSync(join(clientDir, file), 'utf8'), file)
   for (const rule of collectRules(css)) {
     const selector = rule.selector.replace(/^[\s\S]*\*\//, '').replace(/\s+/g, ' ').trim()
@@ -468,7 +483,7 @@ if (shippedTokens.size === 0) {
   note('error', 'shipped theme', 'cannot read --dsw-* token definitions from the harness checkout — re-verify the parity baseline')
 } else {
   const teamRefs = new Map()
-  for (const file of readdirSync(clientDir).filter(name => /\.(css|tsx|ts)$/.test(name))) {
+  for (const file of clientFiles(['.css', '.tsx', '.ts'])) {
     const text = readFileSync(join(clientDir, file), 'utf8')
     for (const match of text.matchAll(/var\(--dsw-[\w-]+/g)) {
       const token = match[0].slice(4)
@@ -538,7 +553,7 @@ if (narrowBranch === null) {
 // ---------------------------------------------------------------------------
 
 const FULL_ROUND = /border-radius:\s*(?:50%|100%|999px)\s*;/
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = readFileSync(join(clientDir, file), 'utf8')
   for (const rule of collectRules(css)) {
     if (!FULL_ROUND.test(rule.body)) continue
@@ -588,7 +603,7 @@ function isTranslucentToken(token) {
   return seen
 }
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = readFileSync(join(clientDir, file), 'utf8')
   for (const rule of collectRules(stripNestedAtRules(css, file))) {
     const bare = rule.selector.replace(/^[\s\S]*\*\//, '').trim()
@@ -610,7 +625,7 @@ for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.
 //     haspopup attribute at all, so it is not in this rule's path.
 // ---------------------------------------------------------------------------
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.tsx'))) {
+for (const file of clientFiles('.tsx')) {
   const source = readFileSync(join(clientDir, file), 'utf8')
   for (const match of source.matchAll(/aria-haspopup="listbox"/g)) {
     const line = source.slice(0, match.index).split('\n').length
@@ -628,7 +643,7 @@ for (const file of readdirSync(clientDir).filter(name => name.endsWith('.tsx')))
 //     same shape.
 // ---------------------------------------------------------------------------
 
-for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+for (const file of clientFiles('.module.css')) {
   const css = readFileSync(join(clientDir, file), 'utf8')
   const containers = new Set()
   for (const rule of collectRules(css)) {

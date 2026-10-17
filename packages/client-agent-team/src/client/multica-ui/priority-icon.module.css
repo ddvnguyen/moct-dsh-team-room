@@ -1,0 +1,27 @@
+/* Priority tones. The bar geometry carries severity; the tone only reinforces
+   it, so an inherited color inside a chip is still readable. */
+
+.icon {
+  flex: none;
+  vertical-align: middle;
+}
+
+.urgent {
+  color: var(--ml-priority-urgent);
+}
+
+.high {
+  color: var(--ml-priority-high);
+}
+
+.medium {
+  color: var(--ml-priority-medium);
+}
+
+.low {
+  color: var(--ml-priority-low);
+}
+
+.none {
+  color: var(--ml-priority-none);
+}

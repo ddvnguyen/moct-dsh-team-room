@@ -21,13 +21,13 @@ export const STATUS_CATEGORY: Readonly<Record<TaskStatus, StatusCategory>> = {
 }
 
 /** Display keys are resolved through `locales.ts`; this map is the stable id. */
-export const STATUS_LABEL_KEY: Readonly<Record<TaskStatus, string>> = {
+export const STATUS_LABEL_KEY = {
   todo: 'statusTodo',
   in_progress: 'statusInProgress',
   in_review: 'statusInReview',
   done: 'statusDone',
   closed: 'statusClosed',
-}
+} as const satisfies Readonly<Record<TaskStatus, string>>
 
 export function isTaskStatus(value: string): value is TaskStatus {
   return (STATUS_ORDER as readonly string[]).includes(value)

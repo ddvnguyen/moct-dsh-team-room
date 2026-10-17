@@ -536,6 +536,16 @@ export const zh = {
   timeMinutesAgo: '{count} 分钟前',
   timeHoursAgo: '{count} 小时前',
   timeDaysAgo: '{count} 天前',
+  statusPickerLabel: '修改状态',
+  statusPickerLocked: '进行中与待评审由 Claim 决定；这里只能选择待办、已完成或已关闭。',
+  priorityPickerLabel: '修改优先级',
+  assigneePickerLabel: '修改负责人',
+  assigneeUnassigned: '未分配',
+  avatarStackOverflow: '另有 {count} 个',
+  activityWorkingShort: '工作中',
+  activityStepCount: '第 {count} 步',
+  activityToolCount: '{count} 个工具',
+  activityHoverHeader: '{count} 个运行中的 Turn',
 } as const
 
 export const en = {
@@ -1068,6 +1078,16 @@ export const en = {
   timeMinutesAgo: '{count}m ago',
   timeHoursAgo: '{count}h ago',
   timeDaysAgo: '{count}d ago',
+  statusPickerLabel: 'Change status',
+  statusPickerLocked: 'In progress and In review are set by claims; only To do, Done or Closed can be chosen here.',
+  priorityPickerLabel: 'Change priority',
+  assigneePickerLabel: 'Change assignee',
+  assigneeUnassigned: 'Unassigned',
+  avatarStackOverflow: '+{count} more',
+  activityWorkingShort: 'Working',
+  activityStepCount: 'Step {count}',
+  activityToolCount: '{count} tools',
+  activityHoverHeader: '{count} running turns',
 } as const
 
 export type TeamKey = keyof typeof zh
