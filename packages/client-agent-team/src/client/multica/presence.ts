@@ -27,15 +27,15 @@ export const AVAILABILITY_ORDER: readonly AgentAvailability[] = ['online', 'unst
 /** Order used by workload groups; actionable signals first. */
 export const WORKLOAD_ORDER: readonly Workload[] = ['working', 'queued', 'idle']
 
-export const AVAILABILITY_LABEL_KEY: Readonly<Record<AgentAvailability, string>> = {
+export const AVAILABILITY_LABEL_KEY = {
   online: 'presenceOnline',
   unstable: 'presenceUnstable',
   offline: 'presenceOffline',
   archived: 'presenceArchived',
-}
+} as const satisfies Readonly<Record<AgentAvailability, string>>
 
-export const WORKLOAD_LABEL_KEY: Readonly<Record<Workload, string>> = {
+export const WORKLOAD_LABEL_KEY = {
   working: 'workloadWorking',
   queued: 'workloadQueued',
   idle: 'workloadIdle',
-}
+} as const satisfies Readonly<Record<Workload, string>>

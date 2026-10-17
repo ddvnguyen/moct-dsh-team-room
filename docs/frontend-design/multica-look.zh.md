@@ -23,6 +23,29 @@ import css from './BoardCard.module.css'
 相对时间）位于 `src/client/multica/`，不依赖 DOM，因此可以在 node 环境的
 测试中直接覆盖。
 
+## 共享组件
+
+`src/client/multica-ui/` 存放所有页面复用的展示组件。每个文件保留 Multica 来源头；
+每个组件只通过 props 接收数据，并通过回调上报变更。
+
+| 组件 | Multica 来源 | 差异 |
+| --- | --- | --- |
+| `StatusIcon` | `views/issues/components/status-icon.tsx` | 仅五种派生状态；没有自定义颜色/图标目录 |
+| `StatusHeading` | `views/issues/components/status-heading.tsx` | 标签来自 `locales.ts`；不接 workspace 状态 hook |
+| `PriorityIcon` | `views/issues/components/priority-icon.tsx` | 色调走 `--ml-priority-*` 类 |
+| `ProgressRing` | `views/issues/components/progress-ring.tsx` | 完成态走 `--ml-status-done` |
+| `ActorAvatar` | `views/common/actor-avatar.tsx` + `ui/components/common/actor-avatar.tsx` | 名称/URL/类型均为 props；无悬浮卡与个人页链接 |
+| `AgentAvatarStack` | `views/agents/components/agent-avatar-stack.tsx` | 名册切片作为 props；保留 `+N` 溢出 |
+| `AgentPresenceDot` | `views/agents/components/agent-presence-indicator.tsx` | 派生结果作为 prop；加载中是中性圆点 |
+| `AgentActivityIndicator` | `views/issues/components/issue-agent-activity-indicator.tsx` + `agents/components/agent-activity-hover-content.tsx` | `memberActivity` 快照作为 props；使用 dsh `HoverCard` |
+| `StatusPicker` | `views/issues/components/pickers/status-picker.tsx` | 五种状态；仅待办/已完成/已关闭可选 |
+| `PriorityPicker` | `views/issues/components/pickers/priority-picker.tsx` | 保留展示顺序；无延迟挂载 |
+| `AssigneePicker` | `views/issues/components/pickers/assignee-picker.tsx` + `property-picker.tsx` | 仅成员；「未分配」写入 null；无 squad |
+| `PickerMenu` / `PickerItem` | `views/issues/components/pickers/property-picker.tsx` | 外部点击、Escape 与焦点返回交给 dsh `Menu` |
+
+一致性审计（`node scripts/audit-ui-parity.mjs`）会递归子目录，因此 `multica-ui/`
+下的样式表与顶层样式表适用同一套焦点、token 与几何规则。
+
 ## Token 映射
 
 存在等价项时，`--ml-*` 映射到宿主的 `--dsw-*` 别名，深色模式随宿主自动切换。
@@ -39,13 +62,13 @@ import css from './BoardCard.module.css'
 | `--ml-text` | `--dsw-alias-label-primary` | `#18181b` |
 | `--ml-text-secondary` | `--dsw-alias-label-secondary` | `#52525b` |
 | `--ml-text-tertiary` | `--dsw-alias-label-tertiary` | `#71717a` |
-| `--ml-text-faint` | `--dsw-alias-label-quaternary` | `#a1a1aa` |
+| `--ml-text-faint` | `--dsw-alias-label-caption` | `#a1a1aa` |
 | `--ml-brand` | `--dsw-alias-brand-primary` | `#4d6bfe` |
 | `--ml-status-in-progress` | `--dsw-alias-state-warn-primary` | `#d97706` |
 | `--ml-status-in-review` | `--dsw-alias-state-success-primary` | `#059669` |
 | `--ml-status-done` | `--dsw-alias-brand-primary` | `#4d6bfe` |
 | `--ml-priority-urgent` | `--dsw-alias-state-error-primary` | `#dc2626` |
-| `--ml-presence-*` | success / warn / quaternary / brand | 同上 |
+| `--ml-presence-*` | success / warn / caption / brand | 同上 |
 
 密度常量（`--ml-card-padding`、`--ml-column-width`、`--ml-row-height`）没有宿主
 等价项，作为有文档记录的字面量保留。

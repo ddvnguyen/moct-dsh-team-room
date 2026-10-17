@@ -1,0 +1,17 @@
+/* The status row: glyph, label, check. The hint sits below the list and names
+   why the two claim-driven statuses cannot be chosen here. */
+
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint {
+  border-top: 1px solid var(--ml-border);
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  margin: 4px 0 0;
+  padding: 6px 8px 2px;
+}

@@ -1,0 +1,19 @@
+/* Assignee rows: one avatar and one handle. "Unassigned" is a dash, not a
+   person, so it never borrows a face. */
+
+.unassigned {
+  color: var(--ml-text-tertiary);
+}
+
+.unassignedIcon {
+  color: var(--ml-text-faint);
+  display: inline-flex;
+  justify-content: center;
+  width: 20px;
+}
+
+.handle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

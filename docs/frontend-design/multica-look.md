@@ -24,6 +24,31 @@ Ported helpers (status, priority, drag, sort, filter, presence, inbox filter,
 time-ago) live in `src/client/multica/` and are DOM-free, so node-environment
 specs can cover them.
 
+## Shared components
+
+`src/client/multica-ui/` holds the presentation every page reuses. Each file
+keeps the Multica derivation header; each component takes data through props
+and reports a change through a callback.
+
+| Component | Multica origin | What changed |
+| --- | --- | --- |
+| `StatusIcon` | `views/issues/components/status-icon.tsx` | five derived statuses; no custom color/icon catalog |
+| `StatusHeading` | `views/issues/components/status-heading.tsx` | label from `locales.ts`; no workspace status hook |
+| `PriorityIcon` | `views/issues/components/priority-icon.tsx` | tone through `--ml-priority-*` classes |
+| `ProgressRing` | `views/issues/components/progress-ring.tsx` | complete tone through `--ml-status-done` |
+| `ActorAvatar` | `views/common/actor-avatar.tsx` + `ui/components/common/actor-avatar.tsx` | name/URL/kind props; no hover card or profile link |
+| `AgentAvatarStack` | `views/agents/components/agent-avatar-stack.tsx` | roster slice as props; `+N` overflow kept |
+| `AgentPresenceDot` | `views/agents/components/agent-presence-indicator.tsx` | derived detail as a prop; neutral dot while loading |
+| `AgentActivityIndicator` | `views/issues/components/issue-agent-activity-indicator.tsx` + `agents/components/agent-activity-hover-content.tsx` | `memberActivity` snapshot as props; dsh `HoverCard` |
+| `StatusPicker` | `views/issues/components/pickers/status-picker.tsx` | five statuses; only todo/done/closed enabled |
+| `PriorityPicker` | `views/issues/components/pickers/priority-picker.tsx` | display order kept; no deferred popup |
+| `AssigneePicker` | `views/issues/components/pickers/assignee-picker.tsx` + `property-picker.tsx` | members only; "Unassigned" writes null; no squads |
+| `PickerMenu` / `PickerItem` | `views/issues/components/pickers/property-picker.tsx` | dsh `Menu` owns outside-click, Escape and focus return |
+
+The parity audit (`node scripts/audit-ui-parity.mjs`) walks subdirectories, so a
+sheet under `multica-ui/` follows the same focus, token and geometry rules as
+the top-level sheets.
+
 ## Token map
 
 `--ml-*` maps onto the host's `--dsw-*` aliases wherever an equivalent exists,
@@ -41,13 +66,13 @@ light value and is only reached on a host that does not define the alias.
 | `--ml-text` | `--dsw-alias-label-primary` | `#18181b` |
 | `--ml-text-secondary` | `--dsw-alias-label-secondary` | `#52525b` |
 | `--ml-text-tertiary` | `--dsw-alias-label-tertiary` | `#71717a` |
-| `--ml-text-faint` | `--dsw-alias-label-quaternary` | `#a1a1aa` |
+| `--ml-text-faint` | `--dsw-alias-label-caption` | `#a1a1aa` |
 | `--ml-brand` | `--dsw-alias-brand-primary` | `#4d6bfe` |
 | `--ml-status-in-progress` | `--dsw-alias-state-warn-primary` | `#d97706` |
 | `--ml-status-in-review` | `--dsw-alias-state-success-primary` | `#059669` |
 | `--ml-status-done` | `--dsw-alias-brand-primary` | `#4d6bfe` |
 | `--ml-priority-urgent` | `--dsw-alias-state-error-primary` | `#dc2626` |
-| `--ml-presence-*` | success / warn / quaternary / brand | as above |
+| `--ml-presence-*` | success / warn / caption / brand | as above |
 
 Density constants (`--ml-card-padding`, `--ml-column-width`, `--ml-row-height`)
 have no host equivalent and are documented literals.

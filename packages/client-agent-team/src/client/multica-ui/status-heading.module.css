@@ -1,0 +1,30 @@
+/* One column header. The count is deliberately quieter than the label: the
+   label names the column, the count is a fact about today. */
+
+.heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.label {
+  align-items: center;
+  color: var(--ml-text-secondary);
+  display: inline-flex;
+  font-size: var(--ml-text-caption);
+  font-weight: 600;
+  gap: 6px;
+  line-height: var(--ml-text-caption-line);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ml-text-caption-line);
+}

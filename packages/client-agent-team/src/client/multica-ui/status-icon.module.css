@@ -1,0 +1,27 @@
+/* Status tones on the scoped Multica look layer. A status is a fact, not a
+   control: the glyph never grows a hit area of its own. */
+
+.icon {
+  flex: none;
+  vertical-align: middle;
+}
+
+.todo {
+  color: var(--ml-status-todo);
+}
+
+.inProgress {
+  color: var(--ml-status-in-progress);
+}
+
+.inReview {
+  color: var(--ml-status-in-review);
+}
+
+.done {
+  color: var(--ml-status-done);
+}
+
+.closed {
+  color: var(--ml-status-closed);
+}

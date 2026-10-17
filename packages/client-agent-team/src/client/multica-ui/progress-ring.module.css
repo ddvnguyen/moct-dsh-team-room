@@ -1,0 +1,11 @@
+/* A progress ring is a status glyph, not a control. */
+
+.ring {
+  color: var(--ml-brand);
+  flex: none;
+  vertical-align: middle;
+}
+
+.complete {
+  color: var(--ml-status-done);
+}
