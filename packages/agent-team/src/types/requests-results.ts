@@ -15,6 +15,11 @@ import type {
   AgentTeamConfirmationToken,
   AgentTeamContextCheckpointRef,
   AgentTeamDirectMarker,
+  AgentTeamDecisionAnswer,
+  AgentTeamDecisionNotice,
+  AgentTeamDecisionQuestion,
+  AgentTeamDecisionRef,
+  AgentTeamDecisionStatus,
   AgentTeamDoc,
   AgentTeamDocComment,
   AgentTeamDocCommentRef,
@@ -1434,3 +1439,69 @@ export type AgentTeamDocNoticeResult =
     readonly notice: AgentTeamDocNotice
   }
   | AgentTeamStaleDocRevision
+
+/** A Member asks the Human one to six questions on one card in a Thread. */
+export interface AgentTeamAskDecisionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
+  readonly context?: string
+  readonly questions: readonly AgentTeamDecisionQuestion[]
+}
+
+/** The Human answers an open card: one answer per question, in question order. */
+export interface AgentTeamAnswerDecisionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly decisionRef: AgentTeamDecisionRef
+  readonly answers: readonly AgentTeamDecisionAnswer[]
+}
+
+/** The asking Member takes back an open card it no longer needs. */
+export interface AgentTeamWithdrawDecisionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly decisionRef: AgentTeamDecisionRef
+}
+
+export interface AgentTeamDecisionRequest {
+  readonly workspaceId: WorkspaceId
+  readonly decisionRef: AgentTeamDecisionRef
+}
+
+/** The decision cards of one Thread, oldest first. */
+export interface AgentTeamDecisionsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+}
+
+/** One decision card as readers see it: the questions, and the answer once there is one. */
+export interface AgentTeamDecisionView {
+  readonly decisionRef: AgentTeamDecisionRef
+  readonly channelRef: AgentTeamChannelRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly asker: AgentTeamMemberId
+  /** The Thread reply that asked; the card renders in its place in the timeline. */
+  readonly messageRef: AgentTeamMessageRef
+  readonly context?: string
+  readonly questions: readonly AgentTeamDecisionQuestion[]
+  readonly status: AgentTeamDecisionStatus
+  readonly askedAt: string
+  readonly answers?: readonly AgentTeamDecisionAnswer[]
+  /** The member who answered or withdrew, and when. */
+  readonly closedBy?: AgentTeamMemberId
+  readonly closedAt?: string
+}
+
+export interface AgentTeamDecisionsResult {
+  readonly decisions: readonly AgentTeamDecisionView[]
+}
+
+/** A committed ask, answer or withdrawal: the Thread notice and the decision fact it carries. */
+export interface AgentTeamDecisionNoticeResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly thread: AgentTeamThread
+  readonly notice: AgentTeamDecisionNotice
+}

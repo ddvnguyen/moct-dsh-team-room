@@ -23,6 +23,7 @@ import type {
 import { AGENT_TEAM_HUMAN_MEMBER_ID } from '@ddvnguyen/moct-dsh-team-room/host'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { service, workspaceOf, workspaceParam, type TeamToolAgent } from './host-access.ts'
+import { waitMinutesOf, WAIT_MINUTES_DEFAULT, WAIT_MINUTES_MAX } from './wait.ts'
 
 export const DOC_TOOL_NAMES = Object.freeze(['team_doc'] as const)
 
@@ -84,6 +85,20 @@ function docText(view: AgentTeamDocView, handleOf: (memberId: AgentTeamMemberId)
   return lines.join('\n')
 }
 
+/** What the author does next: the verdict that arrived while it waited, or how to go on without one. */
+function verdictLines(view: AgentTeamDocView | undefined, waited: number): string[] {
+  if (view === undefined) {
+    return waited === 0
+      ? ['The Human has been asked to review it; the verdict arrives as a mention in this Thread. Do not act on the Doc before it is approved.']
+      : [`No verdict after ${waited} minute(s). Go ahead with the Doc as submitted, and stop before any step no one can undo. The verdict still reaches you as a mention in this Thread and decides: change course if it asks for changes, stop if it cancels.`]
+  }
+  const last = view.reviews.at(-1)
+  const comments = last === undefined || last.commentRefs.length === 0 ? '' : ` with ${last.commentRefs.length} comment(s)`
+  if (view.status === 'approved') return [`Approved${comments}. Go ahead with it.`]
+  if (view.status === 'cancelled') return [`Cancelled${comments}. Stop work on it.`]
+  return [`Changes requested${comments}. Read the Doc with team_doc read, answer or address each delivered comment, revise, then submit again.`]
+}
+
 function handles(agent: TeamToolAgent): (memberId: AgentTeamMemberId) => string {
   const host = service(agent)
   const byId = new Map(host.members().map(status => [status.member.memberId, `@${status.member.handle}`]))
@@ -99,7 +114,7 @@ function positiveRevision(value: unknown, name: string): number {
 
 const teamDoc = defineTool({
   name: 'team_doc',
-  description: 'Write a Team Document in a Thread and get the Human\'s review on it. Use a Doc for a plan, spec or proposal the Human should approve before you act; keep chat-sized answers in team_message. Workflow: create with a title and an outline of section headings; write one section per call (sectionId to replace one, omit it to append), each write fenced by the Doc revision the previous call rendered; only the Doc author and the Human can write a section, any other Channel member can comment and resolve but not write; submit when the Doc is ready, which mentions the Human. Then stop and wait: the Human comments on passages and answers with a verdict that reaches you as a Thread mention — approved (go ahead), changes requested (read the Doc, answer or address each delivered comment, revise, submit again), or cancelled (stop). read shows the whole Doc with its comments, and marks a section the Human edited; history shows every version of one section; list shows the Docs of a Thread. comment answers a comment (parentCommentRef) or notes a passage (quote); resolve closes a comment thread once your revision answered it.',
+  description: 'Write a Team Document in a Thread and get the Human\'s review on it. Use a Doc for a plan, spec or proposal the Human should approve before you act; keep chat-sized answers in team_message. Workflow: create with a title and an outline of section headings; write one section per call (sectionId to replace one, omit it to append), each write fenced by the Doc revision the previous call rendered; only the Doc author and the Human can write a section, any other Channel member can comment and resolve but not write; submit when the Doc is ready, which mentions the Human and waits up to waitMinutes (default 10) for the verdict: approved (go ahead), changes requested (read the Doc, answer or address each delivered comment, revise, submit again), or cancelled (stop). With no verdict by then, go ahead with the Doc as submitted and stop before any step no one can undo; the verdict still reaches you as a Thread mention and decides. read shows the whole Doc with its comments, and marks a section the Human edited; history shows every version of one section; list shows the Docs of a Thread. comment answers a comment (parentCommentRef) or notes a passage (quote); resolve closes a comment thread once your revision answered it.',
   parameters: {
     action: { type: 'string', required: true, enum: ['create', 'write', 'submit', 'read', 'list', 'comment', 'resolve', 'history'] },
     threadRef: { type: 'string', description: "create and list: the Thread the Doc belongs to, as a full branded ref ('thread:…')." },
@@ -112,6 +127,7 @@ const teamDoc = defineTool({
     markdown: { type: 'string', description: 'write: the whole new section body in Markdown. It replaces the previous body.' },
     docRevision: { type: 'number', description: 'submit: the Doc revision you are asking the Human to review — the one your latest write or read rendered.' },
     note: { type: 'string', description: 'submit: an optional one-paragraph note for the Human, posted with the review request.' },
+    waitMinutes: { type: 'number', description: `submit: minutes to wait for the verdict before going on, 0 to ${WAIT_MINUTES_MAX}; default ${WAIT_MINUTES_DEFAULT}.` },
     quote: { type: 'string', description: 'comment: the exact passage the comment is about. Not needed when replying with parentCommentRef.' },
     body: { type: 'string', description: 'comment: the comment text.' },
     parentCommentRef: { type: 'string', description: "comment: the comment ('comment:…') this one answers; it must be in the same section." },
@@ -127,6 +143,7 @@ const teamDoc = defineTool({
     } },
     render: (_args, value) => [{ type: 'text', text: value.text }],
   },
+  timeoutMs: (WAIT_MINUTES_MAX + 1) * 60_000,
   async execute(args, exec) {
     const agent = exec.agent as TeamToolAgent | undefined
     if (agent === undefined) throw new Error('team_doc requires an Agent session')
@@ -158,13 +175,17 @@ const teamDoc = defineTool({
       }
       case 'submit': {
         if (args.docRef === undefined) throw new Error('submit requires docRef and docRevision')
+        const waitMinutes = waitMinutesOf(args.waitMinutes)
         const result = await host.submitDocForAgent(agent, { requestId: id, workspaceId, docRef: args.docRef as AgentTeamDocRef,
           docRevision: positiveRevision(args.docRevision, 'docRevision'), ...(args.note === undefined ? {} : { note: args.note }) })
         if (result.kind === 'stale_doc_revision') return { kind: result.kind, docRef: result.docRef, revision: result.revision, text: staleLines(result).join('\n') }
-        return { kind: 'committed', docRef: result.notice.docRef, revision: result.notice.docRevision, text: [
-          `Committed — ${result.notice.docRef} revision ${result.notice.docRevision} submitted for review (${result.message.messageRef} in ${result.thread.threadRef}).`,
-          'The Human has been asked to review it. Wait for their verdict, which arrives as a mention in this Thread; do not act on the plan before it is approved.',
-        ].join('\n') }
+        const docRef = result.notice.docRef
+        const submitted = `Committed — ${docRef} revision ${result.notice.docRevision} submitted for review (${result.message.messageRef} in ${result.thread.threadRef}).`
+        const view = waitMinutes === 0 ? undefined : await host.waitInThreadForAgent(agent, { workspaceId, threadRef: result.thread.threadRef }, () => {
+          const current = host.docForAgent(agent, { workspaceId, docRef })
+          return current.status === 'in_review' ? undefined : current
+        }, waitMinutes * 60_000, exec.signal)
+        return { kind: 'committed', docRef, revision: view?.revision ?? result.notice.docRevision, text: [submitted, ...verdictLines(view, waitMinutes)].join('\n') }
       }
       case 'read': {
         if (args.docRef === undefined) throw new Error('read requires docRef')

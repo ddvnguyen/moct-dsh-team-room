@@ -164,3 +164,11 @@ Submit and verdict are Thread replies that carry the Doc fact. The submit notice
 Only the author and the Human can write a section; any other Channel member who tries is refused with an error, while commenting and resolving stay open to every Channel member. The Human can also edit a section, fenced by the same Doc revision. Every section write is kept as a version with its writer, so a section's history can be read and an older version written again as a new one; nothing is rewritten in place. When the Human edited a section after the author's last submit, the review verdict names it, so the author reads it again before writing.
 
 A comment thread (a root comment and its replies) can be resolved by the Human or an Agent. A resolved thread is folded away on the page, and a pending Human comment in it is withdrawn, not delivered. A Doc lives in one Thread, and its Channel lists every Doc in it.
+
+A Doc in review shows in its Thread and Channel as a plan card with Approve and Revise. Approve gives the approve verdict at the revision on the card; Revise opens the Doc, where the Human comments and presses Review.
+
+## Decision
+
+A card of 1 to 6 questions an Agent Member asks the Human in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The Human answers every question at once, once.
+
+A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions the Human, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.

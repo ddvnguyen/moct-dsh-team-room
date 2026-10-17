@@ -46,6 +46,10 @@ function session() {
         notice: { docRef: DOC, event: 'submitted', docRevision: request['docRevision'] } }
     },
     docForAgent: () => view,
+    waitInThreadForAgent: async (_agent: unknown, request: Record<string, unknown>, settled: () => unknown, timeoutMs: number) => {
+      record('wait')(_agent, { ...request, timeoutMs })
+      return settled()
+    },
     docsForAgent: () => ({ docs: [{ docRef: DOC, channelRef: 'channel:room', threadRef: THREAD, title: 'Release plan', author: ANN,
       status: 'in_review', revision: 12, sectionCount: 2, pendingCommentCount: 0, updatedAt: '' }] }),
     commentDocForAgent: async () => ({ receipt: {}, comment: { commentRef: 'comment:c', docRef: DOC, sectionId: 's1' } }),
@@ -89,12 +93,25 @@ describe('team_doc', () => {
     await expect(run({ action: 'write', docRef: DOC, heading: 'Risks', markdown: 'None.' }, exec)).rejects.toThrow(/baseDocRevision/)
   })
 
-  it('submits and tells the author to wait for the verdict', async () => {
+  it('submits, waits ten minutes on the Thread for the verdict, and returns it', async () => {
     const { calls, exec } = session()
     const text = await run({ action: 'submit', docRef: DOC, docRevision: 12, note: 'Ready.' }, exec)
     expect(calls[0]!.request).toMatchObject({ docRef: DOC, docRevision: 12, note: 'Ready.' })
+    expect(calls[1]).toEqual({ method: 'wait', request: { workspaceId: WORKSPACE, threadRef: THREAD, timeoutMs: 600_000 } })
     expect(text).toContain('submitted for review')
-    expect(text).toContain('Wait for their verdict')
+    expect(text).toContain('Changes requested with 1 comment(s). Read the Doc with team_doc read')
+  })
+
+  it('goes on without a verdict once the wait runs out, and never waits with waitMinutes 0', async () => {
+    const { calls, exec } = session()
+    const host = (exec as unknown as { agent: { ctx: { get(name: string): Record<string, unknown> } } }).agent.ctx.get('agentTeam')
+    host['waitInThreadForAgent'] = async () => undefined
+    const text = await run({ action: 'submit', docRef: DOC, docRevision: 12, waitMinutes: 3 }, exec)
+    expect(text).toContain('No verdict after 3 minute(s). Go ahead with the Doc as submitted, and stop before any step no one can undo.')
+    const now = await run({ action: 'submit', docRef: DOC, docRevision: 12, waitMinutes: 0 }, exec)
+    expect(now).toContain('Do not act on the Doc before it is approved.')
+    expect(calls.filter(call => call.method === 'wait')).toHaveLength(0)
+    await expect(run({ action: 'submit', docRef: DOC, docRevision: 12, waitMinutes: 30 }, exec)).rejects.toThrow(/0 to 10/)
   })
 
   it('reads the whole Doc with sections, comment threads and the latest verdict', async () => {

@@ -21,6 +21,7 @@ describe('Agent Team generated Typert boundary', () => {
     const client = remote as unknown as GeneratedRemote
     const expected = [
       'addMember',
+      'answerDecision',
       'archiveChannel',
       'archiveMember',
       'changeAttention',
@@ -30,6 +31,7 @@ describe('Agent Team generated Typert boundary', () => {
       'commentDoc',
       'contextJudge',
       'createChannel',
+      'decisions',
       'doc',
       'docSectionHistory',
       'docs',

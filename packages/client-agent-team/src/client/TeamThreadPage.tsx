@@ -3,6 +3,9 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
+  AgentTeamDecisionAnswer,
+  AgentTeamDecisionRef,
+  AgentTeamDecisionView,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamRequestId,
@@ -32,6 +35,7 @@ import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.t
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { TeamActivityLine } from './TeamActivityLine.tsx'
 import { TeamThreadDocs } from './TeamThreadDocs.tsx'
+import { TeamDecisionCard } from './TeamDecisionCard.tsx'
 import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
@@ -74,6 +78,9 @@ interface TeamThreadPageProps {
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
   readonly loadDocs: TeamConversationProps['loadDocs']
+  readonly reviewDoc: TeamConversationProps['reviewDoc']
+  readonly loadDecisions: TeamConversationProps['loadDecisions']
+  readonly answerDecision: TeamConversationProps['answerDecision']
   readonly selectDoc: TeamConversationProps['selectDoc']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   /** Whether the shell's left column is closed; the header offers the open control while it is. */
@@ -134,12 +141,17 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
-    changeAttention, loadDocs, selectDoc,
+    changeAttention, loadDocs, reviewDoc, loadDecisions, answerDecision, selectDoc,
     subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, inLane = false, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
   const [docsVersion, setDocsVersion] = useState(0)
+  // Decision cards asked in this Thread, keyed by the reply that asked each.
+  // The Thread wake that bumps docsVersion re-reads them too.
+  const [decisions, setDecisions] = useState<ReadonlyMap<AgentTeamMessageRef, AgentTeamDecisionView>>(() => new Map())
+  const [decisionsReload, setDecisionsReload] = useState(0)
+  const decisionsSequence = useRef(0)
   const [channelView, setChannelView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   // Current Thread followers; the composer ranks them first because a mention
@@ -701,18 +713,35 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     return contexts
   }, [olderFacts, currentFacts, messageRefVersion, rosterKey, humanName, t])
 
+  useEffect(() => {
+    let live = true
+    const mine = ++decisionsSequence.current
+    void loadDecisions({ workspaceId, threadRef }).then(result => {
+      if (live && mine === decisionsSequence.current && result.ok) setDecisions(new Map(result.value.decisions.map(decision => [decision.messageRef, decision])))
+    })
+    return () => { live = false }
+  }, [workspaceId, threadRef, docsVersion, decisionsReload])
+
+  const answerCard = useCallback(async (decisionRef: AgentTeamDecisionRef, answers: readonly AgentTeamDecisionAnswer[]): Promise<string | undefined> => {
+    const result = await answerDecision({ requestId: mintRequestId(), workspaceId, decisionRef, answers })
+    setDecisionsReload(count => count + 1)
+    return result.ok ? undefined : result.error.message
+  }, [answerDecision, workspaceId])
+
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
       const sender = memberName(fact.message.sender)
       const senderStatus = members.find(candidate => candidate.member.memberId === fact.message.sender)
       const human = fact.message.sender === channelView?.humanMemberId
+      // An ask's body spells the card out for readers without it; here its first line heads the card itself.
+      const decision = decisions.get(fact.message.messageRef)
       return <TeamMessage
         key={factKey(fact)}
         senderName={sender}
         memberId={fact.message.sender}
         human={human}
         {...(human && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {})}
-        body={fact.message.body}
+        body={decision === undefined ? fact.message.body : fact.message.body.split('\n', 1)[0]!}
         attachments={fact.message.attachments}
         {...(human ? {} : { replyStats: replyStats.get(fact.message.messageRef) })}
         loadAttachment={getAttachment}
@@ -732,7 +761,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {...(replyContexts.has(fact.message.messageRef) ? { replyTo: replyContexts.get(fact.message.messageRef)!, onOpenReplyTo: handleOpenReplyTo } : {})}
         replyTarget={replyTarget === fact.message.messageRef}
         replyFlash={flashedMessage === fact.message.messageRef}
-      />
+      >
+        {decision !== undefined && <TeamDecisionCard key={decision.status} decision={decision} nameOf={memberName} t={t}
+          answer={answers => answerCard(decision.decisionRef, answers)} />}
+      </TeamMessage>
     }
     return <p className={threadCss.activityRow} key={factKey(fact)}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(fact.activity, { t, actorName: memberName, claims: taskClaims })}</span></p>
   }
@@ -1058,7 +1090,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             })()}
         </span>}
       </header>
-      <TeamThreadDocs workspaceId={workspaceId} home={{ threadRef }} loadDocs={loadDocs} changeVersion={docsVersion} t={t}
+      <TeamThreadDocs workspaceId={workspaceId} home={{ threadRef }} loadDocs={loadDocs} reviewDoc={reviewDoc} changeVersion={docsVersion} t={t}
         openDoc={summary => { selectDoc(summary.docRef, threadRef, summary.channelRef) }} />
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>

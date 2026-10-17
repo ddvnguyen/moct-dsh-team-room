@@ -48,6 +48,10 @@ import type {
   AgentTeamDocsResult,
   AgentTeamDocView,
   AgentTeamReviewDocRequest,
+  AgentTeamAnswerDecisionRequest,
+  AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionsRequest,
+  AgentTeamDecisionsResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocSectionHistory,
@@ -214,6 +218,10 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   resolveDocComment: (request: AgentTeamResolveDocCommentRequest) => Promise<RemoteResult<AgentTeamResolveDocCommentResult>>
   /** Every version of one section, newest first. */
   loadDocSectionHistory: (request: AgentTeamDocSectionHistoryRequest) => Promise<RemoteResult<AgentTeamDocSectionHistory>>
+  /** The decision cards of one Thread; each renders in place of the reply that asked it. */
+  loadDecisions: (request: AgentTeamDecisionsRequest) => Promise<RemoteResult<AgentTeamDecisionsResult>>
+  /** The Human's answer to one open card; the reply it posts wakes the asker. */
+  answerDecision: (request: AgentTeamAnswerDecisionRequest) => Promise<RemoteResult<AgentTeamDecisionNoticeResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
   loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>

@@ -3054,3 +3054,76 @@ it('reviews a Team Document in real Web', async () => {
   expect(bodies.at(-1)).toContain('The Human edited "风险" since your submit')
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)
+
+it('answers a decision card and approves a plan in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-decisions')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Decisions')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-planner'
+  const author = { kind: 'member', memberId, handle: 'planner' }
+  await ledger.addMember({ requestId: 'decision-member', actor: human, workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:team-decisions', workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', privateMemoryPath: join(HOME, 'planner-decisions'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'decision-channel', actor: human, workspaceId: workspace.id, name: 'release', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'decision-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: '@planner 准备 1.2 发布，先问清楚再写计划。', asTask: false, recipients: [memberId] })).value
+  const threadRef = opened.thread.threadRef
+  const asked = (await ledger.askDecision({ requestId: 'decision-ask', actor: author, workspaceId: workspace.id, threadRef,
+    context: '发布前需要你定两件事，之后我写计划。',
+    questions: [
+      { prompt: '1.2 哪天发布？', multiple: false, options: [{ label: '周四', description: '提前一天，留出周五观察。' }, { label: '周五', description: '按原计划。' }], recommended: [1] },
+      { prompt: '发布后通知谁？', multiple: true, options: [{ label: '客户' }, { label: '运营' }, { label: '销售' }], recommended: [0, 1] },
+    ] })).value
+  const created = (await ledger.createDoc({ requestId: 'decision-doc', actor: author, workspaceId: workspace.id, threadRef, title: '1.2 发布计划', outline: ['目标'] })).value
+  const written = (await ledger.writeDocSection({ requestId: 'decision-doc-s1', actor: author, workspaceId: workspace.id, docRef: created.doc.docRef,
+    baseDocRevision: created.revision, sectionId: 's1', heading: '目标', markdown: '周五发布 1.2。' })).value
+  await ledger.submitDoc({ requestId: 'decision-submit', actor: author, workspaceId: workspace.id, docRef: created.doc.docRef, docRevision: written.revision })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(([workspaceId, channelRef, thread]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, channelRef, threadRef: thread }))
+  }, [workspace.id, channel.channelRef, threadRef])
+  await page.reload()
+
+  const thread = page.locator(`[data-team-thread="${threadRef}"]`)
+  const card = thread.locator(`[data-team-decision="${asked.notice.decisionRef}"]`)
+  await card.waitFor({ timeout: 20_000 })
+  const send = card.getByRole('button', { name: '发送' })
+  expect(await send.isDisabled()).toBe(true)
+  await card.getByRole('radio', { name: /周四/ }).check()
+  await card.getByRole('checkbox', { name: /客户/ }).check()
+  await card.getByRole('textbox', { name: '第 2 题的其他回答' }).fill('还有合作方')
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'decision-card-desktop.png') })
+
+  // 390: the card and the plan card fit the screen.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'decision-card-390.png') })
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // The answer is shown once the Host commits it, and it wakes the asker by mention.
+  await send.click()
+  await card.getByText(/human 已回答/).waitFor()
+  expect(ledger.decision(human, { workspaceId: workspace.id, decisionRef: asked.notice.decisionRef })).toMatchObject({
+    status: 'answered', answers: [{ selected: [0] }, { selected: [0], text: '还有合作方' }] })
+  const bodies = ledger.threadHistory(human, { workspaceId: workspace.id, threadRef }).facts.flatMap((fact: any) => fact.kind === 'message' ? [fact.message.body as string] : [])
+  expect(bodies.at(-1)).toContain('@planner Answered')
+
+  // The plan card approves the submitted Doc from the Thread.
+  const plan = thread.locator(`[data-team-plan-card="${created.doc.docRef}"]`)
+  await plan.waitFor()
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'decision-answered-plan-desktop.png') })
+  await plan.getByRole('button', { name: '批准「1.2 发布计划」' }).click()
+  await expect.poll(() => ledger.doc(human, { workspaceId: workspace.id, docRef: created.doc.docRef }).status).toBe('approved')
+  await expect.poll(() => plan.count()).toBe(0)
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)

@@ -55,6 +55,7 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'memory_search',
   'memory_get',
   'team_doc',
+  'team_ask',
 ] as const)
 
 /** Copy a Remote-supplied capability overlay into owned frozen storage. */
