@@ -2,10 +2,10 @@
 #
 # The environment contract lives in
 # docs/development/environments-and-install.md § "Sandbox and CI environments" — the same six-step contract as the hoplite sandbox setup in
-# .hoplite/settings.json. When the certified harness tag advances, update the
-# DSH_HARNESS_TAG env below, docs/development/environments-and-install.md, and
-# .hoplite/settings.json
-# together; keep the three in sync by hand, there is no generator on purpose.
+# .hoplite/settings.json. On this integration line the sibling is the FORK
+# Harness checkout (dsh#02 @ pinned sha) — when the fork certification
+# advances, update DSH_HARNESS_SHA below; the upstream-tag three-way sync
+# keeps governing the master line.
 #
 # Scope guard: one workflow, one job (linux). No coverage matrix,
 # no release automation, no test:browser (that stays a local acceptance step).
@@ -31,9 +31,17 @@ permissions:
   contents: read
 
 env:
-  # Single adjustable variable: the certified harness release tag. Advance it
-  # per certification (docs/dsh-release-compatibility.md).
-  DSH_HARNESS_TAG: dsh-v0.2.0-rc.2
+  # The dsh-x line develops against the FORK Harness checkout the DSH #02
+  # certification ran on — dsh#02 @ 9dc6300a93 — not the upstream certified
+  # tag: the bundle contract and the regenerated facades match that checkout
+  # (512 Harness mappings), and a first pass against the rc.2 upstream
+  # sibling fails typecheck AND build. Pin by ref AND sha: the checkout step
+  # fails the run if the fork branch moved. Advance DSH_HARNESS_SHA per fork
+  # certification; the upstream-tag three-way sync (docs, hoplite) keeps
+  # governing the master line.
+  DSH_HARNESS_REPO: https://github.com/ddvnguyen/deepseek-harness.git
+  DSH_HARNESS_REF: dsh#02
+  DSH_HARNESS_SHA: 9dc6300a932d19c9edcbf4fc7e2e2082d3f9bb99
 
 jobs:
   linux:
@@ -51,14 +59,20 @@ jobs:
           corepack enable pnpm
           pnpm --version
 
-      - name: Check out the pinned Harness release as the default sibling
+      - name: Check out the pinned fork Harness checkout as the default sibling
         # Contract: the sibling must be named deepseek-harness (the default
-        # every script falls back to); checkout the certified tag. actions/
-        # checkout refuses paths outside the workspace, so clone inside and
-        # move it up one level to the real sibling position.
+        # every script falls back to); on this line the pinned upstream is
+        # the FORK remote at dsh#02, not deepseek-ai's certified tag. The
+        # sha assert keeps the pin crisp: a moved fork branch fails here,
+        # not downstream.
         run: |
-          git clone --depth 1 --branch "$DSH_HARNESS_TAG" \
-            https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+          git clone --depth 1 --branch "$DSH_HARNESS_REF" "$DSH_HARNESS_REPO" ../deepseek-harness
+          head="$(git -C ../deepseek-harness rev-parse HEAD)"
+          if [ "$head" != "$DSH_HARNESS_SHA" ]; then
+            echo "::error::pinned fork Harness moved: $DSH_HARNESS_REF is $head, expected $DSH_HARNESS_SHA"
+            exit 1
+          fi
+          git -C ../deepseek-harness log -1 --format='pinned fork Harness: %H'
 
       - name: Install and build the Harness workspace
         # corepack pnpm only — never npm install (breaks workspace symlinks).
@@ -75,20 +89,24 @@ jobs:
           corepack pnpm build:native-system
 
       - name: Install this repository
-        run: corepack pnpm install
+        run: corepack pnpm install --frozen-lockfile
 
-      - name: Link harness packages and build the bundle
-        run: |
-          node scripts/link-harness-packages.mjs
-          npm run build
+      - name: Link harness packages
+        run: node scripts/link-harness-packages.mjs
 
       - name: Regenerate TypeScript path facades
         # sync-paths is not part of any npm script; skipping it leaves the
-        # committed facades pointing at their generation-time paths.
+        # committed facades pointing at their generation-time paths. It runs
+        # BEFORE typecheck/build so both resolve against the pinned fork
+        # sibling, and it also writes the .generated-harness marker so the
+        # vitest project follows the same checkout without a sticky env.
         run: node scripts/sync-paths.mjs
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Build the bundle
+        run: npm run build
 
       - name: Test
         run: npm test
