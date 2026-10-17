@@ -30,6 +30,7 @@ function mount(over: { updateMember?: ReturnType<typeof vi.fn<(request: Record<s
 }
 const form = () => document.querySelector('[data-agent-config-editor]') as HTMLFormElement
 const instancesInput = () => form().querySelector('input[type="number"]') as HTMLInputElement
+const roleSelect = () => form().querySelector('select') as HTMLSelectElement
 const save = () => [...form().querySelectorAll('button')].find(button => button.textContent === 'editSave') as HTMLButtonElement
 
 describe('Agent Config tab edits the model and Instances (A14 i)', () => {
@@ -74,5 +75,30 @@ describe('Agent Config tab edits the model and Instances (A14 i)', () => {
     expect(updateMember.mock.calls[0]![0]).toMatchObject({ instances: 5 })
     expect(instancesInput().value).toBe('5')
     expect(save().disabled).toBe(false)
+  })
+
+  it('shows the stored role, saves a change, and clears it back to none', async () => {
+    let stored: string | undefined = 'architect'
+    const updateMember = vi.fn(async (request: { role?: string | null }) => {
+      stored = request.role === null ? undefined : (request.role ?? stored)
+      return { ok: true, value: {} }
+    })
+    mount({ updateMember, roster: () => status({ role: stored }) })
+    await waitFor(() => expect(form()).not.toBeNull())
+    expect(roleSelect().value).toBe('architect')
+    // The stored role is not a pending edit.
+    expect(save().disabled).toBe(true)
+    fireEvent.change(roleSelect(), { target: { value: 'leader' } })
+    expect(save().disabled).toBe(false)
+    fireEvent.click(save())
+    await waitFor(() => expect(updateMember).toHaveBeenCalledTimes(1))
+    expect(updateMember.mock.calls[0]![0]).toMatchObject({ role: 'leader' })
+    await waitFor(() => expect(roleSelect().value).toBe('leader'))
+    // Clearing states `null`: an absent field would keep the stored role.
+    fireEvent.change(roleSelect(), { target: { value: '' } })
+    fireEvent.click(save())
+    await waitFor(() => expect(updateMember).toHaveBeenCalledTimes(2))
+    expect(updateMember.mock.calls[1]![0]).toMatchObject({ role: null })
+    await waitFor(() => expect(roleSelect().value).toBe(''))
   })
 })

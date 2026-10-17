@@ -1077,6 +1077,7 @@ export class AgentTeamLedger {
         ...request.member, handle, description, presetId, state: 'enabled' as const,
         ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
         ...freezeCapabilities(request.member.capabilities),
+        ...(request.role === undefined ? {} : { role: request.role }),
       })
       const operation: AgentTeamMemberAddedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-added',
@@ -1119,11 +1120,14 @@ export class AgentTeamLedger {
       // would survive in the spread and the null branch would do nothing.
       const nextInstances = request.instances === undefined ? prior.instances
         : request.instances === null ? undefined : request.instances
-      const { model: _priorModel, capabilities: _priorCapabilities, instances: _priorInstances, ...priorWithoutOverlays } = prior
+      const nextRole = request.role === undefined ? prior.role
+        : request.role === null ? undefined : request.role
+      const { model: _priorModel, capabilities: _priorCapabilities, instances: _priorInstances, role: _priorRole, ...priorWithoutOverlays } = prior
       const member = Object.freeze({
         ...priorWithoutOverlays, handle, description,
         ...(nextModel === undefined ? {} : { model: nextModel }),
         ...(nextInstances === undefined ? {} : { instances: nextInstances }),
+        ...(nextRole === undefined ? {} : { role: nextRole }),
         ...freezeCapabilities(nextCapabilities),
       })
       const operation: AgentTeamMemberUpdatedOperation = Object.freeze({
@@ -6206,6 +6210,7 @@ export class AgentTeamLedger {
       || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.member.model ?? undefined)
       || !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.member.capabilities ?? undefined)
       || (operation.data.member.instances ?? undefined) !== (request.member.instances ?? undefined)
+      || (operation.data.member.role ?? undefined) !== (request.role ?? undefined)
       || !this.sameList(operation.data.channelRefs, this.normalizeUnique(request.channelRefs, 'initial Member Channels'))) this.throwRequestCollision(request.requestId)
   }
 
@@ -6244,7 +6249,8 @@ export class AgentTeamLedger {
       // a request that stated the same value.
       || (request.model !== undefined && !isDeepStrictEqual(operation.data.member.model ?? undefined, request.model ?? undefined))
       || (request.capabilities !== undefined && !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.capabilities ?? undefined))
-      || (request.instances !== undefined && (operation.data.member.instances ?? undefined) !== (request.instances ?? undefined))) this.throwRequestCollision(request.requestId)
+      || (request.instances !== undefined && (operation.data.member.instances ?? undefined) !== (request.instances ?? undefined))
+      || (request.role !== undefined && (operation.data.member.role ?? undefined) !== (request.role ?? undefined))) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameChannelJoin(operation: AgentTeamOperation, request: AgentTeamAuthorizedJoinChannelRequest): asserts operation is AgentTeamChannelMemberAddedOperation {
@@ -6493,6 +6499,7 @@ export class AgentTeamLedger {
     return left.memberId === right.memberId && left.workspaceId === right.workspaceId
       && left.handle === right.handle && left.description === right.description && left.presetId === right.presetId
       && isDeepStrictEqual(left.model ?? undefined, right.model ?? undefined)
+      && (left.role ?? undefined) === (right.role ?? undefined)
       && left.privateMemoryPath === right.privateMemoryPath
   }
 

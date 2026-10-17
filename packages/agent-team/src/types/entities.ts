@@ -92,6 +92,9 @@ export interface AgentTeamMemberCapabilities {
   readonly skills?: { readonly allow?: readonly string[] } | undefined
 }
 
+/** Team role label; a prompt and display fact, never a routing rule. */
+export type AgentTeamMemberRole = 'architect' | 'leader' | 'worker' | 'orchestrator'
+
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
   readonly memberId: AgentTeamMemberId
@@ -104,6 +107,11 @@ export interface AgentTeamAgentMember {
   readonly model?: AgentTeamModelSelection | undefined
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities | undefined
+  /**
+   * Role label shown in the UI and rendered as a prompt section. Absent reads
+   * as `worker` for display; it never routes work automatically.
+   */
+  readonly role?: AgentTeamMemberRole | undefined
   /**
    * Concurrent instances (slots) this seat may run, one Session each; Threads
    * bind to a slot (multi-instance contract v2). An integer from 1 to 5;

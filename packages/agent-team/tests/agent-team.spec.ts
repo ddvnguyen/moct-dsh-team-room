@@ -809,6 +809,25 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(records.join('\n')).not.toContain('follow-changed')
   })
 
+  it('persists a Member role, updates it, and clears it back to absent', async () => {
+    const test = await harness()
+    const member = await test.ctx.agentTeam.addMember({ requestId: requestId('role-member'), workspaceId: alpha, handle: 'architect', description: 'Designs', presetId: 'team-member', channelRefs: [], role: 'architect' })
+    expect(member.status.member.role).toBe('architect')
+
+    const led = (await test.ctx.agentTeam.updateMember({ requestId: requestId('role-change'), memberId: member.status.member.memberId, handle: 'architect', description: 'Designs', role: 'leader' })).status.member
+    expect(led.role).toBe('leader')
+
+    // `null` clears: the field disappears from the projection, matching a
+    // Member written before roles existed.
+    const cleared = (await test.ctx.agentTeam.updateMember({ requestId: requestId('role-clear'), memberId: member.status.member.memberId, handle: 'architect', description: 'Designs', role: null })).status.member
+    expect(cleared.role).toBeUndefined()
+
+    const records = [...(test.facility.get('agent_team')!.table('operations').entries())] as Array<[string, unknown]>
+    const revived = await harness(storedPool(records))
+    expect(revived.ctx.agentTeam.status()).toMatchObject({ agentMemberCount: 1 })
+    expect(() => replayLedger(revived).validate()).not.toThrow()
+  })
+
   it('opens a persisted Member with no initial Channels in a fresh Host', async () => {
     const first = await harness()
     const ledger = replayLedger(first)

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamClientMemberStatus, AgentTeamMemberRole, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamModelCatalog, TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { Button, IconChevronDownOutlineRegular, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { mintRequestId } from './requests.ts'
+import { ROLE_LABEL_KEY } from './TeamMemberRow.tsx'
 import { useEditDialogSave } from './team-dialog-save.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
@@ -247,6 +248,7 @@ function useAgentEditor({ status, updateMember, onCommitted, onClose }: AgentEdi
   const [handle, setHandle] = useState(status.member.handle)
   const [description, setDescription] = useState(status.member.description)
   const [model, setModel] = useState<AgentTeamModelSelection | undefined>(status.member.model)
+  const [role, setRole] = useState<AgentTeamMemberRole | undefined>(status.member.role)
   const storedInstances = status.member.instances ?? DEFAULT_INSTANCES
   // Raw text so the field can be cleared and retyped; the clamp applies to the value used and on blur.
   const [instancesText, setInstancesText] = useState(String(storedInstances))
@@ -260,7 +262,7 @@ function useAgentEditor({ status, updateMember, onCommitted, onClose }: AgentEdi
     onClose,
   })
   const dirty = handle.trim() !== status.member.handle || description.trim() !== status.member.description
-    || !sameModel(model, status.member.model) || instances !== storedInstances
+    || !sameModel(model, status.member.model) || instances !== storedInstances || role !== status.member.role
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const normalizedHandle = handle.trim()
@@ -277,10 +279,13 @@ function useAgentEditor({ status, updateMember, onCommitted, onClose }: AgentEdi
       model: model ?? null,
       // Stated only when it changed: an absent field keeps the stored count.
       ...(instances === storedInstances ? {} : { instances }),
+      // `null` clears the role; an absent field would keep it.
+      ...(role === status.member.role ? {} : { role: role ?? null }),
     }
     const samePending = pendingRequest.current !== undefined && pendingRequest.current.memberId === payload.memberId
       && pendingRequest.current.handle === payload.handle && pendingRequest.current.description === payload.description
       && sameModel(pendingRequest.current.model, model) && pendingRequest.current.instances === payload.instances
+      && pendingRequest.current.role === payload.role
     const request: AgentTeamUpdateMemberRequest = samePending ? pendingRequest.current! : {
       requestId: mintRequestId(),
       ...payload,
@@ -288,7 +293,28 @@ function useAgentEditor({ status, updateMember, onCommitted, onClose }: AgentEdi
     await save(request)
   }
   const edited = (change: () => void) => { pendingRequest.current = undefined; change() }
-  return { handle, setHandle, description, setDescription, model, setModel, instancesText, setInstancesText, instances, saving, error, dirty, submit, edited }
+  return { handle, setHandle, description, setDescription, model, setModel, role, setRole, instancesText, setInstancesText, instances, saving, error, dirty, submit, edited }
+}
+
+export function RoleField({ value, onChange, disabled, t }: {
+  readonly value: AgentTeamMemberRole | undefined
+  readonly onChange: (role: AgentTeamMemberRole | undefined) => void
+  readonly disabled: boolean
+  readonly t: TeamSidebarProps['t']
+}) {
+  // Native select: the host has no select primitive, and the memory filters
+  // already style a native select to the Input atom.
+  return (
+    <label className={createCss.field}>
+      <span>{t('agentRole')}</span>
+      <select className={createCss.input!} value={value ?? ''} disabled={disabled} onChange={event => {
+        onChange(event.target.value === '' ? undefined : event.target.value as AgentTeamMemberRole)
+      }}>
+        <option value="">{t('agentRoleNone')}</option>
+        {(Object.keys(ROLE_LABEL_KEY) as AgentTeamMemberRole[]).map(role => <option key={role} value={role}>{t(ROLE_LABEL_KEY[role])}</option>)}
+      </select>
+    </label>
+  )
 }
 
 function InstancesField({ editor, t }: { readonly editor: ReturnType<typeof useAgentEditor>; readonly t: TeamSidebarProps['t'] }) {
@@ -335,6 +361,7 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
           <Input className={createCss.input!} value={editor.description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { const next = event.target.value; editor.edited(() => { editor.setDescription(next) }) }} disabled={saving} />
         </label>
         <ModelPickerField model={editor.model} onModelChange={choice => { editor.edited(() => { editor.setModel(choice) }) }} loadModels={loadModels} disabled={saving} t={t} />
+        <RoleField value={editor.role} onChange={next => { editor.edited(() => { editor.setRole(next) }) }} disabled={saving} t={t} />
         <InstancesField editor={editor} t={t} />
         {editor.error !== undefined && <p className={createCss.error} role="alert">{editor.error}</p>}
       </form>
@@ -355,6 +382,7 @@ export function AgentConfigEditor({ status, updateMember, loadModels, onCommitte
   return (
     <form className={createCss.form} data-agent-config-editor onSubmit={event => { void editor.submit(event) }}>
       <ModelPickerField model={editor.model} onModelChange={choice => { editor.edited(() => { editor.setModel(choice) }) }} loadModels={loadModels} disabled={editor.saving} t={t} />
+      <RoleField value={editor.role} onChange={next => { editor.edited(() => { editor.setRole(next) }) }} disabled={editor.saving} t={t} />
       <InstancesField editor={editor} t={t} />
       {editor.error !== undefined && <p className={createCss.error} role="alert">{editor.error}</p>}
       <div>
