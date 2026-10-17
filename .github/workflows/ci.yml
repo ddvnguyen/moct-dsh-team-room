@@ -39,6 +39,10 @@ env:
   # fails the run if the fork branch moved. Advance DSH_HARNESS_SHA per fork
   # certification; the upstream-tag three-way sync (docs, hoplite) keeps
   # governing the master line.
+  # The certified baseline VERSION stays declared for the consistency gate
+  # (scripts/check-version-consistency.mjs reads it here) and the docs
+  # contract; it does not drive the clone below — that is REF+SHA's job.
+  DSH_HARNESS_TAG: dsh-v0.2.0-rc.2
   DSH_HARNESS_REPO: https://github.com/ddvnguyen/deepseek-harness.git
   DSH_HARNESS_REF: dsh#02
   DSH_HARNESS_SHA: 9dc6300a932d19c9edcbf4fc7e2e2082d3f9bb99
