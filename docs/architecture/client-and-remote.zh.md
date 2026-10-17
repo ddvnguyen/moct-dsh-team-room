@@ -52,6 +52,12 @@ Client plugin apply
 
 panel row 与 Team mode 是同一件事：这一行是 shell 自己的 rail button，选中它即进入 mode，另一个 panel 拿走中栏即离开 mode。selection 为 null 时 Team 不介入——嵌入的 Member Session 视图会清空 panel 来独占中栏，mode 必须活过这一段——离开 mode 由 mode 自己的 foot row 清空 panel。恢复的 mode 会重新选中自己的 panel，除非挂载时已有 panel 被选中：那时那个 panel 保留中栏，mode 主动让位。
 
+Team 与 Agents 两个 tab 位于侧栏的 tab strip。strip 没有公开的注册 API：strip 的所有者把私有的 `__dshNativeTabs` registry 挂在它的 `sidebar.workspaces` component 上，`team-tab.ts` 向其中 insert；找不到 registry 时静默退出，保留 rail 行。
+
+目前有两个宿主拥有 strip。官方侧栏加 `@michengai/dsh-automation` 会挂 registry。`@michengai/dsh-codex-ui` 替换官方侧栏，使 automation 退出，且在 1.1.33 不挂任何 registry，所以这两个 tab 需要 codex-ui 自己承载 registry（同一个 key、同一个挂载点、同一个 `{ id, label, order, matchSession, render }` descriptor）。
+
+Team 不为此注册第二个 `sidebar.workspaces` entry：codex-ui 的 patch 警告重复的 child slot 会使其激活失败。
+
 Slot parent 的 `children` declaration 同时是 render site 和 render authority。两个存活的 parent entries 不能声明同一个 child slot。特别是 Team 的 `sidebar.workspaces` shadow 不得重新声明 shipped `sidebar.workspaces.directoryFlow`。即使 Team entry priority 更高，Harness SlotCore 也会拒绝这个 duplicate。不要复制 private WorkspaceBrowser、ConversationRoot、Shell 或 private CSS 来规避它。
 
 Team feature 需要现有 Harness capability 时，使用 public service 或 package export。对于 directory selection，先检查 `ctx.workspaces.pickDirectory()` 和 `host.pickDirectory` path，再考虑 Team-specific picker。如果 public contract 无法表达目标 composition，就记录这个 limitation。选择 Team-owned plugin 或新设计。不要静默依赖 private implementation details。
