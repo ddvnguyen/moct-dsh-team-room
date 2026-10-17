@@ -57,6 +57,7 @@ export function TeamSettingsPage({ workspaceList, initialWorkspaceId, memory, ag
   return <section className={`${css.section} ${css.page}`} aria-label={t('teamSettingsGroup')} data-team-settings-page>
     <h2 className={css.heading}>{t('teamSettingsGroup')}</h2>
     <p className={css.intro}>{t('teamSettingsPageIntro')}</p>
+    <p className={css.about}>{t('aboutMulticaAttribution')}</p>
     <TeamWorkspaceSelector workspaces={workspaces} selectedId={selectedId} current={false} onSelect={setChosen} t={t} />
     {!agentsInTab && selectedId !== undefined && <TeamAgentsPanel key={selectedId} workspaceId={selectedId} {...agents} onCreatingChange={() => {}} t={t} />}
     {selectedId !== undefined && <TeamMemoryPanel key={`memory:${selectedId}`} workspaceId={selectedId} memory={memory} loadMembers={agents.loadMembers} t={t} />}

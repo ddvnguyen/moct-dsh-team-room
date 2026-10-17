@@ -49,6 +49,15 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* License attribution required by the Multica License. Deliberately quiet:
+   it is a legal line, not a section of the settings page. */
+.about {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-quaternary, var(--dsw-alias-label-tertiary));
+}
+
 .rows {
   background: var(--dsw-alias-bg-layer-1);
   border-radius: var(--dsw-radius-md);

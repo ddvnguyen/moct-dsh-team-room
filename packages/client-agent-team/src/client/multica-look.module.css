@@ -1,0 +1,100 @@
+/*
+ * The Multica look layer: one scoped variable surface every ported component
+ * reads. Multica's tokens live in `packages/ui/styles/tokens.css` as Tailwind
+ * theme variables; the Team Room has no PostCSS step, so the values are
+ * translated here onto the `--dsw-*` aliases the host already themes.
+ *
+ * Derived from multica-x packages/ui/styles/tokens.css @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
+ * Copyright Index Labs. Multica License.
+ *
+ * Rules:
+ * - Map to a `--dsw-*` alias whenever one exists (dark mode then follows the
+ *   host automatically). The literal fallbacks are the light values and are
+ *   documented in docs/frontend-design/multica-look.md.
+ * - Components read `--ml-*`, never `--dsw-*` directly, so a future re-sync of
+ *   Multica's tokens touches this file only.
+ */
+
+.multicaLook {
+  /* Type scale: micro 11 → display 36, with Multica's line heights. */
+  --ml-text-micro: 11px;
+  --ml-text-micro-line: 15px;
+  --ml-text-caption: 12px;
+  --ml-text-caption-line: 16px;
+  --ml-text-label: 13px;
+  --ml-text-label-line: 18px;
+  --ml-text-body: 14px;
+  --ml-text-body-line: 20px;
+  --ml-text-body-lg: 15px;
+  --ml-text-body-lg-line: 22px;
+  --ml-text-title-sm: 16px;
+  --ml-text-title-sm-line: 24px;
+  --ml-text-title: 18px;
+  --ml-text-title-line: 28px;
+  --ml-text-title-lg: 20px;
+  --ml-text-title-lg-line: 28px;
+  --ml-text-display-sm: 24px;
+  --ml-text-display-sm-line: 32px;
+  --ml-text-display: 36px;
+  --ml-text-display-line: 40px;
+
+  /* Radius ladder: 0.5rem base, roles kept stable. */
+  --ml-radius-xs: 3px;
+  --ml-radius-sm: 4px;
+  --ml-radius-md: 6px;
+  --ml-radius-lg: 8px;
+  --ml-radius-xl: 12px;
+  --ml-radius-2xl: 16px;
+
+  /* Card density. */
+  --ml-card-padding: 12px;
+  --ml-card-gap: 8px;
+  --ml-column-gap: 12px;
+  --ml-column-width: 280px;
+  --ml-row-height: 40px;
+
+  /* Surfaces. */
+  --ml-surface: var(--dsw-alias-bg-layer-1, #ffffff);
+  --ml-surface-raised: var(--dsw-alias-bg-layer-2, #f7f7f8);
+  --ml-surface-hover: var(--dsw-alias-interactive-bg-hover, rgb(0 0 0 / 4%));
+  --ml-surface-selected: var(--dsw-alias-interactive-bg-active, rgb(0 0 0 / 6%));
+  --ml-border: var(--dsw-alias-border-l2, #e5e5e7);
+  --ml-border-strong: var(--dsw-alias-border-l3, #d4d4d8);
+
+  /* Text. */
+  --ml-text: var(--dsw-alias-label-primary, #18181b);
+  --ml-text-secondary: var(--dsw-alias-label-secondary, #52525b);
+  --ml-text-tertiary: var(--dsw-alias-label-tertiary, #71717a);
+  --ml-text-faint: var(--dsw-alias-label-quaternary, #a1a1aa);
+  --ml-brand: var(--dsw-alias-brand-primary, #4d6bfe);
+
+  /* Status colours — Multica's unstarted / started / done / closed tones. */
+  --ml-status-todo: var(--dsw-alias-label-tertiary, #71717a);
+  --ml-status-in-progress: var(--dsw-alias-state-warn-primary, #d97706);
+  --ml-status-in-review: var(--dsw-alias-state-success-primary, #059669);
+  --ml-status-done: var(--dsw-alias-brand-primary, #4d6bfe);
+  --ml-status-closed: var(--dsw-alias-label-quaternary, #a1a1aa);
+
+  /* Priority colours. */
+  --ml-priority-urgent: var(--dsw-alias-state-error-primary, #dc2626);
+  --ml-priority-high: var(--dsw-alias-state-warn-primary, #d97706);
+  --ml-priority-medium: var(--dsw-alias-state-warn-primary, #d97706);
+  --ml-priority-low: var(--dsw-alias-brand-primary, #4d6bfe);
+  --ml-priority-none: var(--dsw-alias-label-quaternary, #a1a1aa);
+
+  /* Presence. */
+  --ml-presence-online: var(--dsw-alias-state-success-primary, #059669);
+  --ml-presence-unstable: var(--dsw-alias-state-warn-primary, #d97706);
+  --ml-presence-offline: var(--dsw-alias-label-quaternary, #a1a1aa);
+  --ml-presence-working: var(--dsw-alias-brand-primary, #4d6bfe);
+
+  color: var(--ml-text);
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+}
+
+/* Column background used by the board and the hidden-columns rail. */
+.multicaLook .mlColumnSurface {
+  background: var(--ml-surface-raised);
+  border-radius: var(--ml-radius-lg);
+}

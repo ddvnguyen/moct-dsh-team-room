@@ -1,0 +1,13 @@
+This product includes software derived from Multica
+(https://github.com/multica-ai/multica), Copyright Index Labs (Hong Kong)
+Limited, licensed under the Multica License (Apache-2.0 with additional
+conditions). The full license text is reproduced in
+licenses/MULTICA-LICENSE.
+
+Derived files carry a header naming the upstream path and the pinned
+multica-x commit they were ported from. UI derived from Multica keeps its
+attribution in Team Settings → About.
+
+Internal use only. Offering a hosted service to third parties, or embedding
+Multica as a component of a commercially distributed product, requires a
+commercial license from Index Labs (Hong Kong) Limited.

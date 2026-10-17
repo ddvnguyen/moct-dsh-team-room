@@ -32,6 +32,7 @@
 | [`frontend-design/principles-and-language.zh.md`](frontend-design/principles-and-language.zh.md) | 设计原则与 DSH 设计语言对齐 | 决定复用哪些原语，或对齐 DSH 语言 |
 | [`frontend-design/layout-and-typography.zh.md`](frontend-design/layout-and-typography.zh.md) | 布局骨架、排版、颜色与身份 | 修改布局、字阶或颜色 |
 | [`frontend-design/components.zh.md`](frontend-design/components.zh.md) | 各组件合同 | 修改某个 Team 组件或其状态 |
+| [`frontend-design/multica-look.zh.md`](frontend-design/multica-look.zh.md) | Multica 外观层：作用域 token、移植的纯函数与署名 | 移植 Multica 组件或修改 `--ml-*` 时 |
 | [`frontend-design/thread-and-composer.zh.md`](frontend-design/thread-and-composer.zh.md) | 时间线滚动、composer 与 mention、入口行、状态胶囊 | 修改滚动、composer、入口行或状态胶囊 |
 | [`frontend-design/sidebar-browser.zh.md`](frontend-design/sidebar-browser.zh.md) | 侧栏浏览器与 Inbox 界面 | 修改侧栏浏览器或 Inbox 界面 |
 | [`frontend-design/refresh-copy-accessibility.zh.md`](frontend-design/refresh-copy-accessibility.zh.md) | 刷新语义、文案、可访问性与演进 | 修改刷新行为、文案或可访问性 |
