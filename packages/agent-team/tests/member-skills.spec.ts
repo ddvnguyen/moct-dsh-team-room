@@ -22,6 +22,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { provideWorkingDirectoryFixture } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam from '../src/index.ts'
 import type { AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
@@ -82,6 +83,10 @@ async function memberSkillsHarness(): Promise<{
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
+  // The pinned fork line (alpha.5) grows a workingDirectory collaborator onto
+  // tool-skill; the fork's own testkit fixture supplies fixed values without
+  // filesystem checks, so the team-member preset can finish composing.
+  provideWorkingDirectoryFixture(ctx)
   await ctx.plugin(AgentPresetRegistry, { default: 'team-member' })
   await ctx.plugin(AgentPreset, { id: 'team-member', plugins: teamMemberPlugins })
   await ctx.plugin(Storage)
