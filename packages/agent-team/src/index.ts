@@ -179,6 +179,10 @@ import type {
   AgentTeamReplyResult,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
+  AgentTeamCreateTaskRequest,
+  AgentTeamCreateTaskResult,
+  AgentTeamUpdateTaskRequest,
+  AgentTeamUpdateTaskResult,
   AgentTeamSetHumanProfileRequest,
   AgentTeamSetHumanProfileResult,
   AgentTeamSetMemberStateRequest,
@@ -2336,6 +2340,27 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().changeTask({ ...request, actor: agentTeamHumanActor() })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Human-only Task creation with an opening Message; the Task may start unassigned. */
+  @Remote('createTask')
+  async createTask(request: AgentTeamCreateTaskRequest): Promise<AgentTeamCreateTaskResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const resolvedAttachments = await this.resolveMessageAttachments(request)
+    const result = await this.requireLedger().createTask({ ...request, actor: agentTeamHumanActor(), resolvedAttachments })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Human-only Task field update; assignment wakes the new assignee. */
+  @Remote('updateTask')
+  async updateTask(request: AgentTeamUpdateTaskRequest): Promise<AgentTeamUpdateTaskResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
     this.emitCommittedOutcome(result)
     return result.value
   }

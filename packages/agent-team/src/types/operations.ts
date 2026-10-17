@@ -24,6 +24,7 @@ import type {
   AgentTeamStoredThreadReadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
+  AgentTeamTaskPriority,
   AgentTeamTaskRef,
   AgentTeamThread,
   AgentTeamThreadAttention,
@@ -676,6 +677,40 @@ export interface AgentTeamDocCommentResolvedOperation extends AgentTeamOperation
   }
 }
 
+/** Durable Human Task creation: the opening Message plus the Task overlay. */
+export interface AgentTeamTaskCreatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/task-created'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly mentions: readonly AgentTeamMemberId[]
+    readonly message: AgentTeamMessage
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
+/** Fields a Human may change on a Task without moving its status. */
+export interface AgentTeamTaskPatch {
+  readonly title?: string
+  readonly priority?: AgentTeamTaskPriority
+  readonly assignee?: AgentTeamMemberId | null
+  readonly position?: number
+}
+
+/** Durable Human Task field update; it does not revise the Thread's Messages. */
+export interface AgentTeamTaskUpdatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/task-updated'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly baseRevision: number
+    readonly patch: AgentTeamTaskPatch
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
 /** Closed union of durable Agent Team operations. */
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
@@ -707,6 +742,8 @@ export type AgentTeamOperation =
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
   | AgentTeamTaskChangedOperation
+  | AgentTeamTaskCreatedOperation
+  | AgentTeamTaskUpdatedOperation
   | AgentTeamThreadAttentionChangedOperation
   | AgentTeamThreadReadOperation
   | AgentTeamMemberRemovedOperation

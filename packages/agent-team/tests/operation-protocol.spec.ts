@@ -584,6 +584,41 @@ const docCommentResolved: Op<'team/doc-comment-resolved'> = {
   data: { workspaceId: alpha, threadRef: memberThread, docRef: fixtureDocRef, commentRef: 'comment:protocol-fixture' as AgentTeamDocCommentRef },
 }
 
+const boardTaskRef = 'task:protocol-board' as AgentTeamTaskRef
+const boardThreadRef = 'thread:protocol-board' as AgentTeamThreadRef
+const boardMessageRef = 'message:protocol-board' as AgentTeamMessageRef
+const boardTitle = 'Create the board task'
+
+const taskCreated: Op<'team/task-created'> = {
+  ...opBase('operation:protocol-35', 'request:protocol-task-created', 35),
+  previousOperationId,
+  kind: 'team/task-created',
+  data: {
+    workspaceId: alpha,
+    mentions: [],
+    message: { messageRef: boardMessageRef, channelRef, threadRef: boardThreadRef, taskRef: boardTaskRef,
+      sender: human.memberId, body: boardTitle, topLevel: true, sequence: 35, occurredAt: instant },
+    task: { taskRef: boardTaskRef, channelRef, threadRef: boardThreadRef, status: 'todo', resolution: 'open',
+      title: boardTitle, priority: 'high', assignee: null, position: 0 },
+    thread: { threadRef: boardThreadRef, taskRef: boardTaskRef, revision: 35 },
+    inbox: emptyInbox,
+  },
+}
+
+const taskUpdated: Op<'team/task-updated'> = {
+  ...opBase('operation:protocol-36', 'request:protocol-task-updated', 36),
+  previousOperationId,
+  kind: 'team/task-updated',
+  data: {
+    workspaceId: alpha,
+    baseRevision: 5,
+    patch: { title: 'Renamed board task' },
+    task: { ...fixtureTask, title: 'Renamed board task', priority: 'high', assignee: null, position: 2 },
+    thread: { threadRef: humanThread, taskRef: fixtureTask.taskRef, revision: 36 },
+    inbox: emptyInbox,
+  },
+}
+
 /** What one same-request retry must produce: resolved, never a second commit. */
 interface RetryOutcome {
   readonly committed: boolean
@@ -1428,6 +1463,38 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
     },
     legacy: { normalize: 'none', repair: 'none' },
     intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/task-created': {
+    stored: taskCreated,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.createTask({ requestId: taskCreated.requestId, actor: human, workspaceId: alpha,
+          channelRef, body: boardTitle, title: boardTitle, priority: 'high' })
+        expect(out.value.task.taskRef, 'the creation mapper answers with the stored Task').toBe(boardTaskRef)
+        return out
+      },
+      changed: () => ledger.createTask({ requestId: taskCreated.requestId, actor: human, workspaceId: alpha,
+        channelRef, body: boardTitle, title: 'A different title', priority: 'high' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'delta' },
+  },
+  'team/task-updated': {
+    stored: taskUpdated,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.updateTask({ requestId: taskUpdated.requestId, actor: human, workspaceId: alpha,
+          taskRef: taskUpdated.data.task.taskRef, baseRevision: taskUpdated.data.baseRevision, patch: { title: 'Renamed board task' } })
+        expect(mappedCommitted(out.value).task.taskRef, 'the update mapper answers with the stored Task').toBe(taskUpdated.data.task.taskRef)
+        return out
+      },
+      changed: () => ledger.updateTask({ requestId: taskUpdated.requestId, actor: human, workspaceId: alpha,
+        taskRef: taskUpdated.data.task.taskRef, baseRevision: taskUpdated.data.baseRevision, patch: { title: 'Another title' } }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'delta' },
   },
   'team/doc-comment-resolved': {
     stored: docCommentResolved,

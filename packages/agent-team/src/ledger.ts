@@ -35,6 +35,8 @@ import type {
   AgentTeamConfirmationToken,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamCreateTaskRequest,
+  AgentTeamCreateTaskResult,
   AgentTeamDirectMarker,
   AgentTeamDmRequest,
   AgentTeamActiveTaskThread,
@@ -132,7 +134,12 @@ import type {
   AgentTeamTask,
   AgentTeamTaskActivity,
   AgentTeamTaskChangedOperation,
+  AgentTeamTaskCreatedOperation,
+  AgentTeamTaskPatch,
+  AgentTeamTaskPatchRequest,
+  AgentTeamTaskPriority,
   AgentTeamTaskRequest,
+  AgentTeamTaskUpdatedOperation,
   AgentTeamTaskResult,
   AgentTeamTaskRef,
   AgentTeamThread,
@@ -186,6 +193,8 @@ import type {
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateChannelResult,
   AgentTeamUpdateMemberRequest,
+  AgentTeamUpdateTaskRequest,
+  AgentTeamUpdateTaskResult,
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
@@ -435,6 +444,16 @@ export interface AgentTeamAuthorizedClaimRequest extends AgentTeamClaimRequest {
 }
 
 export interface AgentTeamAuthorizedTaskRequest extends AgentTeamTaskRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedCreateTaskRequest extends AgentTeamCreateTaskRequest {
+  readonly actor: AgentTeamHumanActor
+  /** Metadata the Host resolved from the attachment cache before the append. */
+  readonly resolvedAttachments?: readonly AgentTeamMessageAttachment[] | undefined
+}
+
+export interface AgentTeamAuthorizedUpdateTaskRequest extends AgentTeamUpdateTaskRequest {
   readonly actor: AgentTeamHumanActor
 }
 
@@ -1504,6 +1523,101 @@ export class AgentTeamLedger {
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.messageResult(operation))
+    })
+  }
+
+  /**
+   * Human-only Task creation: one opening Message plus the Task overlay the
+   * board reads. Modelled on `sendMessage` with `asTask`, but the Task carries
+   * its board fields from the first commit, and an assignee is followed and
+   * woken in the same operation.
+   */
+  createTask(request: AgentTeamAuthorizedCreateTaskRequest): Promise<AgentTeamLedgerResult<AgentTeamCreateTaskResult>> {
+    return this.enqueue(async () => {
+      const body = request.body.trim()
+      if (body === '') throw new Error('task body must not be empty')
+      const title = this.normalizeTaskTitle(request.title, body)
+      const assignee = request.assignee ?? null
+      const priority = request.priority ?? 'none'
+      const position = request.position ?? 0
+      if (!Number.isFinite(position)) throw new Error('task position must be a finite number')
+      // The idempotent branch runs before any projection lookup: a retry must
+      // resolve the stored record even if the Channel moved on since.
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameTaskCreate(existing, request, { title, assignee, priority, position })
+        return this.resolved(this.taskCreatedResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const channel = this.requireActiveChannel(request.workspaceId, request.channelRef)
+      if (assignee !== null) this.assertAssignable(assignee, channel.channelRef)
+      const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
+      const threadRef = this.ref('thread')
+      const taskRef = this.ref('task')
+      const task: AgentTeamTask = Object.freeze({
+        taskRef, channelRef: channel.channelRef, threadRef,
+        status: 'todo' as const, resolution: 'open' as const,
+        title, priority, assignee, position,
+      })
+      const thread: AgentTeamThread = Object.freeze({ threadRef, taskRef, revision: sequence })
+      const message: AgentTeamMessage = Object.freeze({
+        messageRef: this.ref('message'), channelRef: channel.channelRef, threadRef, taskRef,
+        sender: request.actor.memberId, body,
+        ...(request.resolvedAttachments === undefined ? {} : { attachments: request.resolvedAttachments }),
+        topLevel: true, sequence, occurredAt: base.occurredAt,
+      })
+      // Assignment makes the Member a follower in the same commit, which is
+      // what `affectedMembersOf` reads to wake it through `notifyMember`.
+      const started = [this.startAttention(request.actor.memberId, threadRef, sequence)]
+      if (assignee !== null && assignee !== request.actor.memberId) started.push(this.startAttention(assignee, threadRef, sequence))
+      const inbox = this.messageInboxDelta(message, request.actor.memberId, [], started)
+      const operation: AgentTeamTaskCreatedOperation = Object.freeze({
+        ...base, kind: 'team/task-created',
+        data: Object.freeze({ workspaceId: request.workspaceId, mentions: Object.freeze([] as AgentTeamMemberId[]), message, task, thread, inbox }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.taskCreatedResult(operation))
+    })
+  }
+
+  /**
+   * Human-only Task field update. Status is not a field here: claims and
+   * `changeTask` own it. Changing the assignee follows and wakes the new
+   * assignee; clearing it leaves the previous follower in place.
+   */
+  updateTask(request: AgentTeamAuthorizedUpdateTaskRequest): Promise<AgentTeamLedgerResult<AgentTeamUpdateTaskResult>> {
+    return this.enqueue(async () => {
+      const patch = this.normalizeTaskPatch(request.patch)
+      if (Object.keys(patch).length === 0) throw new Error('task update must change at least one field')
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameTaskUpdate(existing, request, patch)
+        return this.resolved(this.taskUpdatedResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const { task, thread } = this.threadForActor(request.actor, request.workspaceId, request.taskRef)
+      if (patch.assignee !== undefined && patch.assignee !== null) this.assertAssignable(patch.assignee, task.channelRef)
+      const deferred = this.deferredThreadWrite(request.actor.memberId, task, thread, request.baseRevision)
+      if (deferred !== undefined) return this.resolved(deferred)
+      const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
+      const nextTask: AgentTeamTask = Object.freeze({ ...task, ...patch })
+      const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
+      const assigneeChanged = patch.assignee !== undefined && (patch.assignee ?? null) !== (task.assignee ?? null)
+      const started = assigneeChanged && patch.assignee != null && !this.isFollowing(thread.threadRef, patch.assignee)
+        ? [this.startAttention(patch.assignee, thread.threadRef, sequence)]
+        : []
+      const inbox = this.inboxDelta(started)
+      const operation: AgentTeamTaskUpdatedOperation = Object.freeze({
+        ...base, kind: 'team/task-updated',
+        data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
+          patch, task: nextTask, thread: nextThread, inbox }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.taskUpdatedResult(operation))
     })
   }
 
@@ -3013,6 +3127,20 @@ export class AgentTeamLedger {
         const claim = operation.data.claim
         return event(operation.kind, roomActivityClaimSummary(operation.data.activity.kind, claim.direction), { threadRef, taskRef })
       }
+      case 'team/task-created': {
+        const { task, thread } = operation.data
+        if (!threadRefs.has(thread.threadRef)) return undefined
+        return event('team/task-created', `created task ${task.title ?? ''}`.trim(), { threadRef: thread.threadRef, taskRef: task.taskRef })
+      }
+      case 'team/task-updated': {
+        const { task, thread, patch } = operation.data
+        if (!threadRefs.has(thread.threadRef)) return undefined
+        if (patch.assignee !== undefined && patch.assignee !== null) {
+          const handle = this.state.members.get(patch.assignee)?.handle ?? patch.assignee
+          return event('team/task-updated', `assigned @${handle}`, { threadRef: thread.threadRef, taskRef: task.taskRef })
+        }
+        return event('team/task-updated', `updated task ${task.title ?? ''}`.trim(), { threadRef: thread.threadRef, taskRef: task.taskRef })
+      }
       case 'team/thread-session-bound': {
         if (!threadRefs.has(operation.data.threadRef)) return undefined
         return event(operation.kind, roomActivitySessionSummary(operation.data), { threadRef: operation.data.threadRef })
@@ -3654,6 +3782,8 @@ export class AgentTeamLedger {
       case 'team/claim-done':
       case 'team/claim-released':
       case 'team/task-changed':
+      case 'team/task-created':
+      case 'team/task-updated':
         return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
@@ -3719,6 +3849,8 @@ export class AgentTeamLedger {
       case 'team/claim-done':
       case 'team/claim-released':
       case 'team/task-changed':
+      case 'team/task-created':
+      case 'team/task-updated':
       case 'team/thread-attention-changed':
         return [operation.data.thread.threadRef]
       case 'team/channel-member-removed':
@@ -4078,6 +4210,62 @@ export class AgentTeamLedger {
         if (!isDeepStrictEqual(data, expectedData)) throw new Error('invalid Thread read receipt')
       }
       this.validateInboxDelta(data.inbox, projection, refs)
+      return
+    }
+    if (operation.kind === 'team/task-created') {
+      assertHuman()
+      const { message, task, thread, mentions } = operation.data
+      const channel = projection.channels.get(message.channelRef)
+      if (channel === undefined || channel.workspaceId !== operation.data.workspaceId
+        || message.sender !== operation.actor.memberId || message.sequence !== operation.sequence
+        || !message.topLevel || thread.revision !== operation.sequence
+        || message.threadRef !== thread.threadRef || message.taskRef !== task.taskRef
+        || thread.taskRef !== task.taskRef || task.threadRef !== thread.threadRef
+        || task.channelRef !== channel.channelRef || task.status !== 'todo' || task.resolution !== 'open'
+        || projection.threads.has(thread.threadRef) || projection.tasks.has(task.taskRef)
+        || mentions.length !== 0) throw new Error('invalid Task creation')
+      if (task.title !== undefined && task.title.trim() === '') throw new Error('invalid Task title')
+      if (task.position !== undefined && !Number.isFinite(task.position)) throw new Error('invalid Task position')
+      if (task.assignee !== undefined && task.assignee !== null) {
+        const assignee = projection.members.get(task.assignee)
+        if (assignee === undefined || assignee.state !== 'enabled'
+          || !projection.memberships.get(channel.channelRef)?.has(task.assignee)) throw new Error('invalid Task assignee')
+      }
+      this.addRef(refs, thread.threadRef)
+      this.addRef(refs, task.taskRef)
+      this.addRef(refs, message.messageRef)
+      this.validateInboxDelta(operation.data.inbox, projection, refs, [thread.threadRef], [message])
+      const started = [this.startAttention(message.sender, thread.threadRef, operation.sequence)]
+      if (task.assignee !== undefined && task.assignee !== null && task.assignee !== message.sender) {
+        started.push(this.startAttention(task.assignee, thread.threadRef, operation.sequence))
+      }
+      if (!isDeepStrictEqual(operation.data.inbox, this.inboxDelta(started))) throw new Error('invalid Task creation inbox projection')
+      return
+    }
+    if (operation.kind === 'team/task-updated') {
+      assertHuman()
+      const { task, thread, patch } = operation.data
+      const priorTask = projection.tasks.get(task.taskRef)
+      const priorThread = projection.threads.get(thread.threadRef)
+      if (priorTask === undefined || priorThread === undefined
+        || priorThread.revision !== operation.data.baseRevision
+        || thread.revision !== operation.sequence
+        || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })
+        || !isDeepStrictEqual(task, { ...priorTask, ...patch })) throw new Error('invalid Task update')
+      if (patch.title !== undefined && patch.title.trim() === '') throw new Error('invalid Task title')
+      if (patch.position !== undefined && !Number.isFinite(patch.position)) throw new Error('invalid Task position')
+      if (patch.assignee !== undefined && patch.assignee !== null) {
+        const assignee = projection.members.get(patch.assignee)
+        if (assignee === undefined || assignee.state !== 'enabled'
+          || !projection.memberships.get(task.channelRef)?.has(patch.assignee)) throw new Error('invalid Task assignee')
+      }
+      const assigned = patch.assignee !== undefined && patch.assignee !== null
+        && (patch.assignee ?? null) !== (priorTask.assignee ?? null)
+      const started = assigned && !this.isFollowingFrom(projection, thread.threadRef, patch.assignee!)
+        ? [this.startAttention(patch.assignee!, thread.threadRef, operation.sequence)]
+        : []
+      if (!isDeepStrictEqual(operation.data.inbox, this.inboxDelta(started))) throw new Error('invalid Task update inbox projection')
+      this.validateInboxDelta(operation.data.inbox, projection, refs)
       return
     }
     if (operation.kind === 'team/thread-promoted') {
@@ -4653,6 +4841,26 @@ export class AgentTeamLedger {
       // member state instead.
       target.members.set(operation.data.member.memberId, operation.data.member)
       this.applyReleaseSnapshot(target, operation, operation.data, operation.occurredAt)
+      return
+    }
+    if (operation.kind === 'team/task-created') {
+      const { message, mentions } = operation.data
+      target.mentionsByMessage.set(message.messageRef, Object.freeze([...mentions]))
+      this.appendMessageFact(target, message, mentions, message.occurredAt ?? operation.occurredAt)
+      target.tasks.set(operation.data.task.taskRef, operation.data.task)
+      target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      target.channelRefByThread.set(message.threadRef, message.channelRef)
+      if (!target.anchorByThread.has(message.threadRef)) target.anchorByThread.set(message.threadRef, message)
+      this.recordTaskNumber(target, operation.data.task)
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
+      this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/task-updated') {
+      target.tasks.set(operation.data.task.taskRef, operation.data.task)
+      target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
+      this.applyInboxDelta(target, operation.data.inbox)
       return
     }
     if (operation.kind === 'team/thread-promoted') {
@@ -6117,6 +6325,75 @@ export class AgentTeamLedger {
     if (operation.kind !== kind || !this.sameActor(operation.actor, request.actor) || operation.data.workspaceId !== request.workspaceId
       || operation.data.task.taskRef !== request.taskRef || operation.data.baseRevision !== request.baseRevision
       || (request.action === 'claim' ? operation.data.claim.direction !== request.direction?.trim() : operation.data.claim.claimRef !== request.claimRef)) this.throwRequestCollision(request.requestId)
+  }
+
+  /** Trim and bound a Task title; absent falls back to the opening Message's first line. */
+  private normalizeTaskTitle(title: string | undefined, body: string): string {
+    const candidate = (title ?? body.split('\n')[0] ?? '').trim()
+    if (candidate === '') throw new Error('task title must not be empty')
+    return candidate.slice(0, 200)
+  }
+
+  /** Keep only the provided keys, so a recorded patch is exactly what changed. */
+  private normalizeTaskPatch(patch: AgentTeamTaskPatchRequest): AgentTeamTaskPatch {
+    const next: { title?: string; priority?: AgentTeamTaskPriority; assignee?: AgentTeamMemberId | null; position?: number } = {}
+    if (patch.title !== undefined) {
+      const title = patch.title.trim()
+      if (title === '') throw new Error('task title must not be empty')
+      next.title = title.slice(0, 200)
+    }
+    if (patch.priority !== undefined) next.priority = patch.priority
+    if (patch.assignee !== undefined) next.assignee = patch.assignee
+    if (patch.position !== undefined) {
+      if (!Number.isFinite(patch.position)) throw new Error('task position must be a finite number')
+      next.position = patch.position
+    }
+    return Object.freeze(next)
+  }
+
+  /** An assignee must be an enabled Member of the Task's Channel. */
+  private assertAssignable(memberId: AgentTeamMemberId, channelRef: AgentTeamChannelRef): void {
+    const member = this.requireMember(memberId)
+    if (member.state !== 'enabled') throw new Error(`Agent Member '${memberId}' is not enabled`)
+    this.requireMemberChannel(member, channelRef)
+  }
+
+  private taskCreatedResult(operation: AgentTeamTaskCreatedOperation) {
+    return { kind: 'committed' as const, receipt: this.receipt(operation), message: operation.data.message,
+      task: operation.data.task, thread: operation.data.thread,
+      attention: operation.data.inbox.attention.set, directMarkers: operation.data.inbox.directMarkers.added }
+  }
+
+  private taskUpdatedResult(operation: AgentTeamTaskUpdatedOperation) {
+    return { kind: 'committed' as const, receipt: this.receipt(operation),
+      task: operation.data.task, thread: operation.data.thread }
+  }
+
+  private assertSameTaskCreate(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedCreateTaskRequest,
+    fields: { title: string; assignee: AgentTeamMemberId | null; priority: AgentTeamTaskPriority; position: number },
+  ): asserts operation is AgentTeamTaskCreatedOperation {
+    if (operation.kind !== 'team/task-created' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId || operation.data.message.channelRef !== request.channelRef
+      || operation.data.message.body !== request.body.trim()
+      || operation.data.task.title !== fields.title
+      || (operation.data.task.priority ?? 'none') !== fields.priority
+      || (operation.data.task.assignee ?? null) !== fields.assignee
+      || (operation.data.task.position ?? 0) !== fields.position
+      || !this.sameList(operation.data.message.attachments?.map(attachment => attachment.attachmentId) ?? [],
+        request.resolvedAttachments?.map(attachment => attachment.attachmentId) ?? [])) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameTaskUpdate(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedUpdateTaskRequest,
+    patch: AgentTeamTaskPatch,
+  ): asserts operation is AgentTeamTaskUpdatedOperation {
+    if (operation.kind !== 'team/task-updated' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId || operation.data.task.taskRef !== request.taskRef
+      || operation.data.baseRevision !== request.baseRevision
+      || !isDeepStrictEqual(operation.data.patch, patch)) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameTask(operation: AgentTeamOperation, request: AgentTeamAuthorizedTaskRequest): asserts operation is AgentTeamTaskChangedOperation {

@@ -157,6 +157,20 @@ const taskSchema = z.object({
   threadRef: threadRefSchema,
   status: z.union([z.literal('todo'), z.literal('in_progress'), z.literal('in_review'), z.literal('done'), z.literal('closed')]),
   resolution: z.union([z.literal('open'), z.literal('accepted'), z.literal('closed')]),
+  // Board fields, optional so every ledger written before the board replays
+  // unchanged. `assignee` is nullable because clearing an assignment is a real
+  // update, distinct from "this old Task never had the field".
+  title: z.string().optional(),
+  priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
+  assignee: memberIdSchema.nullable().optional(),
+  position: z.number().finite().optional(),
+}).strict()
+
+const taskPatchSchema = z.object({
+  title: z.string().optional(),
+  priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
+  assignee: memberIdSchema.nullable().optional(),
+  position: z.number().finite().optional(),
 }).strict()
 
 const threadSchema = z.object({
@@ -567,6 +581,32 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       task: taskSchema,
       thread: threadSchema,
       claims: z.array(claimSchema),
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/task-created'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      mentions: z.array(memberIdSchema),
+      message: messageSchema,
+      task: taskSchema,
+      thread: threadSchema,
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/task-updated'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      baseRevision: z.number().int().positive(),
+      patch: taskPatchSchema,
+      task: taskSchema,
+      thread: threadSchema,
       inbox: inboxDeltaSchema,
     }).strict(),
   }).strict(),
