@@ -31,6 +31,7 @@ describe('Agent Team generated Typert boundary', () => {
       'commentDoc',
       'contextJudge',
       'createChannel',
+      'createTask',
       'decisions',
       'doc',
       'docSectionHistory',
@@ -80,6 +81,7 @@ describe('Agent Team generated Typert boundary', () => {
       'updateChannel',
       'updateMember',
       'updateMemorySettings',
+      'updateTask',
       'view',
       'writeDocSection',
     ]

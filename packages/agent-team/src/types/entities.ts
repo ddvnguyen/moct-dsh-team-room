@@ -341,7 +341,24 @@ export interface AgentTeamTask {
   readonly threadRef: AgentTeamThreadRef
   readonly status: 'todo' | 'in_progress' | 'in_review' | 'done' | 'closed'
   readonly resolution: 'open' | 'accepted' | 'closed'
+  /**
+   * Board title. Absent on Tasks created before the board existed; readers fall
+   * back to the first line of the opening Message.
+   */
+  readonly title?: string | undefined
+  /** Board priority; absent reads as `none`, so old ledgers replay unchanged. */
+  readonly priority?: AgentTeamTaskPriority | undefined
+  /**
+   * The Member the Human assigned, independent of Claims. Claims still derive
+   * `in_progress`/`in_review`; assigning wakes the Member and makes it follow.
+   */
+  readonly assignee?: AgentTeamMemberId | null | undefined
+  /** Fractional order within a status column; absent reads as 0. */
+  readonly position?: number | undefined
 }
+
+/** Board priority of one Task. */
+export type AgentTeamTaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none'
 
 /** Current projection of one collaboration Thread. */
 export interface AgentTeamThread {

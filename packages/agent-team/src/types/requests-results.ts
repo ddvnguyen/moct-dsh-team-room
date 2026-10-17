@@ -36,6 +36,7 @@ import type {
   AgentTeamOperationId,
   AgentTeamRequestId,
   AgentTeamTask,
+  AgentTeamTaskPriority,
   AgentTeamTaskActivity,
   AgentTeamTaskRef,
   AgentTeamThread,
@@ -624,6 +625,63 @@ export type AgentTeamReplyResult =
   | AgentTeamUnreadRequired
   | AgentTeamStaleRevision
   | AgentTeamMemberNotFollowing
+
+/** Human intent to create one Task with an opening Message. */
+export interface AgentTeamCreateTaskRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  /** Opening Message body; also the fallback title when `title` is absent. */
+  readonly body: string
+  readonly title?: string
+  readonly priority?: AgentTeamTaskPriority
+  /** Omit or `null` for an unassigned Task; assigning wakes the Member. */
+  readonly assignee?: AgentTeamMemberId | null
+  readonly position?: number
+  readonly attachments?: readonly AgentTeamAttachmentId[]
+  readonly attachmentPaths?: readonly string[]
+}
+
+export interface AgentTeamCreateTaskCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly attention: readonly AgentTeamThreadAttention[]
+  readonly directMarkers: readonly AgentTeamDirectMarker[]
+}
+
+export type AgentTeamCreateTaskResult = AgentTeamCreateTaskCommittedResult
+
+/** Human intent to change a Task's board fields without moving its status. */
+export interface AgentTeamUpdateTaskRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly baseRevision: number
+  readonly patch: AgentTeamTaskPatchRequest
+}
+
+export interface AgentTeamTaskPatchRequest {
+  readonly title?: string
+  readonly priority?: AgentTeamTaskPriority
+  /** `null` clears the assignment; omitting the key leaves it unchanged. */
+  readonly assignee?: AgentTeamMemberId | null
+  readonly position?: number
+}
+
+export interface AgentTeamUpdateTaskCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+}
+
+export type AgentTeamUpdateTaskResult =
+  | AgentTeamUpdateTaskCommittedResult
+  | AgentTeamUnreadRequired
+  | AgentTeamStaleRevision
 
 /** Human Task resolution intent. */
 export interface AgentTeamTaskRequest {

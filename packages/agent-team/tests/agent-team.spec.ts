@@ -420,6 +420,58 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(test.ctx.agentTeam.inbox({ workspaceId: alpha })).toMatchObject({ recent: [expect.objectContaining({ thread: expect.objectContaining({ threadRef: sent.task.threadRef }) })] })
   })
 
+  it('creates an unassigned board Task and updates its fields without moving status', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const created = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Ship the board', title: 'Ship the board', priority: 'high', position: 3 }))
+    expect(created.task).toMatchObject({ title: 'Ship the board', priority: 'high', assignee: null, position: 3, status: 'todo', resolution: 'open' })
+    expect(created.message).toMatchObject({ body: 'Ship the board', topLevel: true, taskRef: created.task.taskRef })
+    // A same-request retry resolves the stored record instead of committing twice.
+    const retry = await test.ctx.agentTeam.createTask({ requestId: requestId('create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Ship the board', title: 'Ship the board', priority: 'high', position: 3 })
+    expect(retry.kind).toBe('committed')
+    expect(retry.task.taskRef).toBe(created.task.taskRef)
+
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const assigned = committed((await ledger.updateTask({ requestId: requestId('assign'), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: created.thread.revision, actor: agentTeamHumanActor(),
+      patch: { assignee: member.memberId, priority: 'urgent' } })).value)
+    expect(assigned.task).toMatchObject({ assignee: member.memberId, priority: 'urgent', status: 'todo' })
+    // Assignment follows the Member in the same commit, which is what wakes it.
+    expect(ledger.attentionStatus(actor, { workspaceId: alpha, threadRef: created.task.threadRef }).attention).toBeDefined()
+    // Reordering and renaming stay field updates.
+    const renamed = committed((await ledger.updateTask({ requestId: requestId('rename'), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: assigned.thread.revision, actor: agentTeamHumanActor(),
+      patch: { title: 'Ship the board v2', position: 7 } })).value)
+    expect(renamed.task).toMatchObject({ title: 'Ship the board v2', position: 7 })
+    // `null` clears the assignment; the Task keeps its status.
+    const cleared = committed((await ledger.updateTask({ requestId: requestId('clear'), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: renamed.thread.revision, actor: agentTeamHumanActor(),
+      patch: { assignee: null } })).value)
+    expect(cleared.task.assignee).toBeNull()
+    expect(cleared.task.status).toBe('todo')
+    // An obsolete revision is a business outcome, not a throw.
+    const stale = await ledger.updateTask({ requestId: requestId('stale'), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: created.thread.revision, actor: agentTeamHumanActor(), patch: { position: 1 } })
+    expect(stale.value.kind).toBe('stale_revision')
+    // Cold replay validates both new operation kinds.
+    const cold = replayLedger(test)
+    expect(() => cold.validate()).not.toThrow()
+  })
+
+  it('refuses an assignee who is not an enabled member of the Task Channel', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const other = await test.ctx.agentTeam.createChannel({ requestId: requestId('other'), workspaceId: alpha, name: 'design', description: 'Design work' })
+    const ledger = replayLedger(test)
+    const { member } = await addLedgerMember(ledger, other.channel.channelRef)
+    await expect(ledger.createTask({ requestId: requestId('create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Task', assignee: member.memberId, actor: agentTeamHumanActor() }))
+      .rejects.toThrow(/not authorized for Channel/)
+  })
+
   it('accepts a Task early and completes active Claims inside the same operation', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
