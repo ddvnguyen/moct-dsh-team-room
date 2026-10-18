@@ -35,6 +35,7 @@ This directory contains the maintained engineering documentation for this reposi
 | [`frontend-design/multica-look.md`](frontend-design/multica-look.md) | The Multica look layer: scoped tokens, ported helpers, and attribution | Porting a Multica component or changing `--ml-*` |
 | [`frontend-design/thread-and-composer.md`](frontend-design/thread-and-composer.md) | Timeline scrolling, composer and mentions, entry rows, status pills | Changing scrolling, the composer, entry rows, or status pills |
 | [`frontend-design/sidebar-browser.md`](frontend-design/sidebar-browser.md) | The sidebar browser and the Inbox surface | Changing the sidebar browser or the Inbox surface |
+| [`frontend-design/board.md`](frontend-design/board.md) | The Board: the workspace kanban, card anatomy, drag rules, and live activity | Changing the Board page, its columns/cards/filters, or its drag rules |
 | [`frontend-design/refresh-copy-accessibility.md`](frontend-design/refresh-copy-accessibility.md) | Refresh semantics, copy, accessibility, and evolution | Changing refresh behavior, copy, or accessibility |
 | [`harness-navigation.md`](harness-navigation.md) | Routes through this repository and `../deepseek-harness`, including source entry points and integration traps | Unsure which Harness document, package, source, or test to inspect |
 

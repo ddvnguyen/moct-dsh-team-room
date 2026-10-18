@@ -93,6 +93,14 @@ export const TAB_ORDER = 3
 export const AGENTS_TAB_ID = 'agents'
 export const AGENTS_TAB_ORDER = 4
 
+/**
+ * The Board tab, before Team: the strip reads `Tasks | Board | Team | Agents |
+ * Scheduled`. Order 2 sorts it between Tasks and Team (3), so the board is the
+ * first Team surface a strip user meets.
+ */
+export const BOARD_TAB_ID = 'board'
+export const BOARD_TAB_ORDER = 2
+
 /** Retry budget, mirroring the owner plugin's own 20 × 250 ms schedule. */
 const RETRY_INTERVAL_MS = 250
 const RETRY_LIMIT = 20

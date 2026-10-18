@@ -11,6 +11,8 @@ import type {
   AgentTeamClearMemberContextResult,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamCreateTaskRequest,
+  AgentTeamCreateTaskResult,
   AgentTeamInbox,
   AgentTeamInboxRequest,
   AgentTeamJoinWorkspaceRequest,
@@ -29,6 +31,8 @@ import type {
   AgentTeamRecoverMemberResult,
   AgentTeamMemberActivityRequest,
   AgentTeamMemberActivityResult,
+  AgentTeamUpdateTaskRequest,
+  AgentTeamUpdateTaskResult,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -223,6 +227,12 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   /** The Human's answer to one open card; the reply it posts wakes the asker. */
   answerDecision: (request: AgentTeamAnswerDecisionRequest) => Promise<RemoteResult<AgentTeamDecisionNoticeResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+  /** The board's catalog read: one whole-Workspace `view` per query key. */
+  loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
+  /** Board create: one unassigned Task with its opening Message. */
+  createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
+  /** Board field write: title/priority/assignee/position, fenced by the Thread revision. */
+  updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
   loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
   /** Human direct-only Inbox slice; the Inbox page merges one call per visible Workspace. */

@@ -111,6 +111,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'frontend-design/layout-and-typography.md': [556, 452],
   'frontend-design/principles-and-language.md': [775, 557],
   'frontend-design/refresh-copy-accessibility.md': [510, 310],
+  'frontend-design/board.md': [420, 300],
   'frontend-design/sidebar-browser.md': [556, 366],
   'frontend-design/thread-and-composer.md': [573, 589],
   'harness-navigation.md': [425, 322],

@@ -25,6 +25,7 @@ const UI07_SHOTS = join(BROWSER_ARTIFACTS, 'ui-07')
 const UI08_SHOTS = join(BROWSER_ARTIFACTS, 'ui-08')
 const UI09_SHOTS = join(BROWSER_ARTIFACTS, 'ui-09')
 const TWO_LANE_SHOTS = join(BROWSER_ARTIFACTS, 'two-lane')
+const BOARD_SHOTS = join(BROWSER_ARTIFACTS, 'board')
 const TEAM_DOC_SHOTS = join(BROWSER_ARTIFACTS, 'team-docs')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
@@ -263,6 +264,7 @@ async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await mkdir(UI07_SHOTS, { recursive: true })
   await mkdir(UI08_SHOTS, { recursive: true })
   await mkdir(UI09_SHOTS, { recursive: true })
+  await mkdir(BOARD_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -3125,5 +3127,83 @@ it('answers a decision card and approves a plan in real Web', async () => {
   await plan.getByRole('button', { name: '批准「1.2 发布计划」' }).click()
   await expect.poll(() => ledger.doc(human, { workspaceId: workspace.id, docRef: created.doc.docRef }).status).toBe('approved')
   await expect.poll(() => plan.count()).toBe(0)
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * The Board (Team Board 4/10): the strip's 看板 tab opens the board face, the
+ * create dialog mints an unassigned Task on the chosen Channel, and a real
+ * pointer drag moves the card to Done. The move lands only through the Host:
+ * changeTask commits, the change wake refetches the catalog, and the card
+ * appears in the Done column — no optimistic move happens before that.
+ */
+it('creates a board task and drags it to Done in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'team-workspace')
+
+  // The strip reads `Tasks | Board | Team | Agents | Scheduled`; the Board
+  // tab's sidebar body is the open action that hands the seat to the board
+  // face on the Workspace the Team navigation holds.
+  await page.getByRole('button', { name: '看板', exact: true }).click()
+  await page.getByTestId('board-tab-open').waitFor()
+  await page.getByTestId('board-tab-open').click()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor()
+
+  // Create: the dialog defaults to Unassigned and the first Channel; the Host
+  // commits the Task and the catalog refetch carries the card into 待办.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Board journey task')
+  await dialog.getByLabel('描述').fill('Opened from the board journey')
+  await dialog.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Board journey task' })
+  await card.waitFor({ timeout: 20_000 })
+  const todoColumn = board.locator('[data-testid="board-column"][data-status="todo"]')
+  await expect.poll(async () => todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(1)
+  const created = scaffold.ctx.agentTeam.view({ workspaceId: scaffold.ctx.workspaceRegistry.list()[0]!.id })
+    .tasks.find((task: { title?: string }) => task.title === 'Board journey task')
+  expect(created).toMatchObject({ status: 'todo', assignee: null })
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-created.png'), fullPage: true })
+
+  // Drag to Done with a real pointer: dnd-kit's PointerSensor needs the
+  // 5px activation distance and the drop resolves through the columns.
+  const doneColumn = board.locator('[data-testid="board-column"][data-status="done"]')
+  const cardBox = await card.boundingBox()
+  const doneBox = await doneColumn.boundingBox()
+  expect(cardBox).not.toBeNull()
+  expect(doneBox).not.toBeNull()
+  const fromX = cardBox!.x + cardBox!.width / 2
+  const fromY = cardBox!.y + 10
+  await page.mouse.move(fromX, fromY)
+  await page.mouse.down()
+  await page.mouse.move(fromX + 12, fromY + 4, { steps: 4 })
+  await page.mouse.move(doneBox!.x + doneBox!.width / 2, doneBox!.y + doneBox!.height / 2, { steps: 24 })
+  await page.mouse.up()
+
+  // The house rule forbids an optimistic move: the card is in Done only
+  // after the Remote commits and the change wake refetches the catalog.
+  await expect.poll(async () =>
+    doneColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count(), { timeout: 20_000 }).toBe(1)
+  await expect.poll(async () =>
+    todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(0)
+  const workspaceId = scaffold.ctx.workspaceRegistry.list()[0]!.id
+  await expect.poll(() =>
+    scaffold.ctx.agentTeam.view({ workspaceId }).tasks.find((task: { title?: string }) => task.title === 'Board journey task')?.status,
+  ).toBe('done')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-dropped-done.png'), fullPage: true })
+
+  // 390×844: five columns scroll horizontally inside the seat, no page-level
+  // overflow, and the toolbar stays reachable.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)

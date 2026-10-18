@@ -13,6 +13,8 @@ import type {
   AgentTeamThreadAttentionRequest,
   AgentTeamThreadReadRequest,
   AgentTeamCreateChannelRequest,
+  AgentTeamCreateTaskRequest,
+  AgentTeamUpdateTaskRequest,
   AgentTeamGetAttachmentRequest,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamLeaveWorkspaceRequest,
@@ -88,9 +90,10 @@ const GuardedSettingsPanelIcon = withSlotBoundary('sidebar.panellist:team-settin
 const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsPage as never)
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
-import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
+import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, BOARD_TAB_ID, BOARD_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
+import { renderBoardTabBody } from './board-tab-body.tsx'
 import { renderAgentsTabBody } from './agents-tab-body.tsx'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
@@ -337,6 +340,20 @@ function inboxQuery(request: AgentTeamInboxRequest): TeamQueryIdentity {
   }
 }
 
+/**
+ * The board's catalog query: one key per Workspace. Task commits (create,
+ * update, claims, resolution) land in the commit's Workspace scope and Channel
+ * wakes carry the Threads the Tasks open over, so both narrow scopes move the
+ * query; presence wakes change no board fact and stay out.
+ */
+function boardQuery(request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }): TeamQueryIdentity {
+  return {
+    key: `board:${request.workspaceId}`,
+    covers: scope => scope !== undefined
+      && (scope.kind === 'workspace' || scope.kind === 'channel'),
+  }
+}
+
 /** Remote bindings shared by every Team slot; a surface-specific seat extends them below. */
 function teamSharedRemotes(
   ctx: ClientContext,
@@ -362,6 +379,9 @@ function teamSharedRemotes(
     drafts,
     humanIdentity,
     loadMembers: (request: AgentTeamMembersRequest) => queries.read(membersQuery(request), () => ctx.remote.agentTeam.members(request)),
+    loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => queries.read(boardQuery(request), () => ctx.remote.agentTeam.view({ workspaceId: request.workspaceId, includeCatalog: true })),
+    createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
+    updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
     // L1 (issue 57, item 3): the Human's own Thread Attention op. It toggles
@@ -483,6 +503,7 @@ function teamPageActions(ctx: ClientContext, navigation: TeamNavigation): Partia
     selectChannel: channelRef => { actions.selectChannel(channelRef); showTeamPage() },
     selectThread: (threadRef, channelRef, taskRef, taskNumber) => { actions.selectThread(threadRef, channelRef, taskRef, taskNumber); showTeamPage() },
     selectInbox: () => { actions.selectInbox(); showTeamPage() },
+    selectBoard: () => { actions.selectBoard(); showTeamPage() },
   }
 }
 
@@ -745,6 +766,21 @@ function applyUi(ctx: ClientContext): void {
     render: teamTabRender,
     onInserted: () => { dropTeamRow() },
   }), 'agent-team: interim native tab')
+
+  // The Board tab in front of Team: `Tasks | Board | Team | Agents`. The tab
+  // body is the strip's own slice (a Workspace picker and the open action);
+  // the board itself is the Team seat's `board` face.
+  const boardTabRender = (props: NativeTabRenderProps): unknown => {
+    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
+    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
+      renderBoardTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+  }
+  ctx.effect(() => insertTeamTab(ctx, {
+    id: BOARD_TAB_ID,
+    order: BOARD_TAB_ORDER,
+    label: () => ctx.locale.bind(NS)('boardTab'),
+    render: boardTabRender,
+  }), 'agent-team: board native tab')
 
   // The Agents tab beside it: `Tasks | Team | Agents | Scheduled`. The Agents
   // list lives here once the tab is in the strip, and on the Team Settings page

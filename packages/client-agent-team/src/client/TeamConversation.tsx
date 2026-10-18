@@ -2,13 +2,14 @@ import { useSyncExternalStore } from 'react'
 import type { TeamConversationProps } from './slots.ts'
 import { useHumanIdentity } from './human-identity.ts'
 import { TeamChannelPage } from './TeamChannelPage.tsx'
+import { TeamBoardPage } from './board/TeamBoardPage.tsx'
 import { TeamInboxPage } from './TeamInboxPage.tsx'
 import { TeamThreadPage } from './TeamThreadPage.tsx'
 import { TeamDocPage } from './TeamDocPage.tsx'
 import { TeamLanes } from './TeamLanes.tsx'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, createTask, updateTask, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   // Every seat names and draws the Human from this one projection: the
   // localized fallback stands only until the first profile read lands.
@@ -19,6 +20,13 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
   const humanName = identity.name ?? t('human')
   const workspaces = useWorkspaces(state => state.items)
   const current = workspaces.find(workspace => workspace.workspaceId === navigationState.workspaceId)
+  if (current !== undefined && navigationState.board === true) {
+    // The Board page is a Workspace face: the columns read the Workspace's
+    // whole catalog, so it needs the selected Workspace. Selecting the Board
+    // clears the Channel/Thread faces, and a card pick hands the seat to the
+    // Thread setters like every other face change.
+    return <TeamBoardPage key="board" workspaceId={current.workspaceId} loadBoard={loadBoard} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} createTask={createTask} updateTask={updateTask} changeTask={changeTask} subscribeChanges={subscribeChanges} selectThread={selectThread} t={t} />
+  }
   if (navigationState.inbox === true) {
     // The Inbox page is global: it merges every visible Workspace and needs no
     // selected Workspace. Selecting Inbox clears the Channel/Thread faces, so

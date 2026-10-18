@@ -35,6 +35,7 @@
 | [`frontend-design/multica-look.zh.md`](frontend-design/multica-look.zh.md) | Multica 外观层：作用域 token、移植的纯函数与署名 | 移植 Multica 组件或修改 `--ml-*` 时 |
 | [`frontend-design/thread-and-composer.zh.md`](frontend-design/thread-and-composer.zh.md) | 时间线滚动、composer 与 mention、入口行、状态胶囊 | 修改滚动、composer、入口行或状态胶囊 |
 | [`frontend-design/sidebar-browser.zh.md`](frontend-design/sidebar-browser.zh.md) | 侧栏浏览器与 Inbox 界面 | 修改侧栏浏览器或 Inbox 界面 |
+| [`frontend-design/board.zh.md`](frontend-design/board.zh.md) | 看板：Workspace kanban、卡片解剖、拖拽规则与实时活动 | 修改看板页面、其列/卡片/筛选或拖拽规则时 |
 | [`frontend-design/refresh-copy-accessibility.zh.md`](frontend-design/refresh-copy-accessibility.zh.md) | 刷新语义、文案、可访问性与演进 | 修改刷新行为、文案或可访问性 |
 | [`harness-navigation.zh.md`](harness-navigation.zh.md) | 本仓库与 `../deepseek-harness` 的查阅路线、源码入口、已知接入陷阱 | 不确定应该查哪个 Harness 文档/package/source 时 |
 

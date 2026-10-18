@@ -362,7 +362,7 @@ describe('Team Settings rail row', () => {
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     // Strip order: Team, then Agents (see team-tab.ts), each inserted once.
-    expect(strip.inserted).toEqual(['team', 'agents'])
+    expect(strip.inserted).toEqual(['team', 'board', 'agents'])
     expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
     await fiber.dispose()
   })
