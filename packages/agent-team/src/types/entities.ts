@@ -448,7 +448,9 @@ export interface AgentTeamClaimActivity extends AgentTeamActivityBase {
 }
 
 export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
-  readonly kind: 'promote' | 'accept' | 'close' | 'reopen'
+  readonly kind: 'promote' | 'assign' | 'accept' | 'close' | 'reopen'
+  /** The Member a Human assigned the Task to; present exactly when `kind` is `assign`. */
+  readonly assignee?: AgentTeamMemberId | undefined
   /** Claims atomically released by close; absent for other Task transitions. */
   readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
   /** Active claims the Human acceptance completed alongside the Task; absent when none were active. */

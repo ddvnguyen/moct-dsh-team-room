@@ -318,7 +318,7 @@ describe('large-ledger projection equivalence (issue #21)', () => {
       taskRef: created.value.task.taskRef, baseRevision: created.value.thread.revision, patch: { assignee: null, position: 6 }, actor: human })
     if (updated.value.kind !== 'committed') throw new Error('expected committed board Task update')
     // A titleless creation stores the opening Message's first line as the
-    // title, and omitted fields read as their defaults.
+    // title, and an omitted position lands after the todo column.
     const fallback = await ledger.createTask({ requestId: requestId('board-fallback'), workspaceId: alpha,
       channelRef: channel.channelRef, body: 'Fallback title\nbody line', actor: human })
     if (fallback.value.kind !== 'committed') throw new Error('expected committed fallback Task creation')
@@ -326,7 +326,7 @@ describe('large-ledger projection equivalence (issue #21)', () => {
     const catalog = ledger.view({ workspaceId: alpha, limit: 1, includeCatalog: true })
     const byTaskRef = new Map(catalog.tasks.map(task => [task.taskRef, task]))
     expect(byTaskRef.get(created.value.task.taskRef)).toMatchObject({ title: 'Ship the board', priority: 'high', assignee: null, position: 6 })
-    expect(byTaskRef.get(fallback.value.task.taskRef)).toMatchObject({ title: 'Fallback title', priority: 'none', assignee: null, position: 0 })
+    expect(byTaskRef.get(fallback.value.task.taskRef)).toMatchObject({ title: 'Fallback title', priority: 'none', assignee: null, position: 7 })
 
     // Independent replay over the same table rebuilds the identical catalog.
     expect(() => ledger.validate()).not.toThrow()

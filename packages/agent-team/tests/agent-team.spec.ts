@@ -472,6 +472,162 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       .rejects.toThrow(/not authorized for Channel/)
   })
 
+  it('shows an assignment to the assignee as an unread assign activity, including when it already follows', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const created = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Ship the board' }))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const unreadAssignments = async (id: string) => (await ledger.readThread({ requestId: requestId(id), workspaceId: alpha, taskRef: created.task.taskRef, actor })).value
+      .facts.filter(entry => entry.fact.kind === 'activity' && entry.fact.activity.kind === 'assign' && entry.unread)
+
+    const first = committed((await ledger.updateTask({ requestId: requestId('assign-1'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: created.thread.revision, actor: agentTeamHumanActor(), patch: { assignee: member.memberId } })).value)
+    // The assignee did not follow before; the assign fact starts its Attention and is unread for it.
+    expect(first.thread.revision).toBeGreaterThan(created.thread.revision)
+    expect(ledger.notificationFacts(member.memberId)).not.toHaveLength(0)
+    expect(await unreadAssignments('read-1')).toHaveLength(1)
+
+    // Having read it, clearing and assigning again surfaces a fresh unread fact for a Member that already follows.
+    const cleared = committed((await ledger.updateTask({ requestId: requestId('clear'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: (await ledger.readThread({ requestId: requestId('read-2'), workspaceId: alpha, taskRef: created.task.taskRef, actor })).value.thread.revision,
+      actor: agentTeamHumanActor(), patch: { assignee: null } })).value)
+    expect(cleared.thread.revision).toBe(first.thread.revision)
+    committed((await ledger.updateTask({ requestId: requestId('assign-2'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: cleared.thread.revision, actor: agentTeamHumanActor(), patch: { assignee: member.memberId } })).value)
+    expect(await unreadAssignments('read-3')).toHaveLength(1)
+
+    // Reassigning to the current assignee is a no-op field write: no fact, no revision bump.
+    const same = committed((await ledger.updateTask({ requestId: requestId('assign-3'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: (await ledger.readThread({ requestId: requestId('read-4'), workspaceId: alpha, taskRef: created.task.taskRef, actor })).value.thread.revision,
+      actor: agentTeamHumanActor(), patch: { assignee: member.memberId, priority: 'high' } })).value)
+    expect(same.task.priority).toBe('high')
+    expect(() => replayLedger(test).validate()).not.toThrow()
+  })
+
+  it('places a new board Task after the todo column and keeps an explicit position', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const create = async (id: string, extra: { position?: number } = {}) => committed(await test.ctx.agentTeam.createTask({ requestId: requestId(id),
+      workspaceId: alpha, channelRef: channel.channel.channelRef, body: id, ...extra }))
+    const first = await create('first')
+    const second = await create('second')
+    const explicit = await create('explicit', { position: 40 })
+    const third = await create('third')
+    expect(first.task.position).toBe(1)
+    expect(second.task.position).toBe(2)
+    expect(explicit.task.position).toBe(40)
+    expect(third.task.position).toBe(41)
+    // A retry of a defaulted create resolves the stored record, not a recomputed end of column.
+    const retry = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('first'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'first' }))
+    expect(retry.task.taskRef).toBe(first.task.taskRef)
+    expect(retry.task.position).toBe(1)
+    expect(() => replayLedger(test).validate()).not.toThrow()
+  })
+
+  it('rejects an unknown priority and stores the canonical assignee for an abbreviated ref', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:0a1b2c3d-1111-4222-8333-444455556666')
+    await expect(ledger.createTask({ requestId: requestId('bad-priority'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Task', priority: 'critical' as never, actor: agentTeamHumanActor() })).rejects.toThrow(/priority must be one of/)
+    const abbreviated = 'member:0a1b2c3d' as typeof member.memberId
+    const created = committed((await ledger.createTask({ requestId: requestId('abbreviated'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Task', assignee: abbreviated, actor: agentTeamHumanActor() })).value)
+    expect(created.task.assignee).toBe(member.memberId)
+    const retry = committed((await ledger.createTask({ requestId: requestId('abbreviated'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Task', assignee: abbreviated, actor: agentTeamHumanActor() })).value)
+    expect(retry.task.taskRef).toBe(created.task.taskRef)
+    await expect(ledger.updateTask({ requestId: requestId('bad-update'), workspaceId: alpha, taskRef: created.task.taskRef, baseRevision: created.thread.revision,
+      patch: { priority: 'critical' as never }, actor: agentTeamHumanActor() })).rejects.toThrow(/priority must be one of/)
+    const other = committed((await ledger.createTask({ requestId: requestId('other'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Other', actor: agentTeamHumanActor() })).value)
+    const updated = committed((await ledger.updateTask({ requestId: requestId('abbreviated-update'), workspaceId: alpha, taskRef: other.task.taskRef,
+      baseRevision: other.thread.revision, patch: { assignee: abbreviated }, actor: agentTeamHumanActor() })).value)
+    expect(updated.task.assignee).toBe(member.memberId)
+    const retried = committed((await ledger.updateTask({ requestId: requestId('abbreviated-update'), workspaceId: alpha, taskRef: other.task.taskRef,
+      baseRevision: other.thread.revision, patch: { assignee: abbreviated }, actor: agentTeamHumanActor() })).value)
+    expect(retried.task.assignee).toBe(member.memberId)
+    expect(() => ledger.validate()).not.toThrow()
+  })
+
+  it('lets the Human edit board fields while the Thread has unread Messages and keeps the Thread revision for field-only edits', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const created = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('create'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Ship the board' }))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const assigned = committed((await ledger.updateTask({ requestId: requestId('assign'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: created.thread.revision, actor: agentTeamHumanActor(), patch: { assignee: member.memberId } })).value)
+    // The Member reads the assignment before it may write, as any follower must.
+    const memberRead = (await ledger.readThread({ requestId: requestId('agent-read'), workspaceId: alpha, taskRef: created.task.taskRef, actor })).value
+    const agentReply = committed((await ledger.reply({ requestId: requestId('agent-reply'), workspaceId: alpha, taskRef: created.task.taskRef,
+      body: 'Looking into it', baseRevision: memberRead.thread.revision, actor })).value)
+    // The Human has not read the agent's reply, yet a drag is not blocked by it.
+    const moved = await ledger.updateTask({ requestId: requestId('move'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: agentReply.thread.revision, actor: agentTeamHumanActor(), patch: { position: 9, priority: 'low' } })
+    const committedMove = committed(moved.value)
+    expect(committedMove.task).toMatchObject({ position: 9, priority: 'low' })
+    expect(committedMove.thread.revision).toBe(agentReply.thread.revision)
+    // The agent's next write is therefore not made stale by the reorder.
+    committed((await ledger.reply({ requestId: requestId('agent-reply-2'), workspaceId: alpha, taskRef: created.task.taskRef,
+      body: 'Still going', baseRevision: committedMove.thread.revision, actor })).value)
+    // An obsolete revision still returns the business outcome.
+    const stale = await ledger.updateTask({ requestId: requestId('stale'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: created.thread.revision, actor: agentTeamHumanActor(), patch: { position: 1 } })
+    expect(stale.value.kind).toBe('stale_revision')
+  })
+
+  describe('board Task replay validation', () => {
+    /** One committed assignment, replayed after `forge` rewrites the stored `team/task-updated` record. */
+    async function forgedAssignment(forge: (operation: Extract<AgentTeamOperation, { kind: 'team/task-updated' }>) => unknown) {
+      const test = await harness()
+      const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+      const created = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('create'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Ship the board' }))
+      const ledger = replayLedger(test)
+      const { member } = await addLedgerMember(ledger, channel.channel.channelRef)
+      committed((await ledger.updateTask({ requestId: requestId('assign'), workspaceId: alpha, taskRef: created.task.taskRef,
+        baseRevision: created.thread.revision, actor: agentTeamHumanActor(), patch: { assignee: member.memberId } })).value)
+      const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+        const typed = operation as AgentTeamOperation
+        return (typed.kind === 'team/task-updated' ? [id, forge(typed)] : [id, typed]) as [string, unknown]
+      })
+      return harness(storedPool(records))
+    }
+
+    it('rejects an assignment record whose activity is missing', async () => {
+      await expect(forgedAssignment(operation => {
+        const { activity: _activity, ...data } = operation.data
+        return { ...operation, data }
+      })).rejects.toThrow(/invalid Task assignment activity/)
+    })
+
+    it('rejects an assignment activity that names a different Member', async () => {
+      await expect(forgedAssignment(operation => ({ ...operation,
+        data: { ...operation.data, activity: { ...operation.data.activity!, assignee: 'member:somebody-else' } } })))
+        .rejects.toThrow(/invalid Task assignment activity/)
+    })
+
+    it('rejects an assignment whose Thread revision was not advanced', async () => {
+      await expect(forgedAssignment(operation => ({ ...operation,
+        data: { ...operation.data, thread: { ...operation.data.thread, revision: operation.data.baseRevision } } })))
+        .rejects.toThrow(/invalid Task assignment activity/)
+    })
+
+    it('rejects an unknown priority in a stored update', async () => {
+      await expect(forgedAssignment(operation => ({ ...operation,
+        data: { ...operation.data, patch: { ...operation.data.patch, priority: 'critical' }, task: { ...operation.data.task, priority: 'critical' } } })))
+        .rejects.toThrow()
+    })
+
+    it('rejects an activity on an update that assigned nobody', async () => {
+      await expect(forgedAssignment(operation => ({ ...operation,
+        data: { ...operation.data, patch: { priority: 'high' }, task: { ...operation.data.task, assignee: null, priority: 'high' } } })))
+        .rejects.toThrow(/invalid Task update thread|invalid Task update/)
+    })
+  })
+
   it('accepts a Task early and completes active Claims inside the same operation', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
