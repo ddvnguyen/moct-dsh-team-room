@@ -14,4 +14,5 @@
 | [thread-and-composer.zh.md](thread-and-composer.zh.md) | 时间线滚动、composer 与 mention、Thread/Task 入口行，以及状态胶囊与弹层 |
 | [sidebar-browser.zh.md](sidebar-browser.zh.md) | 侧栏工作区浏览器，以及它承载的 Inbox 界面 |
 | [multica-look.zh.md](multica-look.zh.md) | Multica 外观层：作用域 token、移植的纯函数与署名 |
+| [board.zh.md](board.zh.md) | 看板页面：列、卡片、创建对话框、拖拽规则与筛选 |
 | [refresh-copy-accessibility.zh.md](refresh-copy-accessibility.zh.md) | 数据刷新语义、文案与本地化、可访问性基线，以及体系如何演进 |

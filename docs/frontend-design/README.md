@@ -14,4 +14,5 @@ The UI system is maintained in focused files:
 | [thread-and-composer.md](thread-and-composer.md) | timeline scrolling, the composer and mentions, Thread/Task entry rows, and status pills |
 | [sidebar-browser.md](sidebar-browser.md) | the sidebar Workspace browser and the Inbox surface it hosts |
 | [multica-look.md](multica-look.md) | the Multica look layer: scoped tokens, ported helpers and attribution |
+| [board.md](board.md) | the Board page: columns, cards, create dialog, drag rules and filters |
 | [refresh-copy-accessibility.md](refresh-copy-accessibility.md) | data refresh semantics, copy and localization, the accessibility baseline, and how the system evolves |
