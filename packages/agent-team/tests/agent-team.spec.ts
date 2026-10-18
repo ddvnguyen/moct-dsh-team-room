@@ -2553,6 +2553,74 @@ describe('AgentTeam archived read surfaces', () => {
   })
 })
 
+describe('AgentTeam Member role writes', () => {
+  /** A Member added through the ledger with a role, which `addLedgerMember` does not set. */
+  async function addRoleMember(ledger: AgentTeamLedger, role: 'architect' | 'leader' | 'worker' | 'orchestrator', id = 'role-agent') {
+    const memberId = `member:${id}` as AgentTeamAgentMember['memberId']
+    const member: AgentTeamAgentMember = { memberId, sessionId: SessionId(`session:${memberId}`), workspaceId: alpha, handle: id, description: 'Test Agent',
+      presetId: 'team-member', privateMemoryPath: `/tmp/${memberId}`, state: 'enabled' }
+    const request = { requestId: requestId(`add:${id}`), actor: agentTeamHumanActor(), member, handle: id, description: 'Test Agent',
+      presetId: 'team-member', workspaceId: alpha, channelRefs: [], role }
+    return { member, request }
+  }
+
+  it('rejects a role outside the closed set on add and on update', async () => {
+    const test = await harness()
+    const ledger = replayLedger(test)
+    const { request } = await addRoleMember(ledger, 'leader')
+    await expect(ledger.addMember({ ...request, role: 'admin' as never })).rejects.toThrow(/member role must be one of/)
+    const added = await ledger.addMember(request)
+    await expect(ledger.updateMember({ requestId: requestId('bad-role'), actor: agentTeamHumanActor(), memberId: added.value.member.memberId,
+      handle: 'role-agent', description: 'Test Agent', role: 'admin' as never })).rejects.toThrow(/member role must be one of/)
+    expect(ledger.getMember(added.value.member.memberId)?.role).toBe('leader')
+  })
+
+  it('retries an add or update idempotently and refuses the same request with another role', async () => {
+    const test = await harness()
+    const ledger = replayLedger(test)
+    const { request } = await addRoleMember(ledger, 'leader')
+    const added = await ledger.addMember(request)
+    const operations = ledger.status().operationCount
+    expect((await ledger.addMember(request)).value.member.role).toBe('leader')
+    expect(ledger.status().operationCount).toBe(operations)
+    await expect(ledger.addMember({ ...request, role: 'worker' })).rejects.toThrow(/reused with a different operation/)
+
+    const update = { requestId: requestId('role-update'), actor: agentTeamHumanActor(), memberId: added.value.member.memberId,
+      handle: 'role-agent', description: 'Test Agent' }
+    await ledger.updateMember({ ...update, role: 'architect' })
+    const afterUpdate = ledger.status().operationCount
+    expect((await ledger.updateMember({ ...update, role: 'architect' })).value.member.role).toBe('architect')
+    expect(ledger.status().operationCount).toBe(afterUpdate)
+    await expect(ledger.updateMember({ ...update, role: 'worker' })).rejects.toThrow(/reused with a different operation/)
+
+    // `null` clears, and its retry resolves to the cleared Member without a second append.
+    const clear = { ...update, requestId: requestId('role-clear'), role: null }
+    expect((await ledger.updateMember(clear)).value.member.role).toBeUndefined()
+    const afterClear = ledger.status().operationCount
+    expect((await ledger.updateMember(clear)).value.member.role).toBeUndefined()
+    expect(ledger.status().operationCount).toBe(afterClear)
+    expect(() => replayLedger(test).validate()).not.toThrow()
+  })
+
+  it('keeps the stored role when an update names no role, and across a session rollover', async () => {
+    const test = await harness()
+    const ledger = replayLedger(test)
+    const { member, request } = await addRoleMember(ledger, 'orchestrator')
+    await ledger.addMember(request)
+    const renamed = await ledger.updateMember({ requestId: requestId('rename'), actor: agentTeamHumanActor(), memberId: member.memberId,
+      handle: 'role-agent', description: 'Renamed description' })
+    expect(renamed.value.member).toMatchObject({ description: 'Renamed description', role: 'orchestrator' })
+
+    const actor: AgentTeamMemberActor = { kind: 'member', memberId: member.memberId, handle: 'role-agent' }
+    const newSessionId = SessionId(`agent-team-rollover-${crypto.randomUUID()}`)
+    const rolled = await ledger.rolloverMemberSession({ requestId: requestId('role-rollover'), workspaceId: alpha, memberId: member.memberId, actor,
+      previousSessionId: member.sessionId, newSessionId, handoffEventSeq: 5 as never, trigger: 'model' })
+    expect(rolled.value.member).toMatchObject({ sessionId: newSessionId, role: 'orchestrator' })
+    expect(ledger.getMember(member.memberId)?.role).toBe('orchestrator')
+    expect(() => replayLedger(test).validate()).not.toThrow()
+  })
+})
+
 describe('AgentTeam Member session rollover ledger command', () => {
   it('commits a model-actor rollover, moves exactly the sessionId, and keeps every other fact', async () => {
     const pool = new MemoryMediaPool()

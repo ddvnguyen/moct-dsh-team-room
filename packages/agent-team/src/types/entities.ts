@@ -108,8 +108,8 @@ export interface AgentTeamAgentMember {
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities | undefined
   /**
-   * Role label shown in the UI and rendered as a prompt section. Absent reads
-   * as `worker` for display; it never routes work automatically.
+   * Role label shown in the UI and rendered as a prompt section. Absent means
+   * no role: no pill and no role section. It never routes work automatically.
    */
   readonly role?: AgentTeamMemberRole | undefined
   /**

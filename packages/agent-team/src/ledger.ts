@@ -204,6 +204,7 @@ import { resolveBodyMentions } from './mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
 import type { AgentTeamRepliedThread } from './turn-threads.ts'
 import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
+import { assertMemberRole } from './member-roles.ts'
 import type { AgentTeamDocState } from './team-docs.ts'
 import type { AgentTeamDecisionState } from './team-decisions.ts'
 import {
@@ -1076,6 +1077,7 @@ export class AgentTeamLedger {
       this.assertModelSelection(request.member.model)
       this.assertCapabilities(request.member.capabilities)
       assertInstances(request.member.instances)
+      assertMemberRole(request.role)
       const member = Object.freeze({
         ...request.member, handle, description, presetId, state: 'enabled' as const,
         ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
@@ -1111,6 +1113,7 @@ export class AgentTeamLedger {
       this.assertModelSelection(request.model)
       this.assertCapabilities(request.capabilities)
       assertInstances(request.instances)
+      assertMemberRole(request.role)
       // Partial update: an absent field keeps what the Member already has, and
       // an explicit null clears the override. Spreading `prior` verbatim
       // handles the first case; the second must drop the resolved field so the
