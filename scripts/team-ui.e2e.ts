@@ -3131,11 +3131,14 @@ it('answers a decision card and approves a plan in real Web', async () => {
 }, 180_000)
 
 /**
- * The Board (Team Board 4/10): the strip's 看板 tab opens the board face, the
- * create dialog mints an unassigned Task on the chosen Channel, and a real
- * pointer drag moves the card to Done. The move lands only through the Host:
- * changeTask commits, the change wake refetches the catalog, and the card
- * appears in the Done column — no optimistic move happens before that.
+ * The Board (Team Board 4/10): the create dialog mints an unassigned Task on
+ * the chosen Channel, a commit made outside the page reaches the open board
+ * through the change stream, and a real pointer drag moves the card to Done.
+ * The move lands only through the Host: changeTask commits and the catalog
+ * refetch puts the card in the Done column — no optimistic move happens before
+ * that. The board face is entered through the persisted navigation (the
+ * scaffold has no native-tab registry, so the strip's 看板 tab is covered by
+ * the component specs, not here).
  */
 it('creates a board task and drags it to Done in real Web', async () => {
   await installLocalBundle(false)
@@ -3174,12 +3177,29 @@ it('creates a board task and drags it to Done in real Web', async () => {
   await card.waitFor({ timeout: 20_000 })
   const todoColumn = board.locator('[data-testid="board-column"][data-status="todo"]')
   await expect.poll(async () => todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(1)
-  const created = scaffold.ctx.agentTeam.view({ workspaceId: scaffold.ctx.workspaceRegistry.list()[0]!.id })
+  const created = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id })
     .tasks.find((task: { title?: string }) => task.title === 'Board journey task')
   expect(created).toMatchObject({ status: 'todo', assignee: null })
+  // The columns fill the seat: a column is as tall as the board, not its 200px minimum.
+  expect((await todoColumn.boundingBox())!.height).toBeGreaterThan(400)
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-created.png'), fullPage: true })
 
-  // Drag to Done with a real pointer: dnd-kit's PointerSensor needs the
+  // A commit the page did not make reaches the open board through the change
+  // stream: the Task commit lands in Channel and Thread scopes, which the
+  // board follows through the scope-less stream.
+  const taskThread = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id }).threads
+    .find((thread: { taskRef?: string }) => thread.taskRef === created!.taskRef)!
+  await scaffold.ctx.agentTeam.updateTask({ requestId: 'board-outside-edit' as never, workspaceId: workspace.id, taskRef: created!.taskRef,
+    baseRevision: taskThread.revision, patch: { title: 'Board journey task (renamed elsewhere)' } })
+  await expect.poll(async () => board.locator('[data-testid="board-card"]', { hasText: 'renamed elsewhere' }).count(), { timeout: 20_000 }).toBe(1)
+
+  // Escape closes the create dialog without creating anything.
+  await board.getByTestId('board-new-task').click()
+  await page.getByTestId('board-create-dialog').waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('board-create-dialog').waitFor({ state: 'detached' })
+
+  // Drag to Done with a real pointer: dnd-kit's MouseSensor needs the
   // 5px activation distance and the drop resolves through the columns.
   const doneColumn = board.locator('[data-testid="board-column"][data-status="done"]')
   const cardBox = await card.boundingBox()
@@ -3200,9 +3220,9 @@ it('creates a board task and drags it to Done in real Web', async () => {
     doneColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count(), { timeout: 20_000 }).toBe(1)
   await expect.poll(async () =>
     todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(0)
-  const workspaceId = scaffold.ctx.workspaceRegistry.list()[0]!.id
+  const workspaceId = workspace.id
   await expect.poll(() =>
-    scaffold.ctx.agentTeam.view({ workspaceId }).tasks.find((task: { title?: string }) => task.title === 'Board journey task')?.status,
+    scaffold.ctx.agentTeam.view({ workspaceId }).tasks.find((task: { taskRef: string }) => task.taskRef === created!.taskRef)?.status,
   ).toBe('done')
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-dropped-done.png'), fullPage: true })
 
@@ -3211,6 +3231,7 @@ it('creates a board task and drags it to Done in real Web', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   await settleLayout(page)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await expect(board.getByTestId('board-new-task')).toBeVisible()
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-390.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
