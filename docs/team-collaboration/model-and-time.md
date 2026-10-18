@@ -7,7 +7,11 @@ A top-level Channel Message creates one Thread and anchor. New model-facing star
 
 A Task also carries the board fields: `title` (absent on pre-board Tasks, whose subject is the opening Message's first line), `priority` (`urgent|high|medium|low|none`, absent reads as `none`), `assignee` (`MemberId | null`, independent of Claims), and `position` (fractional order within a status column). The Human-only `createTask` Remote commits an unassigned Task with its opening Message in one operation; `updateTask` patches title, priority, assignee or position without moving status — status stays Claim-derived.
 
-Assignment makes the Member a Thread follower in the same commit, which wakes it; `null` clears the assignment without unfollowing.
+Assigning a Task to a different Member appends a public `assign` Activity to its Thread: the assignee starts following if it did not, the Activity is unread for the assignee and every other follower, and that is what wakes it. `null` clears the assignment without unfollowing and appends nothing.
+
+Field-only edits (title, priority, position, or an assignee that did not change) append no fact and leave the Thread revision unchanged. `updateTask` is fenced by the Thread revision alone: the Human does not need to have read the Thread to reorder or relabel a Task, and the edit never makes an Agent's next write stale. A result of `stale_revision` or `unread_required` arrives as an ordinary `ok` result, not an error.
+
+`createTask` without a `position` places the Task after the todo column of its Workspace and stores that value in the record; its body is not scanned for `@mentions`, because assigning the Task is how it addresses a Member.
 
 Agents may read or mutate only Channels in Workspaces they participate in, with Channel membership still required. Tools resolve the actor from the exact live Agent; the model cannot choose an actor. The `workspace` selector must name a participated Workspace. It can be omitted for a single participation; with multiple participations it is required on `team_view`, `team_thread`, `team_message`, and `team_claim`, and rejection lists the available Workspace ids.
 
