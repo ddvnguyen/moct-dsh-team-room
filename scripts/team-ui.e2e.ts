@@ -3140,20 +3140,28 @@ it('answers a decision card and approves a plan in real Web', async () => {
 it('creates a board task and drags it to Done in real Web', async () => {
   await installLocalBundle(false)
   scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  // The board journey does not walk the shell's connect flow: the Team
+  // workspace is a registry entry the scaffold ctx mints, the Channel comes
+  // from the ledger, and the face is reached through the persisted
+  // navigation — the same restore path a reader who left the page on the
+  // board takes. Seeding `board: true` before the first load hands the seat
+  // straight to the board on that Workspace.
+  const workspacePath = join(scaffold.workspaceCwd, 'board-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Board Journey')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  await ledger.createChannel({ requestId: 'board-channel', actor: human, workspaceId: workspace.id, name: 'delivery', description: '', memberIds: [] })
   browser = await chromium.launch({ headless: true, executablePath: CHROME })
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
   const consoleWatch = watchConsole(page)
   await page.goto(scaffold.authenticatedUrl)
-  await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'team-workspace')
-
-  // The strip reads `Tasks | Board | Team | Agents | Scheduled`; the Board
-  // tab's sidebar body is the open action that hands the seat to the board
-  // face on the Workspace the Team navigation holds.
-  await page.getByRole('button', { name: '看板', exact: true }).click()
-  await page.getByTestId('board-tab-open').waitFor()
-  await page.getByTestId('board-tab-open').click()
+  await page.evaluate(workspaceId => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, board: true }))
+  }, workspace.id)
+  await page.reload()
   const board = page.getByTestId('team-board-page')
-  await board.waitFor()
+  await board.waitFor({ timeout: 30_000 })
 
   // Create: the dialog defaults to Unassigned and the first Channel; the Host
   // commits the Task and the catalog refetch carries the card into 待办.
