@@ -2345,18 +2345,34 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Human-only Task creation with an opening Message; the Task may start unassigned. */
+  /**
+   * Human-only Task creation with an opening Message; the Task may start unassigned.
+   * The body is not scanned for `@mentions`: assigning the Task is how a board Task
+   * addresses a Member.
+   */
   @Remote('createTask')
   async createTask(request: AgentTeamCreateTaskRequest): Promise<AgentTeamCreateTaskResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const resolvedAttachments = await this.resolveMessageAttachments(request)
-    const result = await this.requireLedger().createTask({ ...request, actor: agentTeamHumanActor(), resolvedAttachments })
-    this.emitCommittedOutcome(result)
-    return result.value
+    try {
+      const metadata = await this.resolveMessageAttachments(request)
+      const result = await this.requireLedger().createTask({
+        ...request, body: this.appendAttachmentLines(request.body, metadata),
+        ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+        actor: agentTeamHumanActor(),
+      })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      await this.dropUnreferencedPrepared(request, error)
+      throw error
+    }
   }
 
-  /** Human-only Task field update; assignment wakes the new assignee. */
+  /**
+   * Human-only Task field update, fenced by the Thread revision only (no unread-Thread fence: board
+   * fields are metadata). A change of assignee commits an `assign` Activity that wakes the assignee.
+   */
   @Remote('updateTask')
   async updateTask(request: AgentTeamUpdateTaskRequest): Promise<AgentTeamUpdateTaskResult> {
     this.requireAccepting()
@@ -5364,6 +5380,12 @@ export default class AgentTeam extends TypertRemoteService {
     }
     if (activity.kind === 'promote') {
       return `Team Task update\n${actor} created Task ${activity.taskRef} from Thread ${activity.threadRef}; it is open for claims.`
+    }
+    if (activity.kind === 'assign') {
+      const assignee = activity.assignee === undefined ? undefined : this.requireLedger().getMember(activity.assignee)?.handle ?? activity.assignee
+      return readerId !== undefined && activity.assignee === readerId
+        ? `Team Task update\n${actor} assigned Task ${activity.taskRef} to you. Read Thread ${activity.threadRef} and claim the Task when you start the work.`
+        : `Team Task update\n${actor} assigned Task ${activity.taskRef} to ${assignee ?? 'a Member'}.`
     }
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''

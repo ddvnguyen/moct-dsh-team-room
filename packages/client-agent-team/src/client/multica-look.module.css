@@ -65,7 +65,7 @@
   --ml-text: var(--dsw-alias-label-primary, #18181b);
   --ml-text-secondary: var(--dsw-alias-label-secondary, #52525b);
   --ml-text-tertiary: var(--dsw-alias-label-tertiary, #71717a);
-  --ml-text-faint: var(--dsw-alias-label-quaternary, #a1a1aa);
+  --ml-text-faint: var(--dsw-alias-label-caption, #a1a1aa);
   --ml-brand: var(--dsw-alias-brand-primary, #4d6bfe);
 
   /* Status colours — Multica's unstarted / started / done / closed tones. */
@@ -73,19 +73,19 @@
   --ml-status-in-progress: var(--dsw-alias-state-warn-primary, #d97706);
   --ml-status-in-review: var(--dsw-alias-state-success-primary, #059669);
   --ml-status-done: var(--dsw-alias-brand-primary, #4d6bfe);
-  --ml-status-closed: var(--dsw-alias-label-quaternary, #a1a1aa);
+  --ml-status-closed: var(--dsw-alias-label-caption, #a1a1aa);
 
   /* Priority colours. */
   --ml-priority-urgent: var(--dsw-alias-state-error-primary, #dc2626);
   --ml-priority-high: var(--dsw-alias-state-warn-primary, #d97706);
   --ml-priority-medium: var(--dsw-alias-state-warn-primary, #d97706);
   --ml-priority-low: var(--dsw-alias-brand-primary, #4d6bfe);
-  --ml-priority-none: var(--dsw-alias-label-quaternary, #a1a1aa);
+  --ml-priority-none: var(--dsw-alias-label-caption, #a1a1aa);
 
   /* Presence. */
   --ml-presence-online: var(--dsw-alias-state-success-primary, #059669);
   --ml-presence-unstable: var(--dsw-alias-state-warn-primary, #d97706);
-  --ml-presence-offline: var(--dsw-alias-label-quaternary, #a1a1aa);
+  --ml-presence-offline: var(--dsw-alias-label-caption, #a1a1aa);
   --ml-presence-working: var(--dsw-alias-brand-primary, #4d6bfe);
 
   color: var(--ml-text);
