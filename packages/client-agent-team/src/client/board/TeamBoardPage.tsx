@@ -540,7 +540,6 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       <span data-testid="board-debug-state" data-settling={[...settlingRefs].join(',')} hidden aria-hidden="true" />
       <div className={css.toolbar}>
         <BoardFilterBar filters={filters} onFiltersChange={setFilters} channels={channels} members={members} t={t} />
-        <span className={css.spacer} />
         <button type="button" className={css.newTaskButton} data-testid="board-new-task" onClick={openCreate}>
           + {t('boardNewTask')}
         </button>

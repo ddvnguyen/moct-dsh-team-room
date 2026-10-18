@@ -29,8 +29,6 @@
   flex-wrap: wrap;
 }
 
-.spacer { flex: 1; }
-
 .newTaskButton {
   display: inline-flex;
   align-items: center;
