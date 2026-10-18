@@ -28,7 +28,9 @@ Member 与 workspace 之间是可 join、可 leave 的关系。每次变动都�
 
 ## Member Role
 
-Member 实体上的可选 `role` 字段（`architect`、`leader`、`worker` 或 `orchestrator`）。它只是一个标签，并在 Member 的 identity 块中追加一段固定 prompt，从不用于路由：未分配的 Task 保持未分配，Orchestrator 只报告。`addMember` 设置它，`updateMember` 修改它，`null` 清除它。它随 `team/member-added` 与 `team/member-updated` 落账，因此不含该字段的旧 ledger 仍可原样重放，并渲染此前的 identity 块。
+Member 实体上的可选 `role` 字段（`architect`、`leader`、`worker` 或 `orchestrator`）。它只是一个标签，并在 Member 的 identity 块中追加一段固定 prompt，从不用于路由：未分配的 Task 保持未分配，Orchestrator 只报告。`addMember` 设置它，`updateMember` 修改它，`null` 清除它。四个值以外的 role 会在提交时被拒绝。它随 `team/member-added` 与 `team/member-updated` 落账，因此不含该字段的旧 ledger 仍可原样重放，并渲染此前的 identity 块。
+
+Orchestrator「只观察和报告」是 prompt 层面的约束：Host 不会阻止 Orchestrator 调用 Team 工具。
 
 ## Workspace
 
