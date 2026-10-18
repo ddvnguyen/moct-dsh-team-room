@@ -33,7 +33,7 @@ light value and is only reached on a host that does not define the alias.
 | `--ml-*` | Host alias | Fallback |
 | --- | --- | --- |
 | `--ml-text-micro` … `--ml-text-display` | none (type scale) | 11 / 12 / 13 / 14 / 15 / 16 / 18 / 20 / 24 / 36px |
-| `--ml-radius-xs` … `--ml-radius-2xl` | `--dsw-radius-md` for the base step | 3 / 4 / 6 / 8 / 12 / 16px |
+| `--ml-radius-xs` … `--ml-radius-2xl` | none (the host has no matching ladder) | 3 / 4 / 6 / 8 / 12 / 16px |
 | `--ml-surface` | `--dsw-alias-bg-layer-1` | `#ffffff` |
 | `--ml-surface-raised` | `--dsw-alias-bg-layer-2` | `#f7f7f8` |
 | `--ml-surface-hover` | `--dsw-alias-interactive-bg-hover` | `rgb(0 0 0 / 4%)` |
@@ -41,13 +41,13 @@ light value and is only reached on a host that does not define the alias.
 | `--ml-text` | `--dsw-alias-label-primary` | `#18181b` |
 | `--ml-text-secondary` | `--dsw-alias-label-secondary` | `#52525b` |
 | `--ml-text-tertiary` | `--dsw-alias-label-tertiary` | `#71717a` |
-| `--ml-text-faint` | `--dsw-alias-label-quaternary` | `#a1a1aa` |
+| `--ml-text-faint` | `--dsw-alias-label-caption` | `#a1a1aa` |
 | `--ml-brand` | `--dsw-alias-brand-primary` | `#4d6bfe` |
 | `--ml-status-in-progress` | `--dsw-alias-state-warn-primary` | `#d97706` |
 | `--ml-status-in-review` | `--dsw-alias-state-success-primary` | `#059669` |
 | `--ml-status-done` | `--dsw-alias-brand-primary` | `#4d6bfe` |
 | `--ml-priority-urgent` | `--dsw-alias-state-error-primary` | `#dc2626` |
-| `--ml-presence-*` | success / warn / quaternary / brand | as above |
+| `--ml-presence-*` | success / warn / caption / brand | as above |
 
 Density constants (`--ml-card-padding`, `--ml-column-width`, `--ml-row-height`)
 have no host equivalent and are documented literals.

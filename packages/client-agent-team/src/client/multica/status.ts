@@ -1,4 +1,4 @@
-// Derived from multica-x packages/core/issues/config/status.ts @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+// Derived from multica-x packages/core/issues/config/status.ts and packages/core/issues/status-category.ts @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
 //
 // Multica keys its columns on the concrete status; the Team ledger derives
 // exactly five, so the catalog surface collapses to a fixed order. Categories
