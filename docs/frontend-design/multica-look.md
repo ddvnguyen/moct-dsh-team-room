@@ -39,11 +39,11 @@ and reports a change through a callback.
 | `ActorAvatar` | `views/common/actor-avatar.tsx` + `ui/components/common/actor-avatar.tsx` | name/URL/kind props; no hover card or profile link |
 | `AgentAvatarStack` | `views/agents/components/agent-avatar-stack.tsx` | roster slice as props; `+N` overflow kept |
 | `AgentPresenceDot` | `views/agents/components/agent-presence-indicator.tsx` | derived detail as a prop; neutral dot while loading |
-| `AgentActivityIndicator` | `views/issues/components/issue-agent-activity-indicator.tsx` + `agents/components/agent-activity-hover-content.tsx` | `memberActivity` snapshot as props; dsh `HoverCard` |
+| `AgentActivityIndicator` | `views/issues/components/issue-agent-activity-indicator.tsx` + `agents/components/agent-activity-hover-content.tsx` | `memberActivity` snapshot as props; dsh `HoverCard` with `inline`, so keyboard focus opens the per-Turn details and the badge text already carries tool and step for touch |
 | `StatusPicker` | `views/issues/components/pickers/status-picker.tsx` | five statuses; only todo/done/closed enabled |
 | `PriorityPicker` | `views/issues/components/pickers/priority-picker.tsx` | display order kept; no deferred popup |
 | `AssigneePicker` | `views/issues/components/pickers/assignee-picker.tsx` + `property-picker.tsx` | members only; "Unassigned" writes null; no squads |
-| `PickerMenu` / `PickerItem` | `views/issues/components/pickers/property-picker.tsx` | dsh `Menu` owns outside-click, Escape and focus return |
+| `PickerMenu` / `PickerItem` | `views/issues/components/pickers/property-picker.tsx` | dsh `Menu` owns outside-click, Escape and focus return; the list is portaled, the trigger name is `field: value`, and the trigger stops its click so a clickable card does not open |
 
 The parity audit (`node scripts/audit-ui-parity.mjs`) walks subdirectories, so a
 sheet under `multica-ui/` follows the same focus, token and geometry rules as
