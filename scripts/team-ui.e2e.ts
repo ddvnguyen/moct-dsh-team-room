@@ -3172,7 +3172,8 @@ it('creates a board task and drags it to Done in real Web', async () => {
   const dialog = page.getByTestId('board-create-dialog')
   await dialog.getByLabel('标题').fill('Board journey task')
   await dialog.getByLabel('描述').fill('Opened from the board journey')
-  await dialog.getByTestId('board-create-submit').click()
+  // The submit button lives in the Modal footer, beside the form body.
+  await page.getByTestId('board-create-submit').click()
   const card = board.locator('[data-testid="board-card"]', { hasText: 'Board journey task' })
   await card.waitFor({ timeout: 20_000 })
   const todoColumn = board.locator('[data-testid="board-column"][data-status="todo"]')
@@ -3231,7 +3232,7 @@ it('creates a board task and drags it to Done in real Web', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   await settleLayout(page)
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
-  await expect(board.getByTestId('board-new-task')).toBeVisible()
+  expect(await board.getByTestId('board-new-task').isVisible()).toBe(true)
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-390.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
