@@ -1,1 +1,5 @@
-# dsh-side-menu: no patch needed; client plugin observes DOM.
+# Client-only plugin row. The browser half is discovered through package.json's
+# dsh.client declaration; the host half is an empty apply so the row exists.
+- insert:
+    - id: dsh-side-menu
+      name: '@ddvnguyen/dsh-side-menu'
