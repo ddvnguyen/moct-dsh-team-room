@@ -715,6 +715,18 @@ function applyUi(ctx: ClientContext): void {
     return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
       renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
   }
+  // Companion slots exposed by dsh-codex-ui (sidebar.team / sidebar.agents).
+  // Register the same tab bodies there so the tabs survive the codex sidebar.
+  try {
+    ctx.slots.inject('sidebar.team' as never, () => ctx.slots.register({
+      name: 'sidebar.team', locale: NS,
+    } as never, (props: NativeTabRenderProps) => {
+      const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
+      return createElement(TeamSlotBoundary, { slot: 'codex-tab', t: bound as never },
+        renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+    }) as never)
+  } catch { /* slot absent (no dsh-codex-ui) */ }
+
   // Once the tab is in the strip it is the Channel view's home, and the rail's
   // fallback Team row stands down; a strip that never appears keeps the row.
   ctx.effect(() => insertTeamTab(ctx, {
@@ -736,6 +748,16 @@ function applyUi(ctx: ClientContext): void {
     return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
       renderAgentsTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
   }
+  try {
+    ctx.slots.inject('sidebar.agents' as never, () => ctx.slots.register({
+      name: 'sidebar.agents', locale: NS,
+    } as never, (props: NativeTabRenderProps) => {
+      const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
+      return createElement(TeamSlotBoundary, { slot: 'codex-tab', t: bound as never },
+        renderAgentsTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+    }) as never)
+  } catch { /* slot absent (no dsh-codex-ui) */ }
+
   ctx.effect(() => {
     const dispose = insertTeamTab(ctx, {
       id: AGENTS_TAB_ID,
