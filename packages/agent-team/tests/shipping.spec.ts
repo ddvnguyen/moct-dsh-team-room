@@ -308,6 +308,9 @@ describe('Agent Team shipping contract', () => {
     expect(manifest.files).toContain('packages/agent-team/core-skills/**/*')
     expect(manifest.files).toContain('packages/agent-team/lib/**/*')
     expect(manifest.files).toContain('packages/client-agent-team/lib/**/*')
+    // Ported Multica code is redistributed, so the license text and NOTICE ship with it.
+    expect(manifest.files).toContain('NOTICE')
+    expect(manifest.files).toContain('licenses/**/*')
     expect(manifest.name).toBe('@ddvnguyen/moct-dsh-team-room')
     // The context-continuity engine rides as a regular dependency, never a
     // peer: profiles set autoInstallPeers: false, so a peer nothing else
