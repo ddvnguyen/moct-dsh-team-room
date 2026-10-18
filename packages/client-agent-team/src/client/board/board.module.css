@@ -75,7 +75,6 @@
   gap: var(--ml-column-gap);
   overflow-x: auto;
   padding: 8px;
-  align-items: flex-start;
 }
 
 .emptyBoard {
@@ -93,6 +92,7 @@
 .column {
   width: var(--ml-column-width);
   flex-shrink: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-radius: var(--ml-radius-xl);
@@ -177,6 +177,33 @@
   gap: 8px;
 }
 
+.columnActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.virtualSlot {
+  padding-bottom: 8px;
+}
+
+.dropHint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  pointer-events: none;
+  border: 1px dashed var(--ml-priority-urgent);
+  border-radius: var(--ml-radius-lg);
+  color: var(--ml-priority-urgent);
+  background: var(--ml-surface);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
 .emptyColumn {
   padding: 32px 0;
   text-align: center;
@@ -230,7 +257,14 @@
 }
 
 .cardTitle {
-  margin-top: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   color: var(--ml-text);
   font-size: var(--ml-text-label);
   line-height: var(--ml-text-label-line);
@@ -239,6 +273,24 @@
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.cardTitle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+  border-radius: var(--ml-radius-sm);
+}
+
+/* The sortable wrapper is the card's tab stop: it carries the focus ring and
+   the keyboard-drag hand-off, and keeps touch scrolling working outside a drag. */
+.cardSlot {
+  border-radius: var(--ml-radius-lg);
+  touch-action: manipulation;
+}
+
+.cardSlot:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
 }
 
 .cardMeta {
@@ -357,29 +409,13 @@
 .hiddenShowButton:hover { background: var(--ml-surface-hover); color: var(--ml-text); }
 
 /* --- Filter bar --- */
-.filterButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--ml-border);
-  border-radius: var(--ml-radius-md);
-  background: var(--ml-surface);
-  color: var(--ml-text-secondary);
-  font-size: var(--ml-text-caption);
-  line-height: var(--ml-text-caption-line);
-  padding: 4px 9px;
-  cursor: pointer;
-}
-
-.filterButton:hover { background: var(--ml-surface-hover); }
-
 .filterBadge {
   border-radius: 999px;
   corner-shape: round;
   background: var(--ml-brand);
   color: var(--ml-surface);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
   padding: 0 5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -396,7 +432,6 @@
   width: 150px;
 }
 
-.filterSearch:focus { outline: 1px solid var(--ml-brand); border-color: var(--ml-brand); }
 
 .filterChip {
   display: inline-flex;
@@ -426,38 +461,11 @@
 
 .filterChipClear:hover { color: var(--ml-text); }
 
-/* --- Create dialog --- */
-.dialogBackdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--dsw-alias-bg-mask-3, rgba(0, 0, 0, 0.48));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 40;
-  padding: 16px;
-}
-
-.dialog {
-  width: 420px;
-  max-width: 100%;
-  max-height: 80vh;
-  overflow-y: auto;
-  border-radius: var(--ml-radius-2xl);
-  background: var(--ml-surface);
-  border: 1px solid var(--ml-border);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.dialogTitle {
-  margin: 0;
-  color: var(--ml-text);
-  font-size: var(--ml-text-title-sm);
-  line-height: var(--ml-text-title-sm-line);
-  font-weight: 600;
+/* --- Create dialog (body of the dsh Modal; the Modal owns the mask and card) --- */
+.dialogForm {
+  display: grid;
+  gap: 12px;
+  min-width: min(420px, 100%);
 }
 
 .fieldLabel {
@@ -480,7 +488,7 @@
   font-family: inherit;
 }
 
-.fieldInput:focus { outline: 1px solid var(--ml-brand); border-color: var(--ml-brand); }
+.fieldInput:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; border-color: var(--ml-brand); }
 
 .fieldTextarea {
   min-height: 64px;
@@ -505,34 +513,6 @@
   font-family: inherit;
 }
 
-.dialogActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.dialogButton {
-  border: 1px solid var(--ml-border);
-  border-radius: var(--ml-radius-md);
-  background: var(--ml-surface);
-  color: var(--ml-text);
-  font-size: var(--ml-text-caption);
-  line-height: var(--ml-text-caption-line);
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
-.dialogButton:hover { background: var(--ml-surface-hover); }
-
-.dialogPrimary {
-  border: none;
-  background: var(--ml-brand);
-  color: var(--ml-surface);
-}
-
-.dialogPrimary:disabled { opacity: 0.6; cursor: default; }
-
 .dialogError {
   color: var(--ml-priority-urgent);
   font-size: var(--ml-text-caption);
@@ -544,9 +524,14 @@
 .columnAddButton:focus-visible,
 .hiddenShowButton:focus-visible,
 .filterChipClear:focus-visible,
-.filterButton:focus-visible,
-.filterSearch:focus-visible,
-.dialogButton:focus-visible {
+.filterSearch:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
+}
+
+/* dnd-kit animates the sorted cards with inline transitions; honor the reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .cardSlot {
+    transition: none !important;
+  }
 }

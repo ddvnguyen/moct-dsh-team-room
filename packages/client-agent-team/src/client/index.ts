@@ -342,15 +342,18 @@ function inboxQuery(request: AgentTeamInboxRequest): TeamQueryIdentity {
 
 /**
  * The board's catalog query: one key per Workspace. Task commits (create,
- * update, claims, resolution) land in the commit's Workspace scope and Channel
- * wakes carry the Threads the Tasks open over, so both narrow scopes move the
- * query; presence wakes change no board fact and stay out.
+ * update, claims, resolution) land in Channel and Thread scopes only, never in
+ * the Workspace scope, so the board reads from the scope-less stream like the
+ * Inbox does; it also refetches on its Workspace's own scope. Presence and
+ * activity wakes change no catalog fact and stay out.
  */
 function boardQuery(request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }): TeamQueryIdentity {
   return {
     key: `board:${request.workspaceId}`,
-    covers: scope => scope !== undefined
-      && (scope.kind === 'workspace' || scope.kind === 'channel'),
+    covers: scope => scope === undefined
+      || (scope.kind === 'workspace' && scope.workspaceId === request.workspaceId)
+      || scope.kind === 'channel'
+      || scope.kind === 'thread',
   }
 }
 
@@ -379,7 +382,7 @@ function teamSharedRemotes(
     drafts,
     humanIdentity,
     loadMembers: (request: AgentTeamMembersRequest) => queries.read(membersQuery(request), () => ctx.remote.agentTeam.members(request)),
-    loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => queries.read(boardQuery(request), () => ctx.remote.agentTeam.view({ workspaceId: request.workspaceId, includeCatalog: true })),
+    loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => queries.read(boardQuery(request), () => ctx.remote.agentTeam.view({ workspaceId: request.workspaceId, includeCatalog: true, limit: 1, includeActivities: false })),
     createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
     updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),

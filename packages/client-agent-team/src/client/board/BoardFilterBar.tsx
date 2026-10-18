@@ -27,12 +27,16 @@ export function BoardFilterBar({ filters, onFiltersChange, channels, members, t 
   const toggle = <T,>(list: readonly T[], value: T): readonly T[] =>
     list.includes(value) ? list.filter(entry => entry !== value) : [...list, value]
 
-  const chipLabel = (label: string, onClear: () => void) => (
+  // A chip names its facet and what is selected; its clear button names the facet it clears.
+  const chipLabel = (facet: string, values: readonly string[], onClear: () => void) => (
     <span className={css.filterChip}>
-      {label}
-      <button type="button" className={css.filterChipClear} aria-label={t('boardFilterClear')} onClick={onClear}>×</button>
+      {`${facet}: ${values.join(', ')}`}
+      <button type="button" className={css.filterChipClear} aria-label={`${t('boardFilterClear')} ${facet}`} onClick={onClear}>×</button>
     </span>
   )
+  const channelNames = filters.channelRefs.map(ref => channels.find(channel => channel.channelRef === ref)?.name ?? ref)
+  const assigneeNames = filters.assignees.map(id => id === UNASSIGNED ? t('assigneeUnassigned') : members.find(member => member.memberId === id)?.handle ?? id)
+  const priorityNames = filters.priorities.map(priority => t(PRIORITY_LABEL_KEY[priority]))
 
   return (
     <div className={css.toolbarFilters} data-testid="board-filter-bar">
@@ -107,10 +111,10 @@ export function BoardFilterBar({ filters, onFiltersChange, channels, members, t 
           </>
         )}
       </PickerMenu>
-      {count > 0 && <span className={css.filterBadge} data-testid="board-filter-count">{count}</span>}
-      {filters.channelRefs.length > 0 && chipLabel(t('boardFilterChannel'), () => onFiltersChange({ ...filters, channelRefs: [] }))}
-      {filters.assignees.length > 0 && chipLabel(t('boardFilterAssignee'), () => onFiltersChange({ ...filters, assignees: [] }))}
-      {filters.priorities.length > 0 && chipLabel(t('boardFilterPriority'), () => onFiltersChange({ ...filters, priorities: [] }))}
+      {count > 0 && <span className={css.filterBadge} role="status" aria-label={t('boardFilterActive', { count: String(count) })} data-testid="board-filter-count">{count}</span>}
+      {filters.channelRefs.length > 0 && chipLabel(t('boardFilterChannel'), channelNames, () => onFiltersChange({ ...filters, channelRefs: [] }))}
+      {filters.assignees.length > 0 && chipLabel(t('boardFilterAssignee'), assigneeNames, () => onFiltersChange({ ...filters, assignees: [] }))}
+      {filters.priorities.length > 0 && chipLabel(t('boardFilterPriority'), priorityNames, () => onFiltersChange({ ...filters, priorities: [] }))}
       <input
         type="search"
         className={css.filterSearch}

@@ -561,6 +561,31 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     viewItems = viewItems.map(item => ({ ...item, task, thread, taskNumber: 1, claimOwners: [] }))
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, activity, task, thread } }
   })
+  // A Task commit wakes the Channel and Thread scopes (and scope-less waiters)
+  // exactly as the Host's `changeScopesOf` does for claims, resolutions, creates
+  // and field updates: never the Workspace scope. A spec that needs a
+  // workspace-shaped wake must say so with `publishWorkspaceUpdate`.
+  const publishTaskCommit = (channelRef: string, threadRef: string): void => {
+    changeVersion += 1
+    for (const waiter of changeWaiters) {
+      const scope = waiter.request.scope
+      if (scope === undefined || (scope.kind === 'channel' && scope.channelRef === channelRef) || (scope.kind === 'thread' && scope.threadRef === threadRef)) waiter.wake()
+    }
+  }
+  // The next board write answers with a business outcome instead of committing,
+  // the way the Host does for a stale revision or an unread Thread.
+  let nextBoardWriteOutcome: 'stale_revision' | 'unread_required' | undefined
+  const failNextBoardWrite = (kind: 'stale_revision' | 'unread_required'): void => { nextBoardWriteOutcome = kind }
+  const takeBoardWriteOutcome = (threadRef: string, revision: number) => {
+    const kind = nextBoardWriteOutcome
+    nextBoardWriteOutcome = undefined
+    if (kind === undefined) return undefined
+    return { ok: true as const, value: kind === 'stale_revision'
+      ? { kind, threadRef, expectedRevision: revision, revision: revision + 1 }
+      : { kind, threadRef, revision, unreadCount: 1, directCount: 0 } }
+  }
+  /** The next end-of-column position, as the Host assigns it to a new todo Task. */
+  const endOfTodoPosition = (): number => boardTasks.reduce((highest, row) => (row as { status: string }).status === 'todo' ? Math.max(highest, (row as { position?: number }).position ?? 0) : highest, 0) + 1
   const changeTask = vi.fn(async (request: { taskRef?: string; action: 'accept' | 'close' | 'reopen' }) => {
     const status = request.action === 'reopen' ? 'todo' : request.action === 'accept' ? 'done' : 'closed'
     const resolution = request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed'
@@ -572,12 +597,15 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
       : undefined
     if (boardRow !== undefined) {
       const rowThreadRef = (boardRow as { threadRef: string }).threadRef
+      const refused = takeBoardWriteOutcome(rowThreadRef, boardThreadRevisions.get(rowThreadRef) ?? 2)
+      if (refused !== undefined) return refused
       const revision = (boardThreadRevisions.get(rowThreadRef) ?? 2) + 1
       boardTasks = boardTasks.map(row => row === boardRow ? { ...row, status, resolution } : row)
       boardThreadRevisions.set(rowThreadRef, revision)
       // The map above replaced the row object, so find the updated row by ref.
       const task = boardTasks.find(row => (row as { taskRef: string }).taskRef === request.taskRef)!
       const thread = { threadRef: rowThreadRef, taskRef: (task as { taskRef: string }).taskRef, revision }
+      publishTaskCommit((task as { channelRef: string }).channelRef, rowThreadRef)
       return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: request.taskRef, threadRef: rowThreadRef, actor: 'member:human', kind: request.action, sequence: revision + 10 }, task, thread, claims: viewClaims } }
     }
     const top = viewItems[0]!
@@ -592,22 +620,23 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // Board Remotes (Team Board 4/10). createTask mints the next Task ref and
   // appends an unassigned row; updateTask patches board fields the way the
   // ledger projection does; both bump the Thread revision like a commit.
-  const createTask = vi.fn(async (request: { channelRef: string; title?: string; body: string; priority?: string; assignee?: string | null }) => {
+  const createTask = vi.fn(async (request: { requestId?: string; channelRef: string; title?: string; body: string; priority?: string; assignee?: string | null; position?: number }) => {
     boardTaskCounter += 1
     const taskRef = `task:board-${boardTaskCounter}`
     const threadRef = `thread:board-${boardTaskCounter}`
     const task = { taskRef, channelRef: request.channelRef, threadRef, status: 'todo', resolution: 'open',
       ...(request.title === undefined ? {} : { title: request.title }),
       ...(request.priority === undefined ? {} : { priority: request.priority }),
-      assignee: request.assignee ?? null, position: 0 }
+      assignee: request.assignee ?? null, position: request.position ?? endOfTodoPosition() }
     boardTasks = [...boardTasks, task]
     boardTaskNumbers.set(taskRef, boardTaskCounter)
     boardThreadRevisions.set(threadRef, 2)
+    publishTaskCommit(request.channelRef, threadRef)
     const message = { messageRef: `message:board-${boardTaskCounter}`, channelRef: request.channelRef, threadRef, sender: 'member:human', body: request.body, topLevel: true, sequence: 100 + boardTaskCounter, occurredAt: '2026-08-21T10:00:00.000Z' }
     const thread = { threadRef, taskRef, revision: 2 }
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
   })
-  const updateTask = vi.fn(async (request: { taskRef: string; patch: Record<string, unknown> }) => {
+  const updateTask = vi.fn(async (request: { taskRef: string; baseRevision?: number; patch: Record<string, unknown> }) => {
     const existing = boardTasks.find(task => (task as { taskRef: string }).taskRef === request.taskRef) ?? (() => {
       const fromMessage = viewItems.map(item => item.task).find(task => task !== undefined && (task as { taskRef?: string }).taskRef === request.taskRef)
       if (fromMessage === undefined) return undefined
@@ -616,17 +645,33 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
       return row
     })()
     if (existing === undefined) return { ok: false as const, error: { message: 'task missing' } }
+    const existingThreadRef = (existing as { threadRef: string }).threadRef
+    const currentRevision = boardThreadRevisions.get(existingThreadRef) ?? 2
+    const refused = takeBoardWriteOutcome(existingThreadRef, currentRevision)
+    if (refused !== undefined) return refused
+    if (request.baseRevision !== undefined && request.baseRevision !== currentRevision) {
+      return { ok: true as const, value: { kind: 'stale_revision' as const, threadRef: existingThreadRef, expectedRevision: request.baseRevision, revision: currentRevision } }
+    }
     let patched: Record<string, unknown> = existing
     boardTasks = boardTasks.map(task => {
       if (task !== existing) return task
       patched = { ...task, ...request.patch }
       return patched
     })
-    const threadRef = (existing as { threadRef: string }).threadRef
-    const revision = (boardThreadRevisions.get(threadRef) ?? 2) + 1
-    boardThreadRevisions.set(threadRef, revision)
-    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, task: patched, thread: { threadRef, taskRef: (patched as { taskRef: string }).taskRef, revision } } }
+    // Field-only edits leave the Thread revision alone, like the Host ledger.
+    const threadRef = existingThreadRef
+    publishTaskCommit((existing as { channelRef: string }).channelRef, threadRef)
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, task: patched, thread: { threadRef, taskRef: (patched as { taskRef: string }).taskRef, revision: currentRevision } } }
   })
+  /** An Agent's claim commit made elsewhere: the row moves to a live status and only Channel and Thread scopes wake. */
+  const claimBoardTask = (taskRef: string, status: 'in_progress' | 'in_review'): void => {
+    const row = boardTasks.find(entry => (entry as { taskRef: string }).taskRef === taskRef)
+    if (row === undefined) throw new Error(`no board Task ${taskRef}`)
+    const threadRef = (row as { threadRef: string }).threadRef
+    boardTasks = boardTasks.map(entry => entry === row ? { ...entry, status } : entry)
+    boardThreadRevisions.set(threadRef, (boardThreadRevisions.get(threadRef) ?? 2) + 1)
+    publishTaskCommit((row as { channelRef: string }).channelRef, threadRef)
+  }
   /** Replace the board Task rows and wake every workspace waiter. */
   const seedBoardTasks = (rows: ReadonlyArray<Record<string, unknown>>): void => { boardTasks = [...rows]; wakeAll() }
   // Each read consumes the queue head as its remainingUnreadCount: the page's
@@ -960,5 +1005,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, claimBoardTask, failNextBoardWrite, publishTaskCommit, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

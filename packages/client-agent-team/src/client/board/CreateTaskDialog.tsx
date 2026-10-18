@@ -4,15 +4,16 @@
 // Rendering adapted: one manual mode only. Fields are title, description
 // (plain textarea), channel (default = the last channel a Task was created in,
 // remembered in localStorage), priority and assignee (default Unassigned —
-// creating never assigns). The dialog is a plain fixed overlay, not the dsh
-// dialog primitive, because the board renders inside both the main seat and
-// the native tab body and must not depend on the shell's portal stack.
+// creating never assigns). The shell is the dsh `Modal`, like the other Team
+// dialogs: it owns Escape, focus containment and the mask.
 
 import { useState } from 'react'
+import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamSidebarProps } from '../slots.ts'
 import { PRIORITY_LABEL_KEY } from '../multica/priority.ts'
 import { AssigneePicker, type AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
+import look from '../multica-look.module.css'
 import css from './board.module.css'
 
 /** localStorage key for the last channel a Task was created in. */
@@ -33,11 +34,19 @@ export interface CreateTaskDialogProps {
   readonly t: TeamSidebarProps['t']
 }
 
+function rememberedChannel(): AgentTeamChannelRef | undefined {
+  try {
+    return localStorage.getItem(LAST_CHANNEL_KEY) as AgentTeamChannelRef | null ?? undefined
+  } catch (error) {
+    // Blocked storage only costs the remembered default.
+    void error
+    return undefined
+  }
+}
+
 /** The board's create dialog: one unassigned Task over a chosen Channel. */
 export function CreateTaskDialog({ channels, members, defaultChannelRef, onCreate, onClose, t }: CreateTaskDialogProps) {
-  const storedChannel = ((): AgentTeamChannelRef | undefined => {
-    try { return localStorage.getItem(LAST_CHANNEL_KEY) as AgentTeamChannelRef | null ?? undefined } catch { return undefined }
-  })()
+  const storedChannel = rememberedChannel()
   const initialChannel = defaultChannelRef
     ?? (channels.some(channel => channel.channelRef === storedChannel) ? storedChannel : undefined)
     ?? channels[0]?.channelRef
@@ -49,8 +58,10 @@ export function CreateTaskDialog({ channels, members, defaultChannelRef, onCreat
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
 
+  const canSubmit = !submitting && title.trim() !== '' && channelRef !== undefined
+
   const submit = async (): Promise<void> => {
-    if (channelRef === undefined || title.trim() === '' || submitting) return
+    if (!canSubmit) return
     setSubmitting(true)
     setError(undefined)
     try {
@@ -61,7 +72,12 @@ export function CreateTaskDialog({ channels, members, defaultChannelRef, onCreat
         ...(priority === 'none' ? {} : { priority }),
         assignee,
       })
-      try { localStorage.setItem(LAST_CHANNEL_KEY, channelRef) } catch { /* private mode */ }
+      try {
+        localStorage.setItem(LAST_CHANNEL_KEY, channelRef)
+      } catch (storageError) {
+        // Blocked storage only costs the remembered default.
+        void storageError
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       setSubmitting(false)
@@ -69,15 +85,27 @@ export function CreateTaskDialog({ channels, members, defaultChannelRef, onCreat
   }
 
   return (
-    <div className={css.dialogBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-      <div className={css.dialog} role="dialog" aria-label={t('boardCreateTask')} data-testid="board-create-dialog">
-        <h2 className={css.dialogTitle}>{t('boardCreateTask')}</h2>
+    <Modal
+      open
+      onClose={onClose}
+      title={t('boardNewTask')}
+      closeLabel={t('close')}
+      footer={(
+        <>
+          <Button variant="outline" disabled={submitting} onClick={onClose}>{t('cancel')}</Button>
+          <Button variant="primary" disabled={!canSubmit} data-testid="board-create-submit" onClick={() => { void submit() }}>
+            {t('boardCreateSubmit')}
+          </Button>
+        </>
+      )}
+    >
+      <div className={`${look.multicaLook} ${css.dialogForm}`} data-testid="board-create-dialog">
         <label className={css.fieldLabel}>
           {t('boardCreateTitle')}
           <input
             className={css.fieldInput}
             value={title}
-            autoFocus
+            data-modal-autofocus=""
             onChange={event => setTitle(event.target.value)}
             onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void submit() } }}
           />
@@ -115,19 +143,7 @@ export function CreateTaskDialog({ channels, members, defaultChannelRef, onCreat
           <AssigneePicker assignee={assignee} members={members} onChange={memberId => setAssignee(memberId as AgentTeamMemberId | null)} t={t} />
         </div>
         {error !== undefined && <p className={css.dialogError} role="alert">{error}</p>}
-        <div className={css.dialogActions}>
-          <button type="button" className={css.dialogButton} onClick={onClose}>{t('boardCancel')}</button>
-          <button
-            type="button"
-            className={`${css.dialogButton} ${css.dialogPrimary}`}
-            disabled={submitting || title.trim() === '' || channelRef === undefined}
-            data-testid="board-create-submit"
-            onClick={() => { void submit() }}
-          >
-            {t('boardCreateSubmit')}
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   )
 }

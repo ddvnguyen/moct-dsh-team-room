@@ -24,7 +24,7 @@ export function HiddenColumnsPanel({ hidden, onShow, t }: {
             <StatusIcon status={status} size={14} />
             <span className={css.hiddenRowLabel}>{t(STATUS_LABEL_KEY[status])}</span>
           </span>
-          <button type="button" className={css.hiddenShowButton} onClick={() => onShow(status)}>
+          <button type="button" className={css.hiddenShowButton} aria-label={`${t('boardShowColumn')} ${t(STATUS_LABEL_KEY[status])}`} onClick={() => onShow(status)}>
             {t('boardShowColumn')}
           </button>
         </div>

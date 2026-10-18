@@ -4,6 +4,9 @@
 // Multica's Issue + store selectors; the dnd-kit sortable wrapper is split out
 // (`DraggableBoardCard`); the pickers write through one `onUpdate` callback;
 // Multica's dates, labels, duplicates, peek and context menu are not ported.
+// The sortable wrapper is the card's one tab stop (Space or Enter picks it up
+// for a keyboard drag); the title is the real control that opens the Task, so
+// no button contains another.
 
 import { memo, useCallback, type CSSProperties } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
@@ -23,7 +26,7 @@ export interface BoardCardUpdate {
   readonly assignee?: string | null
 }
 
-function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: {
+interface CardBodyProps {
   readonly task: BoardCardTask
   readonly members: readonly AssigneeOption[]
   readonly activities: readonly ActivitySource[]
@@ -31,7 +34,9 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
   readonly onUpdate: (taskRef: string, update: BoardCardUpdate) => void
   readonly onOpen: (task: BoardCardTask) => void
   readonly t: TeamSidebarProps['t']
-}) {
+}
+
+function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: CardBodyProps) {
   const handleUpdate = useCallback((update: BoardCardUpdate) => {
     onUpdate(task.taskRef, update)
   }, [onUpdate, task.taskRef])
@@ -39,20 +44,14 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
   const open = useCallback(() => { onOpen(task) }, [onOpen, task])
 
   return (
+    // A pointer click anywhere on the face opens the Task; the pickers and the
+    // title stop their own clicks, so this only sees the passive parts.
     <div
       className={`${css.card} ${settling ? css.cardSettling : ''}`}
       data-board-card=""
       data-task-ref={task.taskRef}
       data-testid="board-card"
       onClick={open}
-      role="button"
-      tabIndex={0}
-      onKeyDown={event => {
-        if (event.key !== 'Enter') return
-        if (event.target !== event.currentTarget) return
-        event.preventDefault()
-        open()
-      }}
     >
       {/* Row 1: priority + #number (left), live agent activity (right) */}
       <div className={css.cardTopRow}>
@@ -69,8 +68,17 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
         </span>
       </div>
 
-      {/* Row 2: title */}
-      <p className={css.cardTitle}>{task.title ?? `#${task.taskNumber}`}</p>
+      {/* Row 2: title, the control that opens the Task */}
+      <button
+        type="button"
+        className={css.cardTitle}
+        onClick={(event) => {
+          event.stopPropagation()
+          open()
+        }}
+      >
+        {task.title ?? `#${task.taskNumber}`}
+      </button>
 
       {/* Row 3: channel pill (left), assignee (right) */}
       <div className={css.cardMeta}>
@@ -100,12 +108,12 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
 }
 
 /** The static card face, also the DragOverlay's body. */
-export const BoardCardContent = memo(function BoardCardContent(props: Parameters<typeof CardBody>[0]) {
+export const BoardCardContent = memo(function BoardCardContent(props: CardBodyProps) {
   return <CardBody {...props} />
 })
 
 /** The sortable card: same face, wrapped in dnd-kit's sortable contract. */
-export const DraggableBoardCard = memo(function DraggableBoardCard({ task, ...rest }: Parameters<typeof CardBody>[0]) {
+export const DraggableBoardCard = memo(function DraggableBoardCard({ task, ...rest }: CardBodyProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.taskRef,
     data: { status: task.status, columnId: `status:${task.status}` },
@@ -120,7 +128,11 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({ task, ...re
       style={style}
       {...attributes}
       {...listeners}
-      className={isDragging ? css.cardDragging : undefined}
+      // dnd-kit marks the handle `role="button"`; the card holds real buttons, so it is a named group instead.
+      role="group"
+      aria-pressed={undefined}
+      aria-label={`#${task.taskNumber} ${task.title ?? ''}`.trim()}
+      className={isDragging ? `${css.cardSlot} ${css.cardDragging}` : css.cardSlot}
     >
       <CardBody task={task} {...rest} />
     </div>

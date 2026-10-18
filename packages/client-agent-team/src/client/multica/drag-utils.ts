@@ -53,7 +53,7 @@ export function buildColumns(
   return columns
 }
 
-function positionOf(task: BoardTaskLike | undefined): number {
+function positionOf(task: Pick<BoardTaskLike, 'position'> | undefined): number {
   return task?.position ?? 0
 }
 
@@ -64,7 +64,7 @@ function positionOf(task: BoardTaskLike | undefined): number {
 export function computePosition(
   ids: readonly string[],
   activeId: string,
-  taskMap: ReadonlyMap<string, BoardTaskLike>,
+  taskMap: ReadonlyMap<string, Pick<BoardTaskLike, 'position'>>,
 ): number {
   const index = ids.indexOf(activeId)
   if (index === -1) return 0

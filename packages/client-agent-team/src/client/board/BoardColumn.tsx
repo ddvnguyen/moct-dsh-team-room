@@ -14,7 +14,7 @@ import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from '../slots.ts'
 import type { TaskStatus } from '../multica/types.ts'
 import { StatusHeading } from '../multica-ui/StatusHeading.tsx'
-import { DraggableBoardCard } from './BoardCard.tsx'
+import { DraggableBoardCard, type BoardCardUpdate } from './BoardCard.tsx'
 import type { AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
 import type { ActivitySource } from '../multica/types.ts'
 import type { BoardCardTask } from './board-types.ts'
@@ -28,11 +28,10 @@ const BOARD_VIRTUALIZE_THRESHOLD = 30
 export interface BoardColumnProps {
   readonly status: TaskStatus
   readonly tasks: readonly BoardCardTask[]
-  readonly totalCount: number
   readonly locked: boolean
   readonly onCardClick: (task: BoardCardTask) => void
-  readonly onCardUpdate: (taskRef: string, update: { readonly priority?: string; readonly assignee?: string | null }) => void
-  readonly onHide: () => void
+  readonly onCardUpdate: (taskRef: string, update: BoardCardUpdate) => void
+  readonly onHide: (status: TaskStatus) => void
   readonly onCreate: () => void
   readonly members: readonly AssigneeOption[]
   readonly activities: readonly ActivitySource[]
@@ -40,7 +39,7 @@ export interface BoardColumnProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount, locked, onCardClick, onCardUpdate, onHide, onCreate, members, activities, settlingRefs, t }: BoardColumnProps) {
+export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, onCardClick, onCardUpdate, onHide, onCreate, members, activities, settlingRefs, t }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: `status:${status}` })
   const [menuOpen, setMenuOpen] = useState(false)
   // The column's scroll container is both dnd-kit's droppable and Virtuoso's
@@ -60,7 +59,7 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount
   }), [members, activities, onCardUpdate, onCardClick, t])
 
   const computeItemKey = useCallback((_index: number, task: BoardCardTask) => task.taskRef, [])
-  const itemContent = useCallback((index: number, task: BoardCardTask) => (
+  const itemContent = useCallback((_index: number, task: BoardCardTask) => (
     <DraggableBoardCard
       key={task.taskRef}
       task={task}
@@ -68,6 +67,10 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount
       {...cardProps}
     />
   ), [cardProps, settlingRefs])
+  // Virtuoso items are not flex children of the column, so the card gap is a slot padding.
+  const virtualItemContent = useCallback((index: number, task: BoardCardTask) => (
+    <div className={css.virtualSlot}>{itemContent(index, task)}</div>
+  ), [itemContent])
 
   const cards: ReactNode = tasks.length === 0
     ? <p className={css.emptyColumn}>{t('boardColumnEmpty')}</p>
@@ -76,10 +79,10 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount
       : (
         <Virtuoso
           customScrollParent={scrollEl}
-          data={[...tasks]}
+          data={tasks}
           computeItemKey={computeItemKey}
           increaseViewportBy={{ top: 300, bottom: 300 }}
-          itemContent={itemContent}
+          itemContent={virtualItemContent}
         />
       )
 
@@ -87,9 +90,9 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount
     <div className={css.column} data-status={status} data-testid="board-column">
       <div className={css.columnHeader}>
         <span className={css.columnHeaderLeft}>
-          <StatusHeading status={status} count={totalCount} t={t} />
+          <StatusHeading status={status} count={tasks.length} t={t} />
         </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <span className={css.columnActions}>
           <Menu
             open={menuOpen}
             onClose={() => setMenuOpen(false)}
@@ -107,11 +110,11 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount
               </button>
             )}
           >
-            <button type="button" className={css.hiddenShowButton} onClick={() => { setMenuOpen(false); onHide() }}>
+            <button type="button" className={css.hiddenShowButton} onClick={() => { setMenuOpen(false); onHide(status) }}>
               {t('boardHideColumn')}
             </button>
           </Menu>
-          <button type="button" className={css.columnAddButton} aria-label={t('boardCreateTask')} onClick={onCreate}>+</button>
+          <button type="button" className={css.columnAddButton} aria-label={t('boardNewTask')} onClick={onCreate}>+</button>
         </span>
       </div>
       <div className={css.columnBody}>
@@ -125,17 +128,7 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, totalCount
           </SortableContext>
         </div>
         {locked && isOver && (
-          <div
-            role="status"
-            data-testid="board-drop-hint"
-            style={{
-              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: 12, textAlign: 'center', pointerEvents: 'none',
-              border: '1px dashed var(--ml-priority-urgent)', borderRadius: 'var(--ml-radius-lg)',
-              color: 'var(--ml-priority-urgent)', background: 'var(--ml-surface)',
-              fontSize: 'var(--ml-text-caption)', lineHeight: 'var(--ml-text-caption-line)',
-            }}
-          >
+          <div role="status" data-testid="board-drop-hint" className={css.dropHint}>
             {t('boardDropLocked')}
           </div>
         )}

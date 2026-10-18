@@ -10,13 +10,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
+  type Announcements,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {
   AgentTeamChannelRef,
@@ -34,22 +38,25 @@ import type {
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamConversationProps, TeamSidebarProps } from '../slots.ts'
 import type { ActivitySource, TaskStatus } from '../multica/types.ts'
-import { STATUS_ORDER } from '../multica/status.ts'
-import { filterTasks, type TaskFilters } from '../multica/filter.ts'
+import { STATUS_LABEL_KEY, STATUS_ORDER } from '../multica/status.ts'
+import { filterTasks, isEmptyTaskFilters, type TaskFilters } from '../multica/filter.ts'
 import { sortTasks } from '../multica/sort.ts'
 import {
   buildColumns,
-  computePosition,
   findColumn,
   makeKanbanCollision,
   statusGroupId,
+  statusOfColumnId,
 } from '../multica/drag-utils.ts'
+import { mintRequestId } from '../requests.ts'
 import type { AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
 import { BoardCardContent } from './BoardCard.tsx'
 import { BoardColumn, BOARD_COL_WIDTH } from './BoardColumn.tsx'
 import { BoardFilterBar } from './BoardFilterBar.tsx'
 import { CreateTaskDialog } from './CreateTaskDialog.tsx'
 import { HiddenColumnsPanel } from './HiddenColumnsPanel.tsx'
+import { dropAction, mayDrop } from './drop-rules.ts'
+import { planPositionWrites } from './reorder.ts'
 import { useDragSettle } from './use-drag-settle.ts'
 import { useBoardDragPan } from './use-board-drag-pan.ts'
 import type { BoardCardTask } from './board-types.ts'
@@ -61,17 +68,24 @@ const HIDDEN_KEY = 'dsh.agent-team.board.hiddenColumns'
 function readHiddenColumns(): TaskStatus[] {
   if (typeof localStorage === 'undefined') return []
   try {
-    const parsed = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]') as unknown
+    const parsed: unknown = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]')
     return Array.isArray(parsed) ? parsed.filter((entry): entry is TaskStatus =>
       typeof entry === 'string' && STATUS_ORDER.includes(entry as TaskStatus)) : []
-  } catch {
+  } catch (error) {
+    // A corrupt or blocked preference falls back to "nothing hidden"; it never blocks the board.
+    void error
     return []
   }
 }
 
 function writeHiddenColumns(hidden: readonly TaskStatus[]): void {
   if (typeof localStorage === 'undefined') return
-  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden)) } catch { /* private mode */ }
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden))
+  } catch (error) {
+    // Private mode or a full quota: the preference stays in memory for this visit.
+    void error
+  }
 }
 
 export interface TeamBoardPageProps {
@@ -82,13 +96,46 @@ export interface TeamBoardPageProps {
   readonly createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
   readonly updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
   readonly changeTask: TeamConversationProps['changeTask']
-  readonly subscribeChanges: (scope: { readonly kind: 'workspace' | 'activity'; readonly workspaceId: WorkspaceId }, listener: () => void) => () => void
+  readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly selectThread: TeamConversationProps['selectThread']
   readonly t: TeamSidebarProps['t']
 }
 
-function requestId(prefix: string): AgentTeamRequestId {
-  return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}` as AgentTeamRequestId
+type Notice = { readonly text: string; readonly tone: 'error' | 'info' }
+
+/** One write's answer: the Remote either failed, or answered with a business outcome beside `committed`. */
+type WriteResult = RemoteResult<{ readonly kind: string }>
+
+function failureText(error: unknown, t: TeamSidebarProps['t']): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') return error.message
+  return t('boardWriteFailed')
+}
+
+/** The explanation for a write that did not commit; stale and unread results are normal `ok` answers. */
+function outcomeText(result: WriteResult, t: TeamSidebarProps['t']): string {
+  if (!result.ok) return failureText(result.error, t)
+  if (result.value.kind === 'stale_revision') return t('boardStale')
+  if (result.value.kind === 'unread_required') return t('boardUnreadRequired')
+  return t('boardWriteFailed')
+}
+
+const isCommitted = (result: WriteResult): boolean => result.ok && result.value.kind === 'committed'
+
+/** Ids that survive a retry of the same intent, so a lost response never double-commits. */
+function useRequestIds() {
+  const ids = useRef(new Map<string, AgentTeamRequestId>())
+  return useMemo(() => ({
+    forIntent(key: string): AgentTeamRequestId {
+      let id = ids.current.get(key)
+      if (id === undefined) {
+        id = mintRequestId()
+        ids.current.set(key, id)
+      }
+      return id
+    },
+    settle(key: string): void { ids.current.delete(key) },
+  }), [])
 }
 
 export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, selectThread, t }: TeamBoardPageProps) {
@@ -97,35 +144,45 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   const [members, setMembers] = useState<readonly AssigneeOption[]>([])
   const [activities, setActivities] = useState<readonly ActivitySource[]>([])
   const [loadError, setLoadError] = useState<string>()
-  const [notice, setNotice] = useState<{ readonly text: string; readonly tone: 'error' | 'info' }>()
+  const [notice, setNotice] = useState<Notice>()
   const [filters, setFilters] = useState<TaskFilters>({ channelRefs: [], assignees: [], priorities: [], statuses: [], text: '' })
   const [hidden, setHidden] = useState<TaskStatus[]>(readHiddenColumns)
   const [createOpen, setCreateOpen] = useState(false)
   const [activeTask, setActiveTask] = useState<BoardCardTask | null>(null)
   const [settlingRefs, setSettlingRefs] = useState<ReadonlySet<string>>(new Set())
+  const requestIds = useRequestIds()
 
   // --- Data loads ---
+  // Reads can overtake each other; only the newest one may write state.
+  const boardSerial = useRef(0)
+  const activitySerial = useRef(0)
   const reloadBoard = useCallback(async () => {
+    const serial = boardSerial.current += 1
     const [viewResult, memberResult] = await Promise.all([
       loadBoard({ workspaceId }),
       loadMembers({ workspaceId }),
     ])
+    if (serial !== boardSerial.current) return
     if (!viewResult.ok) {
-      setLoadError(viewResult.error instanceof Error ? viewResult.error.message : String(viewResult.error))
+      setLoadError(failureText(viewResult.error, t))
       return
     }
-    setLoadError(undefined)
     const view = viewResult.value
     setChannels(view.channels.map(channel => ({ channelRef: channel.channelRef, name: channel.name })))
-    setMembers(memberResult.ok
-      ? memberResult.value.map(member => ({ memberId: member.member.memberId, handle: member.member.handle }))
-      : [])
     setRows(deriveRows(view))
-  }, [loadBoard, loadMembers, workspaceId])
+    if (memberResult.ok) {
+      setMembers(memberResult.value.map(member => ({ memberId: member.member.memberId, handle: member.member.handle })))
+      setLoadError(undefined)
+    } else {
+      // The cards still render; only assignee names are missing until the next read.
+      setLoadError(failureText(memberResult.error, t))
+    }
+  }, [loadBoard, loadMembers, t, workspaceId])
 
   const reloadActivity = useCallback(async () => {
+    const serial = activitySerial.current += 1
     const result = await loadMemberActivity({ workspaceId })
-    if (result.ok) setActivities(result.value.activities)
+    if (serial === activitySerial.current && result.ok) setActivities(result.value.activities)
   }, [loadMemberActivity, workspaceId])
 
   const reloadRef = useRef(reloadBoard)
@@ -136,20 +193,32 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   useEffect(() => {
     void reloadRef.current()
     void reloadActivityRef.current()
-    // Workspace commits move Tasks; activity wakes move the live badges.
-    const stopWorkspace = subscribeChanges({ kind: 'workspace', workspaceId }, () => { void reloadRef.current() })
-    const stopActivity = subscribeChanges({ kind: 'activity', workspaceId }, () => { void reloadActivityRef.current() })
-    return () => { stopWorkspace(); stopActivity() }
+    // Claims, resolutions and field writes commit to Channel and Thread scopes
+    // only, so the Task stream is the scope-less one (as the Inbox's is);
+    // activity wakes move the live badges.
+    const stopTasks = subscribeChanges(undefined, update => {
+      if (update.type === 'failed') setLoadError(update.message)
+      else void reloadRef.current()
+    })
+    const stopActivity = subscribeChanges({ kind: 'activity', workspaceId }, update => {
+      if (update.type === 'changed') void reloadActivityRef.current()
+    })
+    return () => { stopTasks(); stopActivity() }
   }, [subscribeChanges, workspaceId])
 
   // --- Derivation ---
   const visibleStatuses = useMemo(() => STATUS_ORDER.filter(status => !hidden.includes(status)), [hidden])
   const columnIds = useMemo(() => visibleStatuses.map(statusGroupId), [visibleStatuses])
+  const columnIdSet = useMemo(() => new Set(columnIds), [columnIds])
   const filtered = useMemo(() => {
     const base = rows ?? []
     const sorted = sortTasks(base, 'position', 'asc')
     return filterTasks(sorted, filters)
   }, [rows, filters])
+  const filteredRef = useRef(filtered)
+  filteredRef.current = filtered
+  const columnIdsRef = useRef(columnIds)
+  columnIdsRef.current = columnIds
 
   const {
     columns,
@@ -170,18 +239,47 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     }
   }, [filtered, columnIds, settleVersion, setColumns, isDraggingRef, isSettlingRef])
 
+  const resyncColumns = useCallback(() => {
+    setColumns(buildColumns(filteredRef.current, columnIdsRef.current))
+  }, [setColumns])
+
   const taskMap = useMemo(() => new Map<string, BoardCardTask>(filtered.map(task => [task.taskRef as string, task])), [filtered])
   const taskMapRef = useRef(taskMap)
   if (!isDraggingRef.current && !isSettlingRef.current) {
     taskMapRef.current = taskMap
   }
 
-  const collisionDetection = useMemo(() => makeKanbanCollision(new Set(columnIds)), [columnIds])
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const collisionDetection = useMemo(() => makeKanbanCollision(columnIdSet), [columnIdSet])
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
   const pan = useBoardDragPan<HTMLDivElement>()
 
-  const columnStatusOf = useCallback((columnId: string): TaskStatus | null =>
-    visibleStatuses.find(status => statusGroupId(status) === columnId) ?? null, [visibleStatuses])
+  const columnStatusOf = useCallback((columnId: string): TaskStatus | null => {
+    const status = statusOfColumnId(columnId)
+    return status !== null && visibleStatuses.includes(status) ? status : null
+  }, [visibleStatuses])
+
+  // --- Screen-reader announcements (dnd-kit's defaults are English only) ---
+  const announcements = useMemo<Announcements>(() => {
+    const titleOf = (id: string): string => {
+      const task = taskMapRef.current.get(id)
+      return task === undefined ? id : task.title ?? `#${task.taskNumber}`
+    }
+    const columnLabel = (overId: string): string => {
+      const columnId = findColumn(columnsRef.current, overId, columnIdSet)
+      const status = columnId === null ? null : statusOfColumnId(columnId)
+      return status === null ? '' : t(STATUS_LABEL_KEY[status])
+    }
+    return {
+      onDragStart: ({ active }) => t('boardAnnounceStart', { title: titleOf(active.id as string) }),
+      onDragOver: ({ active, over }) => over === null ? undefined : t('boardAnnounceOver', { title: titleOf(active.id as string), column: columnLabel(over.id as string) }),
+      onDragEnd: ({ active, over }) => over === null ? t('boardAnnounceCancel', { title: titleOf(active.id as string) }) : t('boardAnnounceDrop', { title: titleOf(active.id as string), column: columnLabel(over.id as string) }),
+      onDragCancel: ({ active }) => t('boardAnnounceCancel', { title: titleOf(active.id as string) }),
+    }
+  }, [columnIdSet, columnsRef, t])
 
   // --- Drag handlers ---
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -195,8 +293,8 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     const activeId = active.id as string
     const overId = over.id as string
     setColumns(prev => {
-      const activeCol = findColumn(prev, activeId, new Set(columnIds))
-      const overCol = findColumn(prev, overId, new Set(columnIds))
+      const activeCol = findColumn(prev, activeId, columnIdSet)
+      const overCol = findColumn(prev, overId, columnIdSet)
       if (!activeCol || !overCol || activeCol === overCol) return prev
       recentlyMovedRef.current = true
       const oldIds = (prev[activeCol] ?? []).filter(id => id !== activeId)
@@ -205,9 +303,9 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       newIds.splice(overIndex >= 0 ? overIndex : newIds.length, 0, activeId)
       return { ...prev, [activeCol]: oldIds, [overCol]: newIds }
     })
-  }, [columnIds, recentlyMovedRef, setColumns])
+  }, [columnIdSet, recentlyMovedRef, setColumns])
 
-  /** Marks one card settling until the mutation's onSettled runs. */
+  /** Marks one card settling until the write's answer is in. */
   const beginCardSettle = useCallback((taskRef: string) => {
     setSettlingRefs(prev => new Set(prev).add(taskRef))
     const release = beginSettle()
@@ -221,28 +319,43 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     }
   }, [beginSettle])
 
+  /**
+   * Records one write's answer. A commit clears the notice and settles the
+   * request id; anything else explains itself, and a stale or unread answer
+   * also refetches so the retry carries the current revision.
+   */
+  const conclude = useCallback((result: WriteResult, key: string): boolean => {
+    if (isCommitted(result)) {
+      requestIds.settle(key)
+      setNotice(undefined)
+      return true
+    }
+    setNotice({ text: outcomeText(result, t), tone: 'error' })
+    if (result.ok) void reloadRef.current()
+    return false
+  }, [requestIds, t])
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event
     isDraggingRef.current = false
     setActiveTask(null)
 
-    const resetColumns = () => setColumns(buildColumns(filtered, columnIds))
     if (!over) {
-      resetColumns()
+      resyncColumns()
       return
     }
     const activeId = active.id as string
     const overId = over.id as string
     const cols = columnsRef.current
-    const activeCol = findColumn(cols, activeId, new Set(columnIds))
-    const overCol = findColumn(cols, overId, new Set(columnIds))
+    const activeCol = findColumn(cols, activeId, columnIdSet)
+    const overCol = findColumn(cols, overId, columnIdSet)
     if (!activeCol || !overCol) {
-      resetColumns()
+      resyncColumns()
       return
     }
     const task = taskMapRef.current.get(activeId)
     if (task === undefined) {
-      resetColumns()
+      resyncColumns()
       return
     }
 
@@ -251,42 +364,51 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     // would otherwise read as a same-column reorder.
     const currentStatus = task.status
     const targetStatus = columnStatusOf(overCol)
+    if (targetStatus === null) {
+      resyncColumns()
+      return
+    }
 
-    // Same-column reorder: persist a fractional position between neighbours.
+    // Same-column reorder: persist a position between the neighbours.
     if (targetStatus === currentStatus) {
       const ids = cols[activeCol] ?? []
       const oldIndex = ids.indexOf(activeId)
       const newIndex = ids.indexOf(overId)
       if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
-        resetColumns()
+        resyncColumns()
         return
       }
       const reordered = [...ids]
       reordered.splice(oldIndex, 1)
       reordered.splice(newIndex, 0, activeId)
-      const finalColumns = { ...cols, [activeCol]: reordered }
-      setColumns(finalColumns)
-      const position = computePosition(reordered, activeId, taskMapRef.current)
-      if (position === (task.position ?? 0)) {
-        resetColumns()
+      setColumns({ ...cols, [activeCol]: reordered })
+      const writes = planPositionWrites(reordered, activeId, taskMapRef.current)
+      if (writes.length === 0) {
+        resyncColumns()
         return
       }
       const release = beginCardSettle(activeId)
       void (async () => {
-        const result = await updateTask({
-          requestId: requestId('task-position'),
-          workspaceId,
-          taskRef: task.taskRef,
-          baseRevision: task.threadRevision,
-          patch: { position },
-        })
-        if (result.ok && result.value.kind === 'committed') {
-          setNotice(undefined)
-          void reloadRef.current()
-        } else {
-          resetColumns()
-          setNotice({ text: errorMessage(result), tone: 'error' })
+        let committed = true
+        for (const write of writes) {
+          const row = taskMapRef.current.get(write.taskRef)
+          if (row === undefined) continue
+          const key = `position:${row.taskRef}:${write.position}:${row.threadRevision}`
+          const result = await updateTask({
+            requestId: requestIds.forIntent(key),
+            workspaceId,
+            taskRef: row.taskRef,
+            baseRevision: row.threadRevision,
+            patch: { position: write.position },
+          })
+          if (!conclude(result, key)) {
+            committed = false
+            break
+          }
         }
+        // One refetch for the whole renumbering; a failure snaps the mirror back.
+        if (committed) void reloadRef.current()
+        else resyncColumns()
         release()
       })()
       return
@@ -295,103 +417,85 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     // Cross-column drop. The human rules: done/closed/todo only, and todo
     // only from done/closed. The locked live statuses answer with a hint and
     // a snap-back — the preview is discarded, no Remote is called.
-    if (targetStatus === null || currentStatus === null) {
-      resetColumns()
-      return
-    }
-    const allowed = targetStatus === 'done' || targetStatus === 'closed'
-      || (targetStatus === 'todo' && (currentStatus === 'done' || currentStatus === 'closed'))
-    if (!allowed || targetStatus === currentStatus) {
-      resetColumns()
-      if (!allowed) setNotice({ text: t('boardDropLocked'), tone: 'info' })
+    if (!mayDrop(currentStatus, targetStatus) || (targetStatus !== 'todo' && targetStatus !== 'done' && targetStatus !== 'closed')) {
+      resyncColumns()
+      setNotice({ text: t('boardDropLocked'), tone: 'info' })
       return
     }
 
     // The card moves only after the Remote result plus the change event: the
     // settle lock holds the preview, the reload re-derives the columns, and
-    // the settle release resyncs the mirror. On error the resync snaps the
+    // the settle release resyncs the mirror. On a refusal the resync snaps the
     // card back and the notice explains why.
     const release = beginCardSettle(activeId)
+    const action = dropAction(targetStatus)
+    const key = `status:${task.taskRef}:${action}:${task.threadRevision}`
     void (async () => {
-      const action = targetStatus === 'done' ? 'accept' : targetStatus === 'closed' ? 'close' : 'reopen'
       const result = await changeTask({
-        requestId: requestId('task-status'),
+        requestId: requestIds.forIntent(key),
         workspaceId,
         taskRef: task.taskRef,
         action,
         baseRevision: task.threadRevision,
       })
-      const committed = (result as { ok?: boolean; value?: { kind?: string } }).ok === true
-        && (result as { value?: { kind?: string } }).value?.kind === 'committed'
-      if (committed) {
-        setNotice(undefined)
-        void reloadRef.current()
-      } else {
-        resetColumns()
-        setNotice({ text: errorMessage(result), tone: 'error' })
-      }
+      if (conclude(result, key)) void reloadRef.current()
+      else resyncColumns()
       release()
     })()
-  }, [beginCardSettle, changeTask, columnIds, columnStatusOf, filtered, setColumns, t, updateTask, workspaceId])
+  }, [beginCardSettle, changeTask, columnIdSet, columnStatusOf, columnsRef, conclude, isDraggingRef, requestIds, resyncColumns, setColumns, t, updateTask, workspaceId])
 
   const handleDragCancel = useCallback(() => {
     isDraggingRef.current = false
     setActiveTask(null)
-    setColumns(buildColumns(filtered, columnIds))
-  }, [columnIds, filtered, isDraggingRef, setColumns])
+    resyncColumns()
+  }, [isDraggingRef, resyncColumns])
 
   // --- Card actions ---
-  const handleCardUpdate = useCallback((taskRef: string, update: { readonly priority?: string; readonly assignee?: string | null }) => {
+  const handleCardUpdate = useCallback((taskRef: string, update: { readonly priority?: AgentTeamTaskPriority; readonly assignee?: string | null }) => {
     const task = taskMapRef.current.get(taskRef)
     if (task === undefined) return
+    const patch = {
+      ...(update.priority === undefined ? {} : { priority: update.priority }),
+      ...(update.assignee === undefined ? {} : { assignee: update.assignee as AgentTeamMemberId | null }),
+    }
+    const key = `field:${task.taskRef}:${JSON.stringify(patch)}:${task.threadRevision}`
     const release = beginCardSettle(taskRef)
     void (async () => {
       const result = await updateTask({
-        requestId: requestId('task-field'),
+        requestId: requestIds.forIntent(key),
         workspaceId,
         taskRef: task.taskRef,
         baseRevision: task.threadRevision,
-        patch: {
-          ...(update.priority === undefined ? {} : { priority: update.priority as 'urgent' | 'high' | 'medium' | 'low' | 'none' }),
-          ...(update.assignee === undefined ? {} : { assignee: update.assignee as AgentTeamMemberId | null }),
-        },
+        patch,
       })
-      if (result.ok && result.value.kind === 'committed') {
-        setNotice(undefined)
-        void reloadRef.current()
-      } else {
-        setNotice({ text: errorMessage(result), tone: 'error' })
-      }
+      if (conclude(result, key)) void reloadRef.current()
       release()
     })()
-  }, [beginCardSettle, updateTask, workspaceId])
+  }, [beginCardSettle, conclude, requestIds, updateTask, workspaceId])
 
   const handleCardClick = useCallback((task: BoardCardTask) => {
     selectThread(task.threadRef, task.channelRef, task.taskRef, task.taskNumber)
   }, [selectThread])
 
   const handleCreate = useCallback(async (request: { readonly channelRef: AgentTeamChannelRef; readonly title: string; readonly body: string; readonly priority?: AgentTeamTaskPriority; readonly assignee?: AgentTeamMemberId | null }) => {
-    const result = await createTask({
-      requestId: requestId('task-create'),
-      workspaceId,
+    const payload = {
       channelRef: request.channelRef,
       title: request.title,
       body: request.body,
       ...(request.priority === undefined ? {} : { priority: request.priority }),
-      assignee: request.assignee as AgentTeamMemberId | null,
-    })
+      assignee: request.assignee ?? null,
+    }
+    const key = `create:${JSON.stringify(payload)}`
+    const result = await createTask({ requestId: requestIds.forIntent(key), workspaceId, ...payload })
     if (result.ok) {
+      requestIds.settle(key)
       setCreateOpen(false)
       setNotice(undefined)
       void reloadRef.current()
       return
     }
-    throw new Error(errorMessage(result))
-  }, [createTask, workspaceId])
-
-  /** The human rules as a pure test: where may this card be dropped? */
-  const mayDrop = useCallback((from: TaskStatus, to: TaskStatus): boolean =>
-    to === 'done' || to === 'closed' || (to === 'todo' && (from === 'done' || from === 'closed')), [])
+    throw new Error(failureText(result.error, t))
+  }, [createTask, requestIds, t, workspaceId])
 
   const hideColumn = useCallback((status: TaskStatus) => {
     setHidden(prev => {
@@ -409,14 +513,25 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     })
   }, [])
 
-  const empty = (rows ?? []).length === 0
-  const columnTasks = useCallback((status: TaskStatus): BoardCardTask[] => {
+  const openCreate = useCallback(() => { setCreateOpen(true) }, [])
+
+  // The columns' tasks and live badges, derived once per render of the mirror.
+  // `visibleTaskMap` is the frozen map while a drag or settle holds the mirror, the live one otherwise.
+  const visibleTaskMap = taskMapRef.current
+  const columnTasks = useMemo(() => new Map(STATUS_ORDER.map(status => {
     const ids = columns[statusGroupId(status)] ?? []
-    return ids.flatMap(id => {
-      const task = taskMapRef.current.get(id)
+    return [status, ids.flatMap(id => {
+      const task = visibleTaskMap.get(id)
       return task === undefined ? [] : [task]
-    })
-  }, [columns])
+    })] as const
+  })), [columns, visibleTaskMap])
+  const columnActivities = useMemo(() => new Map(STATUS_ORDER.map(status => {
+    const threads = new Set((columnTasks.get(status) ?? []).map(task => task.threadRef as string))
+    return [status, activities.filter(activity => activity.threadRef !== undefined && threads.has(activity.threadRef))] as const
+  })), [activities, columnTasks])
+
+  const empty = (rows ?? []).length === 0
+  const loading = rows === undefined && loadError === undefined
 
   return (
     <div className={`${look.multicaLook} ${css.page}`} data-testid="team-board-page">
@@ -426,17 +541,18 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       <div className={css.toolbar}>
         <BoardFilterBar filters={filters} onFiltersChange={setFilters} channels={channels} members={members} t={t} />
         <span className={css.spacer} />
-        <button type="button" className={css.newTaskButton} data-testid="board-new-task" onClick={() => setCreateOpen(true)}>
+        <button type="button" className={css.newTaskButton} data-testid="board-new-task" onClick={openCreate}>
           + {t('boardNewTask')}
         </button>
       </div>
       {notice !== undefined && (
         <p className={css.notice} role="alert" data-tone={notice.tone} data-testid="board-notice">{notice.text}</p>
       )}
-      {loadError !== undefined && <p className={css.notice} role="alert" data-tone="error">{loadError}</p>}
+      {loadError !== undefined && <p className={css.notice} role="alert" data-tone="error" data-testid="board-load-error">{loadError}</p>}
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
+        accessibility={{ announcements, screenReaderInstructions: { draggable: t('boardDragInstructions') } }}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
@@ -452,7 +568,9 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
           className={css.scroller}
           data-board-scroller=""
         >
-          {empty && (filters.channelRefs.length === 0 && filters.assignees.length === 0 && filters.priorities.length === 0 && (filters.text ?? '') === '') ? (
+          {loading ? (
+            <div className={css.emptyBoard} role="status" data-testid="board-loading">{t('boardLoading')}</div>
+          ) : rows !== undefined && empty && isEmptyTaskFilters(filters) ? (
             <div className={css.emptyBoard}>{t('boardEmpty')}</div>
           ) : (
             <>
@@ -460,15 +578,14 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
                 <BoardColumn
                   key={status}
                   status={status}
-                  tasks={columnTasks(status)}
-                  totalCount={columnTasks(status).length}
+                  tasks={columnTasks.get(status) ?? []}
                   locked={activeTask !== null && !mayDrop(activeTask.status, status)}
                   onCardClick={handleCardClick}
                   onCardUpdate={handleCardUpdate}
-                  onHide={() => hideColumn(status)}
-                  onCreate={() => setCreateOpen(true)}
+                  onHide={hideColumn}
+                  onCreate={openCreate}
                   members={members}
-                  activities={activities.filter(activity => columnTasks(status).some(task => task.threadRef === activity.threadRef))}
+                  activities={columnActivities.get(status) ?? []}
                   settlingRefs={settlingRefs}
                   t={t}
                 />
@@ -506,13 +623,6 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   )
 }
 
-function errorMessage(result: unknown): string {
-  const failure = result as { error?: { message?: string } | Error }
-  if (failure?.error instanceof Error) return failure.error.message
-  if (typeof failure?.error?.message === 'string') return failure.error.message
-  return 'unknown error'
-}
-
 /** Flattens the view catalog into card rows. */
 function deriveRows(view: AgentTeamView): readonly BoardCardTask[] {
   const numbers = new Map(view.taskNumbers.map(entry => [entry.taskRef, entry.taskNumber]))
@@ -521,9 +631,8 @@ function deriveRows(view: AgentTeamView): readonly BoardCardTask[] {
   const claimsByThread = new Map<string, { owner: string; direction: string }>()
   for (const claim of view.claims) {
     if (claim.state !== 'active') continue
-    const existing = claimsByThread.get(claim.threadRef)
-    // The oldest active Claim owns the Thread's headline; later ones join it.
-    if (existing !== undefined) continue
+    // The first active Claim in catalog order headlines the Thread; later ones join it.
+    if (claimsByThread.has(claim.threadRef)) continue
     claimsByThread.set(claim.threadRef, { owner: claim.owner, direction: claim.direction })
   }
   return view.tasks.map(task => {

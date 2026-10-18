@@ -41,6 +41,9 @@ vi.mock('@dnd-kit/core', () => ({
   },
   DragOverlay: (props: { children?: unknown }) => (props.children ?? null) as never,
   PointerSensor: class {},
+  MouseSensor: class {},
+  TouchSensor: class {},
+  KeyboardSensor: class {},
   useSensor: () => ({}),
   useSensors: () => [],
   useDroppable: (args: { id: string }) => ({ setNodeRef: () => {}, isOver: droppableOverId === args.id }),
@@ -50,7 +53,8 @@ vi.mock('@dnd-kit/core', () => ({
 vi.mock('@dnd-kit/sortable', () => ({
   SortableContext: (props: { children: unknown }) => props.children,
   verticalListSortingStrategy: {},
-  useSortable: () => ({ attributes: {}, listeners: {}, setNodeRef: () => {}, transform: null, transition: null, isDragging: false }),
+  sortableKeyboardCoordinates: () => undefined,
+  useSortable: () => ({ attributes: { role: 'button', tabIndex: 0, 'aria-roledescription': 'sortable', 'aria-pressed': false }, listeners: {}, setNodeRef: () => {}, transform: null, transition: null, isDragging: false }),
 }))
 vi.mock('@dnd-kit/utilities', () => ({
   CSS: { Transform: { toString: () => undefined } },
@@ -88,8 +92,9 @@ function columnOf(view: BoardView, status: string): HTMLElement {
   return column!
 }
 
-function menuRow(view: BoardView, label: string): HTMLButtonElement {
-  const row = [...view.container.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
+function menuRow(_view: BoardView, label: string): HTMLButtonElement {
+  // Picker lists are portaled to the body, outside the render container.
+  const row = [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
     .find(entry => entry.textContent?.includes(label))
   expect(row, `menu row ${label}`).toBeDefined()
   return row!
@@ -224,9 +229,182 @@ describe('Team board page', () => {
     expect(statuses()).not.toContain('done')
     expect(JSON.parse(localStorage.getItem('dsh.agent-team.board.hiddenColumns') ?? '[]')).toEqual(['done'])
     // The hidden rail names the column and offers it back.
-    fireEvent.click(within(b.view.getByTestId('board-hidden-columns')).getByRole('button', { name: '显示列' }))
+    fireEvent.click(within(b.view.getByTestId('board-hidden-columns')).getByRole('button', { name: /^显示列/ }))
     await waitFor(() => expect(b.view.container.querySelectorAll('[data-testid="board-column"]')).toHaveLength(5))
     expect(statuses()).toContain('done')
+    await b.runtime.dispose()
+  })
+
+  it('moves a card when an Agent claims its Task elsewhere, with no local write', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(columnOf(b.view, 'todo').textContent).toContain('Alpha task'))
+    // The claim commits to Channel and Thread scopes only; the board must still hear it.
+    act(() => { b.claimBoardTask('task:a', 'in_progress') })
+    await waitFor(() => expect(columnOf(b.view, 'in_progress').textContent).toContain('Alpha task'))
+    expect(columnOf(b.view, 'todo').textContent).not.toContain('Alpha task')
+    expect(b.changeTask).not.toHaveBeenCalled()
+    expect(b.updateTask).not.toHaveBeenCalled()
+    await b.runtime.dispose()
+  })
+
+  it('explains a stale write and keeps the card where it was', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    b.failNextBoardWrite('stale_revision')
+    drag('task:a', 'status:done')
+    await waitFor(() => expect(b.view.getByTestId('board-notice').textContent).toContain('刚在别处被更改'))
+    expect(b.view.getByTestId('board-notice').textContent).not.toContain('unknown')
+    await waitFor(() => expect(columnOf(b.view, 'todo').textContent).toContain('Alpha task'))
+    expect(columnOf(b.view, 'done').textContent).not.toContain('Alpha task')
+    await b.runtime.dispose()
+  })
+
+  it('tells the Human to read the Thread first when the write needs it', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    b.failNextBoardWrite('unread_required')
+    drag('task:a', 'status:done')
+    await waitFor(() => expect(b.view.getByTestId('board-notice').textContent).toContain('还没读的消息'))
+    await waitFor(() => expect(columnOf(b.view, 'todo').textContent).toContain('Alpha task'))
+    await b.runtime.dispose()
+  })
+
+  it('does not lock the origin column while a card is dragged over its own column', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    act(() => { dndHandlers.onDragStart?.({ active: { id: 'task:a' } }) })
+    droppableOverId = 'status:todo'
+    act(() => { dndHandlers.onDragOver?.({ active: { id: 'task:a' }, over: { id: 'status:todo' } }) })
+    expect(b.view.queryByTestId('board-drop-hint')).toBeNull()
+    droppableOverId = null
+    act(() => { dndHandlers.onDragCancel?.() })
+    await b.runtime.dispose()
+  })
+
+  it('renumbers a column whose neighbours tie, writing only the cards whose position changes', async () => {
+    const tied = [
+      { taskRef: 'task:a', status: 'todo' as const, title: 'Alpha task', taskNumber: 11 },
+      { taskRef: 'task:b', status: 'todo' as const, title: 'Beta task', taskNumber: 12 },
+      { taskRef: 'task:c', status: 'todo' as const, title: 'Gamma task', taskNumber: 13 },
+    ]
+    const b = await boardRuntime({ seedBoardTasks: tied })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    // Alpha lands after Beta; all three read position 0, so there is no number between them.
+    drag('task:a', 'task:b')
+    await waitFor(() => expect(b.updateTask).toHaveBeenCalledTimes(3))
+    expect(b.updateTask.mock.calls.map(call => [call[0].taskRef, call[0].patch.position])).toEqual([['task:b', 1], ['task:a', 2], ['task:c', 3]])
+    await waitFor(() => {
+      const titles = [...columnOf(b.view, 'todo').querySelectorAll('[data-testid="board-card"]')].map(card => card.getAttribute('data-task-ref'))
+      expect(titles).toEqual(['task:b', 'task:a', 'task:c'])
+    })
+    await b.runtime.dispose()
+  })
+
+  it('persists the new order after a reorder', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    drag('task:a', 'task:b')
+    await waitFor(() => expect(b.updateTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      const refs = [...columnOf(b.view, 'todo').querySelectorAll('[data-testid="board-card"]')].map(card => card.getAttribute('data-task-ref'))
+      expect(refs).toEqual(['task:b', 'task:a', 'task:c'])
+    })
+    await b.runtime.dispose()
+  })
+
+  it('keeps a card picker from opening the Task, and writes the chosen field', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    const card = [...b.view.container.querySelectorAll<HTMLElement>('[data-testid="board-card"]')].find(entry => entry.getAttribute('data-task-ref') === 'task:a')!
+    fireEvent.click(within(card).getByRole('button', { name: /^修改优先级/ }))
+    const item = (await b.view.findAllByRole('menuitem')).find(entry => entry.textContent?.includes('紧急'))!
+    fireEvent.click(item)
+    await waitFor(() => expect(b.updateTask).toHaveBeenCalledTimes(1))
+    expect(b.updateTask.mock.calls[0]![0]).toMatchObject({ taskRef: 'task:a', patch: { priority: 'urgent' } })
+    // The board is still the open face: no Thread was selected.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')).toMatchObject({ board: true })
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').threadRef).toBeUndefined()
+    await b.runtime.dispose()
+  })
+
+  it('opens the Task from its title, which is the card\'s only control besides its pickers', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    const card = [...b.view.container.querySelectorAll<HTMLElement>('[data-testid="board-card"]')].find(entry => entry.getAttribute('data-task-ref') === 'task:a')!
+    // One tab stop on the sortable wrapper, a named group, and no button inside another.
+    const slot = card.parentElement!
+    expect(slot.getAttribute('role')).toBe('group')
+    expect(slot.getAttribute('aria-label')).toBe('#11 Alpha task')
+    expect(slot.getAttribute('tabindex')).toBe('0')
+    expect(card.hasAttribute('tabindex')).toBe(false)
+    expect(card.getAttribute('role')).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: 'Alpha task' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').threadRef).toBe('thread:a'))
+    await b.runtime.dispose()
+  })
+
+  it('closes the create dialog on Escape without creating anything', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    fireEvent.click(b.view.getByTestId('board-new-task'))
+    await b.view.findByTestId('board-create-dialog')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(b.view.queryByTestId('board-create-dialog')).toBeNull())
+    expect(b.createTask).not.toHaveBeenCalled()
+    await b.runtime.dispose()
+  })
+
+  it('retries a failed create under the same request id and a new payload under a new one', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    b.createTask.mockImplementationOnce(async () => ({ ok: false as const, error: { message: 'seat is busy' } }) as never)
+    fireEvent.click(b.view.getByTestId('board-new-task'))
+    const dialog = await b.view.findByTestId('board-create-dialog')
+    fireEvent.change(dialog.querySelector('input')!, { target: { value: 'Retry me' } })
+    fireEvent.click(b.view.getByTestId('board-create-submit'))
+    await waitFor(() => expect(document.body.textContent).toContain('seat is busy'))
+    fireEvent.click(b.view.getByTestId('board-create-submit'))
+    await waitFor(() => expect(b.createTask).toHaveBeenCalledTimes(2))
+    expect(b.createTask.mock.calls[1]![0].requestId).toBe(b.createTask.mock.calls[0]![0].requestId)
+    await b.runtime.dispose()
+  })
+
+  it('names each chip and hidden-column button by what it acts on', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    fireEvent.click(b.view.getByRole('button', { name: '负责人' }))
+    fireEvent.click(menuRow(b.view, '未分配'))
+    expect(b.view.getByRole('button', { name: '清除 负责人' })).toBeTruthy()
+    expect(b.view.getByTestId('board-filter-count').getAttribute('aria-label')).toBe('已启用 1 个筛选')
+    const done = columnOf(b.view, 'done')
+    fireEvent.click(within(done).getByRole('button', { name: '列选项' }))
+    fireEvent.click(await b.view.findByText('隐藏列'))
+    expect(await b.view.findByRole('button', { name: /^显示列 / })).toBeTruthy()
+    await b.runtime.dispose()
+  })
+
+  it('opens the board from the strip\'s Board tab, the entry point readers use', async () => {
+    const b = await runtimeWithTeam({ nativeTabs: true, workspaceId: 'w1', initialChannels: true, seedBoardTasks: boardSeed() })
+    const tab = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-native-tab="board"]')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    fireEvent.click(within(tab).getByTestId('board-tab-open'))
+    await waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().board).toBe(true))
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
     await b.runtime.dispose()
   })
 
