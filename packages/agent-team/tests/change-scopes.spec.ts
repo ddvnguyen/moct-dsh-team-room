@@ -343,6 +343,40 @@ describe('ledger change scope and affected member derivation', () => {
     expect(ledger.affectedMembersOf(replyOperation!)).toEqual([AGENT_TEAM_HUMAN_MEMBER_ID])
   })
 
+  it('derives channel and thread scopes for board Task creation and field updates', async () => {
+    const { ctx, facility } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('board-channel'), workspaceId: alpha, name: 'board', description: 'Board work' })
+    const created = await ctx.agentTeam.createTask({ requestId: requestId('board-create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Board task', title: 'Board task', priority: 'high', position: 2 })
+    const ledger = replayLedger(facility)
+    const createdOperation = ledger.getOperation(created.receipt.operationId)
+    expect(createdOperation).toBeDefined()
+    expect(createdOperation!.kind).toBe('team/task-created')
+    expect(ledger.changeScopesOf(createdOperation!)).toEqual([
+      { kind: 'channel', channelRef: channel.channel.channelRef },
+      { kind: 'thread', threadRef: created.thread.threadRef },
+    ])
+    // The Task starts unassigned; the Human starter is the only derived member.
+    expect(ledger.affectedMembersOf(createdOperation!)).toEqual([AGENT_TEAM_HUMAN_MEMBER_ID])
+
+    const actor = await addLedgerMember(ledger, channel.channel.channelRef)
+    const assigned = await ledger.updateTask({ requestId: requestId('board-assign'), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: created.thread.revision, patch: { assignee: actor.memberId }, actor: agentTeamHumanActor() })
+    if (assigned.value.kind !== 'committed') throw new Error(`expected committed assignment, received ${assigned.value.kind}`)
+    const assignedOperation = ledger.getOperation(assigned.value.receipt.operationId)
+    expect(assignedOperation).toBeDefined()
+    expect(assignedOperation!.kind).toBe('team/task-updated')
+    expect(ledger.changeScopesOf(assignedOperation!)).toEqual([
+      { kind: 'channel', channelRef: channel.channel.channelRef },
+      { kind: 'thread', threadRef: created.thread.threadRef },
+    ])
+    // The assignment follows the Member in the same commit, which is what wakes it.
+    const assignedMembers = ledger.affectedMembersOf(assignedOperation!)
+    expect(assignedMembers).toHaveLength(2)
+    expect(assignedMembers).toContain(AGENT_TEAM_HUMAN_MEMBER_ID)
+    expect(assignedMembers).toContain(actor.memberId)
+  })
+
   it('derives follower membership from Attention state on an isolated ledger', async () => {
     const ctx = new Context()
     await ctx.plugin(Storage)

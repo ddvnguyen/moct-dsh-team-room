@@ -705,6 +705,8 @@ export interface AgentTeamTaskUpdatedOperation extends AgentTeamOperationBase {
     readonly workspaceId: WorkspaceId
     readonly baseRevision: number
     readonly patch: AgentTeamTaskPatch
+    /** The public `assign` Activity, present exactly when the patch moved the Task to a different Member. */
+    readonly activity?: AgentTeamTaskActivity
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta

@@ -54,7 +54,7 @@ import css from './BoardCard.module.css'
 | `--ml-*` | 宿主别名 | 回退值 |
 | --- | --- | --- |
 | `--ml-text-micro` … `--ml-text-display` | 无（字号阶梯） | 11 / 12 / 13 / 14 / 15 / 16 / 18 / 20 / 24 / 36px |
-| `--ml-radius-xs` … `--ml-radius-2xl` | 基础档使用 `--dsw-radius-md` | 3 / 4 / 6 / 8 / 12 / 16px |
+| `--ml-radius-xs` … `--ml-radius-2xl` | 无（宿主没有对应的圆角阶梯） | 3 / 4 / 6 / 8 / 12 / 16px |
 | `--ml-surface` | `--dsw-alias-bg-layer-1` | `#ffffff` |
 | `--ml-surface-raised` | `--dsw-alias-bg-layer-2` | `#f7f7f8` |
 | `--ml-surface-hover` | `--dsw-alias-interactive-bg-hover` | `rgb(0 0 0 / 4%)` |

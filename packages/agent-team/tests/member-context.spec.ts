@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MEMBER_ROLE_PROMPTS, renderMemberIdentity, renderMemberMemory } from '../src/member-context.ts'
+import { AGENT_TEAM_MEMBER_ROLES } from '../src/member-roles.ts'
 
 describe('Team Member private memory context', () => {
   it('escapes framing and preserves a bounded private index', () => {
@@ -80,5 +81,11 @@ describe('Team Member identity context', () => {
       .toBe('Team identity: you are @Builder.')
     expect(renderMemberIdentity({ handle: 'Builder', description: '' }))
       .toBe('Team identity: you are @Builder.')
+  })
+})
+
+describe('member roles', () => {
+  it('keeps the validated role list and the prompt table in step', () => {
+    expect([...AGENT_TEAM_MEMBER_ROLES].sort()).toEqual(Object.keys(MEMBER_ROLE_PROMPTS).sort())
   })
 })

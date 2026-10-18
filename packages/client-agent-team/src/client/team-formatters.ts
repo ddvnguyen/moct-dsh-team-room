@@ -348,6 +348,7 @@ export function formatActivity(activity: AgentTeamActivity, options: {
       : options.t('activityAccepted', { actor })
   }
   if (activity.kind === 'promote') return options.t('activityPromoted', { actor })
+  if (activity.kind === 'assign') return options.t('activityAssigned', { actor, assignee: activity.assignee === undefined ? '' : options.actorName(activity.assignee) })
   if (activity.kind === 'close') return options.t('activityClosed', { actor })
   if (activity.kind === 'reopen') return options.t('activityReopened', { actor })
   const direction = 'claimRef' in activity

@@ -38,12 +38,14 @@ export function TeamMemberIdentity({ status, name, className, t }: {
   readonly className?: string | undefined
   readonly t: TeamSidebarProps['t']
 }) {
+  // A newer Host may send a role this Client has no label for; show no pill rather than a blank one.
+  const roleLabelKey = status.member.role === undefined ? undefined : (ROLE_LABEL_KEY as Readonly<Partial<Record<string, (typeof ROLE_LABEL_KEY)[AgentTeamMemberRole]>>>)[status.member.role]
   return <>
     <TeamMemberAvatar status={status} t={t} />
     <span className={className === undefined ? css.copy : `${css.copy} ${className}`}>
       <span className={css.nameLine}>
         <strong>{name ?? `@${status.member.handle.replace(/^@/, '')}`}</strong>
-        {status.member.role !== undefined && <span className={css.rolePill} data-member-role={status.member.role}>{t(ROLE_LABEL_KEY[status.member.role])}</span>}
+        {roleLabelKey !== undefined && <span className={css.rolePill} data-member-role={status.member.role}>{t(roleLabelKey)}</span>}
       </span>
       <small>{status.member.description}</small>
     </span>

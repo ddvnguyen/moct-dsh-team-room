@@ -204,6 +204,7 @@ import { resolveBodyMentions } from './mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from './mentions.ts'
 import type { AgentTeamRepliedThread } from './turn-threads.ts'
 import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
+import { assertMemberRole } from './member-roles.ts'
 import type { AgentTeamDocState } from './team-docs.ts'
 import type { AgentTeamDecisionState } from './team-decisions.ts'
 import {
@@ -247,6 +248,9 @@ export const AGENT_TEAM_HUMAN_HANDLE = 'human'
 
 /** Idempotency identity of the one Host bootstrap operation. */
 export const AGENT_TEAM_INITIALIZE_REQUEST_ID = 'agent-team:initialize:v1' as AgentTeamRequestId
+
+/** The closed set of board priorities; the stored value is checked against it before it reaches the table. */
+const TASK_PRIORITIES: readonly AgentTeamTaskPriority[] = ['urgent', 'high', 'medium', 'low', 'none']
 
 const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
   kind: 'human',
@@ -1073,6 +1077,7 @@ export class AgentTeamLedger {
       this.assertModelSelection(request.member.model)
       this.assertCapabilities(request.member.capabilities)
       assertInstances(request.member.instances)
+      assertMemberRole(request.role)
       const member = Object.freeze({
         ...request.member, handle, description, presetId, state: 'enabled' as const,
         ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
@@ -1108,6 +1113,7 @@ export class AgentTeamLedger {
       this.assertModelSelection(request.model)
       this.assertCapabilities(request.capabilities)
       assertInstances(request.instances)
+      assertMemberRole(request.role)
       // Partial update: an absent field keeps what the Member already has, and
       // an explicit null clears the override. Spreading `prior` verbatim
       // handles the first case; the second must drop the resolved field so the
@@ -1541,20 +1547,20 @@ export class AgentTeamLedger {
       const body = request.body.trim()
       if (body === '') throw new Error('task body must not be empty')
       const title = this.normalizeTaskTitle(request.title, body)
-      const assignee = request.assignee ?? null
-      const priority = request.priority ?? 'none'
-      const position = request.position ?? 0
-      if (!Number.isFinite(position)) throw new Error('task position must be a finite number')
+      const priority = this.assertTaskPriority(request.priority ?? 'none')
+      if (request.position !== undefined && !Number.isFinite(request.position)) throw new Error('task position must be a finite number')
       // The idempotent branch runs before any projection lookup: a retry must
-      // resolve the stored record even if the Channel moved on since.
+      // resolve the stored record even if the Channel moved on since. A
+      // defaulted position is not compared: the stored one was chosen then.
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameTaskCreate(existing, request, { title, assignee, priority, position })
+        this.assertSameTaskCreate(existing, request, { title, assignee: this.canonicalAssigneeRef(request.assignee ?? null), priority, position: request.position })
         return this.resolved(this.taskCreatedResult(existing))
       }
       this.assertHumanActor(request.actor)
       const channel = this.requireActiveChannel(request.workspaceId, request.channelRef)
-      if (assignee !== null) this.assertAssignable(assignee, channel.channelRef)
+      const assignee = request.assignee == null ? null : this.assertAssignable(request.assignee, channel.channelRef).memberId
+      const position = request.position ?? this.endOfColumnPosition(request.workspaceId)
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
       const threadRef = this.ref('thread')
@@ -1597,27 +1603,37 @@ export class AgentTeamLedger {
       if (Object.keys(patch).length === 0) throw new Error('task update must change at least one field')
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameTaskUpdate(existing, request, patch)
+        this.assertSameTaskUpdate(existing, request, this.canonicalTaskPatch(patch))
         return this.resolved(this.taskUpdatedResult(existing))
       }
       this.assertHumanActor(request.actor)
       const { task, thread } = this.threadForActor(request.actor, request.workspaceId, request.taskRef)
-      if (patch.assignee !== undefined && patch.assignee !== null) this.assertAssignable(patch.assignee, task.channelRef)
-      const deferred = this.deferredThreadWrite(request.actor.memberId, task, thread, request.baseRevision)
-      if (deferred !== undefined) return this.resolved(deferred)
+      const canonical = this.canonicalTaskPatch(patch)
+      if (canonical.assignee != null) this.assertAssignable(canonical.assignee, task.channelRef)
+      // Board fields are metadata: the Human need not have read the Thread to
+      // reorder or relabel a Task, so only the revision fences the write.
+      if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
-      const nextTask: AgentTeamTask = Object.freeze({ ...task, ...patch })
-      const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
-      const assigneeChanged = patch.assignee !== undefined && (patch.assignee ?? null) !== (task.assignee ?? null)
-      const started = assigneeChanged && patch.assignee != null && !this.isFollowing(thread.threadRef, patch.assignee)
-        ? [this.startAttention(patch.assignee, thread.threadRef, sequence)]
+      const nextTask: AgentTeamTask = Object.freeze({ ...task, ...canonical })
+      const assigned = canonical.assignee != null && canonical.assignee !== (task.assignee ?? null)
+      // Assignment is a public Thread fact: it is what makes the assignee (and
+      // every other follower) see the change as unread and wakes it, and what
+      // the model reads. Pure field edits append no fact and leave the Thread
+      // revision alone, so an Agent mid-reply is not made stale by a reorder.
+      const activity: AgentTeamTaskActivity | undefined = assigned
+        ? Object.freeze({ activityRef: this.ref('activity'), kind: 'assign' as const, taskRef: task.taskRef, threadRef: thread.threadRef,
+          actor: request.actor.memberId, sequence, assignee: canonical.assignee! })
+        : undefined
+      const nextThread: AgentTeamThread = activity === undefined ? thread : Object.freeze({ ...thread, revision: sequence })
+      const started = assigned && !this.isFollowing(thread.threadRef, canonical.assignee!)
+        ? [this.startAttention(canonical.assignee!, thread.threadRef, sequence)]
         : []
       const inbox = this.inboxDelta(started)
       const operation: AgentTeamTaskUpdatedOperation = Object.freeze({
         ...base, kind: 'team/task-updated',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
-          patch, task: nextTask, thread: nextThread, inbox }),
+          patch: canonical, ...(activity === undefined ? {} : { activity }), task: nextTask, thread: nextThread, inbox }),
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
@@ -3137,12 +3153,14 @@ export class AgentTeamLedger {
         return event('team/task-created', `created task ${task.title ?? ''}`.trim(), { threadRef: thread.threadRef, taskRef: task.taskRef })
       }
       case 'team/task-updated': {
-        const { task, thread, patch } = operation.data
+        const { task, thread, patch, activity } = operation.data
         if (!threadRefs.has(thread.threadRef)) return undefined
-        if (patch.assignee !== undefined && patch.assignee !== null) {
-          const handle = this.state.members.get(patch.assignee)?.handle ?? patch.assignee
+        if (activity?.assignee !== undefined) {
+          const handle = this.state.members.get(activity.assignee)?.handle ?? activity.assignee
           return event('team/task-updated', `assigned @${handle}`, { threadRef: thread.threadRef, taskRef: task.taskRef })
         }
+        // A drag only reorders a column; it is not a room-level event.
+        if (Object.keys(patch).every(key => key === 'position')) return undefined
         return event('team/task-updated', `updated task ${task.title ?? ''}`.trim(), { threadRef: thread.threadRef, taskRef: task.taskRef })
       }
       case 'team/thread-session-bound': {
@@ -4248,15 +4266,14 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/task-updated') {
       assertHuman()
-      const { task, thread, patch } = operation.data
+      const { task, thread, patch, activity } = operation.data
       const priorTask = projection.tasks.get(task.taskRef)
       const priorThread = projection.threads.get(thread.threadRef)
       if (priorTask === undefined || priorThread === undefined
         || priorThread.revision !== operation.data.baseRevision
-        || thread.revision !== operation.sequence
-        || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })
         || !isDeepStrictEqual(task, { ...priorTask, ...patch })) throw new Error('invalid Task update')
       if (patch.title !== undefined && patch.title.trim() === '') throw new Error('invalid Task title')
+      if (patch.priority !== undefined && !TASK_PRIORITIES.includes(patch.priority)) throw new Error('invalid Task priority')
       if (patch.position !== undefined && !Number.isFinite(patch.position)) throw new Error('invalid Task position')
       if (patch.assignee !== undefined && patch.assignee !== null) {
         const assignee = projection.members.get(patch.assignee)
@@ -4264,7 +4281,17 @@ export class AgentTeamLedger {
           || !projection.memberships.get(task.channelRef)?.has(patch.assignee)) throw new Error('invalid Task assignee')
       }
       const assigned = patch.assignee !== undefined && patch.assignee !== null
-        && (patch.assignee ?? null) !== (priorTask.assignee ?? null)
+        && patch.assignee !== (priorTask.assignee ?? null)
+      if (assigned) {
+        if (activity === undefined || activity.kind !== 'assign' || activity.assignee !== patch.assignee
+          || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
+          || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef
+          || thread.revision !== operation.sequence
+          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })) throw new Error('invalid Task assignment activity')
+        this.addRef(refs, activity.activityRef)
+      } else if (activity !== undefined || !isDeepStrictEqual(thread, priorThread)) {
+        throw new Error('invalid Task update thread')
+      }
       const started = assigned && !this.isFollowingFrom(projection, thread.threadRef, patch.assignee!)
         ? [this.startAttention(patch.assignee!, thread.threadRef, operation.sequence)]
         : []
@@ -4861,6 +4888,7 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/task-updated') {
+      if (operation.data.activity !== undefined) this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
@@ -6348,7 +6376,7 @@ export class AgentTeamLedger {
       if (title === '') throw new Error('task title must not be empty')
       next.title = title.slice(0, 200)
     }
-    if (patch.priority !== undefined) next.priority = patch.priority
+    if (patch.priority !== undefined) next.priority = this.assertTaskPriority(patch.priority)
     if (patch.assignee !== undefined) next.assignee = patch.assignee
     if (patch.position !== undefined) {
       if (!Number.isFinite(patch.position)) throw new Error('task position must be a finite number')
@@ -6357,11 +6385,46 @@ export class AgentTeamLedger {
     return Object.freeze(next)
   }
 
-  /** An assignee must be an enabled Member of the Task's Channel. */
-  private assertAssignable(memberId: AgentTeamMemberId, channelRef: AgentTeamChannelRef): void {
+  /** An assignee must be an enabled Member of the Task's Channel; returns the Member so callers store its canonical id. */
+  private assertAssignable(memberId: AgentTeamMemberId, channelRef: AgentTeamChannelRef): AgentTeamAgentMember {
     const member = this.requireMember(memberId)
     if (member.state !== 'enabled') throw new Error(`Agent Member '${memberId}' is not enabled`)
     this.requireMemberChannel(member, channelRef)
+    return member
+  }
+
+  /**
+   * An assignee ref as the ledger stores it: the canonical Member id when the
+   * ref (possibly abbreviated) resolves, the ref itself otherwise. Retry
+   * comparison uses this so it never depends on the Member still being
+   * resolvable.
+   */
+  private canonicalAssigneeRef(assignee: AgentTeamMemberId | null): AgentTeamMemberId | null {
+    return assignee === null ? null : this.uniqueRefKey(this.state.members, assignee, 'member') ?? assignee
+  }
+
+  private canonicalTaskPatch(patch: AgentTeamTaskPatch): AgentTeamTaskPatch {
+    if (patch.assignee === undefined) return patch
+    return Object.freeze({ ...patch, assignee: this.canonicalAssigneeRef(patch.assignee) })
+  }
+
+  private assertTaskPriority(priority: AgentTeamTaskPriority): AgentTeamTaskPriority {
+    if (!TASK_PRIORITIES.includes(priority)) throw new Error(`task priority must be one of ${TASK_PRIORITIES.join(', ')}`)
+    return priority
+  }
+
+  /**
+   * Position that places a new Task after every Task already in the todo
+   * column of the Workspace. The chosen value is stored in the record, so
+   * replay never recomputes it.
+   */
+  private endOfColumnPosition(workspaceId: WorkspaceId): number {
+    let highest = 0
+    for (const task of this.state.tasks.values()) {
+      if (task.status !== 'todo' || this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+      highest = Math.max(highest, task.position ?? 0)
+    }
+    return highest + 1
   }
 
   private taskCreatedResult(operation: AgentTeamTaskCreatedOperation) {
@@ -6378,7 +6441,7 @@ export class AgentTeamLedger {
   private assertSameTaskCreate(
     operation: AgentTeamOperation,
     request: AgentTeamAuthorizedCreateTaskRequest,
-    fields: { title: string; assignee: AgentTeamMemberId | null; priority: AgentTeamTaskPriority; position: number },
+    fields: { title: string; assignee: AgentTeamMemberId | null; priority: AgentTeamTaskPriority; position: number | undefined },
   ): asserts operation is AgentTeamTaskCreatedOperation {
     if (operation.kind !== 'team/task-created' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId || operation.data.message.channelRef !== request.channelRef
@@ -6386,7 +6449,7 @@ export class AgentTeamLedger {
       || operation.data.task.title !== fields.title
       || (operation.data.task.priority ?? 'none') !== fields.priority
       || (operation.data.task.assignee ?? null) !== fields.assignee
-      || (operation.data.task.position ?? 0) !== fields.position
+      || (fields.position !== undefined && (operation.data.task.position ?? 0) !== fields.position)
       || !this.sameList(operation.data.message.attachments?.map(attachment => attachment.attachmentId) ?? [],
         request.resolvedAttachments?.map(attachment => attachment.attachmentId) ?? [])) this.throwRequestCollision(request.requestId)
   }

@@ -58,7 +58,7 @@ light value and is only reached on a host that does not define the alias.
 | `--ml-*` | Host alias | Fallback |
 | --- | --- | --- |
 | `--ml-text-micro` … `--ml-text-display` | none (type scale) | 11 / 12 / 13 / 14 / 15 / 16 / 18 / 20 / 24 / 36px |
-| `--ml-radius-xs` … `--ml-radius-2xl` | `--dsw-radius-md` for the base step | 3 / 4 / 6 / 8 / 12 / 16px |
+| `--ml-radius-xs` … `--ml-radius-2xl` | none (the host has no matching ladder) | 3 / 4 / 6 / 8 / 12 / 16px |
 | `--ml-surface` | `--dsw-alias-bg-layer-1` | `#ffffff` |
 | `--ml-surface-raised` | `--dsw-alias-bg-layer-2` | `#f7f7f8` |
 | `--ml-surface-hover` | `--dsw-alias-interactive-bg-hover` | `rgb(0 0 0 / 4%)` |

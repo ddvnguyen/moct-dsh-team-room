@@ -302,7 +302,8 @@ const claimActivitySchema = z.object({
 
 const taskActivitySchema = z.object({
   ...activityBase,
-  kind: z.union([z.literal('promote'), z.literal('accept'), z.literal('close'), z.literal('reopen')]),
+  kind: z.union([z.literal('promote'), z.literal('assign'), z.literal('accept'), z.literal('close'), z.literal('reopen')]),
+  assignee: memberIdSchema.optional(),
   releasedClaimRefs: z.array(claimRefSchema).min(1).optional(),
   completedClaimRefs: z.array(claimRefSchema).min(1).optional(),
   acceptedClaimRefs: z.array(claimRefSchema).optional(),
@@ -607,10 +608,11 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       workspaceId: workspaceIdSchema,
       baseRevision: z.number().int().positive(),
       patch: taskPatchSchema,
+      activity: taskActivitySchema.optional(),
       task: taskSchema,
       thread: threadSchema,
       inbox: inboxDeltaSchema,
-    }).strict(),
+    }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
     ...operationBase,
