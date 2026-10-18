@@ -77,6 +77,12 @@ function reorganize(root: ParentNode): void {
   )
   const open = extensionsOpen(toggle)
 
+  // React renders its own Experts/Skills/Plugins/Connectors panel inside
+  // Extensions. Those entries stay in the menu here, so the panel is hidden to
+  // avoid rendering each of them twice.
+  const panel = nav.querySelector<HTMLElement>('.dcu-extension-items')
+  if (panel) setHidden(panel, true)
+
   let order = 0
   const kept = new Set<HTMLElement>()
   for (const name of KEEP_ORDER) {

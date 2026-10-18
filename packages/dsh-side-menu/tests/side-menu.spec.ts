@@ -86,6 +86,20 @@ describe('dsh-side-menu', () => {
     stop()
   })
 
+  it('hides the React panel so grouped entries are not rendered twice', async () => {
+    const withPanel = MENU.replace(
+      '<button type="button">Connectors</button>',
+      '<div class="dcu-extension-items"><button type="button">Connectors</button></div>',
+    )
+    const { nav, stop } = mount(withPanel)
+    await settle()
+
+    const panel = nav.querySelector('.dcu-extension-items') as HTMLElement
+    expect(panel.style.display).toBe('none')
+
+    stop()
+  })
+
   it('never moves React-owned nodes out of the menu', async () => {
     const { nav, stop } = mount(MENU)
     await settle()
