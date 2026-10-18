@@ -1,3 +1,8 @@
+/*
+ * Derived from multica-x packages/views/issues/components/status-icon.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
 /* Status tones on the scoped Multica look layer. A status is a fact, not a
    control: the glyph never grows a hit area of its own. */
 

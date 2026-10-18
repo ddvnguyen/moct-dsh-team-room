@@ -27,8 +27,8 @@ const TEXT_TONE: Readonly<Record<PresenceTone, string>> = {
 
 /**
  * Availability dot, optionally with the workload chip. The dot's colour reads
- * only from availability: a reachable Agent whose last Turn failed stays
- * green, and workload carries no historical state.
+ * only from availability: an Agent with an unhealthy seat or instance reads as
+ * unstable (amber), and workload carries no historical state.
  *
  * `compact` collapses to the dot alone for dense rows.
  */

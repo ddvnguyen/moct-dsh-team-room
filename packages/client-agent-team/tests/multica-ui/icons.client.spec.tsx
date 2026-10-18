@@ -62,6 +62,18 @@ describe('Multica status and priority glyphs', () => {
   })
 })
 
+describe('Priority icon color', () => {
+  it('uses the tone class by default and the inherit class inside a chip', () => {
+    const { container, rerender } = render(<PriorityIcon priority="high" />)
+    const svg = () => container.querySelector('svg')!
+    expect(svg().getAttribute('class')).toMatch(/high/)
+    expect(svg().getAttribute('class')).not.toMatch(/inherit/)
+    rerender(<PriorityIcon priority="high" inheritColor />)
+    expect(svg().getAttribute('class')).toMatch(/inherit/)
+    expect(svg().getAttribute('class')).not.toMatch(/high/)
+  })
+})
+
 describe('Multica actor and agent presence', () => {
   it('renders a human initial and an agent glyph', () => {
     const { container, rerender } = render(<ActorAvatar name="@Ada" kind="human" />)
@@ -100,6 +112,13 @@ describe('Multica actor and agent presence', () => {
     expect(container.textContent).toContain('workloadWorking')
     expect(container.textContent).toContain('2 / 3')
     expect(container.querySelector('[data-availability="unstable"]')).not.toBeNull()
+  })
+
+  it('shows an unstable seat on the dot, not green', () => {
+    const detail: AgentPresenceDetail = { availability: 'unstable', workload: 'idle', runningCount: 0, queuedCount: 0, capacity: 1 }
+    const { container } = render(<AgentPresenceDot detail={detail} compact t={t} />)
+    expect(container.querySelector('[data-availability]')).toBeNull()
+    expect(container.querySelector('span[class*="dot"]')?.getAttribute('class')).toMatch(/Warning/i)
   })
 
   it('shows a neutral dot while presence is still loading', () => {

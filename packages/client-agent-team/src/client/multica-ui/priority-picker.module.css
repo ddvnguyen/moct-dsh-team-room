@@ -1,3 +1,8 @@
+/*
+ * Derived from multica-x packages/views/issues/components/pickers/priority-picker.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
 /* Priority chips in the picker: a tinted badge per severity, glyph first so
    the fill level reads before the word. */
 

@@ -4,7 +4,7 @@
 // the Team board groups by Task status only, so those branches are dropped.
 
 import { closestCenter, pointerWithin, type CollisionDetection } from '@dnd-kit/core'
-import { STATUS_RANK } from './status.ts'
+import { STATUS_ORDER } from './status.ts'
 import type { BoardTaskLike, TaskStatus } from './types.ts'
 
 export type DragMoveTargetUpdates = {
@@ -115,7 +115,7 @@ export function findColumn(
 export function statusOfColumnId(columnId: string): TaskStatus | null {
   if (!columnId.startsWith('status:')) return null
   const status = columnId.slice('status:'.length)
-  return status in STATUS_RANK ? status as TaskStatus : null
+  return (STATUS_ORDER as readonly string[]).includes(status) ? status as TaskStatus : null
 }
 
 /** Reordering inside a column never emits a status write. */

@@ -1,3 +1,9 @@
+/*
+ * Derived from multica-x packages/views/common/actor-avatar.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad and packages/ui/components/common/actor-avatar.tsx.
+ * Copyright Index Labs. Multica License.
+ */
+
 /* One actor circle. The muted fill is the fallback for every actor without a
    picture, so a mixed roster keeps one silhouette. */
 

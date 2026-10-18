@@ -1,3 +1,8 @@
+/*
+ * Derived from multica-x packages/views/issues/components/pickers/property-picker.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
 /* Picker shell and rows. The trigger is a quiet inline control: a board card
    and a Task header both read it as a field value, not a button. */
 

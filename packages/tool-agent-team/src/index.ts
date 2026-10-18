@@ -36,6 +36,7 @@ interface ActivityFactView {
   readonly completedClaimRefs?: string[]
   readonly acceptedClaimRefs?: string[]
   readonly releasedClaimRefs?: string[]
+  readonly assignee?: string
   readonly unread?: boolean
   readonly direct?: boolean
 }
@@ -82,7 +83,7 @@ function activityFactView(
   activity: { readonly kind: string; readonly actor: string; readonly taskRef: AgentTeamTaskRef
     readonly claimRef?: AgentTeamClaimRef | undefined; readonly claimRefs?: readonly AgentTeamClaimRef[] | undefined
     readonly completedClaimRefs?: readonly AgentTeamClaimRef[] | undefined; readonly acceptedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
-    readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined },
+    readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined; readonly assignee?: string | undefined },
   markers?: { readonly unread: boolean; readonly direct: boolean } | undefined,
   occurredAt?: string | undefined,
 ): ActivityFactView {
@@ -94,6 +95,7 @@ function activityFactView(
     ...(activity.completedClaimRefs === undefined || activity.completedClaimRefs.length === 0 ? {} : { completedClaimRefs: [...activity.completedClaimRefs] }),
     ...(activity.acceptedClaimRefs === undefined || activity.acceptedClaimRefs.length === 0 ? {} : { acceptedClaimRefs: [...activity.acceptedClaimRefs] }),
     ...(activity.releasedClaimRefs === undefined || activity.releasedClaimRefs.length === 0 ? {} : { releasedClaimRefs: [...activity.releasedClaimRefs] }),
+    ...(activity.assignee === undefined ? {} : { assignee: activity.assignee }),
     ...(markers === undefined ? {} : { unread: markers.unread, direct: markers.direct }),
   }
 }
@@ -141,6 +143,7 @@ function activityLine(fact: ActivityFactView): string {
   if (fact.completedClaimRefs !== undefined) segments.push(`completed claims ${fact.completedClaimRefs.join(', ')}`)
   if (fact.acceptedClaimRefs !== undefined) segments.push(`accepted claims ${fact.acceptedClaimRefs.join(', ')}`)
   if (fact.releasedClaimRefs !== undefined) segments.push(`released claims ${fact.releasedClaimRefs.join(', ')}`)
+  if (fact.assignee !== undefined) segments.push(`to ${fact.assignee}`)
   return segments.join(' ')
 }
 

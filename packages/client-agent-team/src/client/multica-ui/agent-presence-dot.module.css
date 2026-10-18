@@ -1,3 +1,8 @@
+/*
+ * Derived from multica-x packages/views/agents/components/agent-presence-indicator.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
 /* Two dimensions, one quiet line: availability is the dot's colour, workload
    is the words after the separator. */
 

@@ -20,6 +20,7 @@ export function PriorityPicker({ priority, onChange, t }: {
   return (
     <PickerMenu
       triggerLabel={t('priorityPickerLabel')}
+      valueLabel={t(PRIORITY_LABEL_KEY[current])}
       icon={<PriorityIcon priority={current} size={14} />}
       label={t(PRIORITY_LABEL_KEY[current])}
     >

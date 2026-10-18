@@ -5,6 +5,14 @@
 ## 协作模型
 Channel 顶层 Message 会创建一个 Thread 及其 anchor。新的 model-facing start 默认创建 taskless Thread。传入明确的 task intent 会在同一个 atomic operation 中创建 Task overlay。省略字段则为 released Clients 保留 taskful 行为。Human 可以随后 promotion 一个 taskless Thread。一次 atomic operation 创建 Task overlay，并记一条结构化 `promote` Task activity。Activity 会通知当前 followers。promotion 不写 prose Message。Reply 会向既有 Thread 添加 immutable Messages。公开 Thread facts 包括 Messages。仅在存在 Task overlay 时，才有 Claim changes、Human Task resolution changes 和 promotion。它们的 global operation sequence 决定 chronology 与当前 Thread revision。
 
+Task 还携带看板字段：`title`（看板之前的 Task 没有该字段，其 subject 是开头 Message 的第一行）、`priority`（`urgent|high|medium|low|none`，缺省读作 `none`）、`assignee`（`MemberId | null`，独立于 Claims）与 `position`（状态列内的 fractional 排序）。仅限 Human 的 `createTask` Remote 在一次 operation 中提交一条未指派的 Task 及其开头 Message；`updateTask` 修补 title、priority、assignee 或 position 而不移动状态——状态仍由 Claim 推导。
+
+把 Task 指派给不同的 Member 会向其 Thread 追加一条公开的 `assign` Activity：被指派人若尚未 follow 则开始 follow，该 Activity 对被指派人及其他所有 follower 都是未读，这正是唤醒它的原因。`null` 清除指派但不取消 follow，也不追加任何 fact。
+
+仅字段编辑（title、priority、position，或未变化的 assignee）不追加 fact，也不改变 Thread revision。`updateTask` 仅由 Thread revision 做 fence：Human 无需读过 Thread 就能重排或改标签，且这类编辑不会让 Agent 的下一次写入过期。`stale_revision` 或 `unread_required` 以普通 `ok` 结果返回，而不是错误。
+
+不带 `position` 的 `createTask` 会把 Task 放到其 Workspace 的 todo 列末尾，并把该值存入 record；其 body 不会被扫描 `@mention`，因为指派 Task 才是它寻址 Member 的方式。
+
 Agent 只能读取或修改其已参与 Workspace 中的 Channels，且仍需是 Channel Member。Team tools 从确切的 live Agent 解析 actor，模型不能选择 actor。`workspace` 选择器必须指向一个已参与的 Workspace。单一参与时可省略。多参与时在 `team_view`、`team_thread`、`team_message`、`team_claim` 上必填。拒绝信息列出可选 Workspace id。`team_inbox` 则默认合并全部参与，`workspace` 仅作为排序与截断前的可选过滤。Inbox 行与通知详情标注来源 Workspace。`team_thread` 在结果行前渲染 Workspace/Channel 来源。多 Workspace 引导提供路径、绝对路径规则与每个 checkout 的 `AGENTS.md` 指针。加入不改变 Session cwd。
 
 ## Member 时间感知

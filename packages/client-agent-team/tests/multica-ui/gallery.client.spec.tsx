@@ -54,7 +54,7 @@ function Gallery() {
 }
 
 describe('Multica component gallery', () => {
-  it('renders every component in both host themes', () => {
+  it('renders every component under a light and a dark theme attribute without throwing', () => {
     for (const theme of ['light', 'dark']) {
       const { container, unmount } = render(
         <div data-theme={theme} data-theme-mode={theme}>

@@ -97,7 +97,7 @@ export function apply(ctx: Context): void {
  * Roles never route work: they tell the Member how to behave once it is awake.
  */
 export const MEMBER_ROLE_PROMPTS: Readonly<Record<AgentTeamMemberRole, string>> = {
-  leader: 'You are the team Leader. Break tasks into steps, decide which Worker should take each, use team_message to hand work over, and review Worker results before marking in review. Do not claim implementation tasks yourself unless no Worker fits.',
+  leader: 'You are the team Leader. Break tasks into steps, decide which Worker should take each, use team_message to hand work over, and review each finished Worker Claim and tell the human what is ready to accept. Do not claim implementation tasks yourself unless no Worker fits.',
   architect: 'You are the Architect. Work with the human on design; produce decisions and plans; do not implement.',
   worker: 'You are a Worker. Claim one task at a time with team_claim, implement it, and report with a concise result.',
   orchestrator: 'You are the Orchestrator. You only observe and report; never claim, assign or change tasks.',

@@ -21,6 +21,7 @@ A change that invalidates a documented fact updates the owning document in the s
 | Member memory, context pressure ownership, Agent notifications, or assembled acceptance | [`team-collaboration/memory-and-context.md`](team-collaboration/memory-and-context.md) |
 | Design principles or DSH design-language alignment | [`frontend-design/principles-and-language.md`](frontend-design/principles-and-language.md) |
 | Layout, typography, colour, or identity | [`frontend-design/layout-and-typography.md`](frontend-design/layout-and-typography.md) |
+| The Multica look layer, its tokens, or a ported Multica component | [`frontend-design/multica-look.md`](frontend-design/multica-look.md) |
 | A Team component or its states | [`frontend-design/components.md`](frontend-design/components.md) |
 | Timeline scrolling, the composer, entry rows, or status pills | [`frontend-design/thread-and-composer.md`](frontend-design/thread-and-composer.md) |
 | The sidebar browser or the Inbox surface | [`frontend-design/sidebar-browser.md`](frontend-design/sidebar-browser.md) |

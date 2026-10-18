@@ -67,10 +67,47 @@ describe('multica drag helpers', () => {
     expect(getMoveUpdates('status:done', 5, { status: 'todo' })).toEqual({ status: 'done', position: 5 })
   })
 
-  it('prefers a pointer hit on a card over its column', () => {
-    // The collision factory is exercised through the board's own drag spec;
-    // here we only pin that it is a function of the column id set.
-    expect(typeof makeKanbanCollision(new Set(['status:todo']))).toBe('function')
+  it('keeps equal neighbours tied, which the caller must treat as no position change', () => {
+    const tied = new Map([task({ taskRef: 'a', position: 0 }), task({ taskRef: 'b', position: 0 }), task({ taskRef: 'c', position: 0 })].map(item => [item.taskRef, item]))
+    expect(computePosition(['b', 'a', 'c'], 'a', tied)).toBe(0)
+  })
+
+  it('rejects inherited object keys as column statuses', () => {
+    expect(statusOfColumnId('status:constructor')).toBeNull()
+    expect(statusOfColumnId('status:toString')).toBeNull()
+    expect(statusOfColumnId('status:done')).toBe('done')
+  })
+})
+
+describe('multica kanban collision', () => {
+  const rect = (left: number, top: number, width: number, height: number) => ({ left, top, width, height, right: left + width, bottom: top + height })
+  const columnIds = new Set(['status:todo'])
+  const collide = (pointer: { x: number; y: number } | null) => {
+    const rects = new Map([
+      ['status:todo', rect(0, 0, 300, 600)],
+      ['card-a', rect(10, 10, 280, 80)],
+      ['card-b', rect(10, 100, 280, 80)],
+    ])
+    const containers = [...rects.keys()].map(id => ({ id, data: { current: undefined }, disabled: false, node: { current: null }, rect: { current: rects.get(id)! } }))
+    return makeKanbanCollision(columnIds)({
+      active: { id: 'card-x', data: { current: undefined }, rect: { current: { initial: null, translated: null } } },
+      collisionRect: rect(20, 110, 100, 60),
+      droppableRects: rects,
+      droppableContainers: containers,
+      pointerCoordinates: pointer,
+    } as unknown as Parameters<ReturnType<typeof makeKanbanCollision>>[0]).map(entry => entry.id)
+  }
+
+  it('prefers the card under the pointer over its column', () => {
+    expect(collide({ x: 50, y: 120 })).toEqual(['card-b'])
+  })
+
+  it('falls back to the column when the pointer is over empty column space', () => {
+    expect(collide({ x: 50, y: 400 })).toEqual(['status:todo'])
+  })
+
+  it('falls back to the nearest droppable when the pointer is outside every rect', () => {
+    expect(collide({ x: 900, y: 900 }).length).toBeGreaterThan(0)
   })
 })
 

@@ -30,7 +30,9 @@ Durable capability intent on the Member entity (optional `capabilities` field: `
 
 ## Member Role
 
-An optional `role` field (`architect`, `leader`, `worker`, or `orchestrator`) on the Member entity. It is a label plus a fixed prompt section in the Member's identity block, never a routing rule: unassigned Tasks stay unassigned, and the Orchestrator only reports. `addMember` sets it, `updateMember` changes it, and `null` clears it. It rides `team/member-added` and `team/member-updated`, so an older ledger without it replays unchanged and renders the identity block it had before.
+An optional `role` field (`architect`, `leader`, `worker`, or `orchestrator`) on the Member entity. It is a label plus a fixed prompt section in the Member's identity block, never a routing rule: unassigned Tasks stay unassigned, and the Orchestrator only reports. `addMember` sets it, `updateMember` changes it, and `null` clears it. A role outside the four is refused at commit. It rides `team/member-added` and `team/member-updated`, so an older ledger without it replays unchanged and renders the identity block it had before.
+
+The Orchestrator's "only observes and reports" is prompt guidance: the Host does not stop an Orchestrator from calling Team tools.
 
 ## Workspace
 

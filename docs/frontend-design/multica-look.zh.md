@@ -37,11 +37,11 @@ import css from './BoardCard.module.css'
 | `ActorAvatar` | `views/common/actor-avatar.tsx` + `ui/components/common/actor-avatar.tsx` | 名称/URL/类型均为 props；无悬浮卡与个人页链接 |
 | `AgentAvatarStack` | `views/agents/components/agent-avatar-stack.tsx` | 名册切片作为 props；保留 `+N` 溢出 |
 | `AgentPresenceDot` | `views/agents/components/agent-presence-indicator.tsx` | 派生结果作为 prop；加载中是中性圆点 |
-| `AgentActivityIndicator` | `views/issues/components/issue-agent-activity-indicator.tsx` + `agents/components/agent-activity-hover-content.tsx` | `memberActivity` 快照作为 props；使用 dsh `HoverCard` |
+| `AgentActivityIndicator` | `views/issues/components/issue-agent-activity-indicator.tsx` + `agents/components/agent-activity-hover-content.tsx` | `memberActivity` 快照作为 props；使用带 `inline` 的 dsh `HoverCard`，键盘聚焦即打开逐 Turn 详情，触屏用户可直接读到徽标上的工具与步数 |
 | `StatusPicker` | `views/issues/components/pickers/status-picker.tsx` | 五种状态；仅待办/已完成/已关闭可选 |
 | `PriorityPicker` | `views/issues/components/pickers/priority-picker.tsx` | 保留展示顺序；无延迟挂载 |
 | `AssigneePicker` | `views/issues/components/pickers/assignee-picker.tsx` + `property-picker.tsx` | 仅成员；「未分配」写入 null；无 squad |
-| `PickerMenu` / `PickerItem` | `views/issues/components/pickers/property-picker.tsx` | 外部点击、Escape 与焦点返回交给 dsh `Menu` |
+| `PickerMenu` / `PickerItem` | `views/issues/components/pickers/property-picker.tsx` | 外部点击、Escape 与焦点返回交给 dsh `Menu`；列表使用 portal，触发器名称为“字段：值”，触发器会拦截自身点击，避免点击卡片时打开卡片 |
 
 一致性审计（`node scripts/audit-ui-parity.mjs`）会递归子目录，因此 `multica-ui/`
 下的样式表与顶层样式表适用同一套焦点、token 与几何规则。
@@ -54,7 +54,7 @@ import css from './BoardCard.module.css'
 | `--ml-*` | 宿主别名 | 回退值 |
 | --- | --- | --- |
 | `--ml-text-micro` … `--ml-text-display` | 无（字号阶梯） | 11 / 12 / 13 / 14 / 15 / 16 / 18 / 20 / 24 / 36px |
-| `--ml-radius-xs` … `--ml-radius-2xl` | 基础档使用 `--dsw-radius-md` | 3 / 4 / 6 / 8 / 12 / 16px |
+| `--ml-radius-xs` … `--ml-radius-2xl` | 无（宿主没有对应的圆角阶梯） | 3 / 4 / 6 / 8 / 12 / 16px |
 | `--ml-surface` | `--dsw-alias-bg-layer-1` | `#ffffff` |
 | `--ml-surface-raised` | `--dsw-alias-bg-layer-2` | `#f7f7f8` |
 | `--ml-surface-hover` | `--dsw-alias-interactive-bg-hover` | `rgb(0 0 0 / 4%)` |

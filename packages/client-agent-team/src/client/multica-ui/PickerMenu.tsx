@@ -4,7 +4,10 @@
 // already owns outside-click, Escape and the post-selection focus return. The
 // searchable variant and the deferred-mount optimisation are not ported: the
 // Team pickers list at most a workspace roster, and the board mounts them only
-// on interaction.
+// on interaction. The list is portaled so an `overflow` ancestor (a board
+// column) cannot crop it; the trigger stops its click from reaching a
+// clickable ancestor (a board card), which must not be a button or link
+// itself.
 
 import { useState, type ReactNode } from 'react'
 import { IconCheckOutlineRegular, IconChevronDownOutlineRegular, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -16,11 +19,13 @@ import css from './picker-menu.module.css'
  * trigger keeps its own content so a board card and a Task header can show the
  * same field at different densities.
  */
-export function PickerMenu({ label, icon, triggerLabel, children }: {
+export function PickerMenu({ label, icon, triggerLabel, valueLabel, children }: {
   readonly label: ReactNode
   readonly icon?: ReactNode | undefined
   /** Accessible name for the trigger, which may render only an icon. */
   readonly triggerLabel: string
+  /** The field's current value as text; the trigger's name becomes `triggerLabel: valueLabel` so it is not lost. */
+  readonly valueLabel?: string | undefined
   readonly children: (close: () => void) => ReactNode
 }) {
   const [open, setOpen] = useState(false)
@@ -30,17 +35,21 @@ export function PickerMenu({ label, icon, triggerLabel, children }: {
         open={open}
         onClose={() => setOpen(false)}
         autoFocus
+        portal
         align="start"
         className={css.anchor}
-        listClassName={css.list}
+        listClassName={`${look.multicaLook} ${css.list}`}
         anchor={(
           <button
             type="button"
             className={css.trigger}
             aria-haspopup="menu"
             aria-expanded={open}
-            aria-label={triggerLabel}
-            onClick={() => setOpen(value => !value)}
+            aria-label={valueLabel === undefined ? triggerLabel : `${triggerLabel}: ${valueLabel}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              setOpen(value => !value)
+            }}
           >
             {icon}
             <span className={css.triggerLabel}>{label}</span>
@@ -59,10 +68,12 @@ export function PickerMenu({ label, icon, triggerLabel, children }: {
  * cannot move) and carries the reason in a tooltip; the Menu's keyboard walk
  * skips disabled buttons, so arrows cannot choose it either.
  */
-export function PickerItem({ selected, disabled = false, tooltip, onSelect, children }: {
+export function PickerItem({ selected, disabled = false, tooltip, describedBy, onSelect, children }: {
   readonly selected: boolean
   readonly disabled?: boolean
   readonly tooltip?: string | undefined
+  /** Id of the visible hint that explains why a row is disabled. */
+  readonly describedBy?: string | undefined
   readonly onSelect: () => void
   readonly children: ReactNode
 }) {
@@ -72,6 +83,8 @@ export function PickerItem({ selected, disabled = false, tooltip, onSelect, chil
       role="menuitem"
       className={css.item}
       data-selected={selected || undefined}
+      aria-current={selected || undefined}
+      aria-describedby={describedBy}
       disabled={disabled}
       onClick={onSelect}
     >

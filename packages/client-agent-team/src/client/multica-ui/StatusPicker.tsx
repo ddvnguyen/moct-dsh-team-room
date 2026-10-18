@@ -13,6 +13,9 @@ import { PickerItem, PickerMenu } from './PickerMenu.tsx'
 import { StatusIcon } from './StatusIcon.tsx'
 import css from './status-picker.module.css'
 
+/** Id of the one visible hint that the disabled rows point to. */
+const HINT_ID = 'team-status-picker-hint'
+
 /** Status picker: drag-free status change from a Task header or board card. */
 export function StatusPicker({ status, onChange, t }: {
   readonly status: TaskStatus
@@ -22,6 +25,7 @@ export function StatusPicker({ status, onChange, t }: {
   return (
     <PickerMenu
       triggerLabel={t('statusPickerLabel')}
+      valueLabel={t(STATUS_LABEL_KEY[status])}
       icon={<StatusIcon status={status} size={14} />}
       label={t(STATUS_LABEL_KEY[status])}
     >
@@ -34,7 +38,7 @@ export function StatusPicker({ status, onChange, t }: {
                 key={option}
                 selected={option === status}
                 disabled={!enabled}
-                tooltip={enabled ? undefined : t('statusPickerLocked')}
+                describedBy={enabled ? undefined : HINT_ID}
                 onSelect={() => {
                   close()
                   if (enabled && option !== status) onChange(option)
@@ -45,7 +49,7 @@ export function StatusPicker({ status, onChange, t }: {
               </PickerItem>
             )
           })}
-          <p className={`${look.multicaLook} ${css.hint}`}>{t('statusPickerLocked')}</p>
+          <p id={HINT_ID} className={`${look.multicaLook} ${css.hint}`}>{t('statusPickerLocked')}</p>
         </>
       )}
     </PickerMenu>
