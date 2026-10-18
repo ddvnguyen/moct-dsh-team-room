@@ -26,16 +26,20 @@ export function AssigneePicker({ assignee, members, onChange, t }: {
   readonly t: TeamSidebarProps['t']
 }) {
   const current = members.find(member => member.memberId === assignee)
+  // An assignee the roster no longer lists (removed, archived) is still an assignee: show its id instead of "Unassigned".
+  const orphan = current === undefined && assignee != null
+  const assigneeText = current?.handle ?? (orphan ? assignee : t('assigneeUnassigned'))
   return (
     <PickerMenu
       triggerLabel={t('assigneePickerLabel')}
+      valueLabel={assigneeText}
       icon={current === undefined ? undefined : <ActorAvatar name={current.handle} avatarUrl={current.avatarUrl} kind="agent" size="xs" />}
-      label={current === undefined ? <span className={css.unassigned}>{t('assigneeUnassigned')}</span> : current.handle}
+      label={current !== undefined ? current.handle : orphan ? <span className={css.unassigned}>{assignee}</span> : <span className={css.unassigned}>{t('assigneeUnassigned')}</span>}
     >
       {close => (
         <>
           <PickerItem
-            selected={current === undefined}
+            selected={current === undefined && !orphan}
             onSelect={() => {
               close()
               if (assignee != null) onChange(null)

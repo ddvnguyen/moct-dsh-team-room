@@ -43,7 +43,8 @@ export function AgentActivityIndicator({ activities, members, hoverCard = true, 
     const member = byId.get(activity.memberId)
     heads.push(member ?? { memberId: activity.memberId, handle: activity.handle })
   }
-  const current = activities[0]!
+  // The most recently started Turn speaks for the badge; more than one is said out loud.
+  const current = activities.reduce((latest, activity) => activity.turnStartedAt > latest.turnStartedAt ? activity : latest)
   const label = t('activityWorkingShort')
 
   const badge = (
@@ -52,18 +53,20 @@ export function AgentActivityIndicator({ activities, members, hoverCard = true, 
       <TextShimmer active className={css.label}>{label}</TextShimmer>
       {current.current !== undefined && <span className={css.tool}>{current.current.label}</span>}
       <span className={css.step}>{t('activityStepCount', { count: String(current.stepCount) })}</span>
+      {activities.length > 1 && <span className={css.step}>{t('activityHoverHeader', { count: String(activities.length) })}</span>}
     </span>
   )
 
   if (!hoverCard) {
-    return <span className={`${look.multicaLook} ${css.root}`} aria-label={label}>{badge}</span>
+    return <span className={`${look.multicaLook} ${css.root}`} role="group" aria-label={label}>{badge}</span>
   }
 
   return (
     <span className={`${look.multicaLook} ${css.root}`}>
       <HoverCard
+        inline
         openDelayMs={900}
-        anchor={<span className={css.anchor} tabIndex={0} aria-label={label}>{badge}</span>}
+        anchor={<span className={css.anchor} tabIndex={0} role="group" aria-label={label}>{badge}</span>}
         content={(
           <div className={`${look.multicaLook} ${css.card}`}>
             <p className={css.cardTitle}>{t('activityHoverHeader', { count: String(activities.length) })}</p>

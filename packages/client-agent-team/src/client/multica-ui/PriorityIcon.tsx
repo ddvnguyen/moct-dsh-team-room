@@ -1,8 +1,9 @@
 // Derived from multica-x packages/views/issues/components/priority-icon.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
 //
 // Rendering adapted: the tone is a CSS Module class instead of a Tailwind
-// class pair, and `inheritColor` simply drops the tone class so the glyph
-// takes the surrounding text color (used inside priority chips).
+// class pair, and `inheritColor` swaps the tone class for one that restores
+// `color: inherit` (the look layer would otherwise force the neutral text
+// color), so the glyph takes the surrounding chip color.
 
 import type { TaskPriority } from '../multica/types.ts'
 import { PRIORITY_BARS } from '../multica/priority.ts'
@@ -26,7 +27,7 @@ export function PriorityIcon({ priority, size = 14, className, inheritColor = fa
   readonly inheritColor?: boolean
   readonly title?: string
 }) {
-  const classes = [look.multicaLook, css.icon, inheritColor ? undefined : css[priority], className]
+  const classes = [look.multicaLook, css.icon, inheritColor ? css.inherit : css[priority], className]
     .filter(part => part !== undefined).join(' ')
   const label = title === undefined ? { 'aria-hidden': true } : { role: 'img', 'aria-label': title }
 
