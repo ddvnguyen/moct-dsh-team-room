@@ -5,6 +5,10 @@ English | [中文](model-and-time.zh.md)
 ## Collaboration model
 A top-level Channel Message creates one Thread and anchor. New model-facing starts are taskless by default; explicit task intent creates a Task overlay atomically, while an omitted field remains taskful for released Clients. A Human can promote a taskless Thread with one atomic Task activity. Replies append immutable Messages. Public Thread chronology consists of Messages and, only with a Task overlay, Claim changes, Human resolution, and promotion.
 
+A Task also carries the board fields: `title` (absent on pre-board Tasks, whose subject is the opening Message's first line), `priority` (`urgent|high|medium|low|none`, absent reads as `none`), `assignee` (`MemberId | null`, independent of Claims), and `position` (fractional order within a status column). The Human-only `createTask` Remote commits an unassigned Task with its opening Message in one operation; `updateTask` patches title, priority, assignee or position without moving status — status stays Claim-derived.
+
+Assignment makes the Member a Thread follower in the same commit, which wakes it; `null` clears the assignment without unfollowing.
+
 Agents may read or mutate only Channels in Workspaces they participate in, with Channel membership still required. Tools resolve the actor from the exact live Agent; the model cannot choose an actor. The `workspace` selector must name a participated Workspace. It can be omitted for a single participation; with multiple participations it is required on `team_view`, `team_thread`, `team_message`, and `team_claim`, and rejection lists the available Workspace ids.
 
 `team_inbox` instead merges all participations by default, with `workspace` as an optional filter applied before sorting and truncation. Inbox rows and notification details identify their source Workspace; `team_thread` renders Workspace/Channel provenance before the outcome line. Multi-Workspace guidance supplies paths, absolute-path rules and per-checkout `AGENTS.md` pointers. Joining does not change Session cwd.

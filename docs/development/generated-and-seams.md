@@ -76,6 +76,10 @@ The six mechanical surfaces that must change together:
 
 **The question those six surfaces do not ask: crash reconvergence.** For every in-process effect it drives — a wake, a disposal, an activation, an external file side effect — answer: if the process dies between commit and effect, which durable state re-derives it, and is that re-derivation idempotent? The effect is re-derived *after* replay, never instead of it; the step is a question, not a seventh surface. [`host-authority.md`](../architecture/host-authority.md) names the Host's own re-derivations.
 
+A complete worked slice is the board Task pair (#124): `team/task-created` and `team/task-updated` entered all six surfaces in one change — strict `spec.ts` schemas, `createTask`/`updateTask` Human-only Remotes, channel-plus-thread change scopes, idempotent retry comparators, and an in-operation Attention follow that wakes an assignee through `affectedMembersOf` → `notifyMember`.
+
+A side effect that lives inside the record (the assignee's follow) needs no crash reconvergence: replay re-derives it like any projection.
+
 The invariant companion is checked, not extended: `invariant.ts` validates the whole durable ledger at mount and after commits, so a new operation's durable record is covered automatically once it replays. That coverage stops at the durable table — the in-process effects the question above asks about have no invariant. Extend the invariant only when the new record shape needs a relationship the projection validator does not already assert.
 
 Two boundaries this checklist depends on:

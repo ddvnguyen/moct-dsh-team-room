@@ -108,6 +108,33 @@ describe('MoctOperationsTable — replay (A1, A2)', () => {
     expect(a.size).toBe(1)
     expect(b.size).toBe(1)
   })
+
+  it('round-trips the board Task kinds as opaque records', async () => {
+    // MOCT stores `record_json` opaquely and validates no kind, so the two
+    // board kinds must survive a write and a reload byte for byte.
+    const backend = fakeBackend()
+    const table = await MoctOperationsTable.open({ baseUrl: 'http://x', workspaceId: 'host-a', fetch: backend.fetch, sleep: sleepless })
+    const created: Rec = {
+      operationId: 'operation:1', sequence: 1, kind: 'team/task-created',
+      data: { workspaceId: 'workspace:alpha', mentions: [],
+        message: { messageRef: 'message:board', channelRef: 'channel:eng', threadRef: 'thread:board', taskRef: 'task:board', sender: 'member:human', body: 'Ship the board', topLevel: true, sequence: 1, occurredAt: '2026-10-18T00:00:00.000Z' },
+        task: { taskRef: 'task:board', channelRef: 'channel:eng', threadRef: 'thread:board', status: 'todo', resolution: 'open', title: 'Ship the board', priority: 'high', assignee: null, position: 3 },
+        thread: { threadRef: 'thread:board', taskRef: 'task:board', revision: 1 },
+        inbox: { unread: {}, direct: {} } },
+    }
+    const updated: Rec = {
+      operationId: 'operation:2', sequence: 2, kind: 'team/task-updated',
+      data: { workspaceId: 'workspace:alpha', baseRevision: 1, patch: { assignee: null, position: 5 },
+        task: { taskRef: 'task:board', channelRef: 'channel:eng', threadRef: 'thread:board', status: 'todo', resolution: 'open', title: 'Ship the board', priority: 'high', assignee: null, position: 5 },
+        thread: { threadRef: 'thread:board', taskRef: 'task:board', revision: 2 },
+        inbox: { unread: {}, direct: {} } },
+    }
+    await table.put('operation:1', created)
+    await table.put('operation:2', updated)
+    const reopened = await MoctOperationsTable.open({ baseUrl: 'http://x', workspaceId: 'host-a', fetch: backend.fetch, sleep: sleepless })
+    expect(reopened.get('operation:1')).toEqual(created)
+    expect(reopened.get('operation:2')).toEqual(updated)
+  })
 })
 
 describe('MoctOperationsTable — fail-closed writes (A3)', () => {
