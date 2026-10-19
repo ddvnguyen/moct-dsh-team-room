@@ -63,7 +63,7 @@ describe('Team slot boundary', () => {
     await act(async () => { b.selectPanel('agent-team') })
 
     const alert = await b.view.findByRole('alert')
-    expect(alert.getAttribute('data-team-slot-error')).toBe('main:team')
+    expect(alert.getAttribute('data-team-slot-error')).toBe('main:teams')
     expect(alert.textContent).toContain('这一块没能显示出来。')
     // The host's own boundary never fired: this alert is the Team's.
     expect(b.view.container.querySelector('[data-slot-error]')).toBeNull()

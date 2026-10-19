@@ -184,7 +184,12 @@ describe('Agent Team shipping contract', () => {
     const shippedLibDirs = (JSON.parse(manifestText) as { files: string[] }).files
       .filter(pattern => pattern.startsWith('packages/') && pattern.endsWith('/lib/**/*'))
       .map(pattern => pattern.slice(0, -'/**/*'.length))
-    expect(cleanTargets).toEqual(shippedLibDirs)
+    // `packages/dsh-side-menu` is its own plugin package: it ships from its own
+    // manifest, so the repository build cleans its `lib` while this bundle's
+    // tarball does not carry it.
+    const sideMenuManifest = JSON.parse(await readFile(resolve(root, 'packages/dsh-side-menu/package.json'), 'utf8')) as { files: string[] }
+    expect(sideMenuManifest.files).toContain('lib')
+    expect(cleanTargets.filter(target => target !== undefined && !target.startsWith('packages/dsh-side-menu/'))).toEqual(shippedLibDirs)
     const buildCommand = (JSON.parse(manifestText) as { scripts: { build: string } }).scripts.build
     expect(buildCommand.indexOf('npm run clean:build-outputs')).toBeGreaterThanOrEqual(0)
     expect(buildCommand.indexOf('npm run generate:typert')).toBeGreaterThan(buildCommand.indexOf('npm run clean:build-outputs'))

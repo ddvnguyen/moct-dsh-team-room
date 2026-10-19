@@ -85,17 +85,19 @@ describe('Team mode and the shell main panel', () => {
     expect(css).not.toMatch(/newSession|panelList/u)
   })
 
-  it('lists the Agents in the Agents tab, not on Team Settings', async () => {
-    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true, agentsTab: true })
+  it('lists the Agents behind the Agents segment of the Teams tab, not on Team Settings', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
-      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="agents"]')
+      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')
       expect(found).not.toBeNull()
       return found!
     })
+    // Channels is the view the tab opens on: the Agents group is not beside it.
+    expect(within(tab).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+    // The segmented control swaps the one tab's body rather than adding a tab.
+    fireEvent.click(within(tab).getByRole('tab', { name: 'Agents' }))
     expect(await within(tab).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
-    // The Team tab keeps Channels and no Agents group.
-    const team = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')!
-    expect(within(team).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+    expect(b.view.container.querySelector('[data-native-tab="agents"]')).toBeNull()
   })
 
   it('A14: Agent tabs join the host conversation strip only while a Member Session is open, before Chat', async () => {
@@ -112,9 +114,9 @@ describe('Team mode and the shell main panel', () => {
     await waitFor(() => expect(agentTabs()).toEqual(['agent-sessions', 'agent-config', 'agent-memory']))
     // Sessions, Config and Memory sit before the host's Chat (order 0).
     expect(entries().filter(entry => entry.id.startsWith('agent-')).map(entry => entry.order)).toEqual([-30, -20, -10])
-    // No Modal stands in for the page, and the sidebar stays on the Agents tab.
+    // No Modal stands in for the page, and the sidebar stays on the Teams tab.
     expect(b.view.queryByRole('dialog')).toBeNull()
-    expect(b.view.container.querySelector('[data-native-tab="agents"]')).not.toBeNull()
+    expect(b.view.container.querySelector('[data-native-tab="team"]')).not.toBeNull()
     act(() => { b.runtime.ctx.teamNavigation.actions().exitMemberSession() })
     await waitFor(() => expect(agentTabs()).toEqual([]))
   })

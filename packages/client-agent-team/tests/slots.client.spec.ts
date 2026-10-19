@@ -361,8 +361,9 @@ describe('Team Settings rail row', () => {
     const withStrip = await bench(null, strip.registry)
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    // Strip order: Team, then Agents (see team-tab.ts), each inserted once.
-    expect(strip.inserted).toEqual(['team', 'agents'])
+    // One Teams tab carries both the Channel view and the Agents list (see
+    // teams-tab-body.tsx), so the strip gets a single entry.
+    expect(strip.inserted).toEqual(['team'])
     expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
     await fiber.dispose()
   })
