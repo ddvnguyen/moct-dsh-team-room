@@ -15,6 +15,7 @@ import type { AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamSidebarProps } from '../slots.ts'
 import type { ActivitySource } from '../multica/types.ts'
 import { StatusIcon } from '../multica-ui/StatusIcon.tsx'
+import { PriorityIcon } from '../multica-ui/PriorityIcon.tsx'
 import { PriorityPicker } from '../multica-ui/PriorityPicker.tsx'
 import { AssigneePicker, type AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
 import { AgentActivityIndicator } from '../multica-ui/AgentActivityIndicator.tsx'
@@ -33,10 +34,17 @@ interface CardBodyProps {
   readonly settling: boolean
   readonly onUpdate: (taskRef: string, update: BoardCardUpdate) => void
   readonly onOpen: (task: BoardCardTask) => void
+  /**
+   * Dense, read-only face for a list that is not the Board (the Agent page's
+   * Tasks tab): the priority becomes a glyph and the assignee picker is
+   * dropped, since the list is already scoped to one Member. The title still
+   * opens the Task.
+   */
+  readonly compact?: boolean
   readonly t: TeamSidebarProps['t']
 }
 
-function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: CardBodyProps) {
+function CardBody({ task, members, activities, settling, onUpdate, onOpen, compact = false, t }: CardBodyProps) {
   const handleUpdate = useCallback((update: BoardCardUpdate) => {
     onUpdate(task.taskRef, update)
   }, [onUpdate, task.taskRef])
@@ -47,8 +55,9 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
     // A pointer click anywhere on the face opens the Task; the pickers and the
     // title stop their own clicks, so this only sees the passive parts.
     <div
-      className={`${css.card} ${settling ? css.cardSettling : ''}`}
+      className={`${css.card} ${settling ? css.cardSettling : ''} ${compact ? css.cardCompact : ''}`}
       data-board-card=""
+      data-board-card-compact={compact || undefined}
       data-task-ref={task.taskRef}
       data-testid="board-card"
       onClick={open}
@@ -56,11 +65,13 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
       {/* Row 1: priority + #number (left), live agent activity (right) */}
       <div className={css.cardTopRow}>
         <span className={css.cardId}>
-          <PriorityPicker
-            priority={task.priority ?? 'none'}
-            onChange={priority => handleUpdate({ priority })}
-            t={t}
-          />
+          {compact
+            ? <PriorityIcon priority={task.priority ?? 'none'} />
+            : <PriorityPicker
+              priority={task.priority ?? 'none'}
+              onChange={priority => handleUpdate({ priority })}
+              t={t}
+            />}
           <span>#{task.taskNumber}</span>
         </span>
         <span className={css.cardRight}>
@@ -88,14 +99,13 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, t }: 
             <span>{task.channelName}</span>
           </span>
         </span>
-        <AssigneePicker
+        {!compact && <AssigneePicker
           assignee={task.assignee ?? null}
           members={members}
           onChange={assignee => handleUpdate({ assignee })}
           t={t}
-        />
+        />}
       </div>
-
       {/* Row 4: the Task's active Claim, when one is running */}
       {task.claim !== undefined && (
         <div className={css.claimLine}>

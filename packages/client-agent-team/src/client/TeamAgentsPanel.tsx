@@ -2,13 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamClientMemberStatus,
+  AgentTeamMemberActivity,
   AgentTeamMemberRole,
   AgentTeamModelSelection,
+  AgentTeamSessionRun,
+  AgentTeamView,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button, IconArchiveOutlineRegular, IconClockOutlineRegular, IconCopyOutlineRegular, IconEditOutlineRegular, IconPlayOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
-import { TeamMemberIdentity } from './TeamMemberRow.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
 import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
 import { useSidebarSectionOpen, setSidebarSectionOpen } from './sidebar-sections.ts'
@@ -18,6 +20,11 @@ import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { AgentEditorDialog, ModelPickerField, RoleField, sameModel, warmModelCatalog } from './TeamMemberEditor.tsx'
 import { TeamAgentImport } from './TeamAgentImport.tsx'
+import { buildPresenceMap, deriveAgentPresence } from './multica/derive-presence.ts'
+import type { AgentPresenceDetail } from './multica/types.ts'
+import { AgentListToolbar, EMPTY_AGENT_FILTERS, type AgentListFilters } from './agents/agent-list-toolbar.tsx'
+import { AgentRosterRow } from './agents/agent-row.tsx'
+import { currentTaskOf, tokensToday } from './agents/agent-page-model.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -32,6 +39,12 @@ interface TeamAgentsPanelProps {
   readonly joinWorkspace: TeamSidebarProps['joinWorkspace']
   readonly leaveWorkspace: TeamSidebarProps['leaveWorkspace']
   readonly loadModels: TeamSidebarProps['loadModels']
+  /** Live running-Turn snapshot: the row's current tool and workload dot. */
+  readonly loadMemberActivity?: TeamSidebarProps['loadMemberActivity']
+  /** The board's catalog: the row's current Task and the detail's Tasks tab. */
+  readonly loadBoard?: TeamSidebarProps['loadBoard']
+  /** Today's tokens come from the Member's Session runs. */
+  readonly loadMemberSessions?: TeamSidebarProps['loadMemberSessions']
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
@@ -40,8 +53,12 @@ interface TeamAgentsPanelProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, memberSessionId, openMemberSession, openAgentDetail, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, loadModels, loadMemberActivity, loadBoard, loadMemberSessions, memberSessionId, openMemberSession, openAgentDetail, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
+  const [activities, setActivities] = useState<readonly AgentTeamMemberActivity[]>([])
+  const [board, setBoard] = useState<AgentTeamView>()
+  const [runsByMember, setRunsByMember] = useState<ReadonlyMap<string, readonly AgentTeamSessionRun[]>>(new Map())
+  const [filters, setFilters] = useState<AgentListFilters>(EMPTY_AGENT_FILTERS)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [formOpen, setFormOpen] = useState(false)
@@ -121,8 +138,33 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
   // running/idle) ride the dedicated scope and refresh rows in place.
   const loadedRef = useRef(false)
   const mountedRef = useRef(false)
+  // The row facts the list derives from, refreshed with the roster: the live
+  // activity snapshot and the board catalog (the Task the Agent is on). Both
+  // read through the query layer, so a wake that changes nothing costs a cache
+  // hit rather than a Host round trip.
+  const refreshFacts = useCallback(async () => {
+    const reads: Promise<void>[] = []
+    if (loadMemberActivity !== undefined) {
+      reads.push((async () => {
+        try {
+          const result = await loadMemberActivity({ workspaceId })
+          if (mountedRef.current && result.ok) setActivities(result.value.activities)
+        } catch { /* the rows keep their last snapshot */ }
+      })())
+    }
+    if (loadBoard !== undefined) {
+      reads.push((async () => {
+        try {
+          const result = await loadBoard({ workspaceId })
+          if (mountedRef.current && result.ok) setBoard(result.value)
+        } catch { /* the rows keep their last Task */ }
+      })())
+    }
+    await Promise.all(reads)
+  }, [loadMemberActivity, loadBoard, workspaceId])
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
+    void refreshFacts()
     const result = await loadMembers({ workspaceId })
     // A response for a panel the user has already left changes nothing: the
     // key-remounted successor owns the roster state — and the seat-follow
@@ -140,7 +182,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
       setError(result.error.message)
     }
     setLoading(false)
-  }, [loadMembers, workspaceId, followRollover])
+  }, [loadMembers, workspaceId, followRollover, refreshFacts])
 
   useEffect(() => {
     mountedRef.current = true
@@ -169,6 +211,29 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     }
     void refresh()
   }), [subscribeChanges, refresh, workspaceId])
+
+  // Today's tokens per Member. This is the one read the list needs per row
+  // rather than per Workspace, so it is keyed by the roster's Session
+  // bindings and never refetched by a presence wake.
+  const membersRef = useRef(members)
+  membersRef.current = members
+  const sessionKey = members.map(status => `${status.member.memberId}:${status.member.sessionId}`).join(',')
+  useEffect(() => {
+    if (loadMemberSessions === undefined || sessionKey === '') return
+    let live = true
+    void (async () => {
+      const entries = await Promise.all(membersRef.current.map(async status => {
+        try {
+          const result = await loadMemberSessions({ workspaceId, memberId: status.member.memberId })
+          return [status.member.memberId, result.ok ? result.value.runs : []] as const
+        } catch {
+          return [status.member.memberId, []] as const
+        }
+      }))
+      if (live) setRunsByMember(new Map(entries))
+    })()
+    return () => { live = false }
+  }, [loadMemberSessions, workspaceId, sessionKey])
 
   const closeForm = () => {
     if (creating) return
@@ -236,6 +301,17 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     })
   }
 
+  const presenceByMember = buildPresenceMap({ members, activities, memberIds: members.map(status => status.member.memberId) })
+  const query = filters.query.trim().toLowerCase()
+  const visibleMembers = orderedMembers.filter(status => {
+    if (query !== '' && !status.member.handle.toLowerCase().includes(query) && !status.member.description.toLowerCase().includes(query)) return false
+    if (filters.role !== 'all' && status.member.role !== filters.role) return false
+    // The filter reads the same presence the row's dot draws, so a filter
+    // choice and the dot can never disagree.
+    if (filters.presence !== 'all' && presenceByMember.get(status.member.memberId)?.availability !== filters.presence) return false
+    return true
+  })
+
   return (
     <div className={css.panel}>
       <Modal
@@ -277,10 +353,12 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         {/* `members` is empty both before the first successful load and after a
             failed one, so the empty claim additionally requires a clear error. */}
         {!loading && error === undefined && members.length === 0 && <p className={css.emptyState}>{t('emptyAgents')}</p>}
+        {members.length > 0 && <AgentListToolbar filters={filters} onChange={setFilters} visible={visibleMembers.length} total={members.length} t={t} />}
+        {members.length > 0 && visibleMembers.length === 0 && <p className={css.emptyState} data-agent-list-empty>{t('agentListEmptyFiltered')}</p>}
         <div className={css.agentList}>
-          {orderedMembers.map(status => (
+          {visibleMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} openAgentDetail={openAgentDetail} onUpdated={refresh} t={t} />
+              <AgentRow workspaceId={workspaceId} leaveWorkspace={leaveWorkspace} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} activity={activities.find(item => item.memberId === status.member.memberId)} task={currentTaskOf(board, status.member.memberId, activities.find(item => item.memberId === status.member.memberId))} tokens={tokensToday(runsByMember.get(status.member.memberId) ?? [])} presence={presenceByMember.get(status.member.memberId)} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} openAgentDetail={openAgentDetail} onUpdated={refresh} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -300,12 +378,16 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, recoverMember, archiveMember, loadModels, openMemberSession, openAgentDetail, onUpdated, t }: {
+function AgentRow({ workspaceId, leaveWorkspace, status, current, activity, task, tokens, presence, updateMember, recoverMember, archiveMember, loadModels, openMemberSession, openAgentDetail, onUpdated, t }: {
   readonly workspaceId: WorkspaceId
   readonly leaveWorkspace: TeamSidebarProps['leaveWorkspace']
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
+  readonly activity?: AgentTeamMemberActivity | undefined
+  readonly task?: ReturnType<typeof currentTaskOf> | undefined
+  readonly tokens: number
+  readonly presence?: AgentPresenceDetail | undefined
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly archiveMember: TeamSidebarProps['archiveMember']
@@ -384,7 +466,15 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
     <>
       <div className={css.agentRow} data-agent-row data-menu-open={menuOpen || undefined}>
         <button type="button" className={css.agentSelect} aria-label={t('openAgentDetail', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { openDetail() }}>
-          <TeamMemberIdentity status={status} name={status.member.handle.replace(/^@/, '')} className={css.agentCopy} t={t} />
+          <AgentRosterRow
+            status={status}
+            {...(activity === undefined ? {} : { activity })}
+            {...(task === undefined ? {} : { task })}
+            tokens={tokens}
+            presence={presence ?? deriveAgentPresence({ status, activities: activity === undefined ? [] : [activity] })}
+            {...(current === true ? { current } : {})}
+            t={t}
+          />
         </button>
         <span className={css.rowMenu}>
           <TeamRowMenu

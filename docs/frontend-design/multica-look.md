@@ -64,6 +64,27 @@ The Thread page follows Multica's issue detail layout.
   becomes a dsh `Sheet`.
 - `thread-detail.module.css` carries the layout on `--ml-*`.
 
+## Agent pages
+
+The Agents tab and the Agent detail page follow Multica's Agents list and
+Agent page.
+
+- `agents/agent-list-toolbar.tsx` derives from `agent-list-toolbar.tsx`, but
+  keeps search, role and presence always visible instead of a filter popover:
+  the roster is small and fully local, so every control is a plain form field.
+- `agents/agent-row.tsx` derives from `agents-page.tsx`: avatar with presence
+  dot, handle, role pill, the Task it is on, its live tool, instance load and
+  today's tokens.
+- `agents/agent-runs-tab.tsx` and `agents/Sparkline.tsx` derive from
+  `tabs/activity-tab.tsx` and `sparkline.tsx`: `memberSessions` rows plus a
+  14-day token chart, with failure share from `threadTurnFailures`.
+- `agents/agent-tasks-tab.tsx` groups the Tasks the Member owns by status and
+  reuses `BoardCard` in its compact, read-only face rather than a second card.
+- The detail header's Chat opens the Member Session; Stop cancels slot 0 and
+  every working instance through `session.cancel`, behind a confirm dialog.
+- `agents/agent-page-model.ts` holds the pure derivations (current Task,
+  today's tokens, stop targets, buckets) with node-level specs.
+
 ## Token map
 
 `--ml-*` maps onto the host's `--dsw-*` aliases wherever an equivalent exists,

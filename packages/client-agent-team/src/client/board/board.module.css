@@ -221,6 +221,13 @@
 
 .card:hover { border-color: var(--ml-border-strong); }
 
+/* The read-only list face (Agent page's Tasks tab): no drag affordance and a
+   tighter padding, because the row is not going anywhere. */
+.cardCompact {
+  cursor: pointer;
+  padding: 8px 10px 6px;
+}
+
 .cardDragging { opacity: 0.3; }
 
 .cardSettling {

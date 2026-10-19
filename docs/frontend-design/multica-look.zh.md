@@ -60,6 +60,25 @@ Thread 页面按 Multica 的 issue 详情布局重构。
   时间）沿用 issue 布局；768px 以下侧栏折叠为 dsh `Sheet`。
 - `thread-detail.module.css` 在 `--ml-*` 上承载该布局。
 
+## Agent 页面
+
+Agents 标签页与 Agent 详情页按 Multica 的 Agents 列表和 Agent 页面重构。
+
+- `agents/agent-list-toolbar.tsx` 源自 `agent-list-toolbar.tsx`，但把搜索、
+  角色与在线状态常驻显示，而不是收进筛选浮层：名册很小且全在本地，
+  每个控件都是普通表单控件。
+- `agents/agent-row.tsx` 源自 `agents-page.tsx`：头像带在线状态点、handle、
+  角色胶囊、当前 Task、实时工具、实例负载与今日 token。
+- `agents/agent-runs-tab.tsx` 与 `agents/Sparkline.tsx` 源自
+  `tabs/activity-tab.tsx` 和 `sparkline.tsx`：`memberSessions` 行加 14 天
+  token 图，失败占比来自 `threadTurnFailures`。
+- `agents/agent-tasks-tab.tsx` 按状态分组该 Member 拥有的 Task，并复用
+  `BoardCard` 的紧凑只读形态，不另造卡片。
+- 详情头部 Chat 打开 Member Session；Stop 在确认对话框后通过
+  `session.cancel` 取消 slot 0 和所有工作中的实例。
+- `agents/agent-page-model.ts` 承载纯派生（当前 Task、今日 token、停止目标、
+  每日桶），并有 node 级测试。
+
 ## Token 映射
 
 存在等价项时，`--ml-*` 映射到宿主的 `--dsw-*` 别名，深色模式随宿主自动切换。

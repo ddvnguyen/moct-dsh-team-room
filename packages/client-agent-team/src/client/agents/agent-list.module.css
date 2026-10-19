@@ -1,0 +1,219 @@
+/* The Agents list's toolbar and row geometry. The list sits inside the host's
+   sidebar-width panel, so every track is sized to survive a 390px viewport:
+   the toolbar wraps, and the row's metrics column drops under the copy instead
+   of squeezing the Task title. */
+
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px 8px;
+}
+
+.search {
+  flex: 1 1 132px;
+  min-width: 96px;
+}
+
+.field {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.srOnly {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.select {
+  appearance: none;
+  background: var(--ml-surface, transparent);
+  border: 1px solid var(--ml-border, currentColor);
+  border-radius: 999px;
+  color: var(--ml-text-secondary, inherit);
+  corner-shape: round;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ml-text-caption, 12px);
+  height: 26px;
+  max-width: 132px;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+}
+
+.select:hover {
+  background: var(--ml-surface-hover, transparent);
+  color: var(--ml-text, inherit);
+}
+
+.select:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.count {
+  color: var(--ml-text-tertiary, inherit);
+  font-size: var(--ml-text-micro, 11px);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* Row: avatar | identity + facts | metrics. The row is the button's only
+   child and spans its whole width, so this grid never competes with the
+   sidebar's own two-column row layout. */
+.row {
+  align-items: center;
+  column-gap: 8px;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.avatar {
+  align-self: start;
+  display: inline-flex;
+  flex: none;
+  position: relative;
+}
+
+.presence {
+  bottom: -2px;
+  line-height: 0;
+  position: absolute;
+  right: -2px;
+}
+
+.copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nameLine {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nameLine strong {
+  color: var(--ml-text, inherit);
+  font-size: var(--ml-text-label, 13px);
+  font-weight: 600;
+  line-height: var(--ml-text-label-line, 18px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rolePill {
+  border: 1px solid var(--ml-border, currentColor);
+  border-radius: 999px;
+  color: var(--ml-text-tertiary, inherit);
+  corner-shape: round;
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 14px;
+  padding: 0 6px;
+  text-transform: uppercase;
+}
+
+.currentPill {
+  color: var(--ml-brand, inherit);
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.taskLine {
+  align-items: baseline;
+  color: var(--ml-text-secondary, inherit);
+  display: flex;
+  font-size: var(--ml-text-caption, 12px);
+  gap: 5px;
+  line-height: var(--ml-text-caption-line, 16px);
+  min-width: 0;
+}
+
+.taskNumber {
+  color: var(--ml-text-tertiary, inherit);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.taskTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaLine {
+  align-items: center;
+  display: flex;
+  font-size: var(--ml-text-micro, 11px);
+  gap: 6px;
+  line-height: 15px;
+  min-width: 0;
+}
+
+.tool {
+  background: var(--ml-surface-raised, transparent);
+  border-radius: var(--ml-radius-sm, 4px);
+  color: var(--ml-text-secondary, inherit);
+  overflow: hidden;
+  padding: 0 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quiet {
+  color: var(--ml-text-faint, inherit);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metrics {
+  align-items: flex-end;
+  align-self: center;
+  color: var(--ml-text-tertiary, inherit);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--ml-text-micro, 11px);
+  font-variant-numeric: tabular-nums;
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.metric {
+  line-height: 15px;
+}
+
+/* Below the panel's comfortable width the metrics join the copy's last line
+   instead of stealing the title's room. */
+@media (max-width: 520px) {
+  .row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .metrics {
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 2px;
+  }
+}

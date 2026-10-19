@@ -167,6 +167,14 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
     /** A14: the Member's Session runs, newest first, plus the seat's current Session. */
     loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => Promise<RemoteResult<{ readonly current: AgentTeamClientMemberStatus['member']['sessionId'] | null; readonly runs: readonly AgentTeamSessionRun[] }>>
+    /** The board's catalog read: the Agent page's current Task and Tasks tab. */
+    loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
+    /** Running Turns of the Workspace; the Agent page narrows it to one Member for the live tool label. */
+    loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
+    /** Errored Turns of one Thread: the Agent page's run failure reasons. */
+    threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
+    /** Cancel one Member Session's running Turn through the dsh Session controller (`session.cancel`); the Team Host is untouched. */
+    stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => Promise<RemoteResult<{ readonly accepted: true }>>
     /** Names the Threads a Session run touched, for the Agent detail's Session rows. */
     resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
     /** Team memory read for Agent detail's Memory tab (the Human memory list; the Host adds the actor). */

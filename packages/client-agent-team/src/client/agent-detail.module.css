@@ -7,6 +7,150 @@
   font-size: 13px;
 }
 
+/* The page header: identity on the left, the two actions that matter on the
+   right. It renders on every tab body, because the host's tab strip has no
+   shared chrome above it and Stop must stay reachable from Runs. */
+.detailHeader {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.detailAvatar {
+  display: inline-flex;
+  flex: none;
+  position: relative;
+}
+
+.detailPresence {
+  bottom: -2px;
+  line-height: 0;
+  position: absolute;
+  right: -2px;
+}
+
+.detailIdentity {
+  display: grid;
+  flex: 1 1 200px;
+  gap: 2px;
+  min-width: 0;
+}
+
+.detailName {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailName strong {
+  color: var(--ml-text, inherit);
+  font-size: var(--ml-text-title-sm, 16px);
+  font-weight: 600;
+  line-height: var(--ml-text-title-sm-line, 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailRole {
+  border: 1px solid var(--ml-border, currentColor);
+  border-radius: 999px;
+  color: var(--ml-text-tertiary, inherit);
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 14px;
+  padding: 0 6px;
+  text-transform: uppercase;
+}
+
+.detailFacts {
+  align-items: center;
+  color: var(--ml-text-tertiary, inherit);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--ml-text-caption, 12px);
+  gap: 4px 8px;
+  line-height: var(--ml-text-caption-line, 16px);
+  min-width: 0;
+}
+
+.detailDot {
+  opacity: 0.6;
+}
+
+/* The presence word carries the seat's diagnostic when it has one, and a
+   diagnostic is a sentence: the header clamps it and keeps the whole line in
+   the title, so the row's other facts keep their room. */
+.detailPresenceWord {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailTask {
+  align-items: baseline;
+  background: var(--ml-surface-raised, transparent);
+  border: 0;
+  border-radius: var(--ml-radius-sm, 4px);
+  color: var(--ml-text-secondary, inherit);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.detailTask:hover,
+.detailTask:focus-visible {
+  color: var(--ml-brand, inherit);
+  text-decoration: underline;
+}
+
+.taskNumber {
+  color: var(--ml-text-tertiary, inherit);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.taskTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailTool {
+  background: var(--ml-surface-raised, transparent);
+  border-radius: var(--ml-radius-sm, 4px);
+  color: var(--ml-text-secondary, inherit);
+  max-width: 220px;
+  overflow: hidden;
+  padding: 0 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailActions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+}
+
+@media (max-width: 520px) {
+  .detailActions {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
 .handle {
   font-weight: 600;
 }

@@ -386,6 +386,14 @@ function teamSharedRemotes(
     createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
     updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),
+    // A run's failure reasons are read per Thread. The Agent page's Runs tab
+    // needs them from the sidebar seat too, so they live with the shared
+    // remotes rather than the main seat's extras.
+    threadTurnFailures: (request: Parameters<typeof ctx.remote.agentTeam.threadTurnFailures>[0]) => ctx.remote.agentTeam.threadTurnFailures(request),
+    // Stopping a run is the dsh Session controller's own op, not a Team one:
+    // the Host's ledger stays untouched, and the session/event wake that
+    // follows moves the run row through the activity scope.
+    stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => ctx.remote.session.cancel({ sessionId }),
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
     // L1 (issue 57, item 3): the Human's own Thread Attention op. It toggles
     // the reading Human's follow of one Thread and nothing else — the request
@@ -461,13 +469,8 @@ function teamSeatInject(
       loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
       threadObservations: (request: AgentTeamThreadObservationsRequest) => ctx.remote.agentTeam.threadObservations(request),
       threadReplyStats: (request: Parameters<typeof ctx.remote.agentTeam.threadReplyStats>[0]) => ctx.remote.agentTeam.threadReplyStats(request),
-      threadTurnFailures: (request: Parameters<typeof ctx.remote.agentTeam.threadTurnFailures>[0]) => ctx.remote.agentTeam.threadTurnFailures(request),
       loadThreadSessions: (request: Parameters<typeof ctx.remote.agentTeam.threadSessions>[0]) => ctx.remote.agentTeam.threadSessions(request),
       updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
-      // Stopping a run is the dsh Session controller's own op, not a Team one:
-      // the Host's ledger stays untouched, and the session/event wake that
-      // follows moves the run row through the activity scope.
-      stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => ctx.remote.session.cancel({ sessionId }),
       sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
       putAttachment: (request: AgentTeamPutAttachmentRequest) => ctx.remote.agentTeam.putAttachment(request),
       getAttachment: (request: AgentTeamGetAttachmentRequest) => ctx.remote.agentTeam.getAttachment(request),
@@ -822,7 +825,7 @@ function applyUi(ctx: ClientContext): void {
       const open = navigation.getSnapshot().memberSessionId !== undefined
       if (open && dispose === undefined) {
         const bound = (): TeamSidebarProps['t'] => ctx.locale.bind(NS) as TeamSidebarProps['t']
-        const entry = (tab: 'sessions' | 'overview' | 'memory', id: string, order: number, labelKey: 'agentDetailsTabSessions' | 'agentTabConfig' | 'agentDetailsTabMemory') => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+        const entry = (tab: 'sessions' | 'runs' | 'tasks' | 'overview' | 'memory', id: string, order: number, labelKey: 'agentDetailsTabSessions' | 'agentDetailsTabRuns' | 'agentDetailsTabTasks' | 'agentTabConfig' | 'agentDetailsTabMemory') => ctx.slots.inject('conversation.view', () => ctx.slots.register({
           name: 'conversation.view',
           id,
           order,
@@ -833,6 +836,8 @@ function applyUi(ctx: ClientContext): void {
           createElement(AgentViewBody, { tab, sessionId: props.sessionId, remotes: teamTabSeat as never, navigation, ...(props.openView === undefined ? {} : { openView: props.openView }), t: bound() }))) as never))
         const drops = [
           entry('sessions', AGENT_VIEW_IDS.sessions, AGENT_VIEW_ORDER.sessions, 'agentDetailsTabSessions'),
+          entry('runs', AGENT_VIEW_IDS.runs, AGENT_VIEW_ORDER.runs, 'agentDetailsTabRuns'),
+          entry('tasks', AGENT_VIEW_IDS.tasks, AGENT_VIEW_ORDER.tasks, 'agentDetailsTabTasks'),
           entry('overview', AGENT_VIEW_IDS.config, AGENT_VIEW_ORDER.config, 'agentTabConfig'),
           entry('memory', AGENT_VIEW_IDS.memory, AGENT_VIEW_ORDER.memory, 'agentDetailsTabMemory'),
         ]

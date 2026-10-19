@@ -34,7 +34,9 @@ export interface TeamWorkspaceListSource {
 
 export type TeamSettingsPageProps = Pick<TeamSidebarProps,
   'loadMembers' | 'subscribeChanges' | 'addMember' | 'updateMember' | 'recoverMember' | 'archiveMember'
-  | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail' | 't'> & {
+  | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail'
+  // The roster row's live facts, as in the Agents tab.
+  | 'loadMemberActivity' | 'loadBoard' | 'loadMemberSessions' | 't'> & {
   readonly workspaceList: TeamWorkspaceListSource
   /** The Workspace the Team navigation last selected; read once, when the page mounts. */
   readonly initialWorkspaceId: () => WorkspaceId | undefined

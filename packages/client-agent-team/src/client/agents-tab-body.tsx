@@ -22,7 +22,10 @@ import css from './sidebar.module.css'
 
 type AgentsTabProps = Pick<TeamSidebarProps,
   'navigation' | 'useWorkspaces' | 'loadMembers' | 'subscribeChanges' | 'addMember' | 'updateMember' | 'recoverMember'
-  | 'archiveMember' | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail' | 't'>
+  | 'archiveMember' | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail'
+  // The roster row's live facts: the running Turns, the board catalog and the
+  // Member's Session runs. Without them the tab shows an empty roster shell.
+  | 'loadMemberActivity' | 'loadBoard' | 'loadMemberSessions' | 't'>
 
 export function TeamAgentsTab({ navigation, useWorkspaces, t, ...agents }: AgentsTabProps) {
   const workspaces = useWorkspaces(state => state.items)

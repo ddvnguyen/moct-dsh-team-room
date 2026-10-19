@@ -26,6 +26,7 @@ const UI08_SHOTS = join(BROWSER_ARTIFACTS, 'ui-08')
 const UI09_SHOTS = join(BROWSER_ARTIFACTS, 'ui-09')
 const TWO_LANE_SHOTS = join(BROWSER_ARTIFACTS, 'two-lane')
 const BOARD_SHOTS = join(BROWSER_ARTIFACTS, 'board')
+const AGENT_SHOTS = join(BROWSER_ARTIFACTS, 'agent')
 const TEAM_DOC_SHOTS = join(BROWSER_ARTIFACTS, 'team-docs')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
@@ -3234,6 +3235,84 @@ it('creates a board task and drags it to Done in real Web', async () => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
   expect(await board.getByTestId('board-new-task').isVisible()).toBe(true)
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * The Agent surfaces (Team Board 6/10): the roster row answers what the Agent
+ * is doing right now, the row opens the Agent's own Session with its Runs tab
+ * beside it, and Stop is gated on a Turn that is actually running.
+ *
+ * The strip has no Agents tab in this scaffold (no native-tab registry), so the
+ * roster is the Team Settings page's own Agents list — exactly where the page
+ * keeps it while the tab is absent.
+ */
+it('opens an Agent from the roster and reads its Runs tab in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The Workspace comes in through the shell's own connect flow, so the Team
+  // page adopts it and its Agents list has a Workspace to show.
+  await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'agent-journey')
+  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  await page.getByRole('button', { name: '添加 Agent' }).click()
+  const dialog = page.getByRole('dialog', { name: '添加 Agent' })
+  await dialog.getByLabel('名称').fill('builder')
+  await dialog.getByLabel('说明').fill('Runs the board work')
+  await dialog.getByLabel('角色').selectOption('worker')
+  await dialog.getByRole('button', { name: '创建 Agent' }).click()
+  await dialog.waitFor({ state: 'detached' })
+
+  // The roster row carries the Agent's handle, its role pill and its instance
+  // load; a row without them is the shell of a list, not the list.
+  const row = page.locator('[data-agent-row]').filter({ hasText: 'builder' })
+  await row.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await row.locator('[data-agent-handle]').textContent()).toBe('builder')
+  await expect.poll(async () => await row.locator('[data-member-role]').count()).toBe(1)
+  await expect.poll(async () => await row.locator('[data-agent-instances]').textContent()).toContain('/')
+  await expect.poll(async () => await row.locator('[data-agent-tokens]').textContent()).toBe('0')
+  // The toolbar filters the roster: the presence filter drops a seat that is
+  // not online.
+  const presenceFilter = page.getByLabel('按在线状态筛选')
+  await presenceFilter.selectOption('offline')
+  await expect.poll(async () => await page.locator('[data-agent-row]').count()).toBe(0)
+  await presenceFilter.selectOption('all')
+  await expect.poll(async () => await page.locator('[data-agent-row]').count()).toBe(1)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-roster.png'), fullPage: true })
+
+  // The row opens the Agent's own Session; the Runs tab is registered beside
+  // the Session's own views and reads the Host's run ledger.
+  await row.locator('button').first().click()
+  // The Agent's own Session opens blank; a blank Session hides the view
+  // strip, so the reader sends it a word first — the same Chat the header's
+  // button opens.
+  const memberComposer = page.locator('[data-composer-input][contenteditable="true"]')
+  await memberComposer.waitFor({ timeout: 30_000 })
+  await memberComposer.click()
+  await memberComposer.fill('开始工作')
+  await memberComposer.press('Enter')
+  const runsTab = page.getByRole('tab', { name: '运行' })
+  await runsTab.waitFor({ timeout: 30_000 })
+  await runsTab.click()
+  await page.locator('[data-team-agent-runs-panel]').waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await page.locator('[data-agent-runs-chart] [role="img"]').count()).toBe(1)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-runs.png'), fullPage: true })
+
+  // Stop is gated on a running Turn: an idle Agent's Stop is disabled, so the
+  // button never cancels a Session that is doing nothing.
+  const stop = page.locator('[data-agent-stop]')
+  await stop.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await stop.isDisabled()).toBe(true)
+
+  // 390×844: the page keeps its width without pushing the roster sideways.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-390.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)
