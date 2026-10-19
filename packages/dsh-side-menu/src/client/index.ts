@@ -1,39 +1,46 @@
 /** Sidebar layout for the MOCT workspace.
  *
- *  Keeps a small set of entries at the top level and presents the rest as the
- *  body of the existing "Extensions" group. It does this with CSS `order` and
- *  indentation instead of moving DOM nodes: `nav.dcu-menu` and its
- *  `.dcu-extension-items` panel are React-owned, so relocating children makes
- *  React's reconciler lose track of them (and the panel is unmounted whenever
- *  Extensions is collapsed, which would take the moved entries with it).
+ *  The codex-ui sidebar renders one `nav.dcu-menu` whose direct children are:
+ *  the global-panel buttons (Tasks, Plugin Market, Automation tasks, Team,
+ *  Context Insights, Team Settings), the "New task" button, the Extensions
+ *  group (`div.dcu-extensions-group`, which owns the toggle and the panel with
+ *  Experts/Skills/Plugins/Connectors), then the trailing buttons (Scheduled
+ *  tasks, IM Assistant).
  *
- *  Everything here is idempotent and re-applied after a re-render; the observer
- *  only writes when a value actually differs, so an idle sidebar costs nothing.
+ *  The wanted layout is: New task, Teams, Team Settings, Context Insights at the
+ *  top level, and every other entry presented as part of Extensions. The group
+ *  and its panel are React-owned, so nothing is detached: the entries are
+ *  ordered with CSS `order` and indented to line up under the Extensions
+ *  chevron, and the ones outside the group follow its `aria-expanded` state.
+ *  That keeps React's reconciliation intact and makes collapsing Extensions
+ *  hide the same set the panel hides.
+ *
+ *  Everything is idempotent and re-applied after a re-render; a write happens
+ *  only when the computed value differs, so an idle sidebar costs nothing.
  */
 
-/** Entries that stay at the top level, in this order. */
+/** Entries that stay at the top level, in this order. Both languages, plus the
+ *  pre-rename `Team` label so an older MOCT build keeps its seat. */
 const KEEP_ORDER = [
   'New task',
   'New Task',
   '新建任务',
+  'Teams',
   'Team',
   '团队',
-  'Agents',
-  '代理',
   'Team Settings',
   '团队设置',
   'Context Insights',
   '上下文洞察',
 ]
 
-const EXTENSIONS_LABELS = ['Extensions', '扩展管理']
 const INDENT_PX = 28
 
 function labelOf(el: Element): string {
   return (el.getAttribute('aria-label') ?? el.textContent ?? '').trim()
 }
 
-function isMenuButton(el: Element): el is HTMLElement {
+function isButton(el: Element): el is HTMLElement {
   return el instanceof HTMLElement && el.matches('button')
 }
 
@@ -47,14 +54,26 @@ function setIndent(el: HTMLElement, indent: number): void {
   if (el.style.marginLeft !== value) el.style.marginLeft = value
 }
 
+/** Elements this plugin hid. Other plugins own their own `display` writes —
+ *  @ddvnguyen/dsh-hide-im-assistant sets `none` on IM Assistant — so clearing
+ *  only what we set keeps collapsing Extensions from undoing them. */
+const hiddenByPlugin = new WeakSet<HTMLElement>()
+
 function setHidden(el: HTMLElement, hidden: boolean): void {
-  const value = hidden ? 'none' : ''
-  if (el.style.display !== value) el.style.display = value
+  if (hidden) {
+    if (el.style.display === 'none') return
+    el.style.display = 'none'
+    hiddenByPlugin.add(el)
+    return
+  }
+  if (!hiddenByPlugin.has(el)) return
+  el.style.display = ''
+  hiddenByPlugin.delete(el)
 }
 
-/** Returns true when the Extensions group is expanded. Defaults to open when
- *  the toggle has not rendered its state yet, so entries never start hidden. */
-function extensionsOpen(toggle: HTMLElement | undefined): boolean {
+/** True while the Extensions panel is expanded. A toggle that has not rendered
+ *  its state yet counts as open, so entries never start hidden. */
+function extensionsOpen(toggle: HTMLElement | null): boolean {
   if (!toggle) return true
   return toggle.getAttribute('aria-expanded') !== 'false'
 }
@@ -63,7 +82,8 @@ function reorganize(root: ParentNode): void {
   const nav = root.querySelector('nav.dcu-menu')
   if (!nav) return
 
-  const buttons = Array.from(nav.children).filter(isMenuButton)
+  const children = Array.from(nav.children)
+  const buttons = children.filter(isButton)
   if (buttons.length === 0) return
 
   const byLabel = new Map<string, HTMLElement>()
@@ -72,17 +92,15 @@ function reorganize(root: ParentNode): void {
     if (!byLabel.has(label)) byLabel.set(label, button)
   }
 
-  const toggle = EXTENSIONS_LABELS.map(label => byLabel.get(label)).find(
-    (el): el is HTMLElement => el !== undefined,
+  const group = children.find(
+    (el): el is HTMLElement =>
+      el instanceof HTMLElement && el.classList.contains('dcu-extensions-group'),
   )
+  const toggle = group?.querySelector<HTMLElement>('.dcu-extensions-toggle') ?? null
   const open = extensionsOpen(toggle)
 
-  // React renders its own Experts/Skills/Plugins/Connectors panel inside
-  // Extensions. Those entries stay in the menu here, so the panel is hidden to
-  // avoid rendering each of them twice.
-  const panel = nav.querySelector<HTMLElement>('.dcu-extension-items')
-  if (panel) setHidden(panel, true)
-
+  // Keep the requested entries first, in the requested order. The Extensions
+  // group follows them; every other direct child becomes one of its entries.
   let order = 0
   const kept = new Set<HTMLElement>()
   for (const name of KEEP_ORDER) {
@@ -94,16 +112,15 @@ function reorganize(root: ParentNode): void {
     setHidden(el, false)
   }
 
-  // The Extensions toggle sits immediately above the group it owns.
-  if (toggle && !kept.has(toggle)) {
-    setOrder(toggle, order++)
-    setIndent(toggle, 0)
-    setHidden(toggle, false)
+  if (group) {
+    setOrder(group, order++)
+    setIndent(group, 0)
+    setHidden(group, false)
   }
 
   let tail = 100
   for (const button of buttons) {
-    if (kept.has(button) || button === toggle) continue
+    if (kept.has(button)) continue
     setOrder(button, tail++)
     setIndent(button, INDENT_PX)
     setHidden(button, !open)

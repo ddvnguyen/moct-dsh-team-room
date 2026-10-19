@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 // One pointer for every consumer: scripts/harness-dir.mjs owns the checkout
@@ -6,9 +7,22 @@ import { pathToFileURL } from 'node:url'
 // a different checkout than the type and test layer. Both imports stay
 // dynamic: a static template-literal module path breaks tsdown's config loader.
 const { harnessDir } = await import('../../scripts/harness-dir.mjs')
-const { clientBundle } = await import(pathToFileURL(resolve(harnessDir, 'packages/client/tsdown.client.ts')).href)
+const presetPath = resolve(harnessDir, 'packages/client/tsdown.client.ts')
+const { clientBundle } = await import(pathToFileURL(presetPath).href)
 
-const bundle = clientBundle('@ddvnguyen/moct-dsh-team-room', [
+const ID = '@ddvnguyen/moct-dsh-team-room'
+
+// Harness 0.2.0 located a package's manifest by scanning its own workspace for
+// the id; 0.2.1 takes the package directory. Both spell the first parameter as
+// a string, so the call site stays one line. scripts/build-client.mjs plants
+// the workspace manifest the older preset needs.
+const legacyLookup = readFileSync(presetPath, 'utf8').includes('workspaceManifest')
+
+// This package lives inside the repository package: the manifest the preset
+// must read is the repository root's, two levels above this config.
+const packageDir = resolve(import.meta.dirname, '../..')
+
+const bundle = clientBundle(legacyLookup ? ID : packageDir, [
   'lib/types/index.js',
 ])
 
@@ -25,10 +39,20 @@ const bundle = clientBundle('@ddvnguyen/moct-dsh-team-room', [
 // one level deeper than the repository root the string was written for, so it
 // silently pointed outside the repository.
 const teamRemoteTarget = resolve(import.meta.dirname, '../agent-team/lib/typert.remote-client.js')
+
+// The generated remote lives under `lib/`, outside the tsconfig `include`, so
+// tsdown does not apply the facade `paths` to its imports. Resolve the one
+// shared runtime it needs explicitly; without this the specifier stays an
+// external `require()` the browser module table cannot answer and the whole
+// plugin fails to register. Older harness checkouts predate this subpath, so
+// the alias only applies when the source is actually there.
+const remoteInfoTarget = resolve(harnessDir, 'packages/typert/protocol/src/remote-info.ts')
 const teamRemote = {
   name: 'dsh-agent-team-remote-entrypoint',
   resolveId(source: string) {
-    return source === '@ddvnguyen/moct-dsh-team-room/remote' ? teamRemoteTarget : null
+    if (source === '@ddvnguyen/moct-dsh-team-room/remote') return teamRemoteTarget
+    if (source === '@deepseek-ai/dsh-typert-protocol/remote-info' && existsSync(remoteInfoTarget)) return remoteInfoTarget
+    return null
   },
 }
 

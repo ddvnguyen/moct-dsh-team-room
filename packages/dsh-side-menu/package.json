@@ -2,15 +2,15 @@
   "name": "@ddvnguyen/dsh-side-menu",
   "displayName": "DSH Side Menu",
   "description": "Reorganizes the Codex-style sidebar: moves most entries into the Extensions group and keeps only New Tasks, Team Settings, and Context Insights as top-level.",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "author": "ddvnguyen",
   "keywords": ["dsh-plugin", "deepseek-harness", "codex-ui", "sidebar"],
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "types": "lib/types/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -34,7 +34,8 @@
     "vitest": "^4.1.8"
   },
   "scripts": {
-    "build": "tsdown",
+    "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node ../../scripts/build-client.mjs @ddvnguyen/dsh-side-menu",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build"

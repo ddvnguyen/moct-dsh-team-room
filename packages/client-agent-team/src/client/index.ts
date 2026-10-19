@@ -65,7 +65,7 @@ import { TeamPanelIcon } from './TeamPanelIcon.tsx'
 import { TeamSettingsPanelIcon } from './TeamSettingsPanelIcon.tsx'
 import { TeamSettingsPage } from './TeamSettingsPage.tsx'
 import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
-import { TeamConversation } from './TeamConversation.tsx'
+import { TeamsPage } from './TeamsPage.tsx'
 import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
 import { TeamSlotBoundary, withSlotBoundary } from './TeamSlotBoundary.tsx'
 import { useShellSidebarCollapsed } from './shell-sidebar.ts'
@@ -78,7 +78,7 @@ const GuardedPanelIcon = withSlotBoundary('sidebar.panellist:team', TeamPanelIco
 const GuardedSettingsPanelIcon = withSlotBoundary('sidebar.panellist:team-settings', TeamSettingsPanelIcon as never, { quiet: true })
 const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsPage as never)
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
-const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
+const GuardedTeamsPage = withSlotBoundary('main:teams', TeamsPage as never)
 import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
@@ -172,11 +172,16 @@ function registerTeamPanel(
   agentsTab: AgentsTabState,
 ): () => void {
   const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
+  // The Teams page carries the Agents list, so its seat also needs the one
+  // mutation the settings page used to own: adding a Member.
+  const teamsRemotes = () => ({
+    addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
+  })
   const dropTeamRow = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',
     id: TEAM_PANEL_ID,
     order: 19,
-    label: () => ctx.locale.bind(NS)('team'),
+    label: () => ctx.locale.bind(NS)('teams'),
     locale: NS,
   }, GuardedPanelIcon as never))
   ctx.slots.inject('main', () => ctx.slots.register({
@@ -184,8 +189,8 @@ function registerTeamPanel(
     key: TEAM_PANEL_ID,
     priority: -100,
     locale: NS,
-    inject: () => teamSeatInject(ctx, navigation, reads, sharedRemotes, 'main'),
-  }, GuardedConversation as never))
+    inject: () => teamSeatInject(ctx, navigation, reads, sharedRemotes, 'main', teamsRemotes),
+  }, GuardedTeamsPage as never))
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',
     id: TEAM_SETTINGS_PANEL_ID,
@@ -619,7 +624,9 @@ function applyUi(ctx: ClientContext): void {
   const agentsTab = createAgentsTabState()
   const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity, agentsTab)
 
-  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
+  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedTeamsPage as never, () => ({
+    addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
+  }), 'conversation')
 
   // The Team page is a global panel beside the shipped Plugins and
   // scheduled-task entries, so the panel selection and Team mode are one fact:
