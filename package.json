@@ -1,6 +1,6 @@
 {
   "name": "@ddvnguyen/moct-dsh-team-room",
-  "version": "0.0.1-261019.1850",
+  "version": "0.0.1-261019.2110",
   "license": "MIT",
   "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
   "icon": "assets/icon.svg",

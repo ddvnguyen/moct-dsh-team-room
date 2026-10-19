@@ -52,7 +52,7 @@ Install it globally if you want the `dsh` command for the steps below: `npm i -g
 Stop it, then install Agent Team into the `web` profile:
 
 ```sh
-dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261019.1850
+dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261019.2110
 ```
 
 The version is pinned deliberately: pnpm skips releases published less than 24 hours ago, so an unpinned `@latest` install resolves to the previous release on release day.
