@@ -1,0 +1,279 @@
+/*
+ * The Multica issue layout for the Task (thread) detail: the issue head under
+ * the slim header, the timeline-plus-sidebar body row, and the property rows.
+ *
+ * Derived from multica-x packages/views/issues/components/issue-detail.tsx and
+ * packages/views/common/prop-row.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
+ * Copyright Index Labs. Multica License.
+ *
+ * Tokens read the scoped `--ml-*` look layer; the page's root carries
+ * `multicaLook`. The slim header row above this layout keeps the Channel
+ * module's own classes (see the header specs).
+ */
+
+/* The issue head: `#n` beside the editable title, the way Multica's issue
+   page opens with the identifier and the title on one baseline. */
+.issueHead {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  margin: 0 auto;
+  max-width: 880px;
+  min-width: 0;
+  padding: 10px clamp(18px, 3vw, 36px) 0;
+  width: 100%;
+}
+
+.issueNumber {
+  color: var(--ml-text-faint);
+  flex: none;
+  font-size: var(--ml-text-title);
+  font-weight: 500;
+  line-height: var(--ml-text-title-line);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Collapsed title: a plain button that reads as the issue page's title text
+   and summons the editor on click. */
+.issueTitle {
+  background: none;
+  border: 0;
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  cursor: text;
+  font: inherit;
+  font-size: var(--ml-text-title);
+  font-weight: 600;
+  line-height: var(--ml-text-title-line);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0 4px;
+  text-align: left;
+}
+
+.issueTitle:hover {
+  background: var(--ml-surface-hover);
+}
+
+.issueTitle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+.titlePlaceholder {
+  color: var(--ml-text-faint);
+  font-weight: 400;
+}
+
+.titleEditor {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.titleInput {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border-strong);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  flex: 1;
+  font: inherit;
+  font-size: var(--ml-text-title);
+  font-weight: 600;
+  line-height: var(--ml-text-title-line);
+  min-width: 0;
+  padding: 1px 6px;
+}
+
+.titleInput:focus {
+  border-color: var(--ml-brand);
+  outline: none;
+}
+
+.titleError {
+  color: var(--ml-priority-urgent);
+  flex-basis: 100%;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+/* The body row: timeline and property column side by side; the column hides
+   under the lane width and the sheet opener serves it there. */
+.bodyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.side {
+  border-left: 1px solid var(--ml-border);
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px 20px;
+}
+
+/* Property sections: one labelled row per fact, the label column sizing to
+   the widest label the way Multica's subgrid rows do. */
+.propSection {
+  display: grid;
+  gap: 2px;
+}
+
+.propHeading {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: var(--ml-text-micro-line);
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+
+.propRow {
+  align-items: center;
+  border-radius: var(--ml-radius-sm);
+  column-gap: 8px;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  min-height: 28px;
+  padding: 0 4px;
+}
+
+.propRow:hover {
+  background: var(--ml-surface-hover);
+}
+
+.propLabel {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+.propControl {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.propTime {
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.emptyNotes {
+  color: var(--ml-text-faint);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+  padding: 2px 4px;
+}
+
+/* Claims: one row per claim — owner and direction on one line, state at the
+   right; a finished claim stops competing for the eye. */
+.claimRow {
+  align-items: flex-start;
+  border-radius: var(--ml-radius-sm);
+  column-gap: 6px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  padding: 3px 4px;
+}
+
+.claimRow:hover {
+  background: var(--ml-surface-hover);
+}
+
+.claimSpacer {
+  display: block;
+  height: 8px;
+}
+
+.claimBody {
+  display: grid;
+  min-width: 0;
+}
+
+.claimOwner {
+  color: var(--ml-text);
+  font-size: var(--ml-text-caption);
+  font-weight: 500;
+  line-height: var(--ml-text-caption-line);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claimDirection {
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.claimRow[data-claim-state='done'] .claimDirection {
+  color: var(--ml-text-tertiary);
+}
+
+.claimState {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  white-space: nowrap;
+}
+
+.followerStack {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding: 2px 4px;
+  min-width: 0;
+}
+
+.followerCount {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  white-space: nowrap;
+}
+
+/* The execution log section fills the column's tail. */
+.logSection {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The properties sheet opener lives in the slim header's action group and
+   only shows where the sidebar column is hidden. */
+.propertiesToggle {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .bodyRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    display: none;
+  }
+
+  .propertiesToggle {
+    display: inline-flex;
+  }
+}
+
+/* The sidebar's claims disclosure stacks its rows vertically. */
+.claimList {
+  display: grid;
+  row-gap: 2px;
+}

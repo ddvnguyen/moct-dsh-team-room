@@ -12,9 +12,9 @@ import type {
   AgentTeamThreadObservationsRequest,
   AgentTeamThreadAttentionRequest,
   AgentTeamThreadReadRequest,
+  AgentTeamUpdateTaskRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateTaskRequest,
-  AgentTeamUpdateTaskRequest,
   AgentTeamGetAttachmentRequest,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamLeaveWorkspaceRequest,
@@ -462,6 +462,12 @@ function teamSeatInject(
       threadObservations: (request: AgentTeamThreadObservationsRequest) => ctx.remote.agentTeam.threadObservations(request),
       threadReplyStats: (request: Parameters<typeof ctx.remote.agentTeam.threadReplyStats>[0]) => ctx.remote.agentTeam.threadReplyStats(request),
       threadTurnFailures: (request: Parameters<typeof ctx.remote.agentTeam.threadTurnFailures>[0]) => ctx.remote.agentTeam.threadTurnFailures(request),
+      loadThreadSessions: (request: Parameters<typeof ctx.remote.agentTeam.threadSessions>[0]) => ctx.remote.agentTeam.threadSessions(request),
+      updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
+      // Stopping a run is the dsh Session controller's own op, not a Team one:
+      // the Host's ledger stays untouched, and the session/event wake that
+      // follows moves the run row through the activity scope.
+      stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => ctx.remote.session.cancel({ sessionId }),
       sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
       putAttachment: (request: AgentTeamPutAttachmentRequest) => ctx.remote.agentTeam.putAttachment(request),
       getAttachment: (request: AgentTeamGetAttachmentRequest) => ctx.remote.agentTeam.getAttachment(request),

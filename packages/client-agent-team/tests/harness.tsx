@@ -3,7 +3,7 @@ import type { AgentTeamChangesRequest } from '@ddvnguyen/moct-dsh-team-room/type
 import { afterEach, expect, vi } from 'vitest'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadSessionRuns, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -176,6 +176,8 @@ interface SeededMessage {
 }
 
 export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
+  /** Seed the execution log's per-seat Session runs (contract §4 threadSessions); mutable via `setThreadSessions`. */
+  seedThreadSessions?: readonly AgentTeamThreadSessionRuns[];
   /** Replace the bench roster wholesale; the Thread roster spec needs archived/inactive states. */
   readonly seedRoster?: readonly { readonly memberId: string; readonly workspaceId: string; readonly handle: string; readonly presence?: 'available' | 'working' | 'error' | 'unavailable'; readonly diagnostic?: AgentTeamMemberDiagnostic; readonly state?: 'enabled' | 'inactive' | 'archived' }[];
   /** Seed Channel membership rows: which Members joined which Channel. */
@@ -636,7 +638,16 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     const thread = { threadRef, taskRef, revision: 2 }
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
   })
-  const updateTask = vi.fn(async (request: { taskRef: string; baseRevision?: number; patch: Record<string, unknown> }) => {
+  const updateTask = vi.fn(async (request: { taskRef?: string; baseRevision?: number; patch: Record<string, unknown> }) => {
+    // The Task detail drives this Remote by patch alone: fold it into the open
+    // Thread's Task the way the ledger projection does.
+    if (request.taskRef === undefined) {
+      const top = viewItems[0]!
+      const task = { ...(top.task as object), ...request.patch } as Record<string, unknown>
+      const thread = { ...(top.thread as object), revision: (top.thread as { revision: number }).revision + 1 }
+      viewItems = viewItems.map(item => ({ ...item, task, thread }))
+      return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, task, thread } }
+    }
     const existing = boardTasks.find(task => (task as { taskRef: string }).taskRef === request.taskRef) ?? (() => {
       const fromMessage = viewItems.map(item => item.task).find(task => task !== undefined && (task as { taskRef?: string }).taskRef === request.taskRef)
       if (fromMessage === undefined) return undefined
@@ -733,6 +744,15 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // Mutable, so a test can add a notice and wake the open Thread the way the Host's thread-scope change would.
   let turnFailureRows: AgentTeamThreadTurnFailure[] = [...(options?.seedTurnFailures ?? [])]
   const threadTurnFailures = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: turnFailureRows }))
+  // Per-seat Session runs of the Thread (contract §4 threadSessions); a test
+  // seeds the rows it wants the execution log to show, and `setThreadSessions`
+  // replaces them the way a folded Turn record would, waking the open Thread.
+  let threadSessionRows: readonly AgentTeamThreadSessionRuns[] = [...(options?.seedThreadSessions ?? [])]
+  const threadSessions = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: threadSessionRows }))
+  const setThreadSessions = (rows: readonly AgentTeamThreadSessionRuns[]): void => {
+    threadSessionRows = rows
+    publishThreadUpdate(seedThreadRef)
+  }
   // Reply-link quote context, derived from the seeded record like the Host's
   // ledger lookup: author and first line; unknown refs are omitted.
   const docs = vi.fn(async (_request: { workspaceId: string; threadRef?: string }) => ({ ok: true as const, value: { docs: [] as unknown[] } }))
@@ -946,11 +966,13 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // refuses by contract.
   const commandList = vi.fn(async () => ({ ok: true as const, value: [] as const }))
   const skillList = vi.fn(async () => ({ ok: true as const, value: { skills: [] as const } }))
+  // The dsh Session controller's cancel — the Team client's stopSession lands here.
+  const sessionCancel = vi.fn(async (request: { sessionId: string }) => ({ ok: true as const, value: { accepted: true as const } }))
   runtime.remote.provideNamespaces({
-    session: { modelCatalog },
+    session: { modelCatalog, cancel: sessionCancel },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -1005,5 +1027,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, claimBoardTask, failNextBoardWrite, publishTaskCommit, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, claimBoardTask, failNextBoardWrite, publishTaskCommit, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, threadSessions, setThreadSessions, sessionCancel, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

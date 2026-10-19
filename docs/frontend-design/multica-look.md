@@ -49,6 +49,21 @@ The parity audit (`node scripts/audit-ui-parity.mjs`) walks subdirectories, so a
 sheet under `multica-ui/` follows the same focus, token and geometry rules as
 the top-level sheets.
 
+## Task detail
+
+The Thread page follows Multica's issue detail layout.
+
+- `thread/ExecutionLog.tsx` derives from Multica's `execution-log-section.tsx`
+  and `inline-comment-run.tsx`.
+- Data: `threadSessions` (per seat: active run plus history), `memberActivity`
+  for the live tool line, `threadTurnFailures` for errored runs.
+- Stop goes through `session.cancel` behind a confirm dialog, with a
+  non-optimistic stopping state; a row opens the seat's native Session.
+- Header, inline title editor and the sidebar rows (status, priority, assignee,
+  claims, followers, times) follow the issue layout; under 768px the sidebar
+  becomes a dsh `Sheet`.
+- `thread-detail.module.css` carries the layout on `--ml-*`.
+
 ## Token map
 
 `--ml-*` maps onto the host's `--dsw-*` aliases wherever an equivalent exists,

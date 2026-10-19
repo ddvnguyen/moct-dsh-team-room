@@ -46,6 +46,20 @@ import css from './BoardCard.module.css'
 一致性审计（`node scripts/audit-ui-parity.mjs`）会递归子目录，因此 `multica-ui/`
 下的样式表与顶层样式表适用同一套焦点、token 与几何规则。
 
+## Task 详情页
+
+Thread 页面按 Multica 的 issue 详情布局重构。
+
+- `thread/ExecutionLog.tsx` 源自 Multica 的 `execution-log-section.tsx` 与
+  `inline-comment-run.tsx`。
+- 数据：`threadSessions`（每席位活动 run 加历史）、`memberActivity`
+  驱动实时工具行、`threadTurnFailures` 标记出错的 run。
+- 停止走 `session.cancel`，前面有确认对话框，采用非乐观的 stopping 状态；
+  行内改为打开席位原生 Session。
+- 头部、内联标题编辑器与侧栏行（状态、优先级、负责人、Claims、关注者、
+  时间）沿用 issue 布局；768px 以下侧栏折叠为 dsh `Sheet`。
+- `thread-detail.module.css` 在 `--ml-*` 上承载该布局。
+
 ## Token 映射
 
 存在等价项时，`--ml-*` 映射到宿主的 `--dsw-*` 别名，深色模式随宿主自动切换。

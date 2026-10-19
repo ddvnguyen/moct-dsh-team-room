@@ -76,6 +76,7 @@ import type {
   AgentTeamThreadReplyStat,
   AgentTeamThreadRef,
   AgentTeamThreadTurnFailure,
+  AgentTeamThreadSessionRuns,
   AgentTeamPromoteThreadRequest,
   AgentTeamPromoteThreadResult,
   AgentTeamTaskRequest,
@@ -243,6 +244,10 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   threadReplyStats: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadReplyStat[]>>
   /** Errored-Turn notices of the Thread, every notice kept; the page merges them into the timeline by ledger sequence. */
   threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
+  /** Per-seat Session runs that touched one Thread: each seat's active run plus its history (contract §4); the execution log reads it. */
+  loadThreadSessions: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadSessionRuns[]>>
+  /** Cancel one Member Session's running Turn through the dsh Session controller (`session.cancel`); the Team Host is untouched. */
+  stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => Promise<RemoteResult<{ readonly accepted: true }>>
   /** Agent-card session jump, shared by every slot; message member chips reuse it. */
   openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
   /**
