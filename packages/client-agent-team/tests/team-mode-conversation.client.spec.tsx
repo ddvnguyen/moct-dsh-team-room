@@ -711,10 +711,10 @@ describe('Team conversation surfaces', () => {
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(b.readThread).toHaveBeenCalledTimes(1)
     expect(b.loadThreadHistory).toHaveBeenCalledTimes(2)
-    // Two consumers read the roster now that the sidebar is the tab's Channel
-    // list alone (the Agents panel is not mounted): that list and the Thread
-    // page. Neither repeats.
-    expect(b.members).toHaveBeenCalledTimes(2)
+    // One consumer reads the roster now that the sidebar's Agents section is
+    // mounted beside the Channels: that section holds the shared read. The
+    // Thread page rides it rather than reading again.
+    expect(b.members).toHaveBeenCalledTimes(1)
     expect(b.viewChannels).toHaveBeenCalledTimes(1)
 
     // The page waits on its own thread scope. The workspace presence scope

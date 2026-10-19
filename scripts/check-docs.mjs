@@ -99,6 +99,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'architecture/tools-and-preset.md': [616, 540],
   'architecture/workspace-session-storage.md': [576, 584],
   'development/README.md': [105, 64],
+  'development/codex-ui-sidebar-patch.md': [612, 402],
   'development/environments-and-install.md': [597, 569],
   'development/generated-and-seams.md': [515, 362],
   'development/start-and-checks.md': [595, 415],

@@ -10,6 +10,7 @@ This directory contains the maintained engineering documentation for this reposi
 | --- | --- | --- |
 | [`development/README.md`](development/README.md) | Setup, commands, generated artifacts, live/UI preview, browser replay, and release checks | Starting development, running verification, changing a package, or changing release layout |
 | [`development/start-and-checks.md`](development/start-and-checks.md) | Setup and the verification gradient | Starting work, or deciding which check a change needs |
+| [`development/codex-ui-sidebar-patch.md`](development/codex-ui-sidebar-patch.md) | The codex-ui sidebar patch: native tabs, top-level panels, and how the patch stays applied | Changing the sidebar layout, or updating codex-ui |
 | [`development/generated-and-seams.md`](development/generated-and-seams.md) | Browser evidence, generated files, package seams, and adding a Host operation | Touching generated files, package seams, or a Host operation |
 | [`development/environments-and-install.md`](development/environments-and-install.md) | Sandbox/CI environments and external installation verification | Running in CI, or verifying an installed bundle |
 | [`development/storage-and-delivery.md`](development/storage-and-delivery.md) | Ledger storage routing, notification regression, and the delivery checklist | Changing storage routing, notifications, or preparing a delivery |

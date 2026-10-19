@@ -15,7 +15,9 @@ describe('Team tab body seat precedence', () => {
     expect(element.props.selectChannel).toBe(selectChannel)
     expect(element.props.useWorkspaces).toBe(useWorkspaces)
     expect(element.props.wide).toBe(true)
-    expect(element.props.channelsOnly).toBe(true)
+    // The Team tab carries the Channel section and the Agents section, so the
+    // browser is not narrowed to the Channels alone.
+    expect(element.props.channelsOnly).toBeUndefined()
     expect(element.props).not.toHaveProperty('agentsInSettings')
   })
 })

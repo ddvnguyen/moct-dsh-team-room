@@ -60,7 +60,7 @@ describe('Team mode and the shell main panel', () => {
     expect(b.view.container.querySelector('[data-baseline-workspaces]')).not.toBeNull()
   })
 
-  it('shows the Inbox, the Workspace picker and the Channels in the Team tab, without the Agents group', async () => {
+  it('shows the Inbox, the Workspace picker, the Channels and the Agents in the Team tab', async () => {
     const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
       const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')
@@ -70,7 +70,9 @@ describe('Team mode and the shell main panel', () => {
     expect(await within(tab).findByRole('button', { name: '# engineering' })).toBeTruthy()
     expect(within(tab).getByRole('button', { name: /^收件箱/ })).toBeTruthy()
     expect(tab.querySelector('[data-team-workspace-trigger]')).not.toBeNull()
-    expect(within(tab).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+    // The Agents section sits under the Channels in the same tab: an Agent is a
+    // Team member, so the two are one destination.
+    expect(await within(tab).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
   })
 
   it('does not rewrite the shell sidebar in Team mode: no mode marker, no rule hiding New Session or the rail', async () => {
@@ -85,18 +87,17 @@ describe('Team mode and the shell main panel', () => {
     expect(css).not.toMatch(/newSession|panelList/u)
   })
 
-  it('lists the Agents behind the Agents segment of the Teams tab, not on Team Settings', async () => {
+  it('lists the Agents in the Team tab, beside the Channels, not on Team Settings', async () => {
     const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
       const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')
       expect(found).not.toBeNull()
       return found!
     })
-    // Channels is the view the tab opens on: the Agents group is not beside it.
-    expect(within(tab).queryByRole('button', { name: '添加 Agent' })).toBeNull()
-    // The segmented control swaps the one tab's body rather than adding a tab.
-    fireEvent.click(within(tab).getByRole('tab', { name: 'Agents' }))
+    // The tab carries both sections at once: no view switch, no second tab.
     expect(await within(tab).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
+    expect(await within(tab).findByRole('button', { name: '# engineering' })).toBeTruthy()
+    expect(within(tab).queryByRole('tab', { name: 'Agents' })).toBeNull()
     expect(b.view.container.querySelector('[data-native-tab="agents"]')).toBeNull()
   })
 

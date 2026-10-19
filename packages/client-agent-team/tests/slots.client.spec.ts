@@ -121,7 +121,7 @@ function nativeStrip() {
  * the element it returns is the slot boundary, and the body inside carries the
  * share the Channel list picks and opens Member views through.
  */
-function tabSeat(strip: ReturnType<typeof nativeStrip>): Record<string, (...args: never[]) => unknown> & { channelsOnly: boolean } {
+function tabSeat(strip: ReturnType<typeof nativeStrip>): Record<string, (...args: never[]) => unknown> {
   const guarded = strip.renders[0]!({}) as { props: { slot: string; children: { props: Record<string, unknown> } } }
   expect(guarded.props.slot).toBe('native-tab')
   return guarded.props.children.props as never
@@ -361,8 +361,8 @@ describe('Team Settings rail row', () => {
     const withStrip = await bench(null, strip.registry)
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    // One Teams tab carries both the Channel view and the Agents list (see
-    // teams-tab-body.tsx), so the strip gets a single entry.
+    // One Teams tab carries both the Channel section and the Agents section
+    // (see team-tab-body.tsx), so the strip gets a single entry.
     expect(strip.inserted).toEqual(['team'])
     expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
     await fiber.dispose()
@@ -403,7 +403,9 @@ describe('Team Settings rail row', () => {
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
 
     const element = tabSeat(strip)
-    expect(element.channelsOnly).toBe(true)
+    // The tab's body is the whole Team browser: the Channel section and the
+    // Agents section, not the Channels alone.
+    expect(element.channelsOnly).toBeUndefined()
     ;(element.selectChannel as (ref: string) => void)('channel:engineering')
 
     // The one-sidebar contract: the pick opens the Channel in the main column and

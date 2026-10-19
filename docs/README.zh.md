@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | [`development/README.zh.md`](development/README.zh.md) | 安装、命令、生成物、live/UI preview、browser replay 和发布检查 | 开始开发、运行验证、修改 package 或发布布局 |
 | [`development/start-and-checks.zh.md`](development/start-and-checks.zh.md) | 上手与检查梯度 | 开始开发，或判断一次改动该跑哪道门 |
+| [`development/codex-ui-sidebar-patch.zh.md`](development/codex-ui-sidebar-patch.zh.md) | codex-ui 侧栏补丁：原生页签、顶层面板，以及补丁如何持续生效 | 修改侧栏布局，或升级 codex-ui |
 | [`development/generated-and-seams.zh.md`](development/generated-and-seams.zh.md) | 浏览器证据、生成文件、package 接缝与新增 Host operation | 修改生成物、package 接缝或 Host operation |
 | [`development/environments-and-install.zh.md`](development/environments-and-install.zh.md) | 沙箱/CI 环境与外部安装验证 | 在 CI 里跑，或验证已安装的 bundle |
 | [`development/storage-and-delivery.zh.md`](development/storage-and-delivery.zh.md) | Ledger 存储路由、通知回归与交付前核对 | 修改存储路由、通知，或准备交付 |

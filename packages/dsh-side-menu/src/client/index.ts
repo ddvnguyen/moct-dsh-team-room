@@ -1,37 +1,47 @@
 /** Sidebar layout for the MOCT workspace.
  *
- *  The codex-ui sidebar renders one `nav.dcu-menu` whose direct children are:
- *  the global-panel buttons (Tasks, Plugin Market, Automation tasks, Team,
- *  Context Insights, Team Settings), the "New task" button, the Extensions
- *  group (`div.dcu-extensions-group`, which owns the toggle and the panel with
- *  Experts/Skills/Plugins/Connectors), then the trailing buttons (Scheduled
- *  tasks, IM Assistant).
+ *  The codex-ui sidebar renders one `nav.dcu-menu`. Since codex-ui 1.1.39 the
+ *  plugin panels (Tasks, Plugin Market, Automation tasks, Team, Context
+ *  Insights, Team Settings) are children of the Extensions group, which owns
+ *  the toggle and the panel with Experts/Skills/Plugins/Connectors; the
+ *  "New task" button and the group itself are the menu's direct children.
  *
- *  The wanted layout is: New task, Teams, Team Settings, Context Insights at the
- *  top level, and every other entry presented as part of Extensions. The group
- *  and its panel are React-owned, so nothing is detached: the entries are
- *  ordered with CSS `order` and indented to line up under the Extensions
- *  chevron, and the ones outside the group follow its `aria-expanded` state.
- *  That keeps React's reconciliation intact and makes collapsing Extensions
- *  hide the same set the panel hides.
+ *  The wanted layout is: New task, Context Insights, Team Settings at the top
+ *  level, and every other entry presented as part of Extensions. Two pieces
+ *  do that:
+ *
+ *  - The patched codex-ui renders the panels this plugin lists in
+ *    {@link TOP_PANEL_IDS} next to "New task" instead of inside Extensions.
+ *    The patch owns the mechanism; this plugin owns the policy.
+ *  - The order is set with CSS `order` on the menu's children. The group and
+ *    its panel are React-owned, so nothing is detached: the entries outside
+ *    the group are ordered in place and indented to line up under the
+ *    Extensions chevron, and the ones outside the group follow its
+ *    `aria-expanded` state. That keeps React's reconciliation intact and
+ *    makes collapsing Extensions hide the same set the panel hides.
  *
  *  Everything is idempotent and re-applied after a re-render; a write happens
  *  only when the computed value differs, so an idle sidebar costs nothing.
  */
 
-/** Entries that stay at the top level, in this order. Both languages, plus the
- *  pre-rename `Team` label so an older MOCT build keeps its seat. */
+/** The panels that belong next to "New task" rather than inside Extensions.
+ *  The ids are the ones the owning plugins register with
+ *  `sidebar.panellist`: dsh-context owns Context Insights, the Team Room owns
+ *  Team Settings. */
+const TOP_PANEL_IDS = ['dsh-context', 'agent-team-settings']
+
+/** The key the patched codex-ui reads the top-level panel list from. */
+const TOP_PANELS_KEY = '__dshTopPanels'
+
+/** Entries that stay at the top level, in this order. Both languages. */
 const KEEP_ORDER = [
   'New task',
   'New Task',
   '新建任务',
-  'Teams',
-  'Team',
-  '团队',
-  'Team Settings',
-  '团队设置',
   'Context Insights',
   '上下文洞察',
+  'Team Settings',
+  '团队设置',
 ]
 
 const INDENT_PX = 28
@@ -127,9 +137,51 @@ function reorganize(root: ParentNode): void {
   }
 }
 
+/** The store the patched codex-ui reads the top-level panel list from. The
+ *  shape is a contract between this plugin and the patch: `ids` is the current
+ *  set of panel ids, `subscribe` lets the host re-render when it changes. */
+interface TopPanelStore {
+  ids: Set<string>
+  subscribe: (listener: () => void) => () => void
+  set: (ids: readonly string[]) => void
+}
+
+/**
+ * Publish the top-level panel list for the patched codex-ui.
+ *
+ * Without the patch the host keeps every plugin panel inside Extensions, so
+ * this call has no effect and the layout stays the host's. With the patch the
+ * panels in {@link TOP_PANEL_IDS} are rendered next to "New task".
+ */
+function publishTopPanels(ids: readonly string[]): void {
+  const scope = globalThis as unknown as Record<string, unknown>
+  const existing = scope[TOP_PANELS_KEY] as TopPanelStore | undefined
+  if (existing !== undefined && typeof existing.set === 'function') {
+    existing.set(ids)
+    return
+  }
+  const listeners = new Set<() => void>()
+  const store: TopPanelStore = {
+    ids: new Set(ids),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    set(next) {
+      const changed = next.length !== store.ids.size || next.some(id => !store.ids.has(id))
+      if (!changed) return
+      store.ids = new Set(next)
+      for (const listener of listeners) listener()
+    },
+  }
+  scope[TOP_PANELS_KEY] = store
+}
+
 export function apply(ctx: {
   effect: (fn: () => () => void, label: string) => void
 }): void {
+  publishTopPanels(TOP_PANEL_IDS)
+
   ctx.effect(() => {
     if (typeof document === 'undefined') return () => {}
     const win = document.defaultView

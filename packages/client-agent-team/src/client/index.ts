@@ -82,7 +82,7 @@ const GuardedTeamsPage = withSlotBoundary('main:teams', TeamsPage as never)
 import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
-import { renderTeamsTabBody } from './teams-tab-body.tsx'
+import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
 
 export type { TeamMode, TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
@@ -719,7 +719,7 @@ function applyUi(ctx: ClientContext): void {
     // The strip calls `render` raw inside its own tree, so a throw here would
     // unwind into the host's sidebar; the boundary keeps it inside the tab.
     return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
-      renderTeamsTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+      renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
   }
   // Companion slot exposed by dsh-codex-ui (sidebar.team). One tab carries both
   // the Channel view and the Agents list, so no sidebar.agents slot is
@@ -730,7 +730,7 @@ function applyUi(ctx: ClientContext): void {
     } as never, (props: NativeTabRenderProps) => {
       const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
       return createElement(TeamSlotBoundary, { slot: 'codex-tab', t: bound as never },
-        renderTeamsTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+        renderTeamTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
     }) as never)
   } catch { /* slot absent (no dsh-codex-ui) */ }
 
