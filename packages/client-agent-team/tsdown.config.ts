@@ -51,7 +51,19 @@ const teamRemote = {
   name: 'dsh-agent-team-remote-entrypoint',
   resolveId(source: string) {
     if (source === '@ddvnguyen/moct-dsh-team-room/remote') return teamRemoteTarget
-    if (source === '@deepseek-ai/dsh-typert-protocol/remote-info' && existsSync(remoteInfoTarget)) return remoteInfoTarget
+    if (source === '@deepseek-ai/dsh-typert-protocol/remote-info') {
+      // The generated remote came from a harness that knows this subpath, so a
+      // preset checkout that does not is a mismatched pair: the specifier would
+      // stay an external `require()` the browser cannot answer and the plugin
+      // would fail to register at boot. Fail the build instead of shipping it.
+      if (!existsSync(remoteInfoTarget)) {
+        throw new Error(
+          `client bundle: ${source} is imported by the generated remote but ${remoteInfoTarget} does not exist. ` +
+          `Build against the same harness that ran generate:typert (DSH_HARNESS_DIR).`,
+        )
+      }
+      return remoteInfoTarget
+    }
     return null
   },
 }
