@@ -16,10 +16,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { applySidebarPatch, PATCH_MARKER } from './edits.mjs'
-
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 /**
  * Parse-check the patched bundle before it is written.
@@ -63,14 +60,21 @@ function main(argv) {
   }
   const packageDir = resolve(target)
   const bundle = join(packageDir, 'lib', 'client.js')
+  const backup = join(dirname(bundle), 'client.js.orig')
   if (!existsSync(bundle)) {
     console.error(`no client bundle at ${bundle}`)
     return 2
   }
-  const source = readFileSync(bundle, 'utf8')
+  let source = readFileSync(bundle, 'utf8')
   if (source.includes(PATCH_MARKER)) {
-    console.log(`already patched (${PATCH_MARKER} present)`)
-    return 0
+    // The bundle already carries the patch. The pristine copy kept next to it
+    // is the input for the current edit set, so a changed edit list is applied
+    // to the original rather than to an already patched bundle.
+    if (!existsSync(backup)) {
+      console.log(`already patched (${PATCH_MARKER} present)`)
+      return 0
+    }
+    source = readFileSync(backup, 'utf8')
   }
   let patched
   try {
@@ -88,7 +92,6 @@ function main(argv) {
     console.log(`patch applies cleanly to ${readVersion(packageDir)} (${patched.applied.length} edits)`)
     return 0
   }
-  const backup = join(dirname(bundle), 'client.js.orig')
   if (!existsSync(backup)) copyFileSync(bundle, backup)
   writeFileSync(bundle, patched.source)
   console.log(`patched ${basename(packageDir)} ${readVersion(packageDir)} (${patched.applied.length} edits); original kept at ${backup}`)

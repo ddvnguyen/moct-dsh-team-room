@@ -153,6 +153,31 @@ ${REGISTRY_HELPERS}`,
 `,
   },
   {
+    id: 'sidebar-tab-label-icons',
+    from: `						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconFolderCloseMedium, { size: 14 }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.tasksTab") })]`,
+    to: `						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.tasksTab") })`,
+  },
+  {
+    id: 'sidebar-tab-label-icons-channels',
+    from: `						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("svg", {
+							viewBox: "0 0 16 16",
+							width: 14,
+							height: 14,
+							fill: "none",
+							"aria-hidden": "true",
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("path", {
+								fill: "currentColor",
+								d: "M2.15 2.9h11.7v8.2H6.42L2.15 13.85V2.9Zm1.4 1.4v6.62l1.78-1.12h7.12V4.3H3.55Z"
+							})
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.channelsTab") })]`,
+    to: `						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.channelsTab") })`,
+  },
+  {
+    id: 'sidebar-tab-label-icons-schedule',
+    from: `						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScheduleIcon, {}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.scheduleTab") })]`,
+    to: `						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.scheduleTab") })`,
+  },
+  {
     id: 'sidebar-native-tab-items',
     from: `				return items;
 			}, [

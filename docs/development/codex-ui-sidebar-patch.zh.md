@@ -18,6 +18,8 @@
 - `__dshNativeTabs` —— 原生页签注册表，即 automation 插件已经在用的契约。Team Room 的 `Teams` 页签通过它渲染在页签条里。
 - `__dshTopPanels` —— 渲染在 "New task" 旁、而不是 Extensions 内的面板 id 列表。
 
+补丁同时去掉页签条自身页签标题上的图标，让页签条以纯文本呈现 `Tasks | Teams | Schedule`：插件页签只带一个纯文本标签，三个标题里有两个带图标会让整行看起来是坏的。
+
 补丁通过带锚点的编辑（`scripts/codex-ui-sidebar-patch/edits.mjs`）应用，而不是基于行号的 diff。锚点未变的 codex-ui 版本无需新补丁；锚点被移动的版本会让应用器报出失配的编辑 id，并且不改动已安装的包。
 
 ## 策略归谁

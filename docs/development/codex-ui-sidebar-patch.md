@@ -18,6 +18,8 @@ Two seams, and nothing else:
 - `__dshNativeTabs` — the native tab registry, the contract the automation plugin already uses. The Team Room's `Teams` tab renders in the strip through it.
 - `__dshTopPanels` — the ids of the panels that render next to "New task" instead of inside Extensions.
 
+The patch also strips the icons from the strip's own tab titles, so the strip reads `Tasks | Teams | Schedule` as text: a plugin tab carries a plain label, and icons on two of three titles made the row read as broken.
+
 The patch is applied by anchored edits (`scripts/codex-ui-sidebar-patch/edits.mjs`), not by a line-based diff. A codex-ui release that keeps the anchors needs no new patch; a release that moves one fails the applier with the id of the edit that no longer matches, and the installed bundle is left untouched.
 
 ## Who owns the policy
