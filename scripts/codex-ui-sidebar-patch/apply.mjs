@@ -8,9 +8,11 @@
  * and the bundle is left untouched.
  *
  * Usage:
- *   node scripts/codex-ui-sidebar-patch/apply.mjs <codex-ui-package-dir> [--check]
+ *   node scripts/codex-ui-sidebar-patch/apply.mjs <codex-ui-package-dir> [--check|--verify]
  *
  * `--check` reports what would happen and exits 0 without writing.
+ * `--verify` asserts that the installed package already carries the patch,
+ * which is what the deploy runs after applying it.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -53,6 +55,7 @@ function readVersion(packageDir) {
 
 function main(argv) {
   const check = argv.includes('--check')
+  const verify = argv.includes('--verify')
   const target = argv.find((arg) => !arg.startsWith('--'))
   if (target === undefined) {
     console.error('usage: apply.mjs <codex-ui-package-dir> [--check]')
@@ -66,6 +69,17 @@ function main(argv) {
     return 2
   }
   let source = readFileSync(bundle, 'utf8')
+  if (verify) {
+    // The bundle as it is installed, not the pristine copy next to it: the
+    // question is whether the package the lane will serve carries the
+    // patch.
+    if (!source.includes(PATCH_MARKER)) {
+      console.error(`codex-ui ${readVersion(packageDir)} does not carry the sidebar patch (${PATCH_MARKER} is absent)`)
+      return 1
+    }
+    console.log(`codex-ui ${readVersion(packageDir)} carries the sidebar patch`)
+    return 0
+  }
   if (source.includes(PATCH_MARKER)) {
     // The bundle already carries the patch. The pristine copy kept next to it
     // is the input for the current edit set, so a changed edit list is applied
