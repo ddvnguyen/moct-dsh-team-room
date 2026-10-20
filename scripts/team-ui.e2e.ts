@@ -3647,9 +3647,10 @@ it('delivers the scheduled Orchestrator digest in real Web', async () => {
     .filter((candidate: { name: string }) => candidate.name === 'team-digest').length, { timeout: 150_000 }).toBe(1)
   const digestChannel = scaffold.ctx.agentTeam.view({ workspaceId }).channels
     .find((candidate: { name: string }) => candidate.name === 'team-digest')!
-  // The Orchestrator's own answer: one digest message in that Channel.
+  // The Orchestrator's own answer: one digest message in that Channel. The
+  // tick is a minute away, so the answer is a minute away too.
   await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId, channelRef: digestChannel.channelRef, topLevelOnly: true, limit: 50 })
-    .items.length, { timeout: 60_000 }).toBeGreaterThan(0)
+    .items.length, { timeout: 150_000 }).toBeGreaterThan(0)
 
   browser = await chromium.launch({ headless: true, executablePath: CHROME })
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
