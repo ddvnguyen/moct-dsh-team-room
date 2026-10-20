@@ -1,0 +1,440 @@
+/* The Human Inbox page, restyled after Multica's inbox: the shared
+ * conversation seat still carries the header band, column, gutters, and
+ * scrollbar; this sheet styles the severity-grouped queue, the filter surface
+ * and the desktop split view. Every color rides the shipped DSW aliases (and,
+ * inside the Multica look wrapper, the `--ml-*` aliases) so the page follows
+ * the active theme. */
+
+/* The split view: list on the left, the selected row's task detail on the
+   right, the same master–detail Multica's inbox speaks. Below the split
+   threshold (a phone, or the jsdom bench's zero-width seat) the page renders
+   the list alone — a row opens its Thread full-screen, the way it always
+   has — and no detail pane exists at all. */
+.split {
+  display: flex;
+  flex: 1;
+  gap: 0;
+  min-height: 0;
+}
+
+.listPanel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The fixed width belongs to the split view's master column. On a narrow seat
+   the same panel is the whole reading column, so it fills it. */
+.split .listPanel {
+  border-right: 1px solid var(--ml-border, var(--dsw-alias-border-l2));
+  flex: none;
+  width: 340px;
+}
+
+/* The detail pane keeps its own scroll: the row it renders can grow (a
+   decision card's questions), and the list must not move while it does. */
+.detailPanel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.detailEmpty {
+  align-items: center;
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  font-size: var(--ml-text-body, 14px);
+  gap: 8px;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+/* -- Queue sections and severity groups ------------------------------------ */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
+
+/* The page's two slices — 「需要我」 is the queue, 「最近活跃」 the way back into
+   work already read. The heading names the slice a reader is looking at, so it
+   speaks in the page's caption voice instead of competing with the queue:
+   tertiary ink, no rule of its own, and the same 8px inset the rows carry. */
+.section {
+  display: flex;
+  flex-direction: column;
+}
+.section + .section {
+  margin-top: 20px;
+}
+.sectionTitle {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  margin: 0 0 4px;
+  padding: 0 8px;
+}
+/* How much the section holds, so a reader never counts rows to find out — and
+   so the capped 「最近活跃」 tail says how much of it is on screen. */
+.sectionCount {
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+
+/* The severity band inside the queue: a quiet subheading in the band's own
+   ink, so the group the row sits in is readable before any row is. The
+   action-required band is the one that may interrupt — it alone carries
+   demand ink; the other two stay descriptive. */
+.groupTitle {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  margin: 10px 0 2px;
+  padding: 0 8px;
+}
+.groupTitle:first-child {
+  margin-top: 0;
+}
+.groupTitle[data-severity="action_required"] {
+  color: var(--dsw-alias-state-error-primary);
+}
+.groupTitle[data-severity="attention"] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+.groupTitle[data-severity="info"] {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+}
+.groupCount {
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+
+/* The queue's totals are segments rather than a sentence: the reader scans two
+   or three numbers instead of parsing a clause, and the number the page is
+   about carries the ink. */
+.headerMeta {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+  gap: 0 10px;
+  overflow: hidden;
+}
+.headerUnread {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+/* -- One queue row ---------------------------------------------------------- */
+
+/* A queue row is a two-line result row: one face leads in a gutter of its own
+   and everything the row says starts on one column. The grid holds that column
+   across both sections and every severity band — the same Thread moves between
+   them and must not slide sideways on the way. */
+.row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dsw-radius-lg, 8px);
+  color: inherit;
+  column-gap: 8px;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  grid-template-columns: max-content minmax(0, 1fr);
+  padding: 8px;
+  row-gap: 1px;
+  text-align: left;
+  width: 100%;
+}
+.row:hover,
+.row:focus-visible,
+.row[data-selected="true"] {
+  /* On these states the row is no longer the page background, so the marks it
+     carries must cut themselves out of the surface they are actually on. */
+  --team-mark-ring: var(--dsw-alias-interactive-bg-hover);
+  background: var(--ml-surface-hover, var(--dsw-alias-interactive-bg-hover));
+}
+.row[data-selected="true"] {
+  background: var(--ml-surface-selected, var(--dsw-alias-interactive-bg-active));
+}
+.row:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+/* The leading slot, first line: who is on this Thread — the Task's live owners
+   where it has any, the person its newest fact came from otherwise. */
+.rowActor {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* The row's first line: the unread dot, the identity, then the count and the
+   instant closing it at the right edge. It does not wrap — a squeezed seat
+   shortens the identity with an ellipsis instead of folding one row into three
+   lines. */
+.rowLine {
+  align-items: baseline;
+  container-type: inline-size;
+  display: flex;
+  gap: 2px 8px;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+/* The unread dot, Multica's own mark: a brand dot before the identity. It is
+   the row's glanceable unread state; the capsule beside the crumb keeps the
+   quantity. Zero unread is the absence of the dot, not a hollow one. */
+.rowDot {
+  align-self: center;
+  background: var(--ml-brand, var(--dsw-alias-brand-primary));
+  border-radius: 999px;
+  /* The platform curves every rounded surface along a superellipse, which
+     squares a capsule end off; the dot opts back into the round shape. */
+  corner-shape: round;
+  flex: none;
+  height: 6px;
+  width: 6px;
+}
+
+/* Provenance is the row's identity, so it carries the row's ink: the Channel
+   leads in primary 600 while the Workspace stays a quiet prefix. */
+.rowCrumb {
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The Workspace is drawn only while the rows on screen span more than one: a
+   name repeated down every row spends the row's best position on a constant. */
+.rowWorkspace {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  font-size: 12px;
+}
+.rowChannel {
+  color: var(--ml-text, var(--dsw-alias-label-primary));
+  font-weight: 600;
+}
+/* The Task marker rides the provenance line as a hairline chip. */
+.rowTask {
+  border: 1px solid var(--ml-border, var(--dsw-alias-border-l2));
+  border-radius: var(--dsw-radius-sm, 6px);
+  color: var(--ml-text-secondary, var(--dsw-alias-label-secondary));
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  margin-left: 3px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+/* Where the Task stands rides the same provenance run: an 8px state dot then
+   the status word, the pair every Task surface prints. */
+.rowTaskState {
+  align-items: center;
+  color: var(--ml-text-secondary, var(--dsw-alias-label-secondary));
+  display: inline-flex;
+  font-size: 11px;
+  gap: 4px;
+  line-height: 18px;
+  margin-left: 3px;
+  white-space: nowrap;
+}
+
+/* Why the row is in the queue — the severity derivation's own word. It rides
+   the first line like the Task standing, in tertiary ink; the one band that
+   may interrupt says so in the error tone instead. */
+.rowReason {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  flex: none;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.rowReason[data-severity="action_required"] {
+  color: var(--dsw-alias-state-error-primary);
+  font-weight: 600;
+}
+
+/* The instant closes the row's first line behind the count. */
+.rowTime {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  white-space: nowrap;
+}
+/* A line can come in narrower than the count and the instant together need —
+   there the instant yields, and the element still carries the exact time. */
+@container (max-width: 70px) {
+  .rowTime {
+    display: none;
+  }
+}
+/* The gist is evidence for the identity above it: it starts on the identity's
+   own column and speaks in secondary ink, one line. */
+.rowPreview {
+  color: var(--ml-text-secondary, var(--dsw-alias-label-secondary));
+  font-size: 13px;
+  grid-column: 2;
+  grid-row: 2;
+  line-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The bounded-queue footnote: the page shows the newest unread Threads up to
+   the Host's cap, so this line keeps a full page from reading as the whole
+   queue. It sits with the list it qualifies, not in the header. */
+.queueMore {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  font-size: 12px;
+  line-height: 18px;
+  margin: 6px 0 0;
+  padding: 0 8px;
+}
+
+/* -- The detail pane -------------------------------------------------------- */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 20px 24px;
+}
+.detailTitle {
+  color: var(--ml-text, var(--dsw-alias-label-primary));
+  font-size: var(--ml-text-title, 18px);
+  font-weight: 600;
+  line-height: var(--ml-text-title-line, 28px);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.detailMeta {
+  align-items: center;
+  color: var(--ml-text-secondary, var(--dsw-alias-label-secondary));
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--ml-text-caption, 12px);
+  gap: 4px 8px;
+  line-height: var(--ml-text-caption-line, 16px);
+}
+.detailMeta [data-team-task-state] {
+  color: inherit;
+  font-size: inherit;
+  gap: 4px;
+  margin-left: 0;
+}
+.detailBody {
+  color: var(--ml-text, var(--dsw-alias-label-primary));
+  font-size: var(--ml-text-body, 14px);
+  line-height: var(--ml-text-body-line, 20px);
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* The Task's own properties, in the issue shape the Thread page uses: the
+   label on the left, the value beside it. */
+.detailProps {
+  border-top: 1px solid var(--ml-border, var(--dsw-alias-border-l2));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+.detailProp {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.detailPropLabel {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  flex: 0 0 72px;
+  font-size: var(--ml-text-caption, 12px);
+  line-height: var(--ml-text-caption-line, 16px);
+}
+.detailPropValue {
+  align-items: center;
+  color: var(--ml-text, var(--dsw-alias-label-primary));
+  display: flex;
+  font-size: var(--ml-text-caption, 12px);
+  gap: 6px;
+  line-height: var(--ml-text-caption-line, 16px);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.detailPropValue [data-team-task-state] {
+  color: inherit;
+  font-size: inherit;
+  gap: 4px;
+  margin-left: 0;
+}
+/* A failed Turn is evidence the reader needs in full, not a teaser: the
+   reasons render as a quiet list under the body. */
+.detailFailures {
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: var(--ml-radius-md, var(--dsw-radius-lg, 8px));
+  color: var(--ml-text, var(--dsw-alias-label-primary));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--ml-text-caption, 12px);
+  line-height: var(--ml-text-caption-line, 16px);
+  margin: 12px 0 0;
+  padding: 10px 12px;
+}
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+/* The decision card the pane hosts keeps its own width discipline. */
+.detailDecision {
+  margin-top: 12px;
+}
+
+/* -- The filter menu's facet rows ------------------------------------------- */
+
+.filterRow {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.filterCount {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.filterSection {
+  color: var(--ml-text-tertiary, var(--dsw-alias-label-tertiary));
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+  padding: 6px 8px 2px;
+}

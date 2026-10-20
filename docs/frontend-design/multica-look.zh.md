@@ -79,6 +79,23 @@ Agents 标签页与 Agent 详情页按 Multica 的 Agents 列表和 Agent 页面
 - `agents/agent-page-model.ts` 承载纯派生（当前 Task、今日 token、停止目标、
   每日桶），并有 node 级测试。
 
+## Inbox
+
+Team Inbox 按 Multica 的 inbox 重构：一条队列按「它在要求读者做什么」分组，
+带计数的分面筛选，以及在列表右侧打开所选行任务详情的分屏视图。
+
+- `inbox/inbox-items.ts` 承载行模型：Host 的投影，加上 Thread 的未决决策卡
+  （#109）与失败的 Turn，以及由它们推出的严重程度。
+- `inbox/inbox-display.ts` 承载分组与文案：分组带、原因词与详情标题。
+- `inbox/InboxList.tsx` 源自 `inbox-list.tsx`：虚拟滚动容器
+  （`react-virtuoso`）、在行之间走的方向键，以及同处一个列表里的分组标题。
+- `inbox/InboxListItem.tsx` 源自 `inbox-list-item.tsx` 与
+  `inbox-detail-label.tsx`：头像叠放、Task 号码与标题、原因词、相对时间与
+  未读点。
+- `inbox/InboxFilterMenu.tsx` 源自 `inbox-filter-menu.tsx`：未读、严重程度、
+  频道与成员，计数由已移植的 `multica/inbox-filter.ts` 计算。
+- `inbox/inbox.module.css` 在 `--ml-*` 上承载分组带、行与分屏视图。
+
 ## Token 映射
 
 存在等价项时，`--ml-*` 映射到宿主的 `--dsw-*` 别名，深色模式随宿主自动切换。
