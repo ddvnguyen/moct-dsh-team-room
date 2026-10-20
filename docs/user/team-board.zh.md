@@ -73,7 +73,7 @@ Agent 页上的 `聊天` 打开 Member 自己的 Session，Human 在那里与它
 - **实时 Agents**——每个 Member 一张卡片，带在线状态、当前 Task 与正在运行的工具，实时更新；
 - **需要关注**——待决策的卡片、失败的 Turn，以及等待 Human 的 Task；
 - **动态**——Workspace 范围的动态流，最新在前；
-- **消耗**——当天每个 Agent 的 token，以及近两周每天的 token。
+- **消耗**——当天每个 Agent 的 token，以及近两周每天的 token。输入用量没有记录的 Agent 或某一天显示为「未记录」，而不是 0，所以数据缺口不会被读成安静的某一天。
 
 ## 收件箱分级
 

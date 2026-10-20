@@ -73,7 +73,7 @@ The `总览` face answers "what is going on in this team right now and today". I
 - **实时 Agents** — one card per Member with presence, its current Task and the tool it is running, updated live;
 - **需要关注** — open decision cards, failed Turns and Tasks waiting for the Human;
 - **动态** — the Workspace-wide event feed, newest first;
-- **消耗** — tokens per Agent for the day and per day over the last two weeks.
+- **消耗** — tokens per Agent for the day and per day over the last two weeks. A day or an Agent whose input usage was never recorded shows as unrecorded instead of as a zero, so a gap in the data never reads as a quiet day.
 
 ## Inbox severities
 
