@@ -13,3 +13,4 @@ Each boundary is maintained in its own file:
 | [tools-and-preset.md](tools-and-preset.md) | the model-facing tools, where each is defined, and the isolated `team-member` preset. |
 | [client-and-remote.md](client-and-remote.md) | the typed Remote declaration, Client plugin and slot composition, and the Client data and presentation boundary. |
 | [workspace-session-storage.md](workspace-session-storage.md) | how Team reuses Harness Workspace, Session, and storage instead of keeping parallel state. |
+| [team-board-runtime.md](team-board-runtime.md) | the Team Board runtime seams: the Task op kinds, the `workspaceActivity` aggregate, the digest timer, and the Multica reuse policy. |

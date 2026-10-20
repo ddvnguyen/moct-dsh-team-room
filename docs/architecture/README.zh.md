@@ -13,3 +13,4 @@
 | [tools-and-preset.zh.md](tools-and-preset.zh.md) | model-facing 工具、各自定义在哪，以及隔离的 `team-member` preset。 |
 | [client-and-remote.zh.md](client-and-remote.zh.md) | typed Remote 声明、Client plugin 与 slot composition、Client 数据与呈现边界。 |
 | [workspace-session-storage.zh.md](workspace-session-storage.zh.md) | Team 如何复用 Harness 的 Workspace、Session 和存储，而不另建并行状态。 |
+| [team-board-runtime.zh.md](team-board-runtime.zh.md) | 团队看板的运行时接缝：Task 的 op kind、`workspaceActivity` 聚合、摘要定时器与 Multica 复用策略。 |
