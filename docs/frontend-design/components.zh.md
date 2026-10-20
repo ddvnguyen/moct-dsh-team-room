@@ -93,3 +93,14 @@
 - 运行风险行每个出错 Member 一行。行首是诊断结构化 class 的本地化名称：`session-refused`、`session-unreadable`、`preset-composition`、`rollover`、`runtime`、`activation`。这就是 `AgentTeamMemberDiagnostic.class` 这条策略轴。`restartOffered` 早已按这条轴分支。这条轴回答可本地化的「这是哪一类问题」。Host 的 `detail` 天生是英文，行内只截取 `detail` 首句。完整原文留在风险行 `title` 上。`AgentTeamClientMemberStatus` 本来就把整份 diagnostic 带到浏览器，因此这条轴不需要改 Host 协议。
 - 每个 class 一个句子 key，让可见行留在界面语言里，而不是把 Host 字符串直接贴进本地化界面。完全没有 diagnostic 的 Member 回落到 `runtime` 文案，而不是留空。
 - Task / Thread 身份下方那句开篇文字**在任意宽度、任意 Thread 类型下都只占一行**。实现是 `-webkit-line-clamp: 1`，同时写标准属性 `line-clamp`。完整原文留在 `title`。Task 标题本来就长且夹着不可断的 ref。讨论的开篇就是自己的锚消息，正文时间线里紧接着完整重复了一遍。所以别给开篇在页头带里留第二行。那等于把页头高度花在读者已经能看到的文字上，还让页头高度取决于别人当初打了多少字。压成一行后，很长的开篇与两个字的开篇页头同高（实测 taskless Thread 两种都是 114px）。
+
+## 团队总览页（team overview）
+总览页回答一个问题——这个 Workspace 此刻与今天在做什么——分为四部分：实时 agents 条、需要关注列表、消耗图，以及 Workspace 动态 feed。它渲染 Host 的 workspace 聚合，自身只保留已取回的页面。
+
+实时条为每个 Member seat 画一张卡：presence 来自 roster，运行中 Turn 的工具、步数与已用时长来自 `memberActivity` 快照。没有运行中 Turn 的 seat 改为陈述自己的状态，而不是工具；已用时长自行走动，因此运行中的 Turn 不必等一次变更才显得活着。按下卡片打开该 Member 的 Session。
+
+需要关注折合三个来源：待决策卡片、失败的 Turn、等待验收的 Task。决策卡片只为 feed 已经点名的 Thread 读取，且这些探测有界——这份列表是填满一列，不是扫遍整个 Workspace。每一行都通过其它 seat 使用的同一个导航动作打开自己的 Thread。
+
+feed 是聚合里的事件列表：最新在前，一次一页，按 cursor 翻页。走到 feed 末尾的那一页不再给出 cursor，加载下一页的控件也随之消失。
+
+消耗图按 Host 本地日绘制聚合的按天桶：最新一天每个 Member 一根柱，近十四天每天一根柱。只要某个 Session 跑过一轮从未上报输入拆分的 Turn，输入桶就保持 null——与总量同一套 sticky null——因此未证实的桶读作未知，而不是零。

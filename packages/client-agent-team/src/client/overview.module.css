@@ -1,0 +1,327 @@
+/*
+ * The workspace Overview page: four sections on the shared conversation seat —
+ * the live agent strip, needs attention, spend and the workspace event feed.
+ * Colours and type come from the Multica look layer (`--ml-*`), which maps onto
+ * the host's own `--dsw-*` aliases, so the page reads as the same product the
+ * Channel and Thread pages belong to and follows the host's dark mode.
+ */
+
+.subtitle {
+  margin: 0;
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-label);
+  line-height: var(--ml-text-label-line);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 32px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-card-gap);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--ml-text-title-sm);
+  line-height: var(--ml-text-title-sm-line);
+  font-weight: 600;
+  color: var(--ml-text);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sectionCount {
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  font-weight: 400;
+  color: var(--ml-text-tertiary);
+}
+
+/* Live agents strip */
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--ml-card-gap);
+}
+
+.agentCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--ml-card-padding);
+  border-radius: var(--ml-radius-xl);
+  border: 1px solid var(--ml-border);
+  background: var(--ml-surface);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.agentCard:hover {
+  border-color: var(--ml-border-strong);
+}
+
+.agentHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agentHandle {
+  font-size: var(--ml-text-label);
+  line-height: var(--ml-text-label-line);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentLive {
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  color: var(--ml-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentLive[data-live='true'] {
+  color: var(--ml-text);
+}
+
+.agentTool {
+  font-weight: 500;
+}
+
+.agentMeta {
+  margin-left: 6px;
+  color: var(--ml-text-tertiary);
+}
+
+/* Needs attention */
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.attentionRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px var(--ml-card-padding);
+  border: none;
+  border-bottom: 1px solid var(--ml-border);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attentionRow:hover {
+  background: var(--ml-surface-hover);
+}
+
+.attentionMark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.attentionDecision {
+  background: var(--ml-brand);
+}
+
+.attentionFailure {
+  background: var(--ml-priority-urgent);
+}
+
+.attentionReview {
+  background: var(--ml-status-in-progress);
+}
+
+.attentionText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+}
+
+.attentionRow time {
+  flex: none;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  color: var(--ml-text-tertiary);
+}
+
+/* Spend */
+
+.spend {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.spendLabel {
+  margin: 0 0 6px;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  font-weight: 500;
+  color: var(--ml-text-secondary);
+}
+
+.spendEmpty {
+  margin: 0;
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+  color: var(--ml-text-secondary);
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: minmax(72px, 120px) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+.barName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ml-text-secondary);
+}
+
+.barTrack {
+  display: block;
+  height: 10px;
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-surface-raised);
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ml-brand);
+  min-width: 2px;
+}
+
+.barValue {
+  color: var(--ml-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dayBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 64px;
+}
+
+.dayBar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  border-radius: var(--ml-radius-sm) var(--ml-radius-sm) 0 0;
+  background: var(--ml-surface-raised);
+  overflow: hidden;
+}
+
+.dayBarFill {
+  display: block;
+  width: 100%;
+  border-radius: inherit;
+  background: var(--ml-brand);
+}
+
+/* Event feed */
+
+/* The feed virtualizes: it needs a bounded box of its own, or the list has no
+   viewport to measure and renders nothing. Virtuoso sizes its own root to the
+   parent, so the box carries the height and the list fills it. */
+.feedBox {
+  height: min(420px, 60vh);
+  min-height: 220px;
+}
+
+.feed {
+  height: 100%;
+}
+
+/* The load-more control stands under the list while the feed has another page. */
+.feedMore {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+.feedRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px var(--ml-card-padding);
+  border-bottom: 1px solid var(--ml-border);
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+}
+
+.feedText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedActor {
+  font-weight: 600;
+}
+
+.feedSummary {
+  color: var(--ml-text-secondary);
+}
+
+.feedLink {
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  color: var(--ml-brand);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.feedRow time {
+  flex: none;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  color: var(--ml-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}

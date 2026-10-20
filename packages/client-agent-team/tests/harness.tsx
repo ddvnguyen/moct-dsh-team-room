@@ -3,7 +3,7 @@ import type { AgentTeamChangesRequest } from '@ddvnguyen/moct-dsh-team-room/type
 import { afterEach, expect, vi } from 'vitest'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadSessionRuns, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamDecisionView, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadSessionRuns, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -111,9 +111,11 @@ function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作
 /**
  * The real strip renders one tab body at a time; this renders the Team one and,
  * with `agentsTab`, the Agents one beside it, so specs of either body do not
- * read each other's controls.
+ * read each other's controls. The Overview tab follows the same rule with
+ * `overviewTab`: its body mounts the whole Overview page, which would otherwise
+ * stand in every sidebar spec's way.
  */
-function nativeTabStrip(showAgents = false) {
+function nativeTabStrip(showAgents = false, showOverview = false) {
   const tabs: Array<{ readonly id: string; readonly render: (props: never) => unknown }> = []
   const listeners = new Set<() => void>()
   let version = 0
@@ -131,7 +133,7 @@ function nativeTabStrip(showAgents = false) {
   // The strip hands each tab the shipped entry's own props, as the host does.
   function StripWorkspace(props: Record<string, unknown>) {
     useSyncExternalStore(registry.subscribe, () => version)
-    return <div data-baseline-workspaces>普通工作区{tabs.filter(tab => showAgents || tab.id !== 'agents').map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
+    return <div data-baseline-workspaces>普通工作区{tabs.filter(tab => (showAgents || tab.id !== 'agents') && (showOverview || tab.id !== 'overview')).map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
   }
   return Object.assign(StripWorkspace, { __dshNativeTabs: registry })
 }
@@ -175,7 +177,7 @@ interface SeededMessage {
   readonly replyToMessageRef?: string
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
+export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; overviewTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
   /** Seed the execution log's per-seat Session runs (contract §4 threadSessions); mutable via `setThreadSessions`. */
   seedThreadSessions?: readonly AgentTeamThreadSessionRuns[];
   /** Replace the bench roster wholesale; the Thread roster spec needs archived/inactive states. */
@@ -756,13 +758,18 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // Reply-link quote context, derived from the seeded record like the Host's
   // ledger lookup: author and first line; unknown refs are omitted.
   const docs = vi.fn(async (_request: { workspaceId: string; threadRef?: string }) => ({ ok: true as const, value: { docs: [] as unknown[] } }))
+  // Decision cards of one Thread; a test seeds the rows it wants to see, and the
+  // double answers with the rows whose Thread matches the request, like the Host.
+  let decisionRows: AgentTeamDecisionView[] = []
+  const decisions = vi.fn(async (request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: { decisions: decisionRows.filter(decision => decision.threadRef === request.threadRef) } }))
+  /** Seed the decision cards every decisions read answers with. */
+  const seedDecisions = (rows: AgentTeamDecisionView[]): void => { decisionRows = rows; wakeAll() }
   const doc = vi.fn(async (_request: { workspaceId: string; docRef: string }) => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const commentDoc = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const reviewDoc = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const writeDocSection = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const resolveDocComment = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
   const docSectionHistory = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
-  const decisions = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: { decisions: [] as unknown[] } }))
   const answerDecision = vi.fn(async () => ({ ok: false as const, error: { message: 'no decision card in this fixture' } }))
   const resolveMessageRefs = vi.fn(async (request: { workspaceId: string; messageRefs: readonly string[] }) => {
     const messages = viewItems.map(item => item.message as { messageRef: string; threadRef: string; sender: string; body: string })
@@ -874,6 +881,17 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   /** Simulates an externally driven channel/membership commit reaching every workspace waiter. */
   const seedChannel = (channel: Record<string, unknown>) => { channels = [...channels, channel] }
   const publishChannelUpdate = () => { wakeAll() }
+  // The workspace-activity aggregate double (Board 7/10): a test seeds the whole
+  // result, or a function of the request so a cursor page can differ from the
+  // first page the way the Host's sequence paging does.
+  type WorkspaceActivitySeed = Record<string, unknown> | ((request: { workspaceId: string; cursor?: string; limit?: number }) => Record<string, unknown>)
+  let workspaceActivitySeed: WorkspaceActivitySeed = { totals: { messages: 0, turns: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, toolCalls: 0, runMs: 0, failedTurns: 0, unrecordedTurns: 0 }, perAgent: [], perDay: [], sessions: [], events: [] }
+  const workspaceActivity = vi.fn(async (request: { workspaceId: string; cursor?: string; limit?: number }) => ({
+    ok: true as const,
+    value: typeof workspaceActivitySeed === 'function' ? workspaceActivitySeed(request) : workspaceActivitySeed,
+  }))
+  /** Seed the aggregate every workspaceActivity read answers with. */
+  const seedWorkspaceActivity = (seed: WorkspaceActivitySeed): void => { workspaceActivitySeed = seed; wakeAll() }
   // The Human profile doubles: the profile page and every seat that names or
   // draws the Human read the same Remotes, and the Host writes the page makes
   // land in the same seeded value — so one rename visibly moves the page, the
@@ -972,7 +990,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog, cancel: sessionCancel },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, workspaceActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -1022,10 +1040,10 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // session-maybe seat's adoption semantics (remount on no-session) through
   // real element identity of the root's [data-phase] node.
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation })
-  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip(options?.agentsTab === true)) as never)
+  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip(options?.agentsTab === true, options?.overviewTab === true)) as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, claimBoardTask, failNextBoardWrite, publishTaskCommit, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, threadSessions, setThreadSessions, sessionCancel, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, claimBoardTask, failNextBoardWrite, publishTaskCommit, memberActivity, workspaceActivity, seedWorkspaceActivity, decisions, seedDecisions, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, threadSessions, setThreadSessions, sessionCancel, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

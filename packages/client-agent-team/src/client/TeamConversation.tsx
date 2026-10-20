@@ -4,12 +4,13 @@ import { useHumanIdentity } from './human-identity.ts'
 import { TeamChannelPage } from './TeamChannelPage.tsx'
 import { TeamBoardPage } from './board/TeamBoardPage.tsx'
 import { TeamInboxPage } from './TeamInboxPage.tsx'
+import { TeamOverviewPage } from './TeamOverviewPage.tsx'
 import { TeamThreadPage } from './TeamThreadPage.tsx'
 import { TeamDocPage } from './TeamDocPage.tsx'
 import { TeamLanes } from './TeamLanes.tsx'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadWorkspaceActivity, loadInbox, loadBoard, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   // Every seat names and draws the Human from this one projection: the
   // localized fallback stands only until the first profile read lands.
@@ -34,6 +35,16 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // along for the same reason it rides on the other two faces: a row that
     // names or draws the reader must draw the one identity every seat draws.
     return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
+  }
+  if (current !== undefined && navigationState.overview === true) {
+    // The Overview face is workspace-scoped, like the Channel face: the page
+    // answers "what is going on" for the selected Workspace and hands its rows
+    // to the same navigation actions every other face uses.
+    return <TeamOverviewPage key={current.workspaceId} workspaceId={current.workspaceId}
+      loadWorkspaceActivity={loadWorkspaceActivity} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity}
+      loadDecisions={loadDecisions} loadInbox={loadInbox} subscribeChanges={subscribeChanges}
+      selectThread={selectThread} openMemberSession={openMemberSession} humanName={humanName}
+      {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
   }
   if (current !== undefined && navigationState.threadRef !== undefined && navigationState.docRef !== undefined) {
     const { threadRef, channelRef, taskRef, taskNumber } = navigationState

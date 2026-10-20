@@ -94,9 +94,19 @@ export const AGENTS_TAB_ID = 'agents'
 export const AGENTS_TAB_ORDER = 4
 
 /**
- * The Board tab, before Team: the strip reads `Tasks | Board | Team | Agents |
- * Scheduled`. Order 2 sorts it between Tasks and Team (3), so the board is the
- * first Team surface a strip user meets.
+/**
+ * The workspace Overview tab, first of the Team's own tabs: the strip reads
+ * `Tasks | Overview | Board | Team | Agents | Scheduled`. Order 1 sorts it
+ * before the Board tab (order 2, Board 4/10), Team (3) and the owner's
+ * `schedule` (30).
+ */
+export const OVERVIEW_TAB_ID = 'overview'
+export const OVERVIEW_TAB_ORDER = 1
+
+/**
+ * The Board tab, beside it: the strip reads `Tasks | Overview | Board | Team |
+ * Agents | Scheduled`. Order 2 sorts it between the Overview tab (1) and Team
+ * (3), so the board follows the Overview.
  */
 export const BOARD_TAB_ID = 'board'
 export const BOARD_TAB_ORDER = 2
