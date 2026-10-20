@@ -32,7 +32,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_TOOL_NAMES } from '../src/index.ts'
-import type { AgentTeamMemberCapabilities, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
+import type { AgentTeamMemberCapabilities, AgentTeamMemberId, AgentTeamMemberRole, AgentTeamRequestId } from '../src/types.ts'
 // @ts-expect-error untyped shared resolution module
 import { harnessDir } from '../../../scripts/harness-dir.mjs'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -230,12 +230,12 @@ interface MemberFacts {
   readonly privateMemoryPath: string
 }
 
-async function addMember(ctx: Context, workspaceId: WorkspaceId, handle: string, capabilities?: AgentTeamMemberCapabilities): Promise<MemberFacts> {
+async function addMember(ctx: Context, workspaceId: WorkspaceId, handle: string, capabilities?: AgentTeamMemberCapabilities, role?: AgentTeamMemberRole): Promise<MemberFacts> {
   const added = await ctx.agentTeam.addMember({
     requestId: requestId(`add-${handle}`), workspaceId, handle, description: 'Policy member',
-    presetId: 'team-member', channelRefs: [], ...(capabilities === undefined ? {} : { capabilities }),
+    presetId: 'team-member', channelRefs: [], ...(capabilities === undefined ? {} : { capabilities }), ...(role === undefined ? {} : { role }),
   })
-  expect(added.status.availability).toBe('active')
+  expect(added.status.availability, JSON.stringify(added.status)).toBe('active')
   return { memberId: added.status.member.memberId, sessionId: added.status.member.sessionId, privateMemoryPath: added.status.member.privateMemoryPath }
 }
 
@@ -264,6 +264,23 @@ describe('Agent Team member tool policy', () => {
     expect(ctx.tools.get('spare_tool', narrowAgent as never)).toBeUndefined()
     const status = ctx.agentTeam.membersForClient({ workspaceId }).find(item => item.member.memberId === narrow.memberId)
     expect(status?.capabilityWarnings).toBeUndefined()
+  })
+
+  it('withholds team_claim from an Orchestrator and leaves the rest of its surface intact', async () => {
+    useAdapter(new EmptyAdapter())
+    const { ctx, workspaceId } = shared
+    const orchestrator = await addMember(ctx, workspaceId, 't8-orchestrator', undefined, 'orchestrator')
+    const names = toolNames(ctx, liveAgent(ctx, orchestrator))
+    // The role is the contract: the Orchestrator reports, it never claims.
+    expect(names).not.toContain('team_claim')
+    // The read-only and reporting surface stays whole.
+    expect(names).toContain('team_activity')
+    expect(names).toContain('team_message')
+    expect(names).toContain('team_view')
+    expect(names).toContain('ordinary_tool')
+    // A sibling without the role keeps the full Team surface.
+    const worker = await addMember(ctx, workspaceId, 't8-worker')
+    expect(toolNames(ctx, liveAgent(ctx, worker))).toContain('team_claim')
   })
 
   it('drops unknown allow-list names at activation with a diagnostic warning digest', async () => {

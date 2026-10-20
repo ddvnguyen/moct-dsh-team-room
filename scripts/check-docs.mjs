@@ -121,6 +121,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'team-collaboration/boundaries.md': [642, 578],
   'team-collaboration/memory-and-context.md': [581, 573],
   'team-collaboration/model-and-time.md': [530, 598],
+  'team-collaboration/orchestrator-digest.md': [347, 175],
   'team-collaboration/tools.md': [573, 564],
 }
 

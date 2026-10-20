@@ -2352,6 +2352,20 @@ export class AgentTeamLedger {
     return Object.freeze({ decisions: Object.freeze(decisions) })
   }
 
+  /**
+   * Every open decision card of one Workspace, oldest ask first. The caller authorizes the reader
+   * (Workspace participation; a Member sees only Workspaces it belongs to) — there is no per-Channel
+   * filter here, because the digest reads the whole Workspace by design. Archived Channels hold no
+   * open cards that can still be answered, so they are excluded like an inactive surface.
+   */
+  openDecisions(workspaceId: WorkspaceId): readonly AgentTeamDecisionView[] {
+    const views = [...this.state.decisions.values()]
+      .filter(state => state.status === 'open')
+      .filter(state => this.state.channels.get(state.channelRef)?.workspaceId === workspaceId && this.state.channels.get(state.channelRef)?.state === 'active')
+      .map(state => decisionView(state))
+    return Object.freeze(views.sort((left, right) => left.askedAt.localeCompare(right.askedAt)))
+  }
+
   private decisionForActor(actor: AgentTeamHumanActor | AgentTeamMemberActor, workspaceId: WorkspaceId, decisionRef: AgentTeamDecisionRef): AgentTeamDecisionState {
     const state = this.state.decisions.get(this.requireRefKey(this.state.decisions, decisionRef, 'decision', 'decision card'))
     if (state === undefined) throw new Error(`unknown decision card '${decisionRef}'${this.unknownRefHint(decisionRef, 'decision', 'decision card')}`)
@@ -2956,6 +2970,14 @@ export class AgentTeamLedger {
     const cursor = request.cursor === undefined ? null : ROOM_ACTIVITY_SEQUENCE.test(request.cursor) ? Number(request.cursor) : null
     if (request.cursor !== undefined && cursor === null) throw new Error('room activity cursor must be a non-negative decimal sequence')
     const limit = Math.min(Math.max(request.limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT)
+    // A `since` window bounds the fold by the ledger instant: Messages, Turns and failure notices
+    // committed before it are excluded, and the event page stops at it (ordered is chronological,
+    // so the first older event ends the walk). A listed Session's totals still cover its whole
+    // life — Sessions are folded rows, not re-foldable per instant — so windowed Sessions are
+    // filtered to ones with activity at or after the window start and their run fields are
+    // whole-life numbers.
+    const sinceMs = request.since === undefined ? null : Date.parse(request.since)
+    if (request.since !== undefined && Number.isNaN(sinceMs)) throw new Error('room activity since must be an ISO-8601 instant')
 
     const channelRef = this.requireChannel(request.workspaceId, request.channelRef).channelRef
     const scope: 'channel' | 'thread' = request.threadRef === undefined ? 'channel' : 'thread'
@@ -2981,6 +3003,7 @@ export class AgentTeamLedger {
     let messages = 0
     for (const message of this.state.messagesByRef.values()) {
       if (!inScope(message.threadRef)) continue
+      if (sinceMs !== null && Date.parse(message.occurredAt) < sinceMs) continue
       messages += 1
       bucketFor(message.sender).messages += 1
     }
@@ -3002,6 +3025,7 @@ export class AgentTeamLedger {
     for (const operation of this.state.sessionTurns.values()) {
       const turn = operation.data
       if (!turn.threadRefs.some(inScope)) continue
+      if (sinceMs !== null && Date.parse(operation.occurredAt) < sinceMs) continue
       turns += 1
       sessionIdsInScope.add(turn.sessionId)
       const bucket = bucketFor(turn.memberId)
@@ -3025,6 +3049,7 @@ export class AgentTeamLedger {
     for (const operation of this.state.ordered) {
       if (operation.kind !== 'team/turn-failure-notice') continue
       if (!inScope(operation.data.threadRef)) continue
+      if (sinceMs !== null && Date.parse(operation.occurredAt) < sinceMs) continue
       failedTurns += 1
       bucketFor(operation.data.memberId).failedTurns += 1
     }
@@ -3032,6 +3057,7 @@ export class AgentTeamLedger {
     const sessions = [...sessionIdsInScope]
       .map(sessionId => this.state.sessionRuns.get(sessionId))
       .filter((run): run is AgentTeamSessionRun => run !== undefined)
+      .filter(run => sinceMs === null || Date.parse(run.lastAssistantAt) >= sinceMs)
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
       .slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
 
@@ -3080,7 +3106,7 @@ export class AgentTeamLedger {
     })
 
     const eventChannelRef = scope === 'thread' ? (threadContext?.channelRef ?? null) : channelRef
-    return Object.freeze(this.roomActivityEvents(request.workspaceId, eventChannelRef, threadRefs, scope, totals, perAgent, sessions, limit, cursor))
+    return Object.freeze(this.roomActivityEvents(request.workspaceId, eventChannelRef, threadRefs, scope, totals, perAgent, sessions, limit, cursor, sinceMs))
   }
 
 
@@ -3100,6 +3126,7 @@ export class AgentTeamLedger {
     sessions: readonly AgentTeamSessionRun[],
     limit: number,
     cursor: number | null,
+    sinceMs: number | null,
   ): AgentTeamRoomActivityResult {
     const fromSequence = cursor
     const page: AgentTeamRoomActivityEvent[] = []
@@ -3108,6 +3135,8 @@ export class AgentTeamLedger {
       const event = this.roomActivityEvent(this.state.ordered[index]!, channelRef, threadRefs, workspaceId)
       if (event === undefined) continue
       if (fromSequence !== null && event.sequence >= fromSequence) continue
+      // ordered is chronological, so the first event older than the window ends the walk.
+      if (sinceMs !== null && Date.parse(event.at) < sinceMs) break
       if (page.length < limit) page.push(event)
       else { nextCursor = String(page[page.length - 1]!.sequence); break }
     }
