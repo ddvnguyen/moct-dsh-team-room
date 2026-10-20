@@ -198,7 +198,7 @@ jobs:
                 const checks = pr.statusCheckRollup || [];
                 const ci = checks.find(c => {
                   const name = c.name || c.context || c.workflowName || "";
-                  // This repo's PR gate is the `linux` job of .github/workflows/ci.yml.
+                  // The PR gate for this repo is the `linux` job of .github/workflows/ci.yml.
                   return name === "linux" || name === "ci";
                 });
                 const green = !!ci && (ci.conclusion === "SUCCESS" || ci.state === "SUCCESS");
