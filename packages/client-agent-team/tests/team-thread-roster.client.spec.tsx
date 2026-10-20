@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'
@@ -26,9 +26,13 @@ describe('Team Thread roster', () => {
     await waitFor(() => expect(b.view.getByRole('textbox', { name: '消息内容' })).toBeTruthy())
   }
 
+  // The picker's own listbox: the mention menu is a listbox too, and the
+  // Agents toolbar's native selects carry options of their own. Neither is the
+  // picker's rows.
   const openPicker = async () => {
     fireEvent.click(screen.getByRole('button', { name: /^Agent：@/ }))
-    return screen.getAllByRole('option').map(option => (option.textContent ?? '').trim())
+    return within(screen.getByRole('listbox', { name: '选择 Agent' }))
+      .getAllByRole('option').map(option => (option.textContent ?? '').trim())
   }
 
   it('lists only the Thread participants in the picker and the mention candidates', async () => {
@@ -61,7 +65,8 @@ describe('Team Thread roster', () => {
     const input = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
     fireEvent.change(input, { target: { value: 'thread opener @' } })
     await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0))
-    const mentions = screen.getAllByRole('option').map(option => option.textContent ?? '')
+    const mentions = within(screen.getByRole('listbox', { name: '提及成员建议' }))
+      .getAllByRole('option').map(option => option.textContent ?? '')
     expect(mentions.join('|')).toContain('@builder')
     expect(mentions.join('|')).not.toContain('@worker')
     expect(mentions.join('|')).not.toContain('@failed')

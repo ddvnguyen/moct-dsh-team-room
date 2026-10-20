@@ -53,5 +53,5 @@ export function renderTeamTabBody(
   // shows. The seat goes last: the strip wraps the workspace entry's props, which
   // include that entry's own `t` (the workspace dictionary) and navigation
   // actions, and neither may replace the Team's.
-  return createElement(TeamWorkspaceBrowser, { ...props, ...seat, wide: true, channelsOnly: true } as unknown as Parameters<typeof TeamWorkspaceBrowser>[0])
+  return createElement(TeamWorkspaceBrowser, { ...props, ...seat, wide: true } as unknown as Parameters<typeof TeamWorkspaceBrowser>[0])
 }

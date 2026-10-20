@@ -88,7 +88,7 @@ describe('the interim Team tab follows a language switch', () => {
     expect(strip.getByRole('tab', { name: '团队' })).toBeTruthy()
 
     await act(async () => { locale.setLocale('en') })
-    await waitFor(() => expect(strip.getByRole('tab', { name: 'Team' })).toBeTruthy())
+    await waitFor(() => expect(strip.getByRole('tab', { name: 'Teams' })).toBeTruthy())
 
     // And back: every switch re-resolves, not just the first one.
     await act(async () => { locale.setLocale('zh') })

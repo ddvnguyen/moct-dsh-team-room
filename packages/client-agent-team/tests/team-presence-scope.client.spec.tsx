@@ -18,9 +18,22 @@ describe('presence-scope wake wiring (issue #21)', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
     await b.view.findByRole('heading', { name: 'Task #1' })
     await new Promise(resolve => setTimeout(resolve, 300))
-    const inboxCalls = b.inbox.mock.calls.length
-    const channelCalls = b.viewChannels.mock.calls.length
-    const memberCalls = b.members.mock.calls.length
+    // The bench mounts the Team's seats and the strip's tab bodies at once, so
+    // a read count settles a moment after the Thread opens. The test measures
+    // what the presence wake adds, so the baseline has to be a settled one.
+    const settled = async (count: () => number): Promise<number> => {
+      let previous = count()
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        const current = count()
+        if (current === previous) return current
+        previous = current
+      }
+      return previous
+    }
+    const inboxCalls = await settled(() => b.inbox.mock.calls.length)
+    const channelCalls = await settled(() => b.viewChannels.mock.calls.length)
+    const memberCalls = await settled(() => b.members.mock.calls.length)
 
     // A presence wake moves member rows only (issue 03, criterion 4): the
     // open Thread's roster refresh must not ride the supplemental view

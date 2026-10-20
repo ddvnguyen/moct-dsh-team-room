@@ -3,17 +3,22 @@
    the toolbar wraps, and the row's metrics column drops under the copy instead
    of squeezing the Task title. */
 
+/* Two lines, always: the search field on its own row, the filter options
+   (role, presence) and the count on the row below. A wrapped flex row put the
+   options wherever they happened to fit, so the same panel read differently
+   from one column width to the next. */
 .toolbar {
   align-items: center;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
+  grid-template-columns: auto auto minmax(0, 1fr);
   padding: 6px 8px 8px;
 }
 
 .search {
-  flex: 1 1 132px;
-  min-width: 96px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  width: 100%;
 }
 
 .field {
@@ -61,7 +66,7 @@
   color: var(--ml-text-tertiary, inherit);
   font-size: var(--ml-text-micro, 11px);
   font-variant-numeric: tabular-nums;
-  margin-left: auto;
+  justify-self: end;
   white-space: nowrap;
 }
 

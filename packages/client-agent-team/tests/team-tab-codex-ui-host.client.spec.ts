@@ -16,7 +16,7 @@
 // carries the registry, registered at priority -1.
 
 import { describe, expect, it, vi } from 'vitest'
-import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, insertTeamTab } from '../src/client/team-tab.ts'
+import { insertTeamTab } from '../src/client/team-tab.ts'
 import type { NativeTabDescriptor } from '../src/client/team-tab.ts'
 
 /** The registry factory as codex-ui hosts it: Map keyed by id, order-sorted snapshot, idempotent insert. */
@@ -78,7 +78,7 @@ describe('Team tab on a codex-ui host', () => {
     const onInserted = vi.fn()
 
     const disposeTeam = insertTeamTab(ctx, { label: 'Team', render: () => null, onInserted })
-    const disposeAgents = insertTeamTab(ctx, { id: AGENTS_TAB_ID, order: AGENTS_TAB_ORDER, label: 'Agents', render: () => null })
+    const disposeAgents = insertTeamTab(ctx, { id: 'agents', order: 4, label: 'Agents', render: () => null })
 
     expect(registry.getTabs().map(tab => tab.label)).toEqual(['Team', 'Agents'])
     // The rail's fallback Team row stands down once the tab is in.

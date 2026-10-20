@@ -86,12 +86,6 @@ export const PARENT_SLOT = 'sidebar'
 export const TAB_ID = 'team'
 export const TAB_ORDER = 3
 
-/**
- * The Agents tab, beside Team: the strip reads `Tasks | Team | Agents | Scheduled`.
- * Order 4 sorts it right after Team (3) and before the owner's `schedule` (30).
- */
-export const AGENTS_TAB_ID = 'agents'
-export const AGENTS_TAB_ORDER = 4
 
 
 /** Retry budget, mirroring the owner plugin's own 20 × 250 ms schedule. */

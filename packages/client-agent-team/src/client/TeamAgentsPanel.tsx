@@ -162,6 +162,22 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     }
     await Promise.all(reads)
   }, [loadMemberActivity, loadBoard, workspaceId])
+  // The roster on its own: a presence wake moves the rows (the dots, the
+  // current Task) and must not re-read the board catalog, whose read rides the
+  // same `view` remote as the open Thread's facts.
+  const refreshRoster = useCallback(async () => {
+    const result = await loadMembers({ workspaceId })
+    if (!mountedRef.current) return
+    if (result.ok) {
+      const next = result.value.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived')
+      setMembers(next)
+      followRollover(next)
+      setError(undefined)
+      loadedRef.current = true
+    } else {
+      setError(result.error.message)
+    }
+  }, [loadMembers, workspaceId, followRollover])
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     void refreshFacts()
@@ -209,8 +225,10 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
       setError(update.message)
       return
     }
-    void refresh()
-  }), [subscribeChanges, refresh, workspaceId])
+    // Rows only: the dots and the current Task are roster facts, and the
+    // catalog read belongs to the Workspace scope.
+    void refreshRoster()
+  }), [subscribeChanges, refreshRoster, workspaceId])
 
   // Today's tokens per Member. This is the one read the list needs per row
   // rather than per Workspace, so it is keyed by the roster's Session

@@ -18,7 +18,7 @@
 // fact, not a repo dependency.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, HOST_CONTRACT, discoverRegistry, insertTeamTab, readRegistry } from '../src/client/team-tab.ts'
+import { HOST_CONTRACT, discoverRegistry, insertTeamTab, readRegistry } from '../src/client/team-tab.ts'
 import type { NativeTabDescriptor, NativeTabRegistry } from '../src/client/team-tab.ts'
 
 /** One recorded insert, in the shape this module hands the host. */
@@ -213,17 +213,19 @@ describe('insertTeamTab — the insert itself', () => {
     expect(registry.inserted).toHaveLength(0)
   })
 
-  it('inserts the Agents tab beside Team: Tasks | Team | Agents | Scheduled', () => {
+  it('inserts a second tab beside Team: the strip sorts by `order`', () => {
     const registry = fakeRegistry()
     const ctx = fakeContext({ entriesOfSlot: () => [{ __dshNativeTabs: registry }] })
 
+    // The Team Room ships one Team tab (it carries the Channel section and the
+    // Agents section); a second tab is the host's own, and the registry still
+    // has to place it by `order` between Team (3) and the owner's `schedule` (30).
     const disposeTeam = insertTeamTab(ctx, { label: 'Team', render: () => null })
-    const disposeAgents = insertTeamTab(ctx, { id: AGENTS_TAB_ID, order: AGENTS_TAB_ORDER, label: 'Agents', render: () => null })
+    const disposeAgents = insertTeamTab(ctx, { id: 'agents', order: 4, label: 'Agents', render: () => null })
 
     expect(registry.inserted.map(tab => tab.id)).toEqual(['team', 'agents'])
-    // After Team (3), before the owner's `schedule` (30): the strip sorts by `order`.
-    expect(AGENTS_TAB_ORDER).toBeGreaterThan(HOST_CONTRACT.tabOrder)
-    expect(AGENTS_TAB_ORDER).toBeLessThan(30)
+    expect(4).toBeGreaterThan(HOST_CONTRACT.tabOrder)
+    expect(4).toBeLessThan(30)
     expect(registry.inserted[1]).toMatchObject({ id: 'agents', label: 'Agents', order: 4 })
 
     disposeAgents()

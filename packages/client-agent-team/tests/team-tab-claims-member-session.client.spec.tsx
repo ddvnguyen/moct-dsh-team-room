@@ -30,28 +30,29 @@ function hostRegistry() {
 const selectedTab = (tabs: readonly NativeTabDescriptor[], sessionId: string): string =>
   tabs.find(tab => tab.matchSession?.(sessionId) === true)?.id ?? 'tasks'
 
-describe('the Agents tab claims the open Member Session', () => {
-  it('keeps the strip on Agents for a Member Session and drops to Tasks for any other session', async () => {
+describe('the Team tab claims the open Member Session', () => {
+  it('keeps the strip on Team for a Member Session and drops to Tasks for any other session', async () => {
     const bench = await runtimeWithTeam({ nativeTabs: false })
     const registry = hostRegistry()
     const seat = bench.runtime.slots.entriesOfSlot('sidebar.workspaces')[0]
     ;(seat as unknown as Record<string, unknown>).__dshNativeTabs = registry
     await act(async () => { bench.runtime.slots.register({ name: 'sidebar.workspaces', priority: 5 }, () => null) })
-    await waitFor(() => expect(registry.getTabs().map(tab => tab.id)).toContain('agents'))
+    await waitFor(() => expect(registry.getTabs().map(tab => tab.id)).toContain('team'))
 
     const nav = bench.runtime.ctx.teamNavigation
     // Before any press nothing is claimed.
     expect(selectedTab(registry.getTabs(), 'agent-a')).toBe('tasks')
     // A press navigates to the Member Session before the host binds it.
     act(() => { nav.actions().enterMemberSession('agent-a' as never) })
-    expect(selectedTab(registry.getTabs(), 'agent-a')).toBe('agents')
+    expect(selectedTab(registry.getTabs(), 'agent-a')).toBe('team')
     // Member Session to Member Session.
     act(() => { nav.actions().enterMemberSession('agent-b' as never) })
-    expect(selectedTab(registry.getTabs(), 'agent-b')).toBe('agents')
+    expect(selectedTab(registry.getTabs(), 'agent-b')).toBe('team')
     // An ordinary session is never claimed, and neither is the previous Member Session.
     expect(selectedTab(registry.getTabs(), 'ordinary')).toBe('tasks')
     expect(selectedTab(registry.getTabs(), 'agent-a')).toBe('tasks')
-    // The Team tab still claims nothing.
-    expect(registry.getTabs().find(tab => tab.id === 'team')?.matchSession?.('agent-b')).toBe(false)
+    // One Team tab carries both sections, and it is the one that claims the
+    // Member Session.
+    expect(registry.getTabs().filter(tab => tab.id === 'team')).toHaveLength(1)
   })
 })

@@ -60,7 +60,7 @@ describe('Team mode and the shell main panel', () => {
     expect(b.view.container.querySelector('[data-baseline-workspaces]')).not.toBeNull()
   })
 
-  it('shows the Inbox, the Workspace picker and the Channels in the Team tab, without the Agents group', async () => {
+  it('shows the Inbox, the Workspace picker, the Channels and the Agents in the Team tab', async () => {
     const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
       const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')
@@ -70,7 +70,8 @@ describe('Team mode and the shell main panel', () => {
     expect(await within(tab).findByRole('button', { name: '# engineering' })).toBeTruthy()
     expect(within(tab).getByRole('button', { name: /^收件箱/ })).toBeTruthy()
     expect(tab.querySelector('[data-team-workspace-trigger]')).not.toBeNull()
-    expect(within(tab).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+    // One Team tab, both sections: the Channel list and the Agents list.
+    expect(await within(tab).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
   })
 
   it('does not rewrite the shell sidebar in Team mode: no mode marker, no rule hiding New Session or the rail', async () => {
@@ -85,17 +86,16 @@ describe('Team mode and the shell main panel', () => {
     expect(css).not.toMatch(/newSession|panelList/u)
   })
 
-  it('lists the Agents in the Agents tab, not on Team Settings', async () => {
-    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true, agentsTab: true })
+  it('lists the Agents in the Team tab, beside the Channels, not on Team Settings', async () => {
+    const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
-      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="agents"]')
+      const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')
       expect(found).not.toBeNull()
       return found!
     })
     expect(await within(tab).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
-    // The Team tab keeps Channels and no Agents group.
-    const team = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')!
-    expect(within(team).queryByRole('button', { name: '添加 Agent' })).toBeNull()
+    // One Team tab: the strip carries no separate Agents tab any more.
+    expect(b.view.container.querySelector('[data-native-tab="agents"]')).toBeNull()
   })
 
   it('A14: Agent tabs join the host conversation strip only while a Member Session is open, before Chat', async () => {
@@ -112,9 +112,9 @@ describe('Team mode and the shell main panel', () => {
     await waitFor(() => expect(agentTabs()).toEqual(['agent-sessions', 'agent-runs', 'agent-tasks', 'agent-config', 'agent-memory']))
     // Sessions, Runs, Tasks, Config and Memory sit before the host's Chat (order 0).
     expect(entries().filter(entry => entry.id.startsWith('agent-')).map(entry => entry.order)).toEqual([-30, -25, -22, -20, -10])
-    // No Modal stands in for the page, and the sidebar stays on the Agents tab.
+    // No Modal stands in for the page, and the sidebar stays on the Team tab.
     expect(b.view.queryByRole('dialog')).toBeNull()
-    expect(b.view.container.querySelector('[data-native-tab="agents"]')).not.toBeNull()
+    expect(b.view.container.querySelector('[data-native-tab="team"]')).not.toBeNull()
     act(() => { b.runtime.ctx.teamNavigation.actions().exitMemberSession() })
     await waitFor(() => expect(agentTabs()).toEqual([]))
   })

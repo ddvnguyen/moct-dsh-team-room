@@ -93,11 +93,10 @@ const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsP
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 const GuardedBoardPanel = withSlotBoundary('main:team-board', TeamBoardPanel as never)
-import { AGENTS_TAB_ID, AGENTS_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
+import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
 import { TeamBoardPanel } from './board-panel-body.tsx'
-import { renderAgentsTabBody } from './agents-tab-body.tsx'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
 
@@ -795,33 +794,16 @@ function applyUi(ctx: ClientContext): void {
     // `insertTeamTab` resolves this on every insert and re-inserts on a
     // language switch — the eager string this used to pass pinned the label to
     // the language the client booted in.
-    label: () => ctx.locale.bind(NS)('team'),
+    label: () => ctx.locale.bind(NS)('teams'),
     render: teamTabRender,
-    onInserted: () => { dropTeamRow() },
+    // The tab carries the Agents list, so it owns the Member Session: the host
+    // strip re-selects a tab whenever the main session changes, and a session
+    // no tab claims snaps it to Tasks (human fact 4160).
+    matchSession: sessionId => navigation.getSnapshot().memberSessionId === sessionId,
+    onInserted: () => { dropTeamRow(); agentsTab.set(true) },
   }), 'agent-team: interim native tab')
 
 
-  // The Agents tab beside it: `Tasks | Team | Agents | Scheduled`. The Agents
-  // list lives here once the tab is in the strip, and on the Team Settings page
-  // until then.
-  const agentsTabRender = (props: NativeTabRenderProps): unknown => {
-    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
-    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
-      renderAgentsTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
-  }
-  ctx.effect(() => {
-    const dispose = insertTeamTab(ctx, {
-      id: AGENTS_TAB_ID,
-      order: AGENTS_TAB_ORDER,
-      label: () => ctx.locale.bind(NS)('agents'),
-      render: agentsTabRender,
-      // The strip snaps to Tasks on any main session no tab claims, so a Member
-      // Session must be claimed or every Agent press leaves the Agents tab.
-      matchSession: sessionId => navigation.getSnapshot().memberSessionId === sessionId,
-      onInserted: () => { agentsTab.set(true) },
-    })
-    return () => { dispose(); agentsTab.set(false) }
-  }, 'agent-team: agents native tab')
 
   // A14: the Agent detail's tabs ride the host's conversation tab strip
   // (`conversation.view`). The strip is global, so the entries are registered only

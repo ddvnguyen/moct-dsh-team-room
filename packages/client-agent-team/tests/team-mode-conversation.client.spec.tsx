@@ -711,10 +711,9 @@ describe('Team conversation surfaces', () => {
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(b.readThread).toHaveBeenCalledTimes(1)
     expect(b.loadThreadHistory).toHaveBeenCalledTimes(2)
-    // Two consumers read the roster now that the sidebar is the tab's Channel
-    // list alone (the Agents panel is not mounted): that list and the Thread
-    // page. Neither repeats.
-    expect(b.members).toHaveBeenCalledTimes(2)
+    // The roster is read once: the Agents panel in the Team tab and the
+    // Thread page share the one read.
+    expect(b.members).toHaveBeenCalledTimes(1)
     expect(b.viewChannels).toHaveBeenCalledTimes(1)
 
     // The page waits on its own thread scope. The workspace presence scope
@@ -1223,7 +1222,9 @@ describe('Team conversation surfaces', () => {
     expect(current?.textContent).toContain('@')
     // The picker lists this Channel's members and can change the selection.
     fireEvent.click(b.view.getByRole('button', { name: 'Agent：@builder，更换' }))
-    const options = await b.view.findAllByRole('option')
+    // The picker's own listbox: the Agents toolbar's native selects carry
+    // options of their own, and they are not the picker's rows.
+    const options = await within(b.view.getByRole('listbox')).findAllByRole('option')
     expect(options).toHaveLength(2)
     const [first, second] = options
     // The first row is the default and carries the selected state.

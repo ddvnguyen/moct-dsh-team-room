@@ -361,9 +361,10 @@ describe('Team Settings rail row', () => {
     const withStrip = await bench(null, strip.registry)
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    // Strip order: Team, then Agents (see team-tab.ts), each inserted once.
-    // The Board is not among them: it is a menu item in the main list.
-    expect(strip.inserted).toEqual(['team', 'agents'])
+    // One Team tab, carrying the Channel section and the Agents section
+    // (see team-tab-body.tsx). The Board is not among them: it is a menu item
+    // in the main list.
+    expect(strip.inserted).toEqual(['team'])
     expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings', 'agent-team-board'])
     await fiber.dispose()
   })
@@ -403,9 +404,9 @@ describe('Team Settings rail row', () => {
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
 
     const element = tabSeat(strip)
-    // The tab's body is the Channel view; the Agents list is the Agents tab
-    // beside it (see team-tab-body.tsx).
-    expect(element.channelsOnly).toBe(true)
+    // The tab's body is the whole Team browser: the Channel section and the
+    // Agents section, not the Channels alone.
+    expect(element.channelsOnly).toBeUndefined()
     ;(element.selectChannel as (ref: string) => void)('channel:engineering')
 
     // The one-sidebar contract: the pick opens the Channel in the main column and

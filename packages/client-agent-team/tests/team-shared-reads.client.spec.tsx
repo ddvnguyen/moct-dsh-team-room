@@ -66,7 +66,11 @@ describe('shared client reads (issue 03)', () => {
 
     const held = Promise.withResolvers<unknown>()
     let issued = 0
-    ;(b.viewChannels as unknown as { mockImplementation(fn: () => Promise<unknown>): void }).mockImplementation(async () => {
+    ;(b.viewChannels as unknown as { mockImplementation(fn: (request?: { includeCatalog?: boolean }) => Promise<unknown>): void }).mockImplementation(async (request) => {
+      // The Agents list reads the board catalog through the same remote. That
+      // read is a catalog, not the Channels rows this guard is about, so it
+      // does not take part in the issuance count.
+      if (request?.includeCatalog === true) return viewPayload('catalog')
       issued += 1
       return issued === 1 ? await held.promise : viewPayload('fresh-channel')
     })
