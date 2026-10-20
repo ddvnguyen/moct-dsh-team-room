@@ -20,7 +20,7 @@ import { buildPresenceMap } from './multica/derive-presence.ts'
 import { makeTimeAgo } from './multica/time-ago.ts'
 import { ActorAvatar, AgentPresenceDot } from './multica-ui/index.ts'
 import look from './multica-look.module.css'
-import { formatAbsoluteTime, formatInboxTime } from './team-formatters.ts'
+import { formatAbsoluteTime, formatInboxTime, HUMAN_MEMBER_ID } from './team-formatters.ts'
 import css from './conversation.module.css'
 import page from './overview.module.css'
 
@@ -231,15 +231,25 @@ export function TeamOverviewPage({ workspaceId, loadWorkspaceActivity, loadMembe
     activities,
     memberIds: members.map(status => status.member.memberId),
   }), [members, activities])
-  const agents = members.filter(status => status.presence !== undefined && status.member.memberId !== 'member:human' && !status.member.memberId.startsWith('human:'))
+  const agents = members.filter(status => status.presence !== undefined && status.member.memberId !== HUMAN_MEMBER_ID && !status.member.memberId.startsWith('human:'))
   // The spend rows name their seat by handle: the aggregate carries member ids,
   // and a reader knows a person by the name they answer to.
   const handleByMember = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle])), [members])
 
-  const todayBucket = activity?.perDay.at(-1)
+  // The newest day with usage, not necessarily today: the Host buckets by its
+  // own local day, so the page names the day it actually shows.
+  const latestBucket = activity?.perDay.at(-1)
+  const latestRows = useMemo(() => (latestBucket?.perAgent ?? []).map(row => ({
+    ...row,
+    // `tokensIn` is null when any Session of the day left its input unproven;
+    // that is unknown, never zero. The output side is always reported.
+    tokens: row.tokensIn === null ? null : row.tokensIn + row.tokensOut,
+  })), [latestBucket])
+  const latestMax = Math.max(1, ...latestRows.map(row => row.tokens ?? 0))
   // The chart draws a fixed fortnight, not only the days that carry tokens: a
   // series with gaps is a series, and a single day stretched across the whole
-  // width would read as a week of spending.
+  // width would read as a week of spending. A day whose input is unproven keeps
+  // a null total and renders as unknown instead of folding to zero.
   const spendDays = useMemo(() => {
     const buckets = activity?.perDay ?? []
     const newest = buckets.at(-1)
@@ -248,10 +258,12 @@ export function TeamOverviewPage({ workspaceId, loadWorkspaceActivity, loadMembe
     return Array.from({ length: SPEND_DAYS }, (_, index) => shiftDay(newest.day, SPEND_DAYS - 1 - index))
       .map(day => {
         const bucket = byDay.get(day)
-        return { day, tokens: (bucket?.tokensOut ?? 0) + (bucket?.tokensIn ?? 0) }
+        // No bucket means no Session started that day: zero is proven. A bucket
+        // with an unproven input stays null.
+        return { day, tokens: bucket === undefined ? 0 : bucket.tokensIn === null ? null : bucket.tokensIn + bucket.tokensOut }
       })
   }, [activity])
-  const spendMax = Math.max(1, ...spendDays.map(day => day.tokens))
+  const spendMax = Math.max(1, ...spendDays.map(day => day.tokens ?? 0))
 
   return <main className={`${look.multicaLook} ${css.surface}`} data-team-overview>
     <div className={css.surfaceHeader}>
@@ -313,24 +325,26 @@ export function TeamOverviewPage({ workspaceId, loadWorkspaceActivity, loadMembe
 
           <section className={page.section} aria-label={t('overviewSpendTitle')} data-team-overview-spend>
             <h2 className={page.sectionTitle}>{t('overviewSpendTitle')}</h2>
-            {todayBucket === undefined
+            {latestBucket === undefined
               ? <p className={page.spendEmpty}>{t('overviewSpendEmpty')}</p>
               : <div className={page.spend}>
                   <div className={page.spendPerAgent}>
-                    <h3 className={page.spendLabel}>{t('overviewSpendPerAgent', { day: todayBucket.day })}</h3>
-                    <div className={page.bars} role="img" aria-label={t('overviewSpendPerAgent', { day: todayBucket.day })}>
-                      {todayBucket.perAgent.map(row => <div key={row.memberId} className={page.barRow} data-team-overview-spend-agent={row.memberId}>
+                    <h3 className={page.spendLabel}>{t('overviewSpendPerAgent', { day: latestBucket.day })}</h3>
+                    <div className={page.bars} role="img" aria-label={t('overviewSpendPerAgent', { day: latestBucket.day })}>
+                      {latestRows.map(row => <div key={row.memberId} className={page.barRow} data-team-overview-spend-agent={row.memberId} data-unknown={row.tokens === null || undefined}>
                         <span className={page.barName}>{handleByMember.get(row.memberId) ?? row.memberId.replace(/^member:/, '')}</span>
-                        <span className={page.barTrack}><span className={page.barFill} style={{ width: `${Math.round(((row.tokensIn ?? 0) + row.tokensOut) / Math.max(1, Math.max(...todayBucket.perAgent.map(other => (other.tokensIn ?? 0) + other.tokensOut))) * 100)}%` }} /></span>
-                        <span className={page.barValue}>{t('overviewTokens', { count: compactCount((row.tokensIn ?? 0) + row.tokensOut) })}</span>
+                        <span className={page.barTrack}><span className={row.tokens === null ? `${page.barFill} ${page.barFillUnknown}` : page.barFill} style={{ width: `${row.tokens === null ? 0 : Math.round(row.tokens / latestMax * 100)}%` }} /></span>
+                        <span className={page.barValue}>{row.tokens === null ? t('overviewSpendUnknown') : t('overviewTokens', { count: compactCount(row.tokens) })}</span>
                       </div>)}
                     </div>
                   </div>
                   <div className={page.spendPerDay}>
                     <h3 className={page.spendLabel}>{t('overviewSpendPerDay', { count: String(SPEND_DAYS) })}</h3>
                     <div className={page.dayBars} role="img" aria-label={t('overviewSpendPerDay', { count: String(SPEND_DAYS) })} data-team-overview-spend-days>
-                      {spendDays.map(day => <div key={day.day} className={page.dayBar} title={`${day.day}: ${compactCount(day.tokens)} tokens`}>
-                        <span className={page.dayBarFill} style={{ height: `${day.tokens === 0 ? 0 : Math.max(2, Math.round(day.tokens / spendMax * 100))}%` }} />
+                      {spendDays.map(day => <div key={day.day} className={page.dayBar} data-unknown={day.tokens === null || undefined}
+                        title={day.tokens === null ? `${day.day}: ${t('overviewSpendUnknown')}` : `${day.day}: ${compactCount(day.tokens)} tokens`}>
+                        <span className={day.tokens === null ? `${page.dayBarFill} ${page.dayBarFillUnknown}` : page.dayBarFill}
+                          style={{ height: day.tokens === null ? '100%' : day.tokens === 0 ? '0' : `${Math.max(2, Math.round(day.tokens / spendMax * 100))}%` }} />
                       </div>)}
                     </div>
                   </div>
