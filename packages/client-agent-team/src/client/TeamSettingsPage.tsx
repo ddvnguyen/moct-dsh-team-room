@@ -34,7 +34,9 @@ export interface TeamWorkspaceListSource {
 
 export type TeamSettingsPageProps = Pick<TeamSidebarProps,
   'loadMembers' | 'subscribeChanges' | 'addMember' | 'updateMember' | 'recoverMember' | 'archiveMember'
-  | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail' | 't'> & {
+  | 'joinWorkspace' | 'leaveWorkspace' | 'loadModels' | 'openMemberSession' | 'openAgentDetail'
+  // The roster row's live facts, as in the Agents tab.
+  | 'loadMemberActivity' | 'loadBoard' | 'loadMemberSessions' | 't'> & {
   readonly workspaceList: TeamWorkspaceListSource
   /** The Workspace the Team navigation last selected; read once, when the page mounts. */
   readonly initialWorkspaceId: () => WorkspaceId | undefined
@@ -57,8 +59,8 @@ export function TeamSettingsPage({ workspaceList, initialWorkspaceId, memory, ag
   return <section className={`${css.section} ${css.page}`} aria-label={t('teamSettingsGroup')} data-team-settings-page>
     <h2 className={css.heading}>{t('teamSettingsGroup')}</h2>
     <p className={css.intro}>{t('teamSettingsPageIntro')}</p>
+    <p className={css.about}>{t('aboutMulticaAttribution')}</p>
     <TeamWorkspaceSelector workspaces={workspaces} selectedId={selectedId} current={false} onSelect={setChosen} t={t} />
-    {agentsInTab && <p className={css.intro} data-team-agents-moved>{t('agentsMovedToTab')}</p>}
     {!agentsInTab && selectedId !== undefined && <TeamAgentsPanel key={selectedId} workspaceId={selectedId} {...agents} onCreatingChange={() => {}} t={t} />}
     {selectedId !== undefined && <TeamMemoryPanel key={`memory:${selectedId}`} workspaceId={selectedId} memory={memory} loadMembers={agents.loadMembers} t={t} />}
   </section>

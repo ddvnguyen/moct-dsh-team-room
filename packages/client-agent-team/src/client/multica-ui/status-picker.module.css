@@ -1,0 +1,22 @@
+/*
+ * Derived from multica-x packages/views/issues/components/pickers/status-picker.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
+/* The status row: glyph, label, check. The hint sits below the list and names
+   why the two claim-driven statuses cannot be chosen here. */
+
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint {
+  border-top: 1px solid var(--ml-border);
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  margin: 4px 0 0;
+  padding: 6px 8px 2px;
+}

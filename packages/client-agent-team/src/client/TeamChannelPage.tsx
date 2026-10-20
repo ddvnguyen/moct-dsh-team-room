@@ -24,6 +24,7 @@ import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
 import { chunkRunsWithDays, isRunGap } from './team-separators.ts'
 import { TeamActivityLine } from './TeamActivityLine.tsx'
+import { TeamThreadDocs } from './TeamThreadDocs.tsx'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -49,6 +50,11 @@ interface TeamChannelPageProps {
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
   readonly archiveChannel: TeamConversationProps['archiveChannel']
   readonly selectThread: TeamConversationProps['selectThread']
+  readonly loadDocs: TeamConversationProps['loadDocs']
+  readonly reviewDoc: TeamConversationProps['reviewDoc']
+  readonly selectDoc: TeamConversationProps['selectDoc']
+  /** The Thread open in the lane beside this Channel; its entry row shows it is the open one. */
+  readonly openThreadRef?: AgentTeamThreadRef
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
@@ -114,8 +120,9 @@ function unreadCounts(inbox: AgentTeamInbox): ReadonlyMap<AgentTeamThreadRef, nu
   return new Map(inbox.items.filter(item => item.unreadCount > 0).map(item => [item.thread.threadRef, item.unreadCount]))
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, sidebarCollapsed, openSidebar, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvatarUrl, loadTriggerCatalog, loadChannels, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, archiveChannel, selectThread, openThreadRef, loadDocs, reviewDoc, selectDoc, selectChannel, backToChannels, resolveTaskRefs, resolveThreadRefs, openMemberSession, sidebarCollapsed, openSidebar, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
+  const [docsVersion, setDocsVersion] = useState(0)
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
   const [actionError, setError] = useState<string>()
@@ -295,6 +302,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
       subscribeChanges({ kind: 'channel', channelRef }, update => {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setLoadError(update.message); return }
+        setDocsVersion(version => version + 1)
         void refresh()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
@@ -445,6 +453,8 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
           />
         </span>}
       </header>
+      <TeamThreadDocs workspaceId={workspaceId} home={{ channelRef }} loadDocs={loadDocs} reviewDoc={reviewDoc} changeVersion={docsVersion} t={t}
+        openDoc={summary => { selectDoc(summary.docRef, summary.threadRef, summary.channelRef) }} />
     </div>
 
     {archiving && channel !== undefined && (
@@ -542,6 +552,7 @@ export function TeamChannelPage({ workspaceId, channelRef, humanName, humanAvata
                   owners={item.claimOwners}
                   unread={unread}
                   human={humanIdentity}
+                  open={item.thread.threadRef === openThreadRef}
                   t={t}
                   onOpen={() => { selectThread(item.thread.threadRef, channelRef, task?.taskRef, item.taskNumber) }}
                 />}
@@ -613,8 +624,10 @@ function ThreadStateCluster({ task, owners, unread, human, t }: {
  * the control's title, and an unread Thread says so in the control's label
  * rather than only in pixels.
  */
-function ThreadEntryRow({ item, owners, unread, human, t, onOpen }: {
+function ThreadEntryRow({ item, owners, unread, human, open, t, onOpen }: {
   readonly item: AgentTeamViewItem
+  /** This Thread is the one open in the lane beside the Channel. */
+  readonly open: boolean
   readonly owners: readonly TeamAvatarOwner[]
   readonly unread: number
   readonly human: TeamAvatarHuman | undefined
@@ -635,12 +648,13 @@ function ThreadEntryRow({ item, owners, unread, human, t, onOpen }: {
   // owner stack keeps its own accessible name — a labeled button prunes its
   // descendants from the accessibility tree — and so the control's name says
   // exactly what clicking it does.
-  return <span className={css.entryLine} data-thread-entry="">
+  return <span className={css.entryLine} data-thread-entry="" data-thread-entry-ref={item.thread.threadRef}>
     <ThreadStateCluster task={item.task} owners={owners} unread={unread} human={human} t={t} />
     <button
       type="button"
-      className={css.entryRow}
+      className={open ? `${css.entryRow} ${css.entryRowOpen}` : css.entryRow}
       aria-label={openLabel}
+      {...(open ? { 'aria-current': 'true' as const } : {})}
       {...(followUp === undefined ? {} : { title: formatAbsoluteTime(followUp) })}
       onClick={onOpen}
     >

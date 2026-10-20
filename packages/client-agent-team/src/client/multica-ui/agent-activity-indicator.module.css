@@ -1,0 +1,120 @@
+/*
+ * Derived from multica-x packages/views/issues/components/issue-agent-activity-indicator.tsx and
+ * packages/views/agents/components/agent-activity-hover-content.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
+/* The badge is a passive cue on the edge of a card: small heads, one word of
+   activity, one tool label. It never takes a row's width budget. */
+
+.root {
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+}
+
+.anchor {
+  border-radius: var(--ml-radius-sm);
+  cursor: default;
+  display: inline-flex;
+  outline: none;
+}
+
+.anchor:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.badge {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.label {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  white-space: nowrap;
+}
+
+.tool {
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step {
+  color: var(--ml-text-faint);
+  font-size: var(--ml-text-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ml-text-micro-line);
+  white-space: nowrap;
+}
+
+.card {
+  background: var(--ml-surface);
+  color: var(--ml-text);
+  display: grid;
+  gap: 6px;
+  min-width: 280px;
+  padding: 10px;
+}
+
+.cardTitle {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  font-weight: 500;
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+}
+
+.rows {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rowHandle {
+  color: var(--ml-text);
+  flex: 1;
+  font-size: var(--ml-text-caption);
+  font-weight: 500;
+  line-height: var(--ml-text-caption-line);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowTool {
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowMeta {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ml-text-caption-line);
+  white-space: nowrap;
+}

@@ -11,6 +11,8 @@ import type {
   AgentTeamClearMemberContextResult,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamCreateTaskRequest,
+  AgentTeamCreateTaskResult,
   AgentTeamInbox,
   AgentTeamInboxRequest,
   AgentTeamJoinWorkspaceRequest,
@@ -29,6 +31,8 @@ import type {
   AgentTeamRecoverMemberResult,
   AgentTeamMemberActivityRequest,
   AgentTeamMemberActivityResult,
+  AgentTeamUpdateTaskRequest,
+  AgentTeamUpdateTaskResult,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -40,6 +44,24 @@ import type {
   AgentTeamResolveThreadRefsRequest,
   AgentTeamResolveMessageRefsRequest,
   AgentTeamResolveMessageRefsResult,
+  AgentTeamCommentDocRequest,
+  AgentTeamDocCommentResult,
+  AgentTeamDocNoticeResult,
+  AgentTeamDocRequest,
+  AgentTeamDocsRequest,
+  AgentTeamDocsResult,
+  AgentTeamDocView,
+  AgentTeamReviewDocRequest,
+  AgentTeamAnswerDecisionRequest,
+  AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionsRequest,
+  AgentTeamDecisionsResult,
+  AgentTeamResolveDocCommentRequest,
+  AgentTeamResolveDocCommentResult,
+  AgentTeamDocSectionHistory,
+  AgentTeamDocSectionHistoryRequest,
+  AgentTeamWriteDocSectionRequest,
+  AgentTeamWriteDocSectionResult,
   AgentTeamResolveThreadRefsResult,
   AgentTeamReplyResult,
   AgentTeamConfirmationRequired,
@@ -54,6 +76,7 @@ import type {
   AgentTeamThreadReplyStat,
   AgentTeamThreadRef,
   AgentTeamThreadTurnFailure,
+  AgentTeamThreadSessionRuns,
   AgentTeamPromoteThreadRequest,
   AgentTeamPromoteThreadResult,
   AgentTeamTaskRequest,
@@ -144,6 +167,14 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
     /** A14: the Member's Session runs, newest first, plus the seat's current Session. */
     loadMemberSessions: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId']; readonly memberId: AgentTeamClientMemberStatus['member']['memberId'] }) => Promise<RemoteResult<{ readonly current: AgentTeamClientMemberStatus['member']['sessionId'] | null; readonly runs: readonly AgentTeamSessionRun[] }>>
+    /** The board's catalog read: the Agent page's current Task and Tasks tab. */
+    loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
+    /** Running Turns of the Workspace; the Agent page narrows it to one Member for the live tool label. */
+    loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
+    /** Errored Turns of one Thread: the Agent page's run failure reasons. */
+    threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
+    /** Cancel one Member Session's running Turn through the dsh Session controller (`session.cancel`); the Team Host is untouched. */
+    stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => Promise<RemoteResult<{ readonly accepted: true }>>
     /** Names the Threads a Session run touched, for the Agent detail's Session rows. */
     resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
     /** Team memory read for Agent detail's Memory tab (the Human memory list; the Host adds the actor). */
@@ -186,7 +217,31 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   resolveThreadRefs: (request: AgentTeamResolveThreadRefsRequest) => Promise<RemoteResult<AgentTeamResolveThreadRefsResult>>
   /** Quote context (author + excerpt) for the Messages replies cite; unknown refs are omitted. */
   resolveMessageRefs: (request: AgentTeamResolveMessageRefsRequest) => Promise<RemoteResult<AgentTeamResolveMessageRefsResult>>
+  /** Team Document rows of one Thread or one Channel; both pages show them as cards. */
+  loadDocs: (request: AgentTeamDocsRequest) => Promise<RemoteResult<AgentTeamDocsResult>>
+  /** One whole Team Document for its page. */
+  loadDoc: (request: AgentTeamDocRequest) => Promise<RemoteResult<AgentTeamDocView>>
+  /** The Human's comment on a selected passage; it stays pending until a verdict. */
+  commentDoc: (request: AgentTeamCommentDocRequest) => Promise<RemoteResult<AgentTeamDocCommentResult>>
+  /** The Human's Approve, Review or Cancel verdict, fenced by the Doc revision on screen. */
+  reviewDoc: (request: AgentTeamReviewDocRequest) => Promise<RemoteResult<AgentTeamDocNoticeResult>>
+  /** The Human's edit of one section, or a restore of an earlier version, fenced by the Doc revision on screen. */
+  writeDocSection: (request: AgentTeamWriteDocSectionRequest) => Promise<RemoteResult<AgentTeamWriteDocSectionResult>>
+  /** Close one comment thread; a pending Human comment in it is withdrawn. */
+  resolveDocComment: (request: AgentTeamResolveDocCommentRequest) => Promise<RemoteResult<AgentTeamResolveDocCommentResult>>
+  /** Every version of one section, newest first. */
+  loadDocSectionHistory: (request: AgentTeamDocSectionHistoryRequest) => Promise<RemoteResult<AgentTeamDocSectionHistory>>
+  /** The decision cards of one Thread; each renders in place of the reply that asked it. */
+  loadDecisions: (request: AgentTeamDecisionsRequest) => Promise<RemoteResult<AgentTeamDecisionsResult>>
+  /** The Human's answer to one open card; the reply it posts wakes the asker. */
+  answerDecision: (request: AgentTeamAnswerDecisionRequest) => Promise<RemoteResult<AgentTeamDecisionNoticeResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+  /** The board's catalog read: one whole-Workspace `view` per query key. */
+  loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
+  /** Board create: one unassigned Task with its opening Message. */
+  createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
+  /** Board field write: title/priority/assignee/position, fenced by the Thread revision. */
+  updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
   loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
   /** Human direct-only Inbox slice; the Inbox page merges one call per visible Workspace. */
@@ -197,6 +252,10 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   threadReplyStats: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadReplyStat[]>>
   /** Errored-Turn notices of the Thread, every notice kept; the page merges them into the timeline by ledger sequence. */
   threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
+  /** Per-seat Session runs that touched one Thread: each seat's active run plus its history (contract §4); the execution log reads it. */
+  loadThreadSessions: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadSessionRuns[]>>
+  /** Cancel one Member Session's running Turn through the dsh Session controller (`session.cancel`); the Team Host is untouched. */
+  stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => Promise<RemoteResult<{ readonly accepted: true }>>
   /** Agent-card session jump, shared by every slot; message member chips reuse it. */
   openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId'], reportFailure?: (message: string) => void) => void
   /**

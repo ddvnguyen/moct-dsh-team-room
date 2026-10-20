@@ -15,14 +15,29 @@ import type {
   AgentTeamConfirmationToken,
   AgentTeamContextCheckpointRef,
   AgentTeamDirectMarker,
+  AgentTeamDecisionAnswer,
+  AgentTeamDecisionNotice,
+  AgentTeamDecisionQuestion,
+  AgentTeamDecisionRef,
+  AgentTeamDecisionStatus,
+  AgentTeamDoc,
+  AgentTeamDocComment,
+  AgentTeamDocCommentRef,
+  AgentTeamDocNotice,
+  AgentTeamDocRef,
+  AgentTeamDocSection,
+  AgentTeamDocStatus,
+  AgentTeamDocVerdict,
   AgentTeamMemberCapabilities,
   AgentTeamMemberId,
+  AgentTeamMemberRole,
   AgentTeamMessageRef,
   AgentTeamMessage,
   AgentTeamModelSelection,
   AgentTeamOperationId,
   AgentTeamRequestId,
   AgentTeamTask,
+  AgentTeamTaskPriority,
   AgentTeamTaskActivity,
   AgentTeamTaskRef,
   AgentTeamThread,
@@ -73,6 +88,8 @@ export interface AgentTeamAddMemberRequest {
   readonly capabilities?: AgentTeamMemberCapabilities
   /** Concurrent instances, an integer from 1 to 5; absent takes the default (2). */
   readonly instances?: number
+  /** Role label and prompt section; absent reads as `worker` for display. */
+  readonly role?: AgentTeamMemberRole
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
 }
@@ -129,6 +146,8 @@ export interface AgentTeamUpdateMemberRequest {
   readonly capabilities?: AgentTeamMemberCapabilities | null
   /** Absent keeps the current count; `null` clears it back to the default (2). */
   readonly instances?: number | null
+  /** Absent keeps the current role; `null` clears it. */
+  readonly role?: AgentTeamMemberRole | null
 }
 
 /** Human intent to suspend or resume one Agent Member. */
@@ -611,6 +630,63 @@ export type AgentTeamReplyResult =
   | AgentTeamUnreadRequired
   | AgentTeamStaleRevision
   | AgentTeamMemberNotFollowing
+
+/** Human intent to create one Task with an opening Message. */
+export interface AgentTeamCreateTaskRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  /** Opening Message body; also the fallback title when `title` is absent. */
+  readonly body: string
+  readonly title?: string
+  readonly priority?: AgentTeamTaskPriority
+  /** Omit or `null` for an unassigned Task; assigning wakes the Member. */
+  readonly assignee?: AgentTeamMemberId | null
+  readonly position?: number
+  readonly attachments?: readonly AgentTeamAttachmentId[]
+  readonly attachmentPaths?: readonly string[]
+}
+
+export interface AgentTeamCreateTaskCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly attention: readonly AgentTeamThreadAttention[]
+  readonly directMarkers: readonly AgentTeamDirectMarker[]
+}
+
+export type AgentTeamCreateTaskResult = AgentTeamCreateTaskCommittedResult
+
+/** Human intent to change a Task's board fields without moving its status. */
+export interface AgentTeamUpdateTaskRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly baseRevision: number
+  readonly patch: AgentTeamTaskPatchRequest
+}
+
+export interface AgentTeamTaskPatchRequest {
+  readonly title?: string
+  readonly priority?: AgentTeamTaskPriority
+  /** `null` clears the assignment; omitting the key leaves it unchanged. */
+  readonly assignee?: AgentTeamMemberId | null
+  readonly position?: number
+}
+
+export interface AgentTeamUpdateTaskCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+}
+
+export type AgentTeamUpdateTaskResult =
+  | AgentTeamUpdateTaskCommittedResult
+  | AgentTeamUnreadRequired
+  | AgentTeamStaleRevision
 
 /** Human Task resolution intent. */
 export interface AgentTeamTaskRequest {
@@ -1215,4 +1291,280 @@ export interface AgentTeamRoomActivityResult {
   readonly sessions: readonly AgentTeamSessionRun[]
   readonly events: readonly AgentTeamRoomActivityEvent[]
   readonly nextCursor?: string
+}
+
+/** Member intent to start one Team Document in a Thread, with its outline. */
+export interface AgentTeamCreateDocRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly title: string
+  /** Section headings in order; each becomes an empty section to fill later. May be empty. */
+  readonly outline: readonly string[]
+}
+
+/**
+ * Intent to write one Doc section: replace `sectionId`, or append a new section
+ * when it is absent. The Doc's author writes it; the Human may edit it too.
+ */
+export interface AgentTeamWriteDocSectionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  /** The Doc revision from the writer's latest read or write. */
+  readonly baseDocRevision: number
+  readonly sectionId?: string
+  readonly heading: string
+  readonly markdown: string
+}
+
+/** Comment intent on one Doc passage, or a reply to an earlier comment. */
+export interface AgentTeamCommentDocRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+  /** The selected passage; may be empty only for a reply. */
+  readonly quote: string
+  readonly body: string
+  readonly parentCommentRef?: AgentTeamDocCommentRef
+}
+
+/** Member intent to ask the Human to review the Doc at its current revision. */
+export interface AgentTeamSubmitDocRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly docRevision: number
+  /** Optional one-paragraph note for the Human, added to the Thread notice. */
+  readonly note?: string
+}
+
+/** Human verdict on the Doc at the revision the Human was looking at. */
+export interface AgentTeamReviewDocRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly docRevision: number
+  readonly verdict: AgentTeamDocVerdict
+  /** Optional overall note, added to the Thread notice. */
+  readonly note?: string
+}
+
+/** Close one comment thread by its root comment. */
+export interface AgentTeamResolveDocCommentRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly commentRef: AgentTeamDocCommentRef
+}
+
+export interface AgentTeamDocRequest {
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+}
+
+/** List the Docs of one Thread or one Channel, or resolve Doc refs cited in Message bodies. */
+export interface AgentTeamDocsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+  readonly channelRef?: AgentTeamChannelRef
+  readonly docRefs?: readonly AgentTeamDocRef[]
+}
+
+/** Every version of one section, newest first. */
+export interface AgentTeamDocSectionHistoryRequest {
+  readonly workspaceId: WorkspaceId
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+}
+
+/** One written version of a section: the outline at creation, or a later write. */
+export interface AgentTeamDocSectionVersion {
+  readonly sequence: number
+  readonly writer: AgentTeamMemberId
+  readonly heading: string
+  readonly markdown: string
+  readonly occurredAt: string
+}
+
+export interface AgentTeamDocSectionHistory {
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+  readonly versions: readonly AgentTeamDocSectionVersion[]
+}
+
+/** One section as a reader sees it: its text, and who wrote that text last. */
+export interface AgentTeamDocSectionView extends AgentTeamDocSection {
+  readonly writer: AgentTeamMemberId
+  /** Sequence of the write that produced this text. */
+  readonly writtenAtSequence: number
+}
+
+/** One comment as a reader sees it. */
+export interface AgentTeamDocCommentView extends AgentTeamDocComment {
+  readonly occurredAt: string
+  /** A Human comment no review verdict has delivered yet. */
+  readonly pending: boolean
+  /** Its thread is closed: set on the root comment and every reply under it. */
+  readonly resolved: boolean
+}
+
+/** One review verdict the Human gave. */
+export interface AgentTeamDocReview {
+  readonly sequence: number
+  readonly messageRef: AgentTeamMessageRef
+  readonly verdict: AgentTeamDocVerdict
+  readonly docRevision: number
+  readonly commentRefs: readonly AgentTeamDocCommentRef[]
+  readonly occurredAt: string
+}
+
+/** The whole current Doc. */
+export interface AgentTeamDocView {
+  readonly doc: AgentTeamDoc
+  /** The ledger's Human Member id, so a reader tells the Human's comments from an Agent's. */
+  readonly humanMemberId: AgentTeamMemberId
+  readonly status: AgentTeamDocStatus
+  /** Sequence of the latest creation or section write; the fence for the next write and for a submit or review. */
+  readonly revision: number
+  readonly sections: readonly AgentTeamDocSectionView[]
+  readonly comments: readonly AgentTeamDocCommentView[]
+  readonly reviews: readonly AgentTeamDocReview[]
+  /** The revision the latest submit asked the Human to review. */
+  readonly submittedRevision?: number
+  readonly updatedAt: string
+}
+
+/** One Doc as a list row or card shows it. */
+export interface AgentTeamDocSummary {
+  readonly docRef: AgentTeamDocRef
+  readonly channelRef: AgentTeamChannelRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly title: string
+  readonly author: AgentTeamMemberId
+  readonly status: AgentTeamDocStatus
+  readonly revision: number
+  readonly sectionCount: number
+  readonly pendingCommentCount: number
+  readonly updatedAt: string
+}
+
+export interface AgentTeamDocsResult {
+  readonly docs: readonly AgentTeamDocSummary[]
+}
+
+/** A committed Doc creation: the Doc, its outline, and the revision the first section write is fenced by. */
+export interface AgentTeamCreateDocResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly doc: AgentTeamDoc
+  readonly sections: readonly AgentTeamDocSection[]
+  readonly revision: number
+}
+
+export interface AgentTeamDocCommentResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly comment: AgentTeamDocComment
+}
+
+export interface AgentTeamResolveDocCommentResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly docRef: AgentTeamDocRef
+  readonly commentRef: AgentTeamDocCommentRef
+}
+
+/** The Doc changed after the caller read it; nothing was committed. */
+export interface AgentTeamStaleDocRevision {
+  readonly kind: 'stale_doc_revision'
+  readonly docRef: AgentTeamDocRef
+  readonly expectedRevision: number
+  readonly revision: number
+}
+
+export type AgentTeamWriteDocSectionResult =
+  | {
+    readonly kind: 'committed'
+    readonly receipt: AgentTeamOperationReceipt
+    readonly docRef: AgentTeamDocRef
+    readonly section: AgentTeamDocSection
+    /** The Doc revision this write produced; the fence for the next write. */
+    readonly revision: number
+  }
+  | AgentTeamStaleDocRevision
+
+/** A committed submit or review: the Thread notice and the Doc fact it carries. */
+export type AgentTeamDocNoticeResult =
+  | {
+    readonly kind: 'committed'
+    readonly receipt: AgentTeamOperationReceipt
+    readonly message: AgentTeamMessage
+    readonly thread: AgentTeamThread
+    readonly notice: AgentTeamDocNotice
+  }
+  | AgentTeamStaleDocRevision
+
+/** A Member asks the Human one to six questions on one card in a Thread. */
+export interface AgentTeamAskDecisionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
+  readonly context?: string
+  readonly questions: readonly AgentTeamDecisionQuestion[]
+}
+
+/** The Human answers an open card: one answer per question, in question order. */
+export interface AgentTeamAnswerDecisionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly decisionRef: AgentTeamDecisionRef
+  readonly answers: readonly AgentTeamDecisionAnswer[]
+}
+
+/** The asking Member takes back an open card it no longer needs. */
+export interface AgentTeamWithdrawDecisionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly decisionRef: AgentTeamDecisionRef
+}
+
+export interface AgentTeamDecisionRequest {
+  readonly workspaceId: WorkspaceId
+  readonly decisionRef: AgentTeamDecisionRef
+}
+
+/** The decision cards of one Thread, oldest first. */
+export interface AgentTeamDecisionsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+}
+
+/** One decision card as readers see it: the questions, and the answer once there is one. */
+export interface AgentTeamDecisionView {
+  readonly decisionRef: AgentTeamDecisionRef
+  readonly channelRef: AgentTeamChannelRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly asker: AgentTeamMemberId
+  /** The Thread reply that asked; the card renders in its place in the timeline. */
+  readonly messageRef: AgentTeamMessageRef
+  readonly context?: string
+  readonly questions: readonly AgentTeamDecisionQuestion[]
+  readonly status: AgentTeamDecisionStatus
+  readonly askedAt: string
+  readonly answers?: readonly AgentTeamDecisionAnswer[]
+  /** The member who answered or withdrew, and when. */
+  readonly closedBy?: AgentTeamMemberId
+  readonly closedAt?: string
+}
+
+export interface AgentTeamDecisionsResult {
+  readonly decisions: readonly AgentTeamDecisionView[]
+}
+
+/** A committed ask, answer or withdrawal: the Thread notice and the decision fact it carries. */
+export interface AgentTeamDecisionNoticeResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly thread: AgentTeamThread
+  readonly notice: AgentTeamDecisionNotice
 }

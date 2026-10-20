@@ -14,7 +14,8 @@ import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, THREAD_SEED_TOKEN_BUDGET, buildThreadSeed, estimateTokens, selectSummaryWindow, summaryDue, type SummaryMessageLine, type ThreadSeed, type ThreadSummaryPolicy } from './thread-summary.ts'
-import { buildThreadContextSeed } from './thread-context-seed.ts'
+import { THREAD_CONTEXT_SEED_TOKEN_BUDGET, buildThreadContextSeed } from './thread-context-seed.ts'
+import { buildThreadTreeSeed } from './thread-memory-tree.ts'
 import { callThreadSummaryModel, type ThreadSummaryModelCall, type ThreadSummaryModelResult } from './thread-summary-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
@@ -45,11 +46,13 @@ import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_T
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
-import { cacheVerdict } from './cache-verdict.ts'
+import { cacheVerdict, type CacheVerdict } from './cache-verdict.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime } from './member-runtime.ts'
 import { memberInstances } from './member-instances.ts'
-import { memoryWriteRefusal, routeThreads } from './instance-router.ts'
+import { routeThreads } from './instance-router.ts'
+import { UNLIMITED_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit.ts'
+import { MEMORY_READ_ONLY_TOOLS, memoryRevision, seatMemoryGuard, seatMemoryStaleReason, type SeatMemoryStaleRefusal } from './seat-memory.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, failureDetail, RecoveryCoordinator, type RecoveryFact } from './recovery.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
@@ -141,6 +144,31 @@ import type {
   AgentTeamRolloverSessionRequest,
   AgentTeamDmRequest,
   AgentTeamDmResult,
+  AgentTeamCommentDocRequest,
+  AgentTeamCreateDocRequest,
+  AgentTeamCreateDocResult,
+  AgentTeamDocCommentResult,
+  AgentTeamDocNoticeResult,
+  AgentTeamAnswerDecisionRequest,
+  AgentTeamAskDecisionRequest,
+  AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRequest,
+  AgentTeamDecisionView,
+  AgentTeamDecisionsRequest,
+  AgentTeamDecisionsResult,
+  AgentTeamWithdrawDecisionRequest,
+  AgentTeamDocRequest,
+  AgentTeamDocsRequest,
+  AgentTeamDocsResult,
+  AgentTeamDocView,
+  AgentTeamReviewDocRequest,
+  AgentTeamResolveDocCommentRequest,
+  AgentTeamResolveDocCommentResult,
+  AgentTeamDocSectionHistory,
+  AgentTeamDocSectionHistoryRequest,
+  AgentTeamSubmitDocRequest,
+  AgentTeamWriteDocSectionRequest,
+  AgentTeamWriteDocSectionResult,
   AgentTeamOperationId,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -151,6 +179,10 @@ import type {
   AgentTeamReplyResult,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
+  AgentTeamCreateTaskRequest,
+  AgentTeamCreateTaskResult,
+  AgentTeamUpdateTaskRequest,
+  AgentTeamUpdateTaskResult,
   AgentTeamSetHumanProfileRequest,
   AgentTeamSetHumanProfileResult,
   AgentTeamSetMemberStateRequest,
@@ -183,6 +215,9 @@ import type {
   AgentTeamThreadSummaryCommittedData,
   AgentTeamRoomActivityRequest,
   AgentTeamRoomActivityResult,
+  AgentTeamColdFallback,
+  AgentTeamResumeMemberSessionResult,
+  AgentTeamForkMemberSessionResult,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -197,6 +232,7 @@ export { AGENT_TEAM_HUMAN_HANDLE, AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIAL
 export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName } from './human-profile.ts'
 export { humanAvatarsRoot } from './human-avatar.ts'
 export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
+export { decisionAnswersText } from './team-decisions.ts'
 export { TEAM_MEMORY_HOMES, TEAM_MEMORY_STATUSES, TEAM_MEMORY_TYPES, TeamMemoryClient, TeamMemoryError } from './team-memory.ts'
 export { TeamMemoryHuman, memoryOutcome } from './team-memory-human.ts'
 export type { TeamMemoryHumanContext } from './team-memory-human.ts'
@@ -739,6 +775,19 @@ export default class AgentTeam extends TypertRemoteService {
    * recorder reports no poison. Kept across an idle end, so a respawned slot keeps its counts.
    */
   private readonly slotRecorders = new Map<string, AgentTeamTurnRecorder>()
+  /** Warm starts per seat in the current warm-limit window, oldest first (contract §4.2). */
+  private readonly warmStartsByMember = new Map<AgentTeamMemberId, number[]>()
+  private readonly warmDeferTimers = new Map<AgentTeamMemberId, ReturnType<typeof setTimeout>>()
+  /** The warm limit in force; the contract default until a per-seat setting is wired. */
+  // Unlimited until configured: a wake to an idle seat starts at once, as it always has. `DEFAULT_WARM_LIMIT`
+  // (1 per 60 s, contract §4.2) is applied by `configureWarmLimit`.
+  private warmLimit: WarmLimit = UNLIMITED_WARM_LIMIT
+  /**
+   * Where a new Task Thread goes on a multi-instance seat (#92 step 4). `home` (default) routes it like any
+   * Thread; `own` (`AGENT_TEAM_TASK_SESSIONS=own`) prefers an extra slot so Task work gets its own Session.
+   * Opt-in because extra slots carry no recovery, rollover or pressure management: slot 0 alone does.
+   */
+  private taskSessions: 'home' | 'own' = process.env.AGENT_TEAM_TASK_SESSIONS?.trim() === 'own' ? 'own' : 'home'
   /** Extra slots whose last Turn failed; cleared when the slot runs again or ends. Only that slot reads `error`. */
   private readonly slotErrors = new Set<string>()
 
@@ -1214,6 +1263,8 @@ export default class AgentTeam extends TypertRemoteService {
       // through the runtime), so the chains below can drain to zero first.
       this.shutdown.resolve()
       this.memberRuntime.releaseTurnWaits()
+      for (const timer of this.warmDeferTimers.values()) clearTimeout(timer)
+      this.warmDeferTimers.clear()
       this.recovery.dispose()
       this.activityFeed.dispose()
       this.contextManagement.dispose()
@@ -1503,6 +1554,7 @@ export default class AgentTeam extends TypertRemoteService {
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
         ...(request.capabilities === undefined ? {} : { capabilities: Object.freeze(deepCopyCapabilities(request.capabilities)) }),
         ...(request.instances === undefined ? {} : { instances: request.instances }),
+        ...(request.role === undefined ? {} : { role: request.role }),
         privateMemoryPath: dshHomePath('agent-team', 'members', memberMemoryDirectoryName(memberId)),
         state: 'enabled',
       })
@@ -1544,15 +1596,8 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /**
-   * Operator nudge for a Member that stopped making progress: steer a
-   * continuation prompt into its live session, rebuild it after an orphaned
-   * preset composition, or re-run activation when no live session exists.
-   * Runtime-only — no ledger operation, no suspend. Taking over manually also
-   * cancels any pending automatic recovery episode. A non-enabled Member
-   * still holding a live handle is an interrupted suspend/archive/remove,
-   * not a stalled one; recovery finishes that cleanup instead of nudging it.
-   */
+
+
   /**
    * Human resume of a Member's home Session (contract §4, TEST scope). Warm (the Session is
    * still held by the provider and inside its cache TTL) resumes it in place. Cold starts a
@@ -1561,7 +1606,7 @@ export default class AgentTeam extends TypertRemoteService {
    * per-Thread sessions are not supported yet.
    */
   @Remote('resumeMemberSession')
-  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<{ sessionId: SessionId; cache: 'warm' | 'cold'; action: 'resumed' | 'seeded-new' }> {
+  async resumeMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; sessionId: SessionId; threadRef?: AgentTeamThreadRef }): Promise<AgentTeamResumeMemberSessionResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const ledger = this.requireLedger()
@@ -1572,16 +1617,43 @@ export default class AgentTeam extends TypertRemoteService {
     const run = ledger.sessionRun(member.sessionId)
     const resumable = (await this.persistedSessionHeaders()).some(snapshot => snapshot.header.id === member.sessionId)
     const verdict = cacheVerdict({ lastAssistantAt: run?.lastAssistantAt, provider: run?.model?.provider, nowMs: Date.now(), resumable })
+    let fallback: AgentTeamColdFallback | undefined
     if (verdict.cache === 'warm') {
-      await this.enqueueLifecycle(member.memberId, async () => {
-        if (this.handles.get(member.memberId)?.agent.session.id !== member.sessionId) await this.activateMember(member, undefined, new Set([member.sessionId]))
-      })
-      return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
+      try {
+        await this.enqueueLifecycle(member.memberId, async () => {
+          if (this.handles.get(member.memberId)?.agent.session.id !== member.sessionId) await this.activateMember(member, undefined, new Set([member.sessionId]))
+        })
+        return { sessionId: member.sessionId, cache: 'warm', action: 'resumed' }
+      } catch (error) {
+        // One warm try per Turn: a resume that throws falls back to the single cold start below.
+        fallback = { cause: 'resume-failed', triedWarm: true }
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} warm resume for Thread '${request.threadRef ?? 'none'}' failed: ${failureDetail(error)}; taking the cold start`)
+      }
     }
-    if (!this.handles.has(member.memberId)) throw new Error(`Agent Member '${member.handle}' has no live Session to start a fresh context from; resume it before continuing`)
+    if (!this.handles.has(member.memberId)) {
+      // No live Session to start a fresh context from: resume the Member first, then
+      // this Thread resumes warm or falls back to cold on its next delivery (one try).
+      // Nothing was resumed and nothing was seeded: the result says so (`not-resumed`, no warm try)
+      // and still names the Session the Member's ledger row holds, so no caller reads it as a seed.
+      const noHandle = { cause: 'no-handle' as const, triedWarm: fallback !== undefined }
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold fallback for Thread '${request.threadRef ?? 'none'}' cause ${noHandle.cause}: the Member has no live Session; resume it before continuing`)
+      return { sessionId: member.sessionId, cache: 'cold', action: 'not-resumed', coldFallback: noHandle }
+    }
+    fallback ??= { cause: 'cache-cold', triedWarm: false }
+    this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId)} cold start for Thread '${request.threadRef ?? 'none'}' cause ${fallback.cause}${verdict.cache === 'cold' ? ` (${verdict.reason})` : ''}`)
     // The renewal takes the Member's lifecycle lock itself, so it runs outside any lock held here.
-    const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
-    const sessionId = cleared.status.member.sessionId
+    let sessionId: SessionId
+    try {
+      const cleared = await this.clearMemberContext({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberId })
+      sessionId = cleared.status.member.sessionId
+    } catch (error) {
+      // The one cold start failed too: that is the Turn's failure. No second retry, no loop; the room hears of it once.
+      this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold start failed after ${fallback.cause}: ${failureDetail(error)}`)
+      await this.sendColdStartFailedNotice(member.memberId, member.sessionId, request.requestId, fallback, error).catch(noticeError => {
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId)} cold-start-failed notice could not be posted: ${failureDetail(noticeError)}`)
+      })
+      throw error
+    }
     if (request.threadRef !== undefined) {
       const latest = ledger.latestThreadSummary(request.threadRef)
       await ledger.bindThreadSession({
@@ -1592,16 +1664,110 @@ export default class AgentTeam extends TypertRemoteService {
       // A7b: seed the next prompt with the latest summary and the tail-10 messages.
       await this.steerAgentFromThread(member.memberId, request.threadRef)
     }
-    return { sessionId, cache: 'cold', action: 'seeded-new' }
+    return { sessionId, cache: 'cold', action: 'seeded-new', coldFallback: fallback }
   }
 
-  /** Deferred past TEST (contract §4): a Session for one Thread needs a per-Session live handle, which is not built yet. */
+  /**
+   * The Team-room card for a Turn whose single cold fallback also failed: one durable message on the
+   * workspace's first live Channel naming the seat and both causes. The requestId derives from the
+   * failed resume request, so a repeat resolves to the card already posted. Same host-authored
+   * provenance prefix as the poisoned-seat card.
+   */
+  private async sendColdStartFailedNotice(memberId: AgentTeamMemberId, sessionId: SessionId, resumeRequestId: AgentTeamRequestId, fallback: AgentTeamColdFallback, error: unknown): Promise<void> {
+    const ledger = this.ledger
+    const member = ledger?.getMember(memberId)
+    const workspaceId = ledger?.workspacesOf(memberId)[0]
+    if (ledger === undefined || member === undefined || workspaceId === undefined) return
+    const channelRef = ledger.view({ workspaceId }).channels[0]?.channelRef
+    if (channelRef === undefined) return
+    await this.sendMessageAs(agentTeamHumanActor(), {
+      requestId: `cold-start-failed:${sessionId}:${resumeRequestId}` as AgentTeamRequestId,
+      workspaceId,
+      channelRef,
+      body: `[agent-team host] Seat could not be started: @${member.handle} fell back to a cold start (${fallback.cause}${fallback.triedWarm ? ', warm resume tried first' : ''}) and that failed too (${failureDetail(error)}) — the Turn is not retried; recover the seat or start it from a new context. @Lead @Architect`,
+    })
+  }
+
+  /**
+   * Human fork of one Thread onto a fresh Session of the same seat (#92 step 4). The new Session is an
+   * extra instance slot: a slot with no live Session is preferred, else an idle one is ended first (its
+   * other Threads respawn seeded on their next message). The Thread is rebound to that slot and Session
+   * durably, and the Session opens with the Thread's bounded memory view: the latest summary plus the
+   * newest contiguous lines of its memory tree (one line per Message, oldest lines merged) inside the
+   * A7b seed budget. The previous Session keeps its history and finishes any running Turn; new facts
+   * on the Thread go to the fork. Only the
+   * `summary` seed is supported; a seat with one instance has no slot to fork onto.
+   */
   @Remote('forkMemberSession')
-  forkMemberSession(request: { workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef?: AgentTeamThreadRef; seed: 'summary' | 'full' }): never {
+  async forkMemberSession(request: { requestId: AgentTeamRequestId; workspaceId: AgentTeamViewRequest['workspaceId']; memberId: AgentTeamMemberId; fromSessionId: SessionId; threadRef: AgentTeamThreadRef; seed: 'summary' | 'full' }): Promise<AgentTeamForkMemberSessionResult> {
+    this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    throw new Error(`forkMemberSession is not supported yet (seed '${request.seed}'): per-Thread sessions are deferred past TEST`)
+    if (request.seed !== 'summary') throw new Error(`forkMemberSession seed '${request.seed}' is not supported yet: only 'summary' is`)
+    const ledger = this.requireLedger()
+    const member = ledger.getMember(request.memberId)
+    if (member === undefined || !ledger.participatesIn(request.memberId, request.workspaceId)) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
+    if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can fork a Session`)
+    if (!this.handles.has(member.memberId)) throw new Error(`Agent Member '${member.handle}' has no live Session; resume it before forking`)
+    const threadRef = ledger.resolveThreadRefs(request.workspaceId, [request.threadRef])[0]?.threadRef
+    if (threadRef === undefined) throw new Error(`unknown Thread '${request.threadRef}' in workspace '${request.workspaceId}'`)
+    const ownsSource = request.fromSessionId === member.sessionId
+      || this.slotBySessionId.get(request.fromSessionId)?.memberId === member.memberId
+      || ledger.threadSessionsOf(threadRef, member.memberId).some(binding => binding.sessionId === request.fromSessionId)
+    if (!ownsSource) throw new Error(`Session '${request.fromSessionId}' is not a Session of '${member.handle}'`)
+    const instances = memberInstances(member)
+    if (instances < 2) throw new Error(`Agent Member '${member.handle}' runs one instance; raise its Instances to fork a Session`)
+    const extra = Array.from({ length: instances - 1 }, (_, index) => index + 1)
+    const absent = extra.find(slot => !this.slotSpawns.has(slotKey(member.memberId, slot)) && this.slotHandles.get(member.memberId)?.get(slot) === undefined)
+    const slot = absent ?? extra.find(candidate => !this.slotBusy(member.memberId, candidate))
+    if (slot === undefined) throw new Error(`every extra instance of '${member.handle}' is busy; wait for one to finish or raise its Instances`)
+    if (absent === undefined && !(await this.endSlot(member.memberId, slot))) throw new Error(`instance slot ${slot} of '${member.handle}' started work while forking; try again`)
+    const actor = { kind: 'member' as const, memberId: member.memberId, handle: member.handle }
+    // Like the router's own binding, the instance bind wakes nobody; the seed below is the fork's first input.
+    await ledger.bindThreadInstance({
+      requestId: `${request.requestId}:instance` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef, slot, boundAt: new Date().toISOString(), actor,
+    })
+    this.routedSlots.set(routeKey(member.memberId, threadRef), slot)
+    const handle = await this.ensureSlot(member, slot)
+    if (handle === undefined) throw new Error(`instance slot ${slot} of '${member.handle}' did not start`)
+    const sessionId = handle.agent.id
+    const latest = ledger.latestThreadSummary(threadRef)
+    // The fork's seed is the Thread's bounded memory view instead of the A7b flat tail: the newest
+    // contiguous tree lines cover the whole Thread at the same seed budget, so the fork does not
+    // lose what happened between the summary horizon and its last Messages.
+    const threadMessages = ledger.threadMessagesAfter(threadRef, 0)
+    const seed = buildThreadTreeSeed({
+      threadRef,
+      ...(latest === undefined ? {} : { summary: { generation: latest.generation, text: latest.text } }),
+      messages: threadMessages.map(message => ({ messageRef: message.messageRef, sender: message.sender === AGENT_TEAM_HUMAN_MEMBER_ID ? 'human' : ledger.getMember(message.sender)?.handle ?? String(message.sender), body: message.body })),
+    }, { tokens: THREAD_CONTEXT_SEED_TOKEN_BUDGET })
+    // The session binding commits before any in-memory claim, so a refused bind leaves the fork unseeded and the
+    // ledger authoritative; its wake is emitted only after the seed, so the seed stays the Session's first input.
+    const session = await ledger.bindThreadSession({
+      requestId: `${request.requestId}:session` as AgentTeamRequestId, workspaceId: request.workspaceId, threadRef, sessionId, reason: 'fork',
+      parentSessionId: request.fromSessionId, ...(latest === undefined ? {} : { summaryGeneration: latest.generation }), actor,
+    })
+    const note = `The Human started this Session for Thread ${threadRef}: you are instance ${slot} of @${member.handle.replace(/^@/, '')}, and new messages in that Thread now come here. Read the Thread before acting, then continue its open work.`
+    // The seed covers the Thread: a later delivery to this Session does not seed it again.
+    this.seededSlotThreads.set(sessionId, new Set([...(this.seededSlotThreads.get(sessionId) ?? []), threadRef]))
+    this.slotActivityThreads.set(slotKey(member.memberId, slot), threadRef)
+    handle.agent.followup(createUserMessage({
+      content: [{ type: 'text', text: `${seed}\n\n${note}` }],
+      source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Forked Thread Session' },
+    }))
+    if (session.committed) this.emitCommitted(session.value.receipt)
+    this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' forked from Session '${request.fromSessionId}' onto instance slot ${slot}, seeded from ${latest === undefined ? 'no summary' : `summary generation ${latest.generation}`} + ${threadMessages.length} Message(s)`)
+    return Object.freeze({ sessionId, slot })
   }
 
+  /**
+   * Operator nudge for a Member that stopped making progress: steer a
+   * continuation prompt into its live session, rebuild it after an orphaned
+   * preset composition, or re-run activation when no live session exists.
+   * Runtime-only — no ledger operation, no suspend. Taking over manually also
+   * cancels any pending automatic recovery episode. A non-enabled Member
+   * still holding a live handle is an interrupted suspend/archive/remove,
+   * not a stalled one; recovery finishes that cleanup instead of nudging it.
+   */
   @Remote('recoverMember')
   async recoverMember(request: AgentTeamRecoverMemberRequest): Promise<AgentTeamRecoverMemberResult> {
     this.requireAccepting()
@@ -2179,6 +2345,43 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /**
+   * Human-only Task creation with an opening Message; the Task may start unassigned.
+   * The body is not scanned for `@mentions`: assigning the Task is how a board Task
+   * addresses a Member.
+   */
+  @Remote('createTask')
+  async createTask(request: AgentTeamCreateTaskRequest): Promise<AgentTeamCreateTaskResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    try {
+      const metadata = await this.resolveMessageAttachments(request)
+      const result = await this.requireLedger().createTask({
+        ...request, body: this.appendAttachmentLines(request.body, metadata),
+        ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+        actor: agentTeamHumanActor(),
+      })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      await this.dropUnreferencedPrepared(request, error)
+      throw error
+    }
+  }
+
+  /**
+   * Human-only Task field update, fenced by the Thread revision only (no unread-Thread fence: board
+   * fields are metadata). A change of assignee commits an `assign` Activity that wakes the assignee.
+   */
+  @Remote('updateTask')
+  async updateTask(request: AgentTeamUpdateTaskRequest): Promise<AgentTeamUpdateTaskResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
   /** Human-only promotion of a taskless Thread into a real Task plus public Message. */
   @Remote('promoteThread')
   async promoteThread(request: AgentTeamPromoteThreadRequest): Promise<AgentTeamPromoteThreadResult> {
@@ -2543,6 +2746,79 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Return the existing bounded public Workspace discovery projection. */
+  /** Human read of one whole Team Document. */
+  @Remote('doc')
+  doc(request: AgentTeamDocRequest): AgentTeamDocView {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().doc(agentTeamHumanActor(), request)
+  }
+
+  /** Human Doc rows for one Thread or one Channel, or for Doc refs cited in Message bodies. */
+  @Remote('docs')
+  docs(request: AgentTeamDocsRequest): AgentTeamDocsResult {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().docs(agentTeamHumanActor(), request)
+  }
+
+  /** Human read of every version of one Doc section, newest first. */
+  @Remote('docSectionHistory')
+  docSectionHistory(request: AgentTeamDocSectionHistoryRequest): AgentTeamDocSectionHistory {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().docSectionHistory(agentTeamHumanActor(), request)
+  }
+
+  /** Human edit of one Doc section, or a restore of an earlier version; a stale Doc revision is a business outcome. */
+  @Remote('writeDocSection')
+  async writeDocSection(request: AgentTeamWriteDocSectionRequest): Promise<AgentTeamWriteDocSectionResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().writeDocSection({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Human close of one comment thread; a pending Human comment in it is withdrawn. */
+  @Remote('resolveDocComment')
+  async resolveDocComment(request: AgentTeamResolveDocCommentRequest): Promise<AgentTeamResolveDocCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().resolveDocComment({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Human comment on one Doc passage; it stays pending until the Human's next verdict. */
+  @Remote('commentDoc')
+  async commentDoc(request: AgentTeamCommentDocRequest): Promise<AgentTeamDocCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().commentDoc({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Human verdict on one Doc revision; its Thread notice wakes the author. A stale revision is a business outcome. */
+  @Remote('reviewDoc')
+  async reviewDoc(request: AgentTeamReviewDocRequest): Promise<AgentTeamDocNoticeResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().reviewDoc({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Human read of the decision cards of one Thread, oldest first. */
+  @Remote('decisions')
+  decisions(request: AgentTeamDecisionsRequest): AgentTeamDecisionsResult {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().decisions(agentTeamHumanActor(), request)
+  }
+
+  /** Human answer to one open decision card; its Thread notice wakes the asker. */
+  @Remote('answerDecision')
+  async answerDecision(request: AgentTeamAnswerDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().answerDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
@@ -2557,6 +2833,111 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+  }
+
+  /** Agent-only start of one Team Document in a Thread the Member can work in. */
+  async createDocForAgent(agent: Agent, request: AgentTeamCreateDocRequest): Promise<AgentTeamCreateDocResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().createDoc({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only Doc section write; a stale Doc revision is a business outcome. */
+  async writeDocSectionForAgent(agent: Agent, request: AgentTeamWriteDocSectionRequest): Promise<AgentTeamWriteDocSectionResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().writeDocSection({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Agent-only comment or reply on a Doc passage. */
+  async commentDocForAgent(agent: Agent, request: AgentTeamCommentDocRequest): Promise<AgentTeamDocCommentResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().commentDoc({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only close of one comment thread, typically once a revision answered it. */
+  async resolveDocCommentForAgent(agent: Agent, request: AgentTeamResolveDocCommentRequest): Promise<AgentTeamResolveDocCommentResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().resolveDocComment({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only request for the Human's review; its Thread notice puts the Doc in the Human's Inbox. */
+  async submitDocForAgent(agent: Agent, request: AgentTeamSubmitDocRequest): Promise<AgentTeamDocNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().submitDoc({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Agent-only decision card; its Thread notice puts the card in the Human's Inbox. */
+  async askDecisionForAgent(agent: Agent, request: AgentTeamAskDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().askDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /** Agent-only withdrawal of a card the calling Member asked and no longer needs. */
+  async withdrawDecisionForAgent(agent: Agent, request: AgentTeamWithdrawDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().withdrawDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  decisionForAgent(agent: Agent, request: AgentTeamDecisionRequest): AgentTeamDecisionView {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().decision(actor, request)
+  }
+
+  /**
+   * Agent-only bounded wait for the Human on one Thread: resolves with the
+   * first value `settled` reads, or undefined once `timeoutMs` passes or the
+   * caller's signal aborts. The Thread's own change scope drives each check, so
+   * the wait reads nothing between commits and never holds the ledger.
+   */
+  async waitInThreadForAgent<T>(agent: Agent, request: { readonly workspaceId: WorkspaceId; readonly threadRef: AgentTeamThreadRef },
+    settled: () => T | undefined, timeoutMs: number, signal?: AbortSignal): Promise<T | undefined> {
+    this.requireAgentWorkspace(this.memberActor(agent), request.workspaceId)
+    const stop = new AbortController()
+    const timer = setTimeout(() => { stop.abort() }, timeoutMs)
+    const onAbort = (): void => { stop.abort() }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      for await (const _change of this.changes({ scope: { kind: 'thread', threadRef: request.threadRef } }, stop.signal)) {
+        const value = settled()
+        if (value !== undefined) return value
+      }
+      return settled()
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  docForAgent(agent: Agent, request: AgentTeamDocRequest): AgentTeamDocView {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().doc(actor, request)
+  }
+
+  docSectionHistoryForAgent(agent: Agent, request: AgentTeamDocSectionHistoryRequest): AgentTeamDocSectionHistory {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().docSectionHistory(actor, request)
+  }
+
+  docsForAgent(agent: Agent, request: AgentTeamDocsRequest): AgentTeamDocsResult {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().docs(actor, request)
   }
 
   /**
@@ -2576,6 +2957,40 @@ export default class AgentTeam extends TypertRemoteService {
       await this.steerAgentFromThread(actor.memberId, request.threadRef)
     }
     return result.value.binding
+  }
+
+  /**
+   * Task-16 per-Thread binding: after a delivery is queued, record which Session now carries each
+   * delivered Thread for this seat (§3.1). A Thread with no binding opens `start`; a Thread whose
+   * active binding names another Session (the seat was renewed, rolled over or cold-restarted since)
+   * opens `cold-restart` and the `stale-binding` cause is logged. A Thread already bound to this
+   * Session records nothing, and the request id is derived from (seat, Thread, Session), so a repeated
+   * delivery is idempotent. The closed reason enum is untouched; the cause rides the log line only.
+   * Failures are logged and never block or fail the delivery.
+   */
+  private bindDeliveredThreads(member: AgentTeamAgentMember, sessionId: SessionId, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): void {
+    const ledger = this.requireLedger()
+    for (const { item } of notifications) {
+      const threadRef = item.thread.threadRef
+      const active = ledger.threadSessionsOf(threadRef, member.memberId).at(-1)
+      if (active?.sessionId === sessionId) continue
+      const reason: AgentTeamBindThreadSessionRequest['reason'] = active === undefined ? 'start' : 'cold-restart'
+      const latest = ledger.latestThreadSummary(threadRef)
+      if (active !== undefined) {
+        const fallback: AgentTeamColdFallback = { cause: 'stale-binding', triedWarm: false }
+        this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, sessionId)} Thread '${threadRef}' was bound to Session '${active.sessionId}'; cold fallback cause ${fallback.cause}`)
+      }
+      void ledger.bindThreadSession({
+        requestId: `deliver-bind:${member.memberId}:${threadRef}:${sessionId}` as AgentTeamRequestId,
+        workspaceId: item.workspaceId, threadRef, sessionId, reason,
+        ...(latest === undefined ? {} : { summaryGeneration: latest.generation }),
+        actor: { kind: 'member', memberId: member.memberId, handle: member.handle },
+      }).then(result => {
+        if (result.committed) this.emitCommitted(result.value.receipt)
+      }, (error: unknown) => {
+        this.ctx.logger.warn(`agent-team: ${this.memberScope(member.memberId, sessionId)} could not bind Thread '${threadRef}' to its Session (${reason}): ${failureDetail(error)}; the next delivery records it`)
+      })
+    }
   }
 
   /** Agent-only personal Attention change. */
@@ -3588,6 +4003,43 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+  /**
+   * Task-16 memory rule: the per-seat memory lock for this Session. Read-only tools
+   * and calls that never name the seat memory directory pass through; every other
+   * write runs under the seat lock and is refused with `stale-memory` when the file's
+   * revision moved since this Session last read it, returning the current content so
+   * the Session re-reads and retries. A first write by a Session that has never read
+   * the file is allowed. Slot 0 and every extra slot share the same lock.
+   */
+  private installSeatMemoryLock(agentCtx: Context, agent: Agent, memoryDirectory: string): void {
+    const read = async (path: string): Promise<string> => readFileSync(path, 'utf8')
+    // A Session starts having been shown the memory it will be injected with: seed its revision now, so
+    // a full-file overwrite as its first memory write is checked against that, not waved through.
+    try {
+      seatMemoryGuard.noteRead(agent.id, memoryRevision(readFileSync(join(memoryDirectory, 'memory.md'), 'utf8')))
+    } catch {
+      seatMemoryGuard.forget(agent.id)
+    }
+    agentCtx.on('tools/pre-execute', async (exec, next) => {
+      const refusal = await seatMemoryGuard.probe({ toolName: exec.name, args: exec.arguments, memoryDirectory, sessionId: agent.id, read })
+      return refusal === undefined ? next()
+        : { kind: 'deny' as const, reason: seatMemoryStaleReason(refusal) }
+    })
+    agentCtx.on('tools/post-execute', async (exec, result, next) => {
+      // Only a resolved write that named the memory directory can have moved it.
+      const seat = memoryDirectory.replace(/[\\/]+$/, '')
+      const names = seat !== '' && !MEMORY_READ_ONLY_TOOLS.has(exec.name) && !result.isError
+      if (names) {
+        try {
+          if ((JSON.stringify(exec.arguments) ?? '').includes(seat)) seatMemoryGuard.noteWriteSettled(seat, agent.id, read)
+        } catch {
+          // An unserializable argument set never named the directory: nothing to refresh.
+        }
+      }
+      return next()
+    })
+  }
+
   private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId, options?: { readonly deferNotify?: boolean; readonly seed?: readonly SessionEvent[]; readonly inheritedEventCount?: SessionLogOffset }): Promise<void> {
     if (this.handles.has(member.memberId)) return
     let created: AgentHandle | undefined
@@ -3622,6 +4074,7 @@ export default class AgentTeam extends TypertRemoteService {
           throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
         }
         installModelSelection(agentCtx, selected)
+        this.installSeatMemoryLock(agentCtx, agent, memberMemoryDirectoryPath(member))
         // Admission gate for pending context rollovers: once a successful
         // context_rollover result is durable, queued input must not open another
         // old-generation model request. The turn-stop boundary captures the
@@ -4356,6 +4809,12 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     const seatInbox = this.requireLedger().notificationFacts(member.memberId)
+    // Task-16: the seat's own warm Turns are limited (contract §4.2), so a delivery that
+    // would open a second warm Turn inside the window coalesces into the one already owed.
+    // The gate is consulted without recording, and the start is recorded only once the
+    // notice is actually queued below: a wake that failed, or was already carried by a
+    // recovery instruction, started no warm Turn and must not spend the window.
+    const warmLimited = !this.warmStartAllowed(member.memberId, Date.now(), { record: false })
     // Multi-instance seats: Threads routed to an extra slot are delivered there; slot 0 keeps the rest.
     const notifications = this.routeToInstances(member, seatInbox)
     const delegated = notifications.length !== seatInbox.length
@@ -4393,6 +4852,14 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.info(`agent-team: Team Inbox notice carried by the queued recovery instruction for ${scope} cause ${causeText} (${facts}): queued with that recovery instruction, not yet read by the model`)
       return
     }
+    // A delivery that would open a second warm Turn inside the window waits for it: the facts stay
+    // durable, and one deferred re-derivation carries everything that arrived meanwhile.
+    const opensTurn = agent.status === 'idle'
+    if (opensTurn && warmLimited) {
+      this.deferWarmDelivery(member.memberId, cause, sequenced)
+      this.ctx.logger.info(`agent-team: Team Inbox notice for ${scope} cause ${causeText} coalesced: the seat's warm-start limit is spent, one delivery is deferred to the window end (${facts})`)
+      return
+    }
     const existingInboxHint = pending.find(message => this.isInboxNotice(message))
     if (existingInboxHint !== undefined) agent.inbox.remove(existingInboxHint.id)
     const hint = createUserMessage({
@@ -4421,14 +4888,18 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.warn(`agent-team: Team Inbox notice delivery failed for ${scope} cause ${causeText} attempt ${attempt} (${facts}): ${failureDetail(error)}; the operation is committed and stands, and the notice state was cleared so the next fact touching this Member rederives and retries it`)
       return
     }
+    if (opensTurn) this.warmStartAllowed(member.memberId, Date.now())
+    this.bindDeliveredThreads(member, agent.id, notifications)
     this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${scope} cause ${causeText} attempt ${attempt} lane '${sequenced ? 'follow-up turn' : 'next step'}' (${facts}): queued for the Member's next step, not yet read by the model`)
   }
 
   /**
    * Multi-instance routing (contract v2 §2/§2a): split a seat's unread Threads across its slots.
    * Threads routed to an extra slot are delivered there (spawning it on demand); the subset for
-   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. N=1 is
-   * today's behavior: everything stays on slot 0 and nothing is bound.
+   * slot 0 is returned to the caller's ordinary delivery. A new route is bound durably. With
+   * `taskSessions` set to `own`, a new Task Thread prefers an extra slot, so Task work gets its own
+   * Session and the home Session keeps DMs and coordination (#92). N=1 is today's behavior: everything
+   * stays on slot 0 and nothing is bound.
    */
   private routeToInstances(member: AgentTeamAgentMember, notifications: ReturnType<AgentTeamLedger['notificationFacts']>): ReturnType<AgentTeamLedger['notificationFacts']> {
     const instances = memberInstances(member)
@@ -4439,6 +4910,7 @@ export default class AgentTeam extends TypertRemoteService {
       instances,
       threadRef => this.routedSlots.get(routeKey(member.memberId, threadRef)) ?? ledger.threadInstanceOf(threadRef, member.memberId),
       slot => this.slotBusy(member.memberId, slot),
+      threadRef => this.taskSessions === 'own' && notifications.some(entry => entry.item.thread.threadRef === threadRef && entry.item.thread.taskRef !== undefined),
     )
     const bySlot = new Map<number, ReturnType<AgentTeamLedger['notificationFacts']>[number][]>()
     routes.forEach((route, index) => {
@@ -4448,6 +4920,40 @@ export default class AgentTeam extends TypertRemoteService {
     })
     for (const [slot, entries] of bySlot) if (slot !== 0) this.deliverToSlot(member, slot, entries)
     return bySlot.get(0) ?? []
+  }
+
+  /** Set the per-seat warm-start limit (contract §4.2); pass `UNLIMITED_WARM_LIMIT` to lift it. */
+  configureWarmLimit(limit: WarmLimit): void {
+    this.warmLimit = limit
+  }
+
+  /** Re-run the seat's delivery once the warm window frees; one timer per seat, so a burst coalesces. */
+  private deferWarmDelivery(memberId: AgentTeamMemberId, cause: NotificationCause, sequenced: boolean): void {
+    if (this.warmDeferTimers.has(memberId)) return
+    const nowMs = Date.now()
+    const recent = (this.warmStartsByMember.get(memberId) ?? []).filter(at => at > nowMs - this.warmLimit.windowMs)
+    const delay = Math.max(50, (recent[0] ?? nowMs) + this.warmLimit.windowMs - nowMs + 10)
+    const timer = setTimeout(() => {
+      this.warmDeferTimers.delete(memberId)
+      const handle = this.handles.get(memberId)
+      if (handle !== undefined) this.notifyMember(handle.agent, cause, sequenced)
+    }, delay)
+    timer.unref?.()
+    this.warmDeferTimers.set(memberId, timer)
+  }
+
+  /**
+   * Whether this seat may start a warm Turn now (contract §4.2). A warm start inside the
+   * window is recorded, and a trigger that arrives while the window is full is coalesced:
+   * the caller delivers its facts with the start the seat already owes instead of opening a
+   * second warm Turn. Pure policy in `warmDecision`; this only keeps the seat's window state.
+   */
+  private warmStartAllowed(memberId: AgentTeamMemberId, nowMs: number, options: { readonly record?: boolean } = {}): boolean {
+    const recent = (this.warmStartsByMember.get(memberId) ?? []).filter(at => at > nowMs - this.warmLimit.windowMs)
+    const decision = warmDecision({ limit: this.warmLimit, nowMs, recentWarmStarts: recent })
+    if (options.record === false) return decision.kind === 'start'
+    this.warmStartsByMember.set(memberId, decision.kind === 'start' ? [...recent, nowMs] : recent)
+    return decision.kind === 'start'
   }
 
   /** A slot is busy while its turn runs or while it is starting; an absent slot is idle (it spawns on demand). */
@@ -4488,7 +4994,7 @@ export default class AgentTeam extends TypertRemoteService {
     const threadRef = notifications[0]?.item.thread.threadRef
     if (threadRef === undefined) this.slotActivityThreads.delete(key)
     else this.slotActivityThreads.set(key, threadRef)
-    const notice = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. Seat memory is written by the main instance only: put what is worth remembering in your Thread DELIVERABLE.`
+    const notice = `${this.notificationText(notifications, member.memberId)}\n\nYou are instance ${slot} of @${member.handle.replace(/^@/, '')}, a multi-instance seat. Work only on the Thread(s) listed above; your seat's other instances handle the rest of its Inbox. You may write this seat's memory.md yourself; when a write is refused as stale-memory, re-read the current memory.md it returns and re-apply your edit before retrying.`
     const facts = this.notificationIdentity(notifications)
     void this.ensureSlot(member, slot).then(handle => {
       if (handle === undefined) throw new Error('the slot did not start')
@@ -4510,6 +5016,7 @@ export default class AgentTeam extends TypertRemoteService {
         // Refs and counts only: a seed's Message bodies never reach the log.
         this.ctx.logger.info(`agent-team: ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} seeded Thread '${threadRef}' from ${seed.generation === undefined ? 'no summary' : `summary generation ${seed.generation}`} + ${seed.messageRefs.length} Message(s) [${seed.messageRefs.join(', ')}], ${seed.omitted} not shown`)
       }
+      this.bindDeliveredThreads(member, agent.id, notifications)
       this.slotRecorder(member.memberId, slot).noteDelivered(member.memberId, notifications.map(entry => entry.item.thread.threadRef))
       this.ctx.logger.info(`agent-team: Team Inbox notice queued for ${this.memberScope(member.memberId, agent.id)} instance slot ${slot} (${facts}): not yet read by the model`)
     }).catch((error: unknown) => {
@@ -4585,9 +5092,9 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Create one extra-slot Agent with a fresh Session: the seat's preset, tool policy and model,
-   * and a host-side refusal of every non-read-only tool call naming the seat-memory directory
-   * (contract v2 §2b). Extra slots carry no context rollover or pressure management: they are
-   * short Thread sessions, and slot 0 keeps the seat's full lifecycle.
+   * and the shared seat-memory revision lock every slot writes under (task-16). Extra slots carry
+   * no context rollover or pressure management: they are short Thread sessions, and slot 0 keeps
+   * the seat's full lifecycle.
    */
   private async spawnSlotAgent(member: AgentTeamAgentMember, slot: number): Promise<{ readonly handle: AgentHandle; readonly selection: ModelSelectionRef }> {
     const workspace = this.requireWorkspace(member.workspaceId)
@@ -4604,10 +5111,9 @@ export default class AgentTeam extends TypertRemoteService {
         throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
       }
       installModelSelection(agentCtx, selection)
-      agentCtx.on('tools/pre-execute', async (exec, next) => {
-        const reason = memoryWriteRefusal(exec.name, exec.arguments, memoryDirectory)
-        return reason === undefined ? next() : { kind: 'deny' as const, reason }
-      })
+      // Task-16 memory rule: every slot, including slot 0, writes seat memory under the
+      // per-seat revision lock; the host no longer refuses a slot for being not slot 0.
+      this.installSeatMemoryLock(agentCtx, agent, memoryDirectory)
       return { commit: () => { setSandboxMode(agent.session, 'danger-full-access') } }
     }
     const handle = await this.ctx.agents.create({
@@ -4874,6 +5380,12 @@ export default class AgentTeam extends TypertRemoteService {
     }
     if (activity.kind === 'promote') {
       return `Team Task update\n${actor} created Task ${activity.taskRef} from Thread ${activity.threadRef}; it is open for claims.`
+    }
+    if (activity.kind === 'assign') {
+      const assignee = activity.assignee === undefined ? undefined : this.requireLedger().getMember(activity.assignee)?.handle ?? activity.assignee
+      return readerId !== undefined && activity.assignee === readerId
+        ? `Team Task update\n${actor} assigned Task ${activity.taskRef} to you. Read Thread ${activity.threadRef} and claim the Task when you start the work.`
+        : `Team Task update\n${actor} assigned Task ${activity.taskRef} to ${assignee ?? 'a Member'}.`
     }
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''

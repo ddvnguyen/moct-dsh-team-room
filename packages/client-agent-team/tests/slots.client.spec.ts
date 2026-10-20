@@ -141,9 +141,9 @@ describe('Team Client slot takeover', () => {
     // the client, beside the shipped conversation seat the mode shadows when it
     // opens. With no native tab strip, the rail keeps the fallback Team row
     // beside the Team Settings row.
-    expect(slots.entriesOfSlot('main')).toHaveLength(3)
+    expect(slots.entriesOfSlot('main')).toHaveLength(4)
     expect(slots.entriesOfSlot('sidebar.settings')).toHaveLength(1)
-    expect(slots.entries('sidebar.panellist')).toHaveLength(2)
+    expect(slots.entries('sidebar.panellist')).toHaveLength(3)
 
     ctx.teamNavigation.actions().enterTeam()
     // Entering the mode swaps nothing in the sidebar: no Team section, no
@@ -152,13 +152,13 @@ describe('Team Client slot takeover', () => {
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
     expect(slots.entries('sidebar.workspaces.session.row.action')).toHaveLength(0)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(0)
-    expect(slots.entries('main')).toHaveLength(4)
+    expect(slots.entries('main')).toHaveLength(5)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
     ctx.teamNavigation.actions().leaveTeam()
     expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-    expect(slots.entries('main')).toHaveLength(3)
+    expect(slots.entries('main')).toHaveLength(4)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
     await fiber.dispose()
@@ -184,7 +184,7 @@ describe('Team Client slot takeover', () => {
       expect(slots.entriesOfSlot('main')[0]!.options.priority).toBe(-100)
       ctx.teamNavigation.actions().leaveTeam()
       expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-      expect(slots.entries('main')).toHaveLength(3)
+      expect(slots.entries('main')).toHaveLength(4)
       expect(slots.entries('sidebar.settings')).toHaveLength(1)
     }
     ctx.teamNavigation.actions().enterTeam()
@@ -200,7 +200,7 @@ describe('Team Client slot takeover', () => {
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
-    expect(slots.entries('main')).toHaveLength(4)
+    expect(slots.entries('main')).toHaveLength(5)
     await fiber.dispose()
     expect(slots.entries('main')).toHaveLength(1)
   })
@@ -230,7 +230,7 @@ describe('Team Client slot takeover', () => {
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder', returnToSessionId: 'session:human-origin' })
     // The conversation shadow yields to the shipped root while both sidebars
     // stay; the panels' own seats are not the shadow and keep their registration.
-    expect(slots.entries('main')).toHaveLength(3)
+    expect(slots.entries('main')).toHaveLength(4)
     // The Member view registers no composer surface at all: the shipped
     // InputBar owns the bar, its trigger overlay, and the dock — the Team
     // chrome is sidebar-only around the embedded session.
@@ -251,7 +251,7 @@ describe('Team Client slot takeover', () => {
     expect(uiWorkspace.openSession).toHaveBeenLastCalledWith('session:human-origin')
     expect(ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
-    expect(slots.entriesOfSlot('main')).toHaveLength(3)
+    expect(slots.entriesOfSlot('main')).toHaveLength(4)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
 
     await fiber.dispose()
@@ -314,11 +314,11 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
     ctx.teamNavigation.actions().enterTeam()
     ctx.teamNavigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
-    expect(slots.entries('main')).toHaveLength(3)
+    expect(slots.entries('main')).toHaveLength(4)
 
     ctx.teamNavigation.actions().selectChannel('channel:engineering' as never)
     expect(ctx.teamNavigation.getSnapshot().memberSessionId).toBeUndefined()
-    expect(slots.entries('main')).toHaveLength(4)
+    expect(slots.entries('main')).toHaveLength(5)
 
     await fiber.dispose()
   })
@@ -338,13 +338,13 @@ describe('Team Settings rail row', () => {
     await fiber.await()
 
     const rows = panelRows(slots)
-    expect(rows.map(row => row.options.id)).toEqual(['agent-team-settings'])
+    expect(rows.map(row => row.options.id)).toEqual(['agent-team-settings', 'agent-team-board'])
     // A thunk, not a captured string: a language switch relabels the row.
     expect(typeof rows[0]!.options.label).toBe('function')
     const locale = ctx.get('locale') as LocaleRuntime
     expect(rows[0]!.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
     expect(slots.entriesOfSlot('main').map(entry => (entry.options as { key?: string }).key))
-      .toEqual(expect.arrayContaining(['agent-team', 'agent-team-settings', 'conversation']))
+      .toEqual(expect.arrayContaining(['agent-team', 'agent-team-board', 'agent-team-settings', 'conversation']))
 
     await fiber.dispose()
     expect(slots.entries('sidebar.panellist')).toHaveLength(0)
@@ -354,17 +354,17 @@ describe('Team Settings rail row', () => {
     const without = await bench()
     const plain = without.ctx.plugin({ inject: [...inject], apply })
     await plain.await()
-    expect(panelRows(without.slots).map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-settings'])
+    expect(panelRows(without.slots).map(row => row.options.id).sort()).toEqual(['agent-team', 'agent-team-board', 'agent-team-settings'])
     await plain.dispose()
 
     const strip = nativeStrip()
     const withStrip = await bench(null, strip.registry)
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    // One Teams tab carries both the Channel section and the Agents section
-    // (see team-tab-body.tsx), so the strip gets a single entry.
-    expect(strip.inserted).toEqual(['team'])
-    expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings'])
+    // Strip order: Team, then Agents (see team-tab.ts), each inserted once.
+    // The Board is not among them: it is a menu item in the main list.
+    expect(strip.inserted).toEqual(['team', 'agents'])
+    expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings', 'agent-team-board'])
     await fiber.dispose()
   })
 
@@ -403,9 +403,9 @@ describe('Team Settings rail row', () => {
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('conversation')
 
     const element = tabSeat(strip)
-    // The tab's body is the whole Team browser: the Channel section and the
-    // Agents section, not the Channels alone.
-    expect(element.channelsOnly).toBeUndefined()
+    // The tab's body is the Channel view; the Agents list is the Agents tab
+    // beside it (see team-tab-body.tsx).
+    expect(element.channelsOnly).toBe(true)
     ;(element.selectChannel as (ref: string) => void)('channel:engineering')
 
     // The one-sidebar contract: the pick opens the Channel in the main column and
@@ -415,7 +415,7 @@ describe('Team Settings rail row', () => {
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', channelRef: 'channel:engineering' })
     expect(slots.entries(SECTIONS)).toHaveLength(0)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
-    expect(slots.entries('main')).toHaveLength(4)
+    expect(slots.entries('main')).toHaveLength(5)
 
     // A Workspace switch from a plain conversation only rescopes the list.
     ;(element.leaveTeam as () => void)()

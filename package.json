@@ -1,6 +1,6 @@
 {
   "name": "@ddvnguyen/moct-dsh-team-room",
-  "version": "0.0.1-261019.2350",
+  "version": "0.0.1-261020.0035",
   "license": "MIT",
   "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
   "icon": "assets/icon.svg",
@@ -18,6 +18,8 @@
     "packages/agent-team/core-skills/**/*",
     "packages/tool-agent-team/lib/**/*",
     "packages/client-agent-team/lib/**/*",
+    "NOTICE",
+    "licenses/**/*",
     "README.md",
     "README.zh.md"
   ],
@@ -30,10 +32,11 @@
     "check:boundaries": "node scripts/check-package-boundaries.mjs",
     "check:versions": "node scripts/check-version-consistency.mjs",
     "check:facades": "node scripts/sync-paths.mjs --check",
+    "check:multica": "node scripts/check-multica-provenance.mjs",
     "check:artifact": "node scripts/check-artifact.mjs .",
     "smoke:install": "npm run build && node scripts/quality/dsh-smoke.mjs",
     "check:public-baseline": "node scripts/check-public-baseline.mjs .",
-    "test": "npm run generate:typert && npm run check:facades && npm run check:docs && npm run check:core-skills && npm run check:boundaries && npm run check:versions && vitest run",
+    "test": "npm run generate:typert && npm run check:facades && npm run check:docs && npm run check:core-skills && npm run check:boundaries && npm run check:versions && npm run check:multica && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
     "preview": "node scripts/check-preview-credentials.mjs && npm run build && node scripts/run-preview.mjs",
     "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
@@ -66,6 +69,10 @@
   "dependencies": {
     "@contexera/dsh-context-continuity": "^0.4.0",
     "@contexera/dsh-jev": "^0.1.1",
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
+    "@dnd-kit/utilities": "3.2.2",
+    "react-virtuoso": "4.18.7",
     "yaml": "^2.9.1",
     "zod": "^4.4.3"
   },

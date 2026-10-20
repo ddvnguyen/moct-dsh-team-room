@@ -222,7 +222,7 @@ describe('Agent Team shipping contract', () => {
     expect([...dshPeerRanges(bundleManifest)]).toEqual(['>=0.2.0-rc.2 <0.2.1'])
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
-    expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
+    expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, team_view, team_doc, and team_ask')
     // The one token story has exactly two legal surfaces: a fully drained
     // read hands off the next-write token, and a committed public mutation's
     // returned token may serve as the basis for the next deliberate mutation.
@@ -313,6 +313,9 @@ describe('Agent Team shipping contract', () => {
     expect(manifest.files).toContain('packages/agent-team/core-skills/**/*')
     expect(manifest.files).toContain('packages/agent-team/lib/**/*')
     expect(manifest.files).toContain('packages/client-agent-team/lib/**/*')
+    // Ported Multica code is redistributed, so the license text and NOTICE ship with it.
+    expect(manifest.files).toContain('NOTICE')
+    expect(manifest.files).toContain('licenses/**/*')
     expect(manifest.name).toBe('@ddvnguyen/moct-dsh-team-room')
     // The context-continuity engine rides as a regular dependency, never a
     // peer: profiles set autoInstallPeers: false, so a peer nothing else
@@ -323,6 +326,12 @@ describe('Agent Team shipping contract', () => {
     expect(manifest.dependencies).toEqual({
       '@contexera/dsh-context-continuity': '^0.4.0',
       '@contexera/dsh-jev': '^0.1.1',
+      // The board's drag and virtualisation libraries are regular dependencies
+      // for the same reason: the assembled client bundle has no other provider.
+      '@dnd-kit/core': '6.3.1',
+      '@dnd-kit/sortable': '10.0.0',
+      '@dnd-kit/utilities': '3.2.2',
+      'react-virtuoso': '4.18.7',
       yaml: '^2.9.1',
       zod: '^4.4.3',
     })

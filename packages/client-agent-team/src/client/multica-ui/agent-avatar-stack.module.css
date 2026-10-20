@@ -1,0 +1,36 @@
+/*
+ * Derived from multica-x packages/views/agents/components/agent-avatar-stack.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
+/* Overlapping heads. The ring uses the surface color so each circle cuts the
+   one behind it instead of blending into it. */
+
+.stack {
+  align-items: center;
+  display: inline-flex;
+}
+
+.half {
+  opacity: 0.5;
+}
+
+.head {
+  border-radius: 999px;
+  corner-shape: round;
+  box-shadow: 0 0 0 2px var(--ml-surface);
+  display: inline-flex;
+}
+
+.overflow {
+  align-items: center;
+  background: var(--ml-surface-raised);
+  border-radius: 999px;
+  corner-shape: round;
+  box-shadow: 0 0 0 2px var(--ml-surface);
+  color: var(--ml-text-tertiary);
+  display: inline-flex;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  justify-content: center;
+}

@@ -1,0 +1,27 @@
+/* The Runs tab's token sparkline. Colours come from the look layer's tone
+   tokens, so the chart follows the shell's theme instead of pinning brand
+   hexes. */
+
+.sparkline {
+  display: block;
+  overflow: visible;
+}
+
+.baseline {
+  fill: var(--ml-text-faint, currentColor);
+  opacity: 0.25;
+}
+
+.completed {
+  fill: var(--ml-brand, currentColor);
+  opacity: 0.6;
+}
+
+.neutral {
+  fill: var(--ml-text-faint, currentColor);
+  opacity: 0.6;
+}
+
+.failed {
+  fill: var(--dsw-alias-state-error-primary, currentColor);
+}

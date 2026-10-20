@@ -3,9 +3,13 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
+  AgentTeamDecisionAnswer,
+  AgentTeamDecisionRef,
+  AgentTeamDecisionView,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamRequestId,
+  AgentTeamTaskPatchRequest,
   AgentTeamTaskRef,
   AgentTeamThreadFact,
   AgentTeamThreadReadFact,
@@ -14,7 +18,7 @@ import type {
   AgentTeamView,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChecklistOutlineRegular, IconChevronLeftOutlineRegular, IconCloseOutlineRegular, IconPanelLeftOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { useThreadAttention } from './team-attention.ts'
@@ -31,6 +35,17 @@ import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { TeamActivityLine } from './TeamActivityLine.tsx'
+import { TeamThreadDocs } from './TeamThreadDocs.tsx'
+import { TeamDecisionCard } from './TeamDecisionCard.tsx'
+import { ExecutionLog } from './thread/ExecutionLog.tsx'
+import { AssigneePicker } from './multica-ui/AssigneePicker.tsx'
+import { PriorityPicker } from './multica-ui/PriorityPicker.tsx'
+import { StatusPicker } from './multica-ui/StatusPicker.tsx'
+import { AgentAvatarStack } from './multica-ui/AgentAvatarStack.tsx'
+import { makeTimeAgo } from './multica/time-ago.ts'
+import { normalizePriority } from './multica/priority.ts'
+import look from './multica-look.module.css'
+import detailCss from './thread-detail.module.css'
 import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
@@ -55,6 +70,9 @@ interface TeamThreadPageProps {
   readonly threadObservations: TeamConversationProps['threadObservations']
   readonly threadReplyStats: TeamConversationProps['threadReplyStats']
   readonly threadTurnFailures: TeamConversationProps['threadTurnFailures']
+  readonly loadThreadSessions: TeamConversationProps['loadThreadSessions']
+  readonly updateTask: TeamConversationProps['updateTask']
+  readonly stopSession: TeamConversationProps['stopSession']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly loadMemberActivity: TeamConversationProps['loadMemberActivity']
@@ -72,11 +90,18 @@ interface TeamThreadPageProps {
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
+  readonly loadDocs: TeamConversationProps['loadDocs']
+  readonly reviewDoc: TeamConversationProps['reviewDoc']
+  readonly loadDecisions: TeamConversationProps['loadDecisions']
+  readonly answerDecision: TeamConversationProps['answerDecision']
+  readonly selectDoc: TeamConversationProps['selectDoc']
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   /** Whether the shell's left column is closed; the header offers the open control while it is. */
   readonly sidebarCollapsed: boolean
   /** Reopen the shell's left column through the shell's own action. */
   readonly openSidebar: () => void
+  /** Open beside its Channel rather than alone: the back crumb closes the lane, and the page is a region, not the seat's main landmark. */
+  readonly inLane?: boolean
   readonly t: TeamConversationProps['t']
 }
 
@@ -128,12 +153,18 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
-    loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures,
-    changeAttention,
-    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, t,
+    loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, updateTask, stopSession,
+    changeAttention, loadDocs, reviewDoc, loadDecisions, answerDecision, selectDoc,
+    subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, inLane = false, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
+  const [docsVersion, setDocsVersion] = useState(0)
+  // Decision cards asked in this Thread, keyed by the reply that asked each.
+  // The Thread wake that bumps docsVersion re-reads them too.
+  const [decisions, setDecisions] = useState<ReadonlyMap<AgentTeamMessageRef, AgentTeamDecisionView>>(() => new Map())
+  const [decisionsReload, setDecisionsReload] = useState(0)
+  const decisionsSequence = useRef(0)
   const [channelView, setChannelView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   // Current Thread followers; the composer ranks them first because a mention
@@ -157,7 +188,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // The composer owns the subscription — this page only reads a snapshot when
   // it sends, so typing never re-renders the timeline.
   const draftKey: TeamDraftKey = `thread:${threadRef}`
-  const [claimsOpen, setClaimsOpen] = useState(false)
   // Early acceptance: the Human may accept while Claims are still open; the
   // confirm dialog lists exactly what will be completed with the Task.
   const [confirmingAccept, setConfirmingAccept] = useState(false)
@@ -168,6 +198,19 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // Channel member by seeding an @mention into the composer draft.
   const [managingThreadMembers, setManagingThreadMembers] = useState(false)
   const [inviteNote, setInviteNote] = useState<string>()
+  // Multica issue layout: the inline title editor and the properties sheet.
+  // The editor saves on Enter and on blur, the way the issue page's own title
+  // does; Escape discards the draft.
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [claimsOpen, setClaimsOpen] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [titleSaving, setTitleSaving] = useState(false)
+  const titleBusyRef = useRef(false)
+  const [titleError, setTitleError] = useState<string>()
+  // The properties sidebar collapses into a sheet under the lane width; the
+  // sheet rides the same dsh Modal every dialog on the page uses.
+  const [propertiesOpen, setPropertiesOpen] = useState(false)
+  const [patchPending, setPatchPending] = useState(false)
 
   useEffect(() => {
     if (confirmingAccept && projection?.task?.resolution === 'accepted') setConfirmingAccept(false)
@@ -316,7 +359,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         return merged
       })
       setProjection(current => {
-        const next = current === undefined ? current : { ...current, ...(result.value.task === undefined ? {} : { task: result.value.task }), thread: result.value.thread, claims: result.value.claims }
+        // React state can lag the ref here: a read landing between this wake's
+        // dispatch and its render means the queued `current` is already stale,
+        // and spreading it would resurrect a pre-read projection (and stall a
+        // running unread drain on a phantom unchanged remainder). The ref is
+        // written synchronously at every write site, so it is the freshest base.
+        const base = projectionRef.current ?? current
+        const next = base === undefined ? current : { ...base, ...(result.value.task === undefined ? {} : { task: result.value.task }), thread: result.value.thread, claims: result.value.claims }
         if (next !== undefined) projectionRef.current = next
         return next
       })
@@ -462,6 +511,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setError(update.message); return }
         void refreshPassiveFacts()
+        // Every Team Document write wakes its Thread's scope; the Doc cards re-read on it.
+        setDocsVersion(version => version + 1)
         // Attention changes wake this scope too; keep the mention ranking current.
         void refreshFollowers()
         // A new reply or a finished Turn changes the usage lines.
@@ -693,18 +744,35 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     return contexts
   }, [olderFacts, currentFacts, messageRefVersion, rosterKey, humanName, t])
 
+  useEffect(() => {
+    let live = true
+    const mine = ++decisionsSequence.current
+    void loadDecisions({ workspaceId, threadRef }).then(result => {
+      if (live && mine === decisionsSequence.current && result.ok) setDecisions(new Map(result.value.decisions.map(decision => [decision.messageRef, decision])))
+    })
+    return () => { live = false }
+  }, [workspaceId, threadRef, docsVersion, decisionsReload])
+
+  const answerCard = useCallback(async (decisionRef: AgentTeamDecisionRef, answers: readonly AgentTeamDecisionAnswer[]): Promise<string | undefined> => {
+    const result = await answerDecision({ requestId: mintRequestId(), workspaceId, decisionRef, answers })
+    setDecisionsReload(count => count + 1)
+    return result.ok ? undefined : result.error.message
+  }, [answerDecision, workspaceId])
+
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
       const sender = memberName(fact.message.sender)
       const senderStatus = members.find(candidate => candidate.member.memberId === fact.message.sender)
       const human = fact.message.sender === channelView?.humanMemberId
+      // An ask's body spells the card out for readers without it; here its first line heads the card itself.
+      const decision = decisions.get(fact.message.messageRef)
       return <TeamMessage
         key={factKey(fact)}
         senderName={sender}
         memberId={fact.message.sender}
         human={human}
         {...(human && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {})}
-        body={fact.message.body}
+        body={decision === undefined ? fact.message.body : fact.message.body.split('\n', 1)[0]!}
         attachments={fact.message.attachments}
         {...(human ? {} : { replyStats: replyStats.get(fact.message.messageRef) })}
         loadAttachment={getAttachment}
@@ -724,7 +792,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {...(replyContexts.has(fact.message.messageRef) ? { replyTo: replyContexts.get(fact.message.messageRef)!, onOpenReplyTo: handleOpenReplyTo } : {})}
         replyTarget={replyTarget === fact.message.messageRef}
         replyFlash={flashedMessage === fact.message.messageRef}
-      />
+      >
+        {decision !== undefined && <TeamDecisionCard key={decision.status} decision={decision} nameOf={memberName} t={t}
+          answer={answers => answerCard(decision.decisionRef, answers)} />}
+      </TeamMessage>
     }
     return <p className={threadCss.activityRow} key={factKey(fact)}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(fact.activity, { t, actorName: memberName, claims: taskClaims })}</span></p>
   }
@@ -950,6 +1021,42 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     } finally { setPending(false) }
   }
 
+  /** The Human's board-field patch (title, priority, assignee), fenced by the Thread revision; status is not writable here. Returns the failure message, if any. */
+  const patchTask = async (patch: AgentTeamTaskPatchRequest): Promise<string | undefined> => {
+    if (patchPending || task === undefined || thread === undefined) return undefined
+    setPatchPending(true)
+    setError(undefined)
+    const key = 'task:patch'
+    const requestId = mutationRequests.current.get(key) ?? mintRequestId()
+    mutationRequests.current.set(key, requestId)
+    try {
+      const result = await updateTask({ requestId, workspaceId, taskRef: task.taskRef, baseRevision: thread.revision, patch })
+      if (!result.ok) { setError(result.error.message); return result.error.message }
+      if (result.value.kind === 'committed') {
+        mutationRequests.current.delete(key)
+        const committed = result.value as Extract<typeof result.value, { kind: 'committed' }>
+        setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread })
+        return undefined
+      }
+      if (result.value.kind === 'unread_required') {
+        setError(t('unreadRequired', { count: result.value.unreadCount }))
+        mutationRequests.current.delete(key)
+        await refreshAfterFence()
+        return t('unreadRequired', { count: result.value.unreadCount })
+      }
+      setError(t('staleRevision'))
+      mutationRequests.current.delete(key)
+      await refreshPassiveFacts()
+      return t('staleRevision')
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      return message
+    } finally {
+      setPatchPending(false)
+    }
+  }
+
   // Notices older than the first current fact belong to the history block when there is one; otherwise they lead the current block.
   const firstCurrentSequence = currentFacts[0]?.sequence ?? Number.POSITIVE_INFINITY
   const historyFailures = olderFacts.length > 0 ? turnFailures.filter(failure => failure.sequence < firstCurrentSequence) : []
@@ -972,7 +1079,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   })
   // Threads are always entered through a Channel page, so a Channel origin
   // returns to its timeline; a Thread restored without one returns further.
-  const backLabel = channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
+  const backLabel = inLane ? t('closeThreadLane') : channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
   // Slim header participants: every actor holding a Message in the loaded
   // window, in first-appearance order, drawn as the shared identity stack.
   // The stack caps itself at three plus `+N`; the label names them all.
@@ -999,6 +1106,135 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const crumbText = t('threadCrumbLabel', { channel: channelName ?? '…', title: crumbTitle })
   const crumbHint = taskTitle === undefined || taskTitle === '' ? crumbText : `${crumbText} — ${taskTitle}`
 
+  // --- Multica issue layout: title, property rows, execution log ------------
+  // The board title leads; Tasks created before the board fell back to the
+  // opening Message's first line, and the editor writes the board field.
+  const currentTitle = task?.title ?? taskTitle ?? ''
+  const startTitleEdit = (): void => {
+    setTitleDraft(currentTitle)
+    setTitleError(undefined)
+    setEditingTitle(true)
+  }
+  const cancelTitleEdit = (): void => {
+    setEditingTitle(false)
+    setTitleDraft('')
+    setTitleError(undefined)
+  }
+  const saveTitleEdit = (): void => {
+    // Enter and blur both save; the busy ref keeps the second call (the blur
+    // that the Enter path itself causes) from re-submitting the patch.
+    if (titleBusyRef.current || titleSaving) return
+    const next = titleDraft.trim()
+    if (next === '' || next === currentTitle) { cancelTitleEdit(); return }
+    titleBusyRef.current = true
+    void (async () => {
+      setTitleSaving(true)
+      const failure = await patchTask({ title: next })
+      titleBusyRef.current = false
+      setTitleSaving(false)
+      if (failure === undefined) cancelTitleEdit(); else setTitleError(failure)
+    })()
+  }
+  // The sidebar's relative times: created is the opening Message's instant,
+  // last activity the newest fact's.
+  const timeAgo = useMemo(() => makeTimeAgo({ justNow: t('timeJustNow'), minutesAgo: t('timeMinutesAgo'), hoursAgo: t('timeHoursAgo'), daysAgo: t('timeDaysAgo') }), [t])
+  const createdAt = activeProjection?.anchor.occurredAt
+  const lastActivityAt = currentFactsWithAnchor.length > 0
+    ? currentFactsWithAnchor.reduce((latest, fact) => fact.sequence > latest.sequence ? fact : latest, currentFactsWithAnchor[0]!).occurredAt
+    : createdAt
+  // The assignee picker offers every selectable seat; the Human included, the
+  // way the board card's picker does.
+  const assigneeOptions = useMemo(() => members.filter(status => selectable(status)).map(status => ({
+    memberId: status.member.memberId,
+    handle: status.member.handle,
+    ...(status.member.memberId === channelView?.humanMemberId && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {}),
+  })), [members, channelView?.humanMemberId, humanAvatarUrl])
+  // The Human picker option needs a name even before its avatar lands.
+  const followerStack = useMemo(() => [...followerIds].flatMap(memberId => {
+    if (memberId === channelView?.humanMemberId) return [{ memberId, handle: humanName, ...(humanAvatarUrl === undefined ? {} : { avatarUrl: humanAvatarUrl }) }]
+    const status = members.find(candidate => candidate.member.memberId === memberId)
+    return status === undefined ? [] : [{ memberId, handle: status.member.handle }]
+  }), [followerIds, members, channelView?.humanMemberId, humanName, humanAvatarUrl])
+  // The status picker writes through the ledger transitions: done accepts the
+  // Task, closed closes it, todo reopens. The picker disables in_progress and
+  // in_review itself — Claims set those, never the Human.
+  const statusChange = (status: 'todo' | 'in_progress' | 'in_review' | 'done' | 'closed'): void => {
+    const action = status === 'done' ? 'accept' : status === 'closed' ? 'close' : 'reopen'
+    void mutateTask(action)
+  }
+  const sidebarBody = <>
+    {task !== undefined && <section className={detailCss.propSection} aria-label={t('propertiesLabel')}>
+      <div className={detailCss.propRow}>
+        <span className={detailCss.propLabel}>{t('propStatus')}</span>
+        <span className={detailCss.propControl}><StatusPicker status={task.status} onChange={statusChange} t={t} /></span>
+      </div>
+      <div className={detailCss.propRow}>
+        <span className={detailCss.propLabel}>{t('propPriority')}</span>
+        <span className={detailCss.propControl}><PriorityPicker priority={normalizePriority(task.priority)} onChange={priority => { void patchTask({ priority }) }} t={t} /></span>
+      </div>
+      <div className={detailCss.propRow}>
+        <span className={detailCss.propLabel}>{t('propAssignee')}</span>
+        <span className={detailCss.propControl}><AssigneePicker assignee={task.assignee} members={assigneeOptions} onChange={memberId => { void patchTask({ assignee: memberId as AgentTeamMemberId | null }) }} t={t} /></span>
+      </div>
+    </section>}
+    {task !== undefined && <section className={detailCss.propSection} aria-label={t('claims')}>
+      <DisclosureRow
+        expandOnRowClick
+        expandable
+        open={claimsOpen}
+        onToggle={() => { setClaimsOpen(current => !current) }}
+        icon={<IconChecklistOutlineRegular size={14} />}
+        title={`${t('claims')} · ${taskClaims.length}`}
+      >
+        <div className={detailCss.claimList}>
+          {taskClaims.length === 0 && <p className={detailCss.emptyNotes}>{t('noClaims')}</p>}
+          {taskClaims.map(claim => {
+            const ownerStatus = members.find(status => status.member.memberId === claim.owner)
+            return <article className={detailCss.claimRow} key={claim.claimRef} data-claim-state={claim.state}>
+              {ownerStatus === undefined ? <span className={detailCss.claimSpacer} /> : <TeamPresenceDot status={ownerStatus} t={t} />}
+              <span className={detailCss.claimBody}>
+                <strong className={detailCss.claimOwner} title={memberName(claim.owner)}>{memberName(claim.owner)}</strong>
+                <span className={detailCss.claimDirection}>{claim.direction}</span>
+              </span>
+              <small className={detailCss.claimState}>{formatClaimState(claim.state, t)}</small>
+            </article>
+          })}
+        </div>
+      </DisclosureRow>
+    </section>}
+    <section className={detailCss.propSection} aria-label={t('propFollowers')}>
+      <div className={detailCss.propHeading}>{t('propFollowers')}</div>
+      {followerStack.length === 0
+        ? <p className={detailCss.emptyNotes}>{t('noFollowers')}</p>
+        : <span className={detailCss.followerStack}><AgentAvatarStack members={followerStack} size="xs" max={5} t={t} /><span className={detailCss.followerCount}>{t('threadFollowersCount', { count: followerStack.length })}</span></span>}
+    </section>
+    <section className={detailCss.propSection} aria-label={t('propTimes')}>
+      <div className={detailCss.propRow}>
+        <span className={detailCss.propLabel}>{t('propCreated')}</span>
+        <span className={`${detailCss.propControl} ${detailCss.propTime}`}>{createdAt === undefined ? '—' : timeAgo(createdAt)}</span>
+      </div>
+      <div className={detailCss.propRow}>
+        <span className={detailCss.propLabel}>{t('propLastActivity')}</span>
+        <span className={`${detailCss.propControl} ${detailCss.propTime}`}>{lastActivityAt === undefined ? '—' : timeAgo(lastActivityAt)}</span>
+      </div>
+    </section>
+    <section className={detailCss.logSection} aria-label={t('executionLog')}>
+      <div className={detailCss.propHeading}>{t('executionLog')}</div>
+      <ExecutionLog
+        workspaceId={workspaceId}
+        threadRef={threadRef}
+        loadThreadSessions={loadThreadSessions}
+        loadMemberActivity={loadMemberActivity}
+        threadTurnFailures={threadTurnFailures}
+        openMemberSession={openMemberSession}
+        stopSession={stopSession}
+        subscribeChanges={subscribeChanges}
+        members={members}
+        t={t}
+      />
+    </section>
+  </>
+
   // The dialog's rows: the roster plus the writing Human, who is a participant
   // without holding a Message of their own. The Human is matched by id, never
   // assumed to be in the roster: a Workspace projection that serves no Human
@@ -1010,7 +1246,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     || channelMembers.some(status => status.member.memberId === humanStatus.member.memberId)
     ? channelMembers
     : [...channelMembers, humanStatus]
-  return <main className={css.surface} data-team-thread={threadRef}>
+  // One element type in both faces, so crossing the two-lane width never remounts the Thread.
+  return <div role={inLane ? 'region' : 'main'} aria-label={inLane ? crumbText : undefined} className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>
       <header className={channelCss.slimHeader} data-team-slim-header="thread">
         <h1 className={channelCss.slimHidden}>{crumbTitle}</h1>
@@ -1019,7 +1256,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             them off the edge. It shows only while the column is closed. */}
         {sidebarCollapsed && <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} onClick={openSidebar} />}
         <button type="button" className={channelCss.slimCrumb} aria-label={backLabel} title={crumbHint} onClick={backToWorkspace}>
-          <IconChevronLeftOutlineRegular size={14} />
+          {inLane ? <IconCloseOutlineRegular size={14} /> : <IconChevronLeftOutlineRegular size={14} />}
           <span className={channelCss.slimCrumbText}>{crumbText}</span>
         </button>
         {participantOwners.length > 0 && <span className={channelCss.slimParticipants}>
@@ -1031,6 +1268,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             action, not a Task transition, so it leads the group and the Task transitions
             follow it; the group keeps the row's last-child slot either way. */}
         {thread !== undefined && <span className={channelCss.slimActions}>
+          {/* The properties sheet opener serves the sub-lane widths where the
+              sidebar column is hidden; CSS collapses it on the wide page. */}
+          <Button size="sm" variant="outline" className={detailCss.propertiesToggle} onClick={() => { setPropertiesOpen(true) }}>{t('propertiesLabel')}</Button>
           <Button size="sm" variant="outline" onClick={() => { setManagingThreadMembers(true) }}>{t('threadMembers')}</Button>
           {task === undefined
             ? <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
@@ -1049,6 +1289,31 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             })()}
         </span>}
       </header>
+      {task !== undefined && <div className={detailCss.issueHead}>
+        <span className={detailCss.issueNumber} aria-hidden="true">#{resolvedTaskNumber ?? '…'}</span>
+        {editingTitle
+          ? <span className={detailCss.titleEditor}>
+              <input
+                autoFocus
+                className={detailCss.titleInput}
+                aria-label={t('editTitle')}
+                value={titleDraft}
+                disabled={titleSaving || patchPending}
+                onChange={event => { setTitleDraft(event.currentTarget.value) }}
+                onBlur={saveTitleEdit}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') { event.preventDefault(); saveTitleEdit() }
+                  if (event.key === 'Escape') { event.preventDefault(); cancelTitleEdit() }
+                }}
+              />
+              {titleError !== undefined && <span className={detailCss.titleError} role="alert">{titleError}</span>}
+            </span>
+          : <button type="button" className={detailCss.issueTitle} aria-label={t('editTitle')} title={currentTitle === '' ? undefined : currentTitle} onClick={startTitleEdit}>
+              {currentTitle === '' ? <span className={detailCss.titlePlaceholder}>{t('titlePlaceholder')}</span> : currentTitle}
+            </button>}
+      </div>}
+      <TeamThreadDocs workspaceId={workspaceId} home={{ threadRef }} loadDocs={loadDocs} reviewDoc={reviewDoc} changeVersion={docsVersion} t={t}
+        openDoc={summary => { selectDoc(summary.docRef, threadRef, summary.channelRef) }} />
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>
         {risks.map(({ claim, status, label, sentenceKey, reason, full }) => <p className={threadCss.riskRow} key={claim.claimRef}>
@@ -1115,49 +1380,43 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           </ul>
         </Modal>
       })()}
-      {task !== undefined && thread !== undefined && <section className={threadCss.workSection} aria-label={t('claims')}>
-        <DisclosureRow
-          expandOnRowClick
-          expandable
-          open={claimsOpen}
-          onToggle={() => { setClaimsOpen(current => !current) }}
-          icon={<IconChecklistOutlineRegular size={14} />}
-          title={`${t('claims')} · ${taskClaims.length}`}
-        >
-          <div className={threadCss.claimList}>
-            {taskClaims.length === 0 && <p className={threadCss.emptyClaims}>{t('noClaims')}</p>}
-            {taskClaims.map(claim => {
-              const ownerStatus = members.find(status => status.member.memberId === claim.owner)
-              return <article className={`${threadCss.claimRow}${claim.state === 'done' ? ` ${threadCss.claimRowDone}` : ''}`} key={claim.claimRef}>
-                {ownerStatus === undefined ? <span /> : <TeamPresenceDot status={ownerStatus} t={t} />}
-                <strong className={threadCss.claimOwner} title={memberName(claim.owner)}>{memberName(claim.owner)}</strong>
-                <span className={threadCss.claimDirection}>{claim.direction}</span>
-                <small className={threadCss.claimState}>{formatClaimState(claim.state, t)}</small>
-              </article>
-            })}
-          </div>
-        </DisclosureRow>
-      </section>}
     </div>
 
-    <section ref={timeline.ref} onScroll={handleTimelineScroll} className={css.timeline} aria-label={t('timelineLabel')}>
-      <div className={css.timelineContent}>
-        {loading && projection === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p></div>}
-        {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
-        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{renderFactBlocks(olderFacts, undefined, historyFailures)}</section>}
-        {historyHasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
-        {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection}>
-          {renderFactBlocks(currentFactsWithAnchor, unreadBoundary, currentFailures)}
-        </section>}
-        {autoReadExhausted && <div className={css.timelineAction} role="alert">
-          <span>{t('autoReadIncomplete')}</span>
-          <Button size="sm" onClick={() => { setAutoReadExhausted(false); void drainUnread() }} disabled={loading}>{t('retry')}</Button>
-        </div>}
-        {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
-          <button type="button" className={threadCss.newUpdatesJump} onClick={() => { setNewFactsCount(0); timeline.scrollToBottom() }}>{t('newUpdatesJump', { count: newFactsCount })}</button>
-        </div>}
-      </div>
-    </section>
+    <div className={detailCss.bodyRow}>
+      <section ref={timeline.ref} onScroll={handleTimelineScroll} className={css.timeline} aria-label={t('timelineLabel')}>
+        <div className={css.timelineContent}>
+          {loading && projection === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p></div>}
+          {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
+          {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{renderFactBlocks(olderFacts, undefined, historyFailures)}</section>}
+          {historyHasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
+          {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection}>
+            {renderFactBlocks(currentFactsWithAnchor, unreadBoundary, currentFailures)}
+          </section>}
+          {autoReadExhausted && <div className={css.timelineAction} role="alert">
+            <span>{t('autoReadIncomplete')}</span>
+            <Button size="sm" onClick={() => { setAutoReadExhausted(false); void drainUnread() }} disabled={loading}>{t('retry')}</Button>
+          </div>}
+          {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
+            <button type="button" className={threadCss.newUpdatesJump} onClick={() => { setNewFactsCount(0); timeline.scrollToBottom() }}>{t('newUpdatesJump', { count: newFactsCount })}</button>
+          </div>}
+        </div>
+      </section>
+      {/* The Multica issue layout's property column. A Thread rendered inside
+          the two-lane view keeps the lane it had: the sidebar belongs to the
+          full-page Task view, and the sheet opener serves the narrow widths. */}
+      {!inLane && <aside className={detailCss.side} data-team-thread-side>
+        {sidebarBody}
+      </aside>}
+    </div>
+    {thread !== undefined && <Modal
+      open={propertiesOpen}
+      onClose={() => { setPropertiesOpen(false) }}
+      title={t('propertiesLabel')}
+      closeLabel={t('close')}
+      contentClassName={threadCss.modalBody!}
+    >
+      {sidebarBody}
+    </Modal>}
 
     {projection !== undefined && thread !== undefined ? (
       task?.resolution === 'closed'
@@ -1197,5 +1456,5 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       t={t}
     />
     ) : <div />}
-  </main>
+  </div>
 }

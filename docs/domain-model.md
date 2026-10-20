@@ -28,6 +28,12 @@ A Member created and managed by Team. Created inside one Workspace (its creation
 
 Durable capability intent on the Member entity (optional `capabilities` field: `tools.allow` and `skills.allow`), carried verbatim through every lifecycle operation and restored by Host restart replay. Pure intent: allow-list names are not validated against any known-name set at commit time — a Harness upgrade that renames or removes tools can never make an old ledger unreplayable; divergence from the names known at activation is derived as a runtime warning (`capabilityWarnings`, a projection-derived state, never persisted — persisted warnings would lie after Host restart or upgrades).
 
+## Member Role
+
+An optional `role` field (`architect`, `leader`, `worker`, or `orchestrator`) on the Member entity. It is a label plus a fixed prompt section in the Member's identity block, never a routing rule: unassigned Tasks stay unassigned, and the Orchestrator only reports. `addMember` sets it, `updateMember` changes it, and `null` clears it. A role outside the four is refused at commit. It rides `team/member-added` and `team/member-updated`, so an older ledger without it replays unchanged and renders the identity block it had before.
+
+The Orchestrator's "only observes and reports" is prompt guidance: the Host does not stop an Orchestrator from calling Team tools.
+
 ## Workspace
 
 A project and shared working directory. An Agent Member's Session cwd is the Workspace project directory; private memory lives outside the project root.
@@ -150,3 +156,25 @@ The desired external state of each durable Member state, in one table. Every lif
 | `inactive` | none | archived | deleted |
 
 Each step derives from the durable state alone, so repeating it after a crash or a failed call runs exactly the owed steps and never a second durable write.
+
+## Team Document
+
+A Markdown document an Agent Member writes in one Thread and submits for the Human's review — the place for a plan, spec, or proposal the Human should approve before work starts. A Doc is an ordered list of sections (`s1`, `s2`, …); the author creates it with an outline and writes one section per operation.
+
+The Doc revision is the sequence of its latest creation or section write. It fences the next section write, the author's submit, and the Human's verdict, so nothing is written or judged against text the writer did not see. It is separate from the Thread revision.
+
+The Human comments on a selected passage, and an Agent can answer a comment. A Human comment stays pending until the Human's next verdict delivers every pending comment at once: approve, review (changes requested), or cancel. Approved and cancelled are final.
+
+Submit and verdict are Thread replies that carry the Doc fact. The submit notice mentions the Human, so the Doc reaches their Inbox; the verdict notice mentions the author, so the existing mention wake carries it. Section writes and comments change no Thread revision and wake nobody.
+
+Only the author and the Human can write a section; any other Channel member who tries is refused with an error, while commenting and resolving stay open to every Channel member. The Human can also edit a section, fenced by the same Doc revision. Every section write is kept as a version with its writer, so a section's history can be read and an older version written again as a new one; nothing is rewritten in place. When the Human edited a section after the author's last submit, the review verdict names it, so the author reads it again before writing.
+
+A comment thread (a root comment and its replies) can be resolved by the Human or an Agent. A resolved thread is folded away on the page, and a pending Human comment in it is withdrawn, not delivered. A Doc lives in one Thread, and its Channel lists every Doc in it.
+
+A Doc in review shows in its Thread and Channel as a plan card with Approve and Revise. Approve gives the approve verdict at the revision on the card; Revise opens the Doc, where the Human comments and presses Review.
+
+## Decision
+
+A card of 1 to 6 questions an Agent Member asks the Human in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The Human answers every question at once, once.
+
+A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions the Human, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.

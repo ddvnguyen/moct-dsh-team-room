@@ -1,0 +1,168 @@
+/*
+ * The execution log's own surface. Tokens come from the Multica look layer
+ * (`--ml-*`), which the section's root carries via `multicaLook`.
+ *
+ * Derived from multica-x packages/views/issues/components/execution-log-section.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
+ * Copyright Index Labs. Multica License.
+ */
+
+.root {
+  display: grid;
+  font-size: var(--ml-text-label);
+  gap: 2px;
+  line-height: var(--ml-text-label-line);
+}
+
+.empty {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+}
+
+.groupLabel {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: var(--ml-text-micro-line);
+  margin: 6px 0 0;
+  text-transform: uppercase;
+}
+
+.row {
+  align-items: flex-start;
+  border-radius: var(--ml-radius-md);
+  column-gap: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 5px 4px;
+}
+
+.row:hover {
+  background: var(--ml-surface-hover);
+}
+
+.main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.headLine {
+  align-items: baseline;
+  column-gap: 6px;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.handle {
+  color: var(--ml-text);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state {
+  flex: none;
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+}
+
+.state.running { color: var(--ml-status-in-progress); }
+.state.completed { color: var(--ml-status-in-review); }
+.state.failed { color: var(--ml-priority-urgent); }
+.state.cancelled { color: var(--ml-text-tertiary); }
+.state.queued { color: var(--ml-status-in-progress); }
+.state.stopping { color: var(--ml-text-tertiary); }
+
+.elapsed {
+  color: var(--ml-text-tertiary);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.liveLine {
+  align-items: center;
+  color: var(--ml-text-secondary);
+  column-gap: 6px;
+  display: flex;
+  min-width: 0;
+}
+
+/* The pulsing dot stands in for Multica's spinning loader; the host has no
+   spinner primitive, and a moving dot reads the same at this size. */
+.pulse {
+  animation: pulseOpacity 1.2s ease-in-out infinite;
+  background: var(--ml-presence-working);
+  border-radius: 50%;
+  flex: none;
+  height: 6px;
+  width: 6px;
+}
+
+@keyframes pulseOpacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.tool {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step {
+  color: var(--ml-text-tertiary);
+  flex: none;
+  font-size: var(--ml-text-micro);
+  white-space: nowrap;
+}
+
+.metaLine {
+  align-items: baseline;
+  color: var(--ml-text-tertiary);
+  column-gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--ml-text-micro);
+  line-height: var(--ml-text-micro-line);
+  min-width: 0;
+}
+
+.partial {
+  color: var(--ml-priority-high);
+}
+
+.model {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ended {
+  flex: none;
+}
+
+.actions {
+  align-items: center;
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.error {
+  color: var(--ml-priority-urgent);
+  font-size: var(--ml-text-caption);
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.confirmBody {
+  margin: 0;
+}

@@ -2,11 +2,14 @@ import { useSyncExternalStore } from 'react'
 import type { TeamConversationProps } from './slots.ts'
 import { useHumanIdentity } from './human-identity.ts'
 import { TeamChannelPage } from './TeamChannelPage.tsx'
+import { TeamBoardPage } from './board/TeamBoardPage.tsx'
 import { TeamInboxPage } from './TeamInboxPage.tsx'
 import { TeamThreadPage } from './TeamThreadPage.tsx'
+import { TeamDocPage } from './TeamDocPage.tsx'
+import { TeamLanes } from './TeamLanes.tsx'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   // Every seat names and draws the Human from this one projection: the
   // localized fallback stands only until the first profile read lands.
@@ -17,6 +20,13 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
   const humanName = identity.name ?? t('human')
   const workspaces = useWorkspaces(state => state.items)
   const current = workspaces.find(workspace => workspace.workspaceId === navigationState.workspaceId)
+  if (current !== undefined && navigationState.board === true) {
+    // The Board page is a Workspace face: the columns read the Workspace's
+    // whole catalog, so it needs the selected Workspace. Selecting the Board
+    // clears the Channel/Thread faces, and a card pick hands the seat to the
+    // Thread setters like every other face change.
+    return <TeamBoardPage key="board" workspaceId={current.workspaceId} loadBoard={loadBoard} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} createTask={createTask} updateTask={updateTask} changeTask={changeTask} subscribeChanges={subscribeChanges} selectThread={selectThread} t={t} />
+  }
   if (navigationState.inbox === true) {
     // The Inbox page is global: it merges every visible Workspace and needs no
     // selected Workspace. Selecting Inbox clears the Channel/Thread faces, so
@@ -25,11 +35,19 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // names or draws the reader must draw the one identity every seat draws.
     return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
   }
-  if (current !== undefined && navigationState.threadRef !== undefined) {
-    return <TeamThreadPage key={navigationState.threadRef} humanName={humanName} resolveMessageRefs={resolveMessageRefs} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} workspaceId={current.workspaceId} putAttachment={putAttachment} threadRef={navigationState.threadRef} backToWorkspace={backToWorkspace} selectChannel={selectChannel} selectThread={selectThread} resolveTaskRefs={resolveTaskRefs} resolveThreadRefs={resolveThreadRefs} openMemberSession={openMemberSession} openSidebar={openSidebar} sidebarCollapsed={sidebarCollapsed} {...(navigationState.channelRef === undefined ? {} : { channelRef: navigationState.channelRef })} {...(navigationState.taskRef === undefined ? {} : { taskRef: navigationState.taskRef })} {...(navigationState.taskNumber === undefined ? {} : { taskNumber: navigationState.taskNumber })} drafts={drafts} getAttachment={getAttachment} readThread={readThread} loadChannels={loadChannels} loadThreadHistory={loadThreadHistory} threadObservations={threadObservations} threadReplyStats={threadReplyStats} threadTurnFailures={threadTurnFailures} loadTriggerCatalog={loadTriggerCatalog} subscribeChanges={subscribeChanges} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} reply={reply} changeTask={changeTask} promoteThread={promoteThread} changeAttention={changeAttention} t={t} />
+  if (current !== undefined && navigationState.threadRef !== undefined && navigationState.docRef !== undefined) {
+    const { threadRef, channelRef, taskRef, taskNumber } = navigationState
+    return <TeamDocPage key={navigationState.docRef} workspaceId={current.workspaceId} docRef={navigationState.docRef} threadRef={threadRef} humanName={humanName}
+      loadDoc={loadDoc} commentDoc={commentDoc} reviewDoc={reviewDoc} writeDocSection={writeDocSection} resolveDocComment={resolveDocComment} loadDocSectionHistory={loadDocSectionHistory} loadMembers={loadMembers} subscribeChanges={subscribeChanges}
+      backToThread={() => { selectThread(threadRef, channelRef, taskRef, taskNumber) }} sidebarCollapsed={sidebarCollapsed} openSidebar={openSidebar} t={t} />
   }
-  if (current !== undefined && navigationState.channelRef !== undefined) {
-    return <TeamChannelPage key={navigationState.channelRef} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} workspaceId={current.workspaceId} channelRef={navigationState.channelRef} drafts={drafts} putAttachment={putAttachment} getAttachment={getAttachment} loadChannels={loadChannels} loadTriggerCatalog={loadTriggerCatalog} subscribeChanges={subscribeChanges} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} loadInbox={loadInbox} sendMessage={sendMessage} joinChannel={joinChannel} removeChannelMember={removeChannelMember} archiveChannel={archiveChannel} selectThread={selectThread} selectChannel={selectChannel} backToChannels={backToChannels} resolveTaskRefs={resolveTaskRefs} resolveThreadRefs={resolveThreadRefs} openMemberSession={openMemberSession} openSidebar={openSidebar} sidebarCollapsed={sidebarCollapsed} t={t} />
+  if (current !== undefined && (navigationState.threadRef !== undefined || navigationState.channelRef !== undefined)) {
+    // The Channel and its open Thread share one seat: side by side when it is
+    // wide enough, the Thread alone when it is not (see `TeamLanes`).
+    const { channelRef, threadRef } = navigationState
+    return <TeamLanes key={current.workspaceId} closeThread={backToWorkspace} t={t}
+      {...(channelRef === undefined ? {} : { channel: <TeamChannelPage key={channelRef} loadDocs={loadDocs} selectDoc={selectDoc} reviewDoc={reviewDoc} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} workspaceId={current.workspaceId} channelRef={channelRef} drafts={drafts} putAttachment={putAttachment} getAttachment={getAttachment} loadChannels={loadChannels} loadTriggerCatalog={loadTriggerCatalog} subscribeChanges={subscribeChanges} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} loadInbox={loadInbox} sendMessage={sendMessage} joinChannel={joinChannel} removeChannelMember={removeChannelMember} archiveChannel={archiveChannel} selectThread={selectThread} selectChannel={selectChannel} backToChannels={backToChannels} resolveTaskRefs={resolveTaskRefs} resolveThreadRefs={resolveThreadRefs} openMemberSession={openMemberSession} openSidebar={openSidebar} sidebarCollapsed={sidebarCollapsed} {...(navigationState.threadRef === undefined ? {} : { openThreadRef: navigationState.threadRef })} t={t} /> })}
+      {...(threadRef === undefined ? {} : { thread: { threadRef, render: (inLane: boolean) => <TeamThreadPage key={threadRef} loadDocs={loadDocs} selectDoc={selectDoc} reviewDoc={reviewDoc} loadDecisions={loadDecisions} answerDecision={answerDecision} humanName={humanName} resolveMessageRefs={resolveMessageRefs} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} workspaceId={current.workspaceId} putAttachment={putAttachment} threadRef={threadRef} backToWorkspace={backToWorkspace} selectChannel={selectChannel} selectThread={selectThread} resolveTaskRefs={resolveTaskRefs} resolveThreadRefs={resolveThreadRefs} openMemberSession={openMemberSession} openSidebar={openSidebar} sidebarCollapsed={sidebarCollapsed && !inLane} inLane={inLane} {...(navigationState.channelRef === undefined ? {} : { channelRef: navigationState.channelRef })} {...(navigationState.taskRef === undefined ? {} : { taskRef: navigationState.taskRef })} {...(navigationState.taskNumber === undefined ? {} : { taskNumber: navigationState.taskNumber })} drafts={drafts} getAttachment={getAttachment} readThread={readThread} loadChannels={loadChannels} loadThreadHistory={loadThreadHistory} threadObservations={threadObservations} threadReplyStats={threadReplyStats} threadTurnFailures={threadTurnFailures} loadThreadSessions={loadThreadSessions} updateTask={updateTask} stopSession={stopSession} loadTriggerCatalog={loadTriggerCatalog} subscribeChanges={subscribeChanges} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} reply={reply} changeTask={changeTask} promoteThread={promoteThread} changeAttention={changeAttention} t={t} /> } })} />
   }
   const welcome = current === undefined
     ? { eyebrow: t('teamMode'), title: t('team'), body: t('empty') }

@@ -1,0 +1,37 @@
+This product includes software derived from Multica
+(https://github.com/multica-ai/multica), Copyright Index Labs (Hong Kong)
+Limited, licensed under the Multica License (Apache-2.0 with additional
+conditions). The full license text is reproduced in
+licenses/MULTICA-LICENSE.
+
+Derived files carry a header naming the upstream path and the pinned
+multica-x commit they were ported from. UI derived from Multica keeps its
+attribution in Team Settings → About.
+
+Internal use only. Offering a hosted service to third parties, or embedding
+Multica as a component of a commercially distributed product, requires a
+commercial license from Index Labs (Hong Kong) Limited.
+
+Pinned upstream sources
+-----------------------
+Source files: multica-x commit 18fa9f728a9e25f2465df2789631edb2a75442ad.
+Look and feel (packages/ui/styles/tokens.css): last changed upstream at
+e7742b052be2b2340609b9d7dbd32aabcb3e9fb7, which is an ancestor of that commit.
+Advance both together; each derived file names its own upstream path.
+
+Upstream NOTICE (reproduced verbatim, Apache License 2.0 section 4(d))
+----------------------------------------------------------------------
+Multica
+Copyright 2025-2026 Index Labs (Hong Kong) Limited
+
+This product includes software developed at Index Labs (Hong Kong) Limited
+for Multica (https://github.com/multica-ai/multica).
+
+Multica is distributed under the Multica License, which incorporates the
+complete text of the Apache License, Version 2.0 together with additional
+conditions covering hosted or embedded commercial use, branding and
+copyright information displayed by a Multica user interface, and
+attribution for non-interface use. See the LICENSE file for the full text.
+
+This NOTICE file is provided for attribution purposes only and does not
+modify the Multica License.

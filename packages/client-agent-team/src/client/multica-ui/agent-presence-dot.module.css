@@ -1,0 +1,102 @@
+/*
+ * Derived from multica-x packages/views/agents/components/agent-presence-indicator.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
+/* Two dimensions, one quiet line: availability is the dot's colour, workload
+   is the words after the separator. */
+
+.presence {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+
+.availability,
+.workload {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.dot {
+  border-radius: 999px;
+  corner-shape: round;
+  flex: none;
+  height: 6px;
+  width: 6px;
+}
+
+.loading {
+  background: var(--ml-surface-raised);
+  border-radius: 999px;
+  corner-shape: round;
+  display: inline-block;
+  height: 6px;
+  width: 6px;
+}
+
+.compact {
+  align-items: center;
+  display: inline-flex;
+}
+
+.availability > span:not(.dot),
+.workload > span:not(.count) {
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+.separator {
+  color: var(--ml-text-tertiary);
+}
+
+.count {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ml-text-caption-line);
+}
+
+.dotSuccess {
+  background: var(--ml-presence-online);
+}
+
+.dotWarning {
+  background: var(--ml-presence-unstable);
+}
+
+.dotMuted {
+  background: var(--ml-presence-offline);
+}
+
+.dotBrand {
+  background: var(--ml-presence-working);
+}
+
+.textSuccess {
+  color: var(--ml-presence-online);
+}
+
+.textWarning {
+  color: var(--ml-presence-unstable);
+}
+
+.textMuted {
+  color: var(--ml-text-tertiary);
+}
+
+.textBrand {
+  color: var(--ml-presence-working);
+}
+
+.srOnly {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}

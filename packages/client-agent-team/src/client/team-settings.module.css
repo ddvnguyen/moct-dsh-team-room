@@ -17,6 +17,8 @@
 /* The rail's Team Settings page reuses the settings column in the main seat,
  * so it takes the shipped page gutter the settings shell would have given it. */
 .page {
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   width: 100%;
   margin: 0 auto;
@@ -45,6 +47,15 @@
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* License attribution required by the Multica License. Deliberately quiet:
+   it is a legal line, not a section of the settings page. */
+.about {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary));
 }
 
 .rows {

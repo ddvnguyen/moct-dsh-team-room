@@ -92,6 +92,9 @@ export interface AgentTeamMemberCapabilities {
   readonly skills?: { readonly allow?: readonly string[] } | undefined
 }
 
+/** Team role label; a prompt and display fact, never a routing rule. */
+export type AgentTeamMemberRole = 'architect' | 'leader' | 'worker' | 'orchestrator'
+
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
   readonly memberId: AgentTeamMemberId
@@ -104,6 +107,11 @@ export interface AgentTeamAgentMember {
   readonly model?: AgentTeamModelSelection | undefined
   /** Durable capability intent; see AgentTeamMemberCapabilities. */
   readonly capabilities?: AgentTeamMemberCapabilities | undefined
+  /**
+   * Role label shown in the UI and rendered as a prompt section. Absent means
+   * no role: no pill and no role section. It never routes work automatically.
+   */
+  readonly role?: AgentTeamMemberRole | undefined
   /**
    * Concurrent instances (slots) this seat may run, one Session each; Threads
    * bind to a slot (multi-instance contract v2). An integer from 1 to 5;
@@ -341,7 +349,24 @@ export interface AgentTeamTask {
   readonly threadRef: AgentTeamThreadRef
   readonly status: 'todo' | 'in_progress' | 'in_review' | 'done' | 'closed'
   readonly resolution: 'open' | 'accepted' | 'closed'
+  /**
+   * Board title. Absent on Tasks created before the board existed; readers fall
+   * back to the first line of the opening Message.
+   */
+  readonly title?: string | undefined
+  /** Board priority; absent reads as `none`, so old ledgers replay unchanged. */
+  readonly priority?: AgentTeamTaskPriority | undefined
+  /**
+   * The Member the Human assigned, independent of Claims. Claims still derive
+   * `in_progress`/`in_review`; assigning wakes the Member and makes it follow.
+   */
+  readonly assignee?: AgentTeamMemberId | null | undefined
+  /** Fractional order within a status column; absent reads as 0. */
+  readonly position?: number | undefined
 }
+
+/** Board priority of one Task. */
+export type AgentTeamTaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none'
 
 /** Current projection of one collaboration Thread. */
 export interface AgentTeamThread {
@@ -431,7 +456,9 @@ export interface AgentTeamClaimActivity extends AgentTeamActivityBase {
 }
 
 export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
-  readonly kind: 'promote' | 'accept' | 'close' | 'reopen'
+  readonly kind: 'promote' | 'assign' | 'accept' | 'close' | 'reopen'
+  /** The Member a Human assigned the Task to; present exactly when `kind` is `assign`. */
+  readonly assignee?: AgentTeamMemberId | undefined
   /** Claims atomically released by close; absent for other Task transitions. */
   readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
   /** Active claims the Human acceptance completed alongside the Task; absent when none were active. */
@@ -498,3 +525,132 @@ export interface AgentTeamStoredThreadReadFact {
   readonly direct: boolean
 }
 
+
+/** Stable identifier of one Team Document. */
+export type AgentTeamDocRef = Branded<'AgentTeamDocRef'>
+
+/** Stable identifier of one comment on a Team Document. */
+export type AgentTeamDocCommentRef = Branded<'AgentTeamDocCommentRef'>
+
+/**
+ * Identity of one Team Document: a Member-written Markdown document that lives
+ * in one Thread. Its sections, comments and review state are separate facts.
+ */
+export interface AgentTeamDoc {
+  readonly docRef: AgentTeamDocRef
+  readonly channelRef: AgentTeamChannelRef
+  /** The Thread the Doc belongs to; its submit and review notices are Messages there. */
+  readonly threadRef: AgentTeamThreadRef
+  /** The Member that created the Doc; the Human's verdict is delivered to it. */
+  readonly author: AgentTeamMemberId
+  readonly title: string
+  readonly createdAtSequence: number
+}
+
+/** One section of a Team Document. A Doc is the ordered list of its sections. */
+export interface AgentTeamDocSection {
+  /** Stable within its Doc: `s1`, `s2`, … in the order sections were first written. */
+  readonly sectionId: string
+  readonly heading: string
+  /** May be empty while the section is only an outline heading. */
+  readonly markdown: string
+}
+
+/** One comment anchored to a quoted passage of one section. */
+export interface AgentTeamDocComment {
+  readonly commentRef: AgentTeamDocCommentRef
+  readonly docRef: AgentTeamDocRef
+  readonly sectionId: string
+  /** The passage the comment is about, as the commenter selected it; empty for a reply. */
+  readonly quote: string
+  readonly body: string
+  readonly author: AgentTeamMemberId
+  /** The comment this one answers, inside the same Doc. */
+  readonly parentCommentRef?: AgentTeamDocCommentRef
+  readonly sequence: number
+}
+
+/**
+ * Review state of one Team Document. `approved` and `cancelled` are final; the
+ * other three follow submit and review notices.
+ */
+export type AgentTeamDocStatus = 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'cancelled'
+
+/** The Human's verdict on a Doc: accept it, send the pending comments back for revision, or drop it. */
+export type AgentTeamDocVerdict = 'approve' | 'review' | 'cancel'
+
+/** Stable identifier of one decision card. */
+export type AgentTeamDecisionRef = Branded<'AgentTeamDecisionRef'>
+
+/** One choice on a decision question. */
+export interface AgentTeamDecisionOption {
+  /** One or two words, shown on the button. */
+  readonly label: string
+  /** One sentence: what happens if this option is picked. */
+  readonly description?: string
+}
+
+/**
+ * One question on a decision card. Every question also takes a free-text
+ * answer beside its options, so the Human is never boxed in.
+ */
+export interface AgentTeamDecisionQuestion {
+  readonly prompt: string
+  /** Whether several options may be picked together. */
+  readonly multiple: boolean
+  readonly options: readonly AgentTeamDecisionOption[]
+  /** Option indexes the asking Member will act on while the card is open; at most one for a single-choice question. */
+  readonly recommended: readonly number[]
+}
+
+/** The Human's answer to one question: the picked option indexes, free text, or both. */
+export interface AgentTeamDecisionAnswer {
+  readonly selected: readonly number[]
+  readonly text?: string
+}
+
+/**
+ * The decision event one Thread reply announces. A Member asks (the reply
+ * mentions the Human), the Human answers (the reply mentions the asker, so the
+ * existing mention wake carries the answer), or the asker withdraws a card it
+ * no longer needs.
+ */
+export type AgentTeamDecisionNotice =
+  | {
+    readonly decisionRef: AgentTeamDecisionRef
+    readonly event: 'asked'
+    /** Background the Human needs to answer, shown above the questions. */
+    readonly context?: string
+    readonly questions: readonly AgentTeamDecisionQuestion[]
+  }
+  | {
+    readonly decisionRef: AgentTeamDecisionRef
+    readonly event: 'answered'
+    /** One answer per question, in question order. */
+    readonly answers: readonly AgentTeamDecisionAnswer[]
+  }
+  | {
+    readonly decisionRef: AgentTeamDecisionRef
+    readonly event: 'withdrawn'
+  }
+
+/** Where a decision card stands: open until the Human answers it or its asker withdraws it. */
+export type AgentTeamDecisionStatus = 'open' | 'answered' | 'withdrawn'
+
+/** The Doc event one Thread reply announces; the Message is the notice, this is the fact it carries. */
+export type AgentTeamDocNotice =
+  | {
+    readonly docRef: AgentTeamDocRef
+    readonly event: 'submitted'
+    /** The Doc revision the Member asked the Human to review. */
+    readonly docRevision: number
+  }
+  | {
+    readonly docRef: AgentTeamDocRef
+    readonly event: 'reviewed'
+    /** The Doc revision the Human reviewed. */
+    readonly docRevision: number
+    readonly verdict: AgentTeamDocVerdict
+    /** The Human's pending comments this verdict delivered to the author, oldest first. */
+    readonly commentRefs: readonly AgentTeamDocCommentRef[]
+  }

@@ -7,6 +7,150 @@
   font-size: 13px;
 }
 
+/* The page header: identity on the left, the two actions that matter on the
+   right. It renders on every tab body, because the host's tab strip has no
+   shared chrome above it and Stop must stay reachable from Runs. */
+.detailHeader {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.detailAvatar {
+  display: inline-flex;
+  flex: none;
+  position: relative;
+}
+
+.detailPresence {
+  bottom: -2px;
+  line-height: 0;
+  position: absolute;
+  right: -2px;
+}
+
+.detailIdentity {
+  display: grid;
+  flex: 1 1 200px;
+  gap: 2px;
+  min-width: 0;
+}
+
+.detailName {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailName strong {
+  color: var(--ml-text, inherit);
+  font-size: var(--ml-text-title-sm, 16px);
+  font-weight: 600;
+  line-height: var(--ml-text-title-sm-line, 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailRole {
+  border: 1px solid var(--ml-border, currentColor);
+  border-radius: 999px;
+  color: var(--ml-text-tertiary, inherit);
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 14px;
+  padding: 0 6px;
+  text-transform: uppercase;
+}
+
+.detailFacts {
+  align-items: center;
+  color: var(--ml-text-tertiary, inherit);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--ml-text-caption, 12px);
+  gap: 4px 8px;
+  line-height: var(--ml-text-caption-line, 16px);
+  min-width: 0;
+}
+
+.detailDot {
+  opacity: 0.6;
+}
+
+/* The presence word carries the seat's diagnostic when it has one, and a
+   diagnostic is a sentence: the header clamps it and keeps the whole line in
+   the title, so the row's other facts keep their room. */
+.detailPresenceWord {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailTask {
+  align-items: baseline;
+  background: var(--ml-surface-raised, transparent);
+  border: 0;
+  border-radius: var(--ml-radius-sm, 4px);
+  color: var(--ml-text-secondary, inherit);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.detailTask:hover,
+.detailTask:focus-visible {
+  color: var(--ml-brand, inherit);
+  text-decoration: underline;
+}
+
+.taskNumber {
+  color: var(--ml-text-tertiary, inherit);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.taskTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailTool {
+  background: var(--ml-surface-raised, transparent);
+  border-radius: var(--ml-radius-sm, 4px);
+  color: var(--ml-text-secondary, inherit);
+  max-width: 220px;
+  overflow: hidden;
+  padding: 0 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailActions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+}
+
+@media (max-width: 520px) {
+  .detailActions {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
 .handle {
   font-weight: 600;
 }
@@ -27,7 +171,7 @@
 }
 
 .run {
-  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.08));
+  background: var(--dsw-alias-bg-layer-1);
   border-radius: var(--dsw-radius-md, 10px);
   display: flex;
   flex-direction: column;
@@ -38,12 +182,13 @@
 
 /* A live Session steps one surface up instead of drawing an outline. */
 .run[data-active] {
-  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.14)));
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .runHead {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
   align-items: center;
   gap: 6px;
 }
@@ -55,6 +200,32 @@
   padding: 0;
   color: inherit;
   cursor: pointer;
+}
+
+.open {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.open code {
+  display: inline-flex;
+  min-width: 0;
+  font-family: var(--dsw-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+/* Middle ellipsis: the head gives way first, the tail (the part that tells ids apart) stays. */
+.idHead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.idTail {
+  flex: none;
+  white-space: nowrap;
 }
 
 .open:hover code,
@@ -117,15 +288,15 @@
   line-height: 0;
 }
 
-.stateIcon[data-session-state='active'] { color: var(--dsw-alias-state-success-primary, #2ea043); }
-.stateIcon[data-session-state='inactive'] { color: var(--dsw-alias-label-tertiary, #8b8b8b); }
-.stateIcon[data-session-state='error'] { color: var(--dsw-alias-state-error-primary, #e5484d); }
-.stateIcon[data-session-state='pending'] { color: var(--dsw-alias-state-warning-primary, #d9a400); }
+.stateIcon[data-session-state='active'] { color: var(--dsw-alias-state-success-primary); }
+.stateIcon[data-session-state='inactive'] { color: var(--dsw-alias-label-tertiary); }
+.stateIcon[data-session-state='error'] { color: var(--dsw-alias-state-error-primary); }
+.stateIcon[data-session-state='pending'] { color: var(--dsw-alias-state-warn-primary); }
 
 .threadLink {
   background: none;
   border: 0;
-  color: var(--dsw-alias-brand-primary, inherit);
+  color: var(--dsw-alias-brand-primary);
   cursor: pointer;
   font: inherit;
   padding: 0;
@@ -135,23 +306,6 @@
 .threadLink:hover,
 .threadLink:focus-visible {
   text-decoration: underline;
-}
-
-.more {
-  display: inline-block;
-  margin-left: 6px;
-}
-
-.more summary {
-  cursor: pointer;
-}
-
-.moreList {
-  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.14)));
-  border-radius: var(--dsw-radius-sm, 8px);
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 6px 10px;
 }
 
 .slots {
@@ -169,7 +323,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 10px;
-  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.08));
+  background: var(--dsw-alias-bg-layer-1);
   border-radius: var(--dsw-radius-md, 10px);
   padding: 8px 12px;
   min-width: 0;
@@ -177,7 +331,7 @@
 }
 
 .facts {
-  background: var(--dsw-alias-bg-layer-1, rgba(127, 127, 127, 0.08));
+  background: var(--dsw-alias-bg-layer-1);
   border-radius: var(--dsw-radius-md, 10px);
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -214,4 +368,11 @@
   overflow-y: auto;
   padding: 16px clamp(18px, 3vw, 36px);
   width: 100%;
+}
+
+.configEdit {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
 }

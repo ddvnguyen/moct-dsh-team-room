@@ -125,6 +125,65 @@ describe('Team Member private memory composition', () => {
     await ctx.fiber.dispose()
   })
 
+  it('carries the Member role into the identity block it injects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'team-member-memory-'))
+    roots.push(root)
+    await writeFile(join(root, 'memory.md'), 'own index')
+    const ctx = new Context()
+    const agent = fakeAgent(ctx)
+    ctx.provide('agentTeam', {
+      memberForAgent: (subject: Agent) => subject === agent ? { privateMemoryPath: root, handle: 'Opus', description: '', role: 'architect' } : undefined,
+      workspacesForAgent: () => [],
+      teamMemoryBlockForAgent: async () => undefined,
+    } as never)
+    await mount(ctx)
+    const decision = await preStep(ctx, agent)
+    const text = decision.kind === 'enter' ? (decision.messages[0]?.content[0] as { text: string }).text : ''
+    expect(text).toContain('Team identity: you are @Opus.')
+    expect(text).toContain(memberContext.MEMBER_ROLE_PROMPTS.architect)
+    await ctx.fiber.dispose()
+  })
+
+  it('re-enters the identity block when the Member role changes and not before', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'team-member-memory-'))
+    roots.push(root)
+    await writeFile(join(root, 'memory.md'), 'own index')
+    const ctx = new Context()
+    const entered: string[] = []
+    const agent = fakeAgent(ctx)
+    Object.assign(agent, { session: {
+      surface: { get nodes() { return entered.map((_text, index) => index) } },
+      snapshotEvents: (from: number) => [{ type: 'user/message', data: { source: { kind: 'wowyuarm-agent-team-member-context' }, content: [{ type: 'text', text: entered[from] }] } }],
+    } })
+    let role: 'architect' | 'leader' | undefined = 'architect'
+    ctx.provide('agentTeam', {
+      memberForAgent: (subject: Agent) => subject === agent ? { privateMemoryPath: root, handle: 'Opus', description: '', ...(role === undefined ? {} : { role }) } : undefined,
+      workspacesForAgent: () => [],
+      teamMemoryBlockForAgent: async () => undefined,
+    } as never)
+    await mount(ctx)
+    const texts = (decision: PreStepDecision) => decision.kind === 'enter' ? decision.messages.map(message => (message.content[0] as { text: string }).text) : []
+
+    const first = texts(await preStep(ctx, agent))
+    expect(first.join('\n')).toContain(memberContext.MEMBER_ROLE_PROMPTS.architect)
+    entered.push(...first)
+    // Nothing changed, so nothing is re-sent.
+    expect(texts(await preStep(ctx, agent))).toEqual([])
+
+    role = 'leader'
+    const changed = texts(await preStep(ctx, agent))
+    expect(changed.join('\n')).toContain(memberContext.MEMBER_ROLE_PROMPTS.leader)
+    expect(changed.join('\n')).not.toContain(memberContext.MEMBER_ROLE_PROMPTS.architect)
+    entered.push(...changed)
+
+    // Clearing the role re-sends the plain identity line.
+    role = undefined
+    const cleared = texts(await preStep(ctx, agent))
+    expect(cleared.join('\n')).toContain('Team identity: you are @Opus.')
+    expect(cleared.join('\n')).not.toContain(memberContext.MEMBER_ROLE_PROMPTS.leader)
+    await ctx.fiber.dispose()
+  })
+
   it('keeps the step going with no team-memory block when the Host lookup throws', async () => {
     const root = await mkdtemp(join(tmpdir(), 'team-member-memory-'))
     roots.push(root)

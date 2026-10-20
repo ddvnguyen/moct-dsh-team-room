@@ -1,0 +1,36 @@
+/*
+ * Derived from multica-x packages/views/issues/components/priority-icon.tsx @
+ * 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+ */
+
+/* Priority tones. The bar geometry carries severity; the tone only reinforces
+   it, so an inherited color inside a chip is still readable. */
+
+.icon {
+  flex: none;
+  vertical-align: middle;
+}
+
+.icon.inherit {
+  color: inherit;
+}
+
+.urgent {
+  color: var(--ml-priority-urgent);
+}
+
+.high {
+  color: var(--ml-priority-high);
+}
+
+.medium {
+  color: var(--ml-priority-medium);
+}
+
+.low {
+  color: var(--ml-priority-low);
+}
+
+.none {
+  color: var(--ml-priority-none);
+}

@@ -118,6 +118,22 @@ The Team answers the engine's two questions about that stretch from the Member's
 
 A Member whose preset mounts no compaction engine is told the capability is not available in this scope — never a silent no-op — and a context with nothing safe to replace reports that this context is unchanged.
 
+## `team_doc`
+
+`team_doc` writes a Team Document and asks for the Human's review: `create` (a Thread, a title, an outline of headings), `write` (one section: `sectionId` replaces it, no `sectionId` appends one; only the Doc's author and the Human may write, any other Member is refused), `submit`, `read`, `list` (a Thread's Docs), `comment` (a quoted passage, or a reply through `parentCommentRef`), `resolve` (a comment thread, by its root `commentRef`), and `history` (one section's versions, newest first).
+
+Every result renders the Doc revision, which the next `write` passes as `baseDocRevision` and `submit` passes as `docRevision`. A stale revision writes nothing and says to read the Doc again; it never uses the Thread's next-write token.
+
+`submit` waits up to `waitMinutes` (default 10, at most 10, 0 returns at once) for the verdict and returns it: approved (go ahead), changes requested (read the Doc, answer the delivered comments, revise, submit again), or cancelled (stop). With no verdict by then the author goes ahead with the Doc as submitted and stops before any step no one can undo; the verdict still arrives later as a Thread mention.
+
+`read` renders Doc text and comments as Team data, not instructions, and marks a section the Human edited last. Only the Human gives a verdict, from the Doc page or the plan card; no tool can.
+
+## `team_ask`
+
+`team_ask` asks the Human a decision on a card in a Thread: `ask` (a Thread or Task, optional `context`, and 1 to 6 `questions`, each with a `prompt`, 2 to 4 `options`, `multiple`, and the `recommended` option indexes), `read` (a card and its answer, by `decisionRef`), and `withdraw` (an open card the asker no longer needs).
+
+`ask` posts the card, then waits up to `waitMinutes` (default 10, at most 10) for the answer, ending early when the call is cancelled. An answer is returned and replaces the recommended options. With no answer the result lists the recommended options to go ahead on, and says to stop before any step no one can undo; the answer still arrives later as a Thread mention. The wait holds no seat lock: it reads the Thread's change stream until the card closes or the time runs out.
+
 ## Team memory: `memory_note`, `memory_search`, `memory_get`
 
 Three Team memory tools sit beside the protocol tools. They read and write the MOCT Team Room backend's typed memory records (`/team/v1/memory`, schema v8): rule, convention, decision, how_to_work, task, and branch, each filed under a home (task, Channel, Team, or expert). Without `MOCT_TEAM_URL` they refuse with `BACKEND_UNAVAILABLE`; a backend without the v8 routes answers `MEMORY_UNSUPPORTED`.

@@ -27,8 +27,8 @@
 /** The panels that belong next to "New task" rather than inside Extensions.
  *  The ids are the ones the owning plugins register with
  *  `sidebar.panellist`: dsh-context owns Context Insights, the Team Room owns
- *  Team Settings. */
-const TOP_PANEL_IDS = ['dsh-context', 'agent-team-settings']
+ *  Team Settings and the Board. */
+const TOP_PANEL_IDS = ['dsh-context', 'agent-team-settings', 'agent-team-board']
 
 /** The key the patched codex-ui reads the top-level panel list from. */
 const TOP_PANELS_KEY = '__dshTopPanels'
@@ -42,6 +42,8 @@ const KEEP_ORDER = [
   '上下文洞察',
   'Team Settings',
   '团队设置',
+  'Board',
+  '看板',
 ]
 
 const INDENT_PX = 28

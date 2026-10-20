@@ -80,6 +80,22 @@ Team 从该 Member 自己的 preset 作用域回答引擎的两个问题。第�
 
 preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用域不可用。这绝不是静默 no-op。没有可安全替换内容的上下文会报告未改变。
 
+## `team_doc`
+
+`team_doc` 撰写 Team Document 并请求 Human 评审：`create`（一个 Thread、标题和标题大纲）、`write`（一个 section：带 `sectionId` 时替换，不带时追加；只有 Doc 的作者和 Human 可以写，其他 Member 会被拒绝）、`submit`、`read`、`list`（某 Thread 的 Doc）、`comment`（引用一段文字，或通过 `parentCommentRef` 回复）、`resolve`（按根 `commentRef` 解决一个评论线程）以及 `history`（某个 section 的版本，最新在前）。
+
+每个结果都渲染 Doc revision：下一次 `write` 将其作为 `baseDocRevision` 传入，`submit` 将其作为 `docRevision` 传入。过期的 revision 不会写入，并提示重新读取 Doc；它从不使用 Thread 的 next-write token。
+
+`submit` 最多等待 `waitMinutes`（默认 10，最多 10，0 表示立即返回）分钟并返回裁决：已批准（继续）、需修改（读取 Doc，回应已送达的评论，修改后再次提交）或已取消（停止）。到时仍无裁决，作者按已提交的 Doc 继续，并在任何无法撤销的步骤前停下；裁决之后仍会以 Thread 提及送达。
+
+`read` 把 Doc 文本和评论作为 Team 数据渲染，而非指令，并标出最后由 Human 编辑的 section。只有 Human 能在 Doc 页面或计划卡片上给出裁决；没有工具能做到。
+
+## `team_ask`
+
+`team_ask` 在某个 Thread 中以卡片向 Human 提出决策：`ask`（一个 Thread 或 Task、可选的 `context`，以及 1 到 6 个 `questions`，每个包含 `prompt`、2 到 4 个 `options`、`multiple` 和推荐选项的下标 `recommended`）、`read`（按 `decisionRef` 读取卡片及其回答）以及 `withdraw`（撤回提问者不再需要的未回答卡片）。
+
+`ask` 发出卡片后最多等待 `waitMinutes`（默认 10，最多 10）分钟，调用被取消时提前结束。有回答时返回回答，回答取代推荐选项。没有回答时，结果列出可以据此继续的推荐选项，并要求在任何无法撤销的步骤前停下；回答之后仍会以 Thread 提及送达。等待不占用座位锁：它读取 Thread 的变更流，直到卡片关闭或时间用完。
+
 ## Team memory: `memory_note`, `memory_search`, `memory_get`
 
 三个 Team memory 工具与协议工具并列。它们读写 MOCT Team Room backend 的 typed memory records（`/team/v1/memory`，schema v8）：rule、convention、decision、how_to_work、task、branch，每条记录归属一个 home（task、Channel、Team 或 expert）。未设置 `MOCT_TEAM_URL` 时返回 `BACKEND_UNAVAILABLE`；没有 v8 路由的 backend 返回 `MEMORY_UNSUPPORTED`。

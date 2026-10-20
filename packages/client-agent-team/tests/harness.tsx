@@ -3,7 +3,7 @@ import type { AgentTeamChangesRequest } from '@ddvnguyen/moct-dsh-team-room/type
 import { afterEach, expect, vi } from 'vitest'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamThreadReplyStat, AgentTeamThreadSessionRuns, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -176,10 +176,14 @@ interface SeededMessage {
 }
 
 export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
+  /** Seed the execution log's per-seat Session runs (contract §4 threadSessions); mutable via `setThreadSessions`. */
+  seedThreadSessions?: readonly AgentTeamThreadSessionRuns[];
   /** Replace the bench roster wholesale; the Thread roster spec needs archived/inactive states. */
   readonly seedRoster?: readonly { readonly memberId: string; readonly workspaceId: string; readonly handle: string; readonly presence?: 'available' | 'working' | 'error' | 'unavailable'; readonly diagnostic?: AgentTeamMemberDiagnostic; readonly state?: 'enabled' | 'inactive' | 'archived' }[];
   /** Seed Channel membership rows: which Members joined which Channel. */
-  readonly seedChannelMembers?: readonly { readonly channelRef: string; readonly memberId: string }[] }) {
+  readonly seedChannelMembers?: readonly { readonly channelRef: string; readonly memberId: string }[];
+  /** Seed board Tasks: rows the `view` catalog carries beside any message-borne Task. */
+  readonly seedBoardTasks?: readonly { readonly taskRef: string; readonly threadRef?: string; readonly channelRef?: string; readonly status: AgentTeamTask['status']; readonly title?: string; readonly priority?: 'urgent' | 'high' | 'medium' | 'low' | 'none'; readonly assignee?: string | null; readonly position?: number; readonly taskNumber: number }[] }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -329,13 +333,42 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     lastActivityAt: seed.occurredAt,
   }))
   let viewClaims: Array<Record<string, unknown>> = []
+  // Board Tasks live beside the message-borne one: mutable, so createTask /
+  // updateTask / changeTask doubles mutate them the way the Host ledger does,
+  // and every `view` read re-derives the catalog from the same rows.
+  let boardTasks: Array<Record<string, unknown>> = (options?.seedBoardTasks ?? []).map(entry => ({
+    taskRef: entry.taskRef, channelRef: entry.channelRef ?? 'channel:engineering',
+    threadRef: entry.threadRef ?? `thread:${entry.taskRef.slice('task:'.length)}`,
+    status: entry.status, resolution: entry.status === 'done' ? 'accepted' : entry.status === 'closed' ? 'closed' : 'open',
+    ...(entry.title === undefined ? {} : { title: entry.title }),
+    ...(entry.priority === undefined ? {} : { priority: entry.priority }),
+    ...(entry.assignee === undefined ? {} : { assignee: entry.assignee }),
+    ...(entry.position === undefined ? {} : { position: entry.position }),
+  }))
+  const boardTaskNumbers = new Map<string, number>((options?.seedBoardTasks ?? []).map(entry => [entry.taskRef, entry.taskNumber]))
+  let boardThreadRevisions = new Map<string, number>((options?.seedBoardTasks ?? []).map(entry => [entry.threadRef ?? `thread:${entry.taskRef.slice('task:'.length)}`, 2]))
+  let boardTaskCounter = (options?.seedBoardTasks ?? []).length
   let viewActivities: Array<Record<string, unknown>> = []
-  const viewChannels = vi.fn(async (request: { threadRef?: string; topLevelOnly?: boolean }) => ({ ok: true, value: {
+  const viewChannels = vi.fn(async (request: { threadRef?: string; topLevelOnly?: boolean }) => {
+  const messageTasks = viewItems.flatMap(item => item.task === undefined ? [] : [item.task])
+  const messageThreads = viewItems.length === 0 ? [] : [viewItems[0]!.thread]
+  const threads = [...messageThreads, ...boardTasks.flatMap(task => {
+    const threadRef = (task as { threadRef: string }).threadRef
+    return messageThreads.some(thread => (thread as { threadRef: string }).threadRef === threadRef)
+      ? [] : [{ threadRef, revision: boardThreadRevisions.get(threadRef) ?? 2 } as Record<string, unknown>]
+  })]
+  return { ok: true, value: {
     humanMemberId: 'member:human', channels, members: memberships,
-    tasks: viewItems.flatMap(item => item.task === undefined ? [] : [item.task]), threads: viewItems.length === 0 ? [] : [viewItems[0]!.thread],
-    taskNumbers: viewItems.flatMap(item => item.task === undefined || item.taskNumber === undefined ? [] : [{ taskRef: (item.task as { taskRef: string }).taskRef, taskNumber: item.taskNumber }]),
+    tasks: [...messageTasks, ...boardTasks], threads,
+    taskNumbers: [...viewItems.flatMap(item => item.task === undefined || item.taskNumber === undefined ? [] : [{ taskRef: (item.task as { taskRef: string }).taskRef, taskNumber: item.taskNumber }]),
+      ...boardTasks.flatMap(task => {
+        const taskRef = (task as { taskRef: string }).taskRef
+        const number = boardTaskNumbers.get(taskRef)
+        return number === undefined ? [] : [{ taskRef, taskNumber: number }]
+      })],
     items: request.threadRef !== undefined || !request.topLevelOnly ? viewItems : viewItems.filter(item => (item.message as { topLevel?: boolean }).topLevel), claims: viewClaims, activities: request.topLevelOnly ? [] : viewActivities, cursor: 0, hasMore: false,
-  } }))
+  }
+  } })
   const createChannel = vi.fn(async (request: AgentTeamCreateChannelRequest) => {
     const channel = { channelRef: 'channel:new', workspaceId: request.workspaceId, name: request.name,
       description: request.description, createdAtSequence: 1 }
@@ -530,17 +563,128 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     viewItems = viewItems.map(item => ({ ...item, task, thread, taskNumber: 1, claimOwners: [] }))
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, activity, task, thread } }
   })
-  const changeTask = vi.fn(async (request: { action: 'accept' | 'close' | 'reopen' }) => {
+  // A Task commit wakes the Channel and Thread scopes (and scope-less waiters)
+  // exactly as the Host's `changeScopesOf` does for claims, resolutions, creates
+  // and field updates: never the Workspace scope. A spec that needs a
+  // workspace-shaped wake must say so with `publishWorkspaceUpdate`.
+  const publishTaskCommit = (channelRef: string, threadRef: string): void => {
+    changeVersion += 1
+    for (const waiter of changeWaiters) {
+      const scope = waiter.request.scope
+      if (scope === undefined || (scope.kind === 'channel' && scope.channelRef === channelRef) || (scope.kind === 'thread' && scope.threadRef === threadRef)) waiter.wake()
+    }
+  }
+  // The next board write answers with a business outcome instead of committing,
+  // the way the Host does for a stale revision or an unread Thread.
+  let nextBoardWriteOutcome: 'stale_revision' | 'unread_required' | undefined
+  const failNextBoardWrite = (kind: 'stale_revision' | 'unread_required'): void => { nextBoardWriteOutcome = kind }
+  const takeBoardWriteOutcome = (threadRef: string, revision: number) => {
+    const kind = nextBoardWriteOutcome
+    nextBoardWriteOutcome = undefined
+    if (kind === undefined) return undefined
+    return { ok: true as const, value: kind === 'stale_revision'
+      ? { kind, threadRef, expectedRevision: revision, revision: revision + 1 }
+      : { kind, threadRef, revision, unreadCount: 1, directCount: 0 } }
+  }
+  /** The next end-of-column position, as the Host assigns it to a new todo Task. */
+  const endOfTodoPosition = (): number => boardTasks.reduce((highest, row) => (row as { status: string }).status === 'todo' ? Math.max(highest, (row as { position?: number }).position ?? 0) : highest, 0) + 1
+  const changeTask = vi.fn(async (request: { taskRef?: string; action: 'accept' | 'close' | 'reopen' }) => {
+    const status = request.action === 'reopen' ? 'todo' : request.action === 'accept' ? 'done' : 'closed'
+    const resolution = request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed'
+    // The board drives this Remote by taskRef; the Thread page drives it by
+    // the open Thread's rows. Either way the double moves the row it names,
+    // or the message-borne Task when no row is named.
+    const boardRow = request.taskRef !== undefined
+      ? boardTasks.find(row => (row as { taskRef: string }).taskRef === request.taskRef)
+      : undefined
+    if (boardRow !== undefined) {
+      const rowThreadRef = (boardRow as { threadRef: string }).threadRef
+      const refused = takeBoardWriteOutcome(rowThreadRef, boardThreadRevisions.get(rowThreadRef) ?? 2)
+      if (refused !== undefined) return refused
+      const revision = (boardThreadRevisions.get(rowThreadRef) ?? 2) + 1
+      boardTasks = boardTasks.map(row => row === boardRow ? { ...row, status, resolution } : row)
+      boardThreadRevisions.set(rowThreadRef, revision)
+      // The map above replaced the row object, so find the updated row by ref.
+      const task = boardTasks.find(row => (row as { taskRef: string }).taskRef === request.taskRef)!
+      const thread = { threadRef: rowThreadRef, taskRef: (task as { taskRef: string }).taskRef, revision }
+      publishTaskCommit((task as { channelRef: string }).channelRef, rowThreadRef)
+      return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: request.taskRef, threadRef: rowThreadRef, actor: 'member:human', kind: request.action, sequence: revision + 10 }, task, thread, claims: viewClaims } }
+    }
     const top = viewItems[0]!
-    const task = { ...(top.task as object),
-      status: request.action === 'reopen' ? 'todo' : request.action === 'accept' ? 'done' : 'closed',
-      resolution: request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed' }
+    const task = { ...(top.task as object), status, resolution }
     const thread = { ...(top.thread as object), revision: (top.thread as { revision: number }).revision + 1 }
     // Accept, close, and reopen all land outside the live statuses, so the
     // Host projects no owners after any of them.
     viewItems = viewItems.map(item => ({ ...item, task, thread, claimOwners: [] }))
     return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
+
+  // Board Remotes (Team Board 4/10). createTask mints the next Task ref and
+  // appends an unassigned row; updateTask patches board fields the way the
+  // ledger projection does; both bump the Thread revision like a commit.
+  const createTask = vi.fn(async (request: { requestId?: string; channelRef: string; title?: string; body: string; priority?: string; assignee?: string | null; position?: number }) => {
+    boardTaskCounter += 1
+    const taskRef = `task:board-${boardTaskCounter}`
+    const threadRef = `thread:board-${boardTaskCounter}`
+    const task = { taskRef, channelRef: request.channelRef, threadRef, status: 'todo', resolution: 'open',
+      ...(request.title === undefined ? {} : { title: request.title }),
+      ...(request.priority === undefined ? {} : { priority: request.priority }),
+      assignee: request.assignee ?? null, position: request.position ?? endOfTodoPosition() }
+    boardTasks = [...boardTasks, task]
+    boardTaskNumbers.set(taskRef, boardTaskCounter)
+    boardThreadRevisions.set(threadRef, 2)
+    publishTaskCommit(request.channelRef, threadRef)
+    const message = { messageRef: `message:board-${boardTaskCounter}`, channelRef: request.channelRef, threadRef, sender: 'member:human', body: request.body, topLevel: true, sequence: 100 + boardTaskCounter, occurredAt: '2026-08-21T10:00:00.000Z' }
+    const thread = { threadRef, taskRef, revision: 2 }
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
+  })
+  const updateTask = vi.fn(async (request: { taskRef?: string; baseRevision?: number; patch: Record<string, unknown> }) => {
+    // The Task detail drives this Remote by patch alone: fold it into the open
+    // Thread's Task the way the ledger projection does.
+    if (request.taskRef === undefined) {
+      const top = viewItems[0]!
+      const task = { ...(top.task as object), ...request.patch } as Record<string, unknown>
+      const thread = { ...(top.thread as object), revision: (top.thread as { revision: number }).revision + 1 }
+      viewItems = viewItems.map(item => ({ ...item, task, thread }))
+      return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, task, thread } }
+    }
+    const existing = boardTasks.find(task => (task as { taskRef: string }).taskRef === request.taskRef) ?? (() => {
+      const fromMessage = viewItems.map(item => item.task).find(task => task !== undefined && (task as { taskRef?: string }).taskRef === request.taskRef)
+      if (fromMessage === undefined) return undefined
+      const row = { ...(fromMessage as Record<string, unknown>) }
+      boardTasks = [...boardTasks, row]
+      return row
+    })()
+    if (existing === undefined) return { ok: false as const, error: { message: 'task missing' } }
+    const existingThreadRef = (existing as { threadRef: string }).threadRef
+    const currentRevision = boardThreadRevisions.get(existingThreadRef) ?? 2
+    const refused = takeBoardWriteOutcome(existingThreadRef, currentRevision)
+    if (refused !== undefined) return refused
+    if (request.baseRevision !== undefined && request.baseRevision !== currentRevision) {
+      return { ok: true as const, value: { kind: 'stale_revision' as const, threadRef: existingThreadRef, expectedRevision: request.baseRevision, revision: currentRevision } }
+    }
+    let patched: Record<string, unknown> = existing
+    boardTasks = boardTasks.map(task => {
+      if (task !== existing) return task
+      patched = { ...task, ...request.patch }
+      return patched
+    })
+    // Field-only edits leave the Thread revision alone, like the Host ledger.
+    const threadRef = existingThreadRef
+    publishTaskCommit((existing as { channelRef: string }).channelRef, threadRef)
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, task: patched, thread: { threadRef, taskRef: (patched as { taskRef: string }).taskRef, revision: currentRevision } } }
+  })
+  /** An Agent's claim commit made elsewhere: the row moves to a live status and only Channel and Thread scopes wake. */
+  const claimBoardTask = (taskRef: string, status: 'in_progress' | 'in_review'): void => {
+    const row = boardTasks.find(entry => (entry as { taskRef: string }).taskRef === taskRef)
+    if (row === undefined) throw new Error(`no board Task ${taskRef}`)
+    const threadRef = (row as { threadRef: string }).threadRef
+    boardTasks = boardTasks.map(entry => entry === row ? { ...entry, status } : entry)
+    boardThreadRevisions.set(threadRef, (boardThreadRevisions.get(threadRef) ?? 2) + 1)
+    publishTaskCommit((row as { channelRef: string }).channelRef, threadRef)
+  }
+  /** Replace the board Task rows and wake every workspace waiter. */
+  const seedBoardTasks = (rows: ReadonlyArray<Record<string, unknown>>): void => { boardTasks = [...rows]; wakeAll() }
   // Each read consumes the queue head as its remainingUnreadCount: the page's
   // auto-drain loop keeps issuing fresh-requestId reads until a zero, so the
   // queue supplies every round the way the Host's bounded batches would.
@@ -600,8 +744,26 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // Mutable, so a test can add a notice and wake the open Thread the way the Host's thread-scope change would.
   let turnFailureRows: AgentTeamThreadTurnFailure[] = [...(options?.seedTurnFailures ?? [])]
   const threadTurnFailures = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: turnFailureRows }))
+  // Per-seat Session runs of the Thread (contract §4 threadSessions); a test
+  // seeds the rows it wants the execution log to show, and `setThreadSessions`
+  // replaces them the way a folded Turn record would, waking the open Thread.
+  let threadSessionRows: readonly AgentTeamThreadSessionRuns[] = [...(options?.seedThreadSessions ?? [])]
+  const threadSessions = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: threadSessionRows }))
+  const setThreadSessions = (rows: readonly AgentTeamThreadSessionRuns[]): void => {
+    threadSessionRows = rows
+    publishThreadUpdate(seedThreadRef)
+  }
   // Reply-link quote context, derived from the seeded record like the Host's
   // ledger lookup: author and first line; unknown refs are omitted.
+  const docs = vi.fn(async (_request: { workspaceId: string; threadRef?: string }) => ({ ok: true as const, value: { docs: [] as unknown[] } }))
+  const doc = vi.fn(async (_request: { workspaceId: string; docRef: string }) => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const commentDoc = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const reviewDoc = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const writeDocSection = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const resolveDocComment = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const docSectionHistory = vi.fn(async () => ({ ok: false as const, error: { message: 'no Doc in this fixture' } }))
+  const decisions = vi.fn(async (_request: { workspaceId: string; threadRef: string }) => ({ ok: true as const, value: { decisions: [] as unknown[] } }))
+  const answerDecision = vi.fn(async () => ({ ok: false as const, error: { message: 'no decision card in this fixture' } }))
   const resolveMessageRefs = vi.fn(async (request: { workspaceId: string; messageRefs: readonly string[] }) => {
     const messages = viewItems.map(item => item.message as { messageRef: string; threadRef: string; sender: string; body: string })
     const resolved = request.messageRefs.flatMap(ref => {
@@ -804,11 +966,13 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // refuses by contract.
   const commandList = vi.fn(async () => ({ ok: true as const, value: [] as const }))
   const skillList = vi.fn(async () => ({ ok: true as const, value: { skills: [] as const } }))
+  // The dsh Session controller's cancel — the Team client's stopSession lands here.
+  const sessionCancel = vi.fn(async (request: { sessionId: string }) => ({ ok: true as const, value: { accepted: true as const } }))
   runtime.remote.provideNamespaces({
-    session: { modelCatalog },
+    session: { modelCatalog, cancel: sessionCancel },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -863,5 +1027,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   const failThreadHistory = (message?: string): void => { threadHistoryFailure = message }
-  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
+  return { runtime, team, view, panelInfo: runtime.panelInfo, selectPanel, sidebarState, toggleSidebar, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, seedBoardTasks, claimBoardTask, failNextBoardWrite, publishTaskCommit, memberActivity, resolveTaskRefs, resolveMessageRefs, publishAgentReply, publishActivity, endActivity, publishPresence, publishWorkspaceUpdate, publishGlobalUpdate, publishThreadUpdate, addTurnFailure, threadTurnFailures, threadSessions, setThreadSessions, sessionCancel, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession, failThreadHistory }
 }

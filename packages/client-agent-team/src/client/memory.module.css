@@ -5,6 +5,11 @@
 .memory {
   display: flex;
   flex-direction: column;
+  /* The Team Settings page is a flex column: the header above stays put and
+   * this section takes what is left (never under 480px, then the page scrolls),
+   * so only the record list below scrolls, in its own bounded container. */
+  flex: 1 0 480px;
+  min-height: 0;
   gap: 12px;
   padding-top: 16px;
   border-top: 1px solid var(--dsw-alias-border-l2);
@@ -162,6 +167,15 @@
 }
 
 @media (max-width: 480px) {
+  /* A phone has no room for a fixed header, the stacked filters and a list of
+   * its own: the page scrolls as one column there instead. */
+  .memory {
+    flex: 0 0 auto;
+  }
+  .records > .list {
+    min-height: 0;
+    overflow-y: visible;
+  }
   .field,
   .field[data-wide] {
     flex: 1 1 100%;
@@ -179,6 +193,32 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.viewArea {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.viewArea > .records {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The filter bar and the Load more row stay put; the list is the scroller. */
+.records > .list {
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow-y: auto;
+}
+
+/* Every other Memory view scrolls as one block under the fixed tab strip. */
+.scrollView {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .list,

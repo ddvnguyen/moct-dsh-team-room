@@ -47,7 +47,7 @@ function fakeRegistry(): {
     getTabs: () => inserted.map(item => ({ id: item.id, label: item.label, order: item.order })),
     subscribe: () => () => {},
     insert: (tab) => {
-      inserted.push({ id: tab.id, label: tab.label, order: tab.order, matchSession: () => false })
+      inserted.push({ id: tab.id, label: tab.label, order: tab.order, matchSession: tab.matchSession ?? (() => false) })
       return () => {
         const at = inserted.findIndex(item => item.id === tab.id)
         if (at >= 0) inserted.splice(at, 1)

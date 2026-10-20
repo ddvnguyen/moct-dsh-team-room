@@ -24,6 +24,10 @@ const UI06_SHOTS = join(BROWSER_ARTIFACTS, 'ui-06')
 const UI07_SHOTS = join(BROWSER_ARTIFACTS, 'ui-07')
 const UI08_SHOTS = join(BROWSER_ARTIFACTS, 'ui-08')
 const UI09_SHOTS = join(BROWSER_ARTIFACTS, 'ui-09')
+const TWO_LANE_SHOTS = join(BROWSER_ARTIFACTS, 'two-lane')
+const BOARD_SHOTS = join(BROWSER_ARTIFACTS, 'board')
+const AGENT_SHOTS = join(BROWSER_ARTIFACTS, 'agent')
+const TEAM_DOC_SHOTS = join(BROWSER_ARTIFACTS, 'team-docs')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -261,6 +265,7 @@ async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await mkdir(UI07_SHOTS, { recursive: true })
   await mkdir(UI08_SHOTS, { recursive: true })
   await mkdir(UI09_SHOTS, { recursive: true })
+  await mkdir(BOARD_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -2866,5 +2871,448 @@ it('configures the jev endpoint from the Team page in real Web', async () => {
   await page.setViewportSize({ width: 1440, height: 960 })
   await settleLayout(page)
 
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * Issue 88: the Channel stays in the main lane while its Thread opens beside
+ * it. Seeded through the Host's own ledger, so the journey starts at the lanes
+ * rather than at Channel creation.
+ */
+it('keeps the Channel beside its open Thread in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'two-lane')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Two Lane')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-lane'
+  await ledger.addMember({ requestId: 'lane-member', actor: human, workspaceId: workspace.id, handle: 'lane', description: 'Answers in the lane', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:two-lane', workspaceId: workspace.id, handle: 'lane', description: 'Answers in the lane', presetId: 'team-member', privateMemoryPath: join(HOME, 'lane'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'lane-channel', actor: human, workspaceId: workspace.id, name: 'lanes', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'lane-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: 'LANE-ROOT-MARKER the Channel should stay in view', asTask: false, recipients: [] })).value
+  const threadRef = opened.thread.threadRef as string
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(([workspaceId, channelRef]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, channelRef }))
+  }, [workspace.id, channel.channelRef])
+  await page.reload()
+  const entry = page.locator(`[data-thread-entry-ref="${threadRef}"] > button`)
+  await entry.waitFor({ timeout: 20_000 })
+  await entry.click()
+
+  // Both lanes, focus inside the Thread lane, and the open row marked.
+  await page.locator(`[data-team-lanes="two"] [data-team-thread="${threadRef}"]`).waitFor()
+  await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-team-lane'))).toBe('thread')
+  expect(await entry.getAttribute('aria-current')).toBe('true')
+  await settleLayout(page)
+  await page.screenshot({ path: join(TWO_LANE_SHOTS, 'two-lanes-desktop.png') })
+
+  // A reload keeps the pair.
+  await page.reload()
+  // The shell may restore its own last Session first; entering Team again must
+  // bring back the same Channel and Thread, not the Channel list.
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  await page.locator(`[data-team-lanes="two"] [data-team-thread="${threadRef}"]`).waitFor({ timeout: 20_000 })
+  await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
+
+  // The split resizes from the keyboard.
+  const separator = page.getByRole('separator', { name: '调整 Thread 宽度' })
+  const before = Number(await separator.getAttribute('aria-valuenow'))
+  await separator.focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect.poll(async () => Number(await separator.getAttribute('aria-valuenow'))).toBe(before + 24)
+
+  // Escape from the lane closes it and hands focus back to the Thread's row.
+  await page.locator('[data-team-lane="thread"]').focus()
+  await page.keyboard.press('Escape')
+  await expect.poll(() => page.locator('[data-team-thread]').count()).toBe(0)
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[data-thread-entry-ref]')?.getAttribute('data-thread-entry-ref'))).toBe(threadRef)
+
+  // A narrow seat shows the Thread alone, with nothing wider than the screen.
+  await entry.click()
+  await page.locator('[data-team-lanes="two"]').waitFor()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator(`[data-team-lanes="one"] [data-team-thread="${threadRef}"]`).waitFor()
+  expect(await page.locator('[data-team-channel]').count()).toBe(0)
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(TWO_LANE_SHOTS, 'thread-alone-390.png') })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.locator('[data-team-lanes="two"] [data-team-channel]').waitFor()
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * Issue 95: a Team Document reviewed in real Web. The Doc is seeded through the
+ * Host's own ledger as its author would write it; the Human then finds it on
+ * the Channel, comments on a passage, edits a section, restores a version from
+ * its history, resolves a thread and asks for changes.
+ */
+it('reviews a Team Document in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-docs')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Docs')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-planner'
+  const author = { kind: 'member', memberId, handle: 'planner' }
+  await ledger.addMember({ requestId: 'docs-member', actor: human, workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:team-docs', workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', privateMemoryPath: join(HOME, 'planner'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'docs-channel', actor: human, workspaceId: workspace.id, name: 'delivery', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'docs-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: '@planner 请写一份 1.2 发布计划，我审批后再动手。', asTask: false, recipients: [memberId] })).value
+  const created = (await ledger.createDoc({ requestId: 'docs-doc', actor: author, workspaceId: workspace.id, threadRef: opened.thread.threadRef,
+    title: '1.2 发布计划', outline: ['目标', '步骤', '风险'] })).value
+  let revision = created.revision
+  for (const [sectionId, heading, markdown] of [
+    ['s1', '目标', '在**周五**发布 1.2，包含 Team Documents 与评论。'],
+    ['s2', '步骤', '1. 冻结 `integration/test-4`\n2. 跑完整测试与浏览器测试\n3. 在 TEST 上验收 30 分钟\n4. 打 tag 并发布'],
+    ['s3', '风险', '- TEST 上的写入卡住问题可能复现\n- 浏览器测试依赖相邻 Harness 构建'],
+  ] as const) {
+    revision = (await ledger.writeDocSection({ requestId: `docs-${sectionId}`, actor: author, workspaceId: workspace.id, docRef: created.doc.docRef,
+      baseDocRevision: revision, sectionId, heading, markdown })).value.revision
+  }
+  await ledger.submitDoc({ requestId: 'docs-submit', actor: author, workspaceId: workspace.id, docRef: created.doc.docRef, docRevision: revision })
+  await ledger.commentDoc({ requestId: 'docs-c1', actor: human, workspaceId: workspace.id, docRef: created.doc.docRef, sectionId: 's1', quote: '周五', body: '能提前到周四吗？' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(([workspaceId, channelRef]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, channelRef }))
+  }, [workspace.id, channel.channelRef])
+  await page.reload()
+
+  // The Channel lists its Doc; the card opens the Doc page.
+  const card = page.locator(`[data-team-channel] [data-team-doc-card="${created.doc.docRef}"]`)
+  await card.waitFor({ timeout: 20_000 })
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'channel-doc-card-desktop.png') })
+  await card.click()
+  await page.getByRole('heading', { name: '目标' }).waitFor()
+  // The open comment's passage is painted, not rewritten.
+  await expect.poll(() => page.evaluate(() => (CSS as unknown as { highlights?: Map<string, { size: number }> }).highlights?.get('team-doc-comment')?.size ?? 0)).toBe(1)
+
+  // Comment on a selected passage; it waits as pending.
+  await page.locator('[data-doc-section="s2"] li').nth(2).evaluate(node => {
+    const range = document.createRange(); range.selectNodeContents(node)
+    const selection = document.getSelection()!; selection.removeAllRanges(); selection.addRange(range)
+  })
+  await page.getByText('针对「在 TEST 上验收 30 分钟」').waitFor()
+  await page.getByRole('textbox', { name: '评论内容' }).fill('验收改成 1 小时。')
+  await page.getByRole('button', { name: '添加评论' }).click()
+  await expect.poll(() => page.locator('[data-team-doc-comment]').count()).toBe(2)
+
+  // Edit a section, then read its history and restore the author's version.
+  await page.getByRole('button', { name: '编辑「风险」' }).click()
+  const editorBody = page.getByRole('textbox', { name: '段落正文（Markdown）' })
+  await editorBody.fill('- 浏览器测试依赖相邻 Harness 构建')
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-section-editor-desktop.png') })
+  await editorBody.press('Control+Enter')
+  await page.getByText('human 编辑过').waitFor()
+  await page.getByRole('button', { name: '「风险」的历史' }).click()
+  const history = page.locator('[data-team-doc-history="s3"]')
+  await expect.poll(() => history.locator('[data-doc-version]').count()).toBe(3)
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-history-desktop.png') })
+  await history.locator('[data-doc-version]').nth(1).getByRole('button', { name: '恢复此版本' }).click()
+  await expect.poll(() => history.locator('[data-doc-version]').count()).toBe(4)
+  await page.locator('[data-doc-section="s3"] [data-doc-section-body]').getByText('TEST 上的写入卡住问题可能复现').waitFor()
+
+  // Resolve the first thread: its pending comment is withdrawn and folded away.
+  await page.locator('[data-team-doc-comment]').first().getByRole('button', { name: '解决' }).click()
+  await page.getByRole('button', { name: '显示已解决（1）' }).waitFor()
+  await page.getByText('「评审」会把 1 条待发评论退回给作者修改。').waitFor()
+
+  // 390: one column, nothing wider than the screen.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-page-390.png') })
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // Review sends the one pending comment and names the section the Human rewrote.
+  await page.getByRole('button', { name: '评审', exact: true }).click()
+  await page.getByText('需修改').first().waitFor()
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'doc-reviewed-desktop.png') })
+  const verdict = ledger.doc(human, { workspaceId: workspace.id, docRef: created.doc.docRef })
+  expect(verdict.status).toBe('changes_requested')
+  expect(verdict.reviews[0].commentRefs).toHaveLength(1)
+  const threadHistory = ledger.threadHistory(human, { workspaceId: workspace.id, threadRef: opened.thread.threadRef })
+  const bodies = threadHistory.facts.flatMap((fact: any) => fact.kind === 'message' ? [fact.message.body as string] : [])
+  expect(bodies.at(-1)).toContain('The Human edited "风险" since your submit')
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+it('answers a decision card and approves a plan in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-decisions')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Decisions')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-planner'
+  const author = { kind: 'member', memberId, handle: 'planner' }
+  await ledger.addMember({ requestId: 'decision-member', actor: human, workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:team-decisions', workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', privateMemoryPath: join(HOME, 'planner-decisions'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'decision-channel', actor: human, workspaceId: workspace.id, name: 'release', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'decision-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: '@planner 准备 1.2 发布，先问清楚再写计划。', asTask: false, recipients: [memberId] })).value
+  const threadRef = opened.thread.threadRef
+  const asked = (await ledger.askDecision({ requestId: 'decision-ask', actor: author, workspaceId: workspace.id, threadRef,
+    context: '发布前需要你定两件事，之后我写计划。',
+    questions: [
+      { prompt: '1.2 哪天发布？', multiple: false, options: [{ label: '周四', description: '提前一天，留出周五观察。' }, { label: '周五', description: '按原计划。' }], recommended: [1] },
+      { prompt: '发布后通知谁？', multiple: true, options: [{ label: '客户' }, { label: '运营' }, { label: '销售' }], recommended: [0, 1] },
+    ] })).value
+  const created = (await ledger.createDoc({ requestId: 'decision-doc', actor: author, workspaceId: workspace.id, threadRef, title: '1.2 发布计划', outline: ['目标'] })).value
+  const written = (await ledger.writeDocSection({ requestId: 'decision-doc-s1', actor: author, workspaceId: workspace.id, docRef: created.doc.docRef,
+    baseDocRevision: created.revision, sectionId: 's1', heading: '目标', markdown: '周五发布 1.2。' })).value
+  await ledger.submitDoc({ requestId: 'decision-submit', actor: author, workspaceId: workspace.id, docRef: created.doc.docRef, docRevision: written.revision })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(([workspaceId, channelRef, thread]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, channelRef, threadRef: thread }))
+  }, [workspace.id, channel.channelRef, threadRef])
+  await page.reload()
+
+  const thread = page.locator(`[data-team-thread="${threadRef}"]`)
+  const card = thread.locator(`[data-team-decision="${asked.notice.decisionRef}"]`)
+  await card.waitFor({ timeout: 20_000 })
+  const send = card.getByRole('button', { name: '发送' })
+  expect(await send.isDisabled()).toBe(true)
+  await card.getByRole('radio', { name: /周四/ }).check()
+  await card.getByRole('checkbox', { name: /客户/ }).check()
+  await card.getByRole('textbox', { name: '第 2 题的其他回答' }).fill('还有合作方')
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'decision-card-desktop.png') })
+
+  // 390: the card and the plan card fit the screen.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'decision-card-390.png') })
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // The answer is shown once the Host commits it, and it wakes the asker by mention.
+  await send.click()
+  await card.getByText(/human 已回答/).waitFor()
+  expect(ledger.decision(human, { workspaceId: workspace.id, decisionRef: asked.notice.decisionRef })).toMatchObject({
+    status: 'answered', answers: [{ selected: [0] }, { selected: [0], text: '还有合作方' }] })
+  const bodies = ledger.threadHistory(human, { workspaceId: workspace.id, threadRef }).facts.flatMap((fact: any) => fact.kind === 'message' ? [fact.message.body as string] : [])
+  expect(bodies.at(-1)).toContain('@planner Answered')
+
+  // The plan card approves the submitted Doc from the Thread.
+  const plan = thread.locator(`[data-team-plan-card="${created.doc.docRef}"]`)
+  await plan.waitFor()
+  await settleLayout(page)
+  await page.screenshot({ path: join(TEAM_DOC_SHOTS, 'decision-answered-plan-desktop.png') })
+  await plan.getByRole('button', { name: '批准「1.2 发布计划」' }).click()
+  await expect.poll(() => ledger.doc(human, { workspaceId: workspace.id, docRef: created.doc.docRef }).status).toBe('approved')
+  await expect.poll(() => plan.count()).toBe(0)
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * The Board (Team Board 4/10): the create dialog mints an unassigned Task on
+ * the chosen Channel, a commit made outside the page reaches the open board
+ * through the change stream, and a real pointer drag moves the card to Done.
+ * The move lands only through the Host: changeTask commits and the catalog
+ * refetch puts the card in the Done column — no optimistic move happens before
+ * that. The board face is entered through the persisted navigation (the
+ * scaffold has no native-tab registry, so the strip's 看板 tab is covered by
+ * the component specs, not here).
+ */
+it('creates a board task and drags it to Done in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  // The board journey does not walk the shell's connect flow: the Team
+  // workspace is a registry entry the scaffold ctx mints, the Channel comes
+  // from the ledger, and the face is reached through the persisted
+  // navigation — the same restore path a reader who left the page on the
+  // board takes. Seeding `board: true` before the first load hands the seat
+  // straight to the board on that Workspace.
+  const workspacePath = join(scaffold.workspaceCwd, 'board-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Board Journey')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  await ledger.createChannel({ requestId: 'board-channel', actor: human, workspaceId: workspace.id, name: 'delivery', description: '', memberIds: [] })
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(workspaceId => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, board: true }))
+  }, workspace.id)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // Create: the dialog defaults to Unassigned and the first Channel; the Host
+  // commits the Task and the catalog refetch carries the card into 待办.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Board journey task')
+  await dialog.getByLabel('描述').fill('Opened from the board journey')
+  // The submit button lives in the Modal footer, beside the form body.
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Board journey task' })
+  await card.waitFor({ timeout: 20_000 })
+  const todoColumn = board.locator('[data-testid="board-column"][data-status="todo"]')
+  await expect.poll(async () => todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(1)
+  const created = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id })
+    .tasks.find((task: { title?: string }) => task.title === 'Board journey task')
+  expect(created).toMatchObject({ status: 'todo', assignee: null })
+  // The columns fill the seat: a column is as tall as the board, not its 200px minimum.
+  expect((await todoColumn.boundingBox())!.height).toBeGreaterThan(400)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-created.png'), fullPage: true })
+
+  // A commit the page did not make reaches the open board through the change
+  // stream: the Task commit lands in Channel and Thread scopes, which the
+  // board follows through the scope-less stream.
+  const taskThread = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id }).threads
+    .find((thread: { taskRef?: string }) => thread.taskRef === created!.taskRef)!
+  await scaffold.ctx.agentTeam.updateTask({ requestId: 'board-outside-edit' as never, workspaceId: workspace.id, taskRef: created!.taskRef,
+    baseRevision: taskThread.revision, patch: { title: 'Board journey task (renamed elsewhere)' } })
+  await expect.poll(async () => board.locator('[data-testid="board-card"]', { hasText: 'renamed elsewhere' }).count(), { timeout: 20_000 }).toBe(1)
+
+  // Escape closes the create dialog without creating anything.
+  await board.getByTestId('board-new-task').click()
+  await page.getByTestId('board-create-dialog').waitFor()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('board-create-dialog').waitFor({ state: 'detached' })
+
+  // Drag to Done with a real pointer: dnd-kit's MouseSensor needs the
+  // 5px activation distance and the drop resolves through the columns.
+  const doneColumn = board.locator('[data-testid="board-column"][data-status="done"]')
+  const cardBox = await card.boundingBox()
+  const doneBox = await doneColumn.boundingBox()
+  expect(cardBox).not.toBeNull()
+  expect(doneBox).not.toBeNull()
+  const fromX = cardBox!.x + cardBox!.width / 2
+  const fromY = cardBox!.y + 10
+  await page.mouse.move(fromX, fromY)
+  await page.mouse.down()
+  await page.mouse.move(fromX + 12, fromY + 4, { steps: 4 })
+  await page.mouse.move(doneBox!.x + doneBox!.width / 2, doneBox!.y + doneBox!.height / 2, { steps: 24 })
+  await page.mouse.up()
+
+  // The house rule forbids an optimistic move: the card is in Done only
+  // after the Remote commits and the change wake refetches the catalog.
+  await expect.poll(async () =>
+    doneColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count(), { timeout: 20_000 }).toBe(1)
+  await expect.poll(async () =>
+    todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(0)
+  const workspaceId = workspace.id
+  await expect.poll(() =>
+    scaffold.ctx.agentTeam.view({ workspaceId }).tasks.find((task: { taskRef: string }) => task.taskRef === created!.taskRef)?.status,
+  ).toBe('done')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-dropped-done.png'), fullPage: true })
+
+  // 390×844: five columns scroll horizontally inside the seat, no page-level
+  // overflow, and the toolbar stays reachable.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  expect(await board.getByTestId('board-new-task').isVisible()).toBe(true)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+/**
+ * The Agent surfaces (Team Board 6/10): the roster row answers what the Agent
+ * is doing right now, the row opens the Agent's own Session with its Runs tab
+ * beside it, and Stop is gated on a Turn that is actually running.
+ *
+ * The strip has no Agents tab in this scaffold (no native-tab registry), so the
+ * roster is the Team Settings page's own Agents list — exactly where the page
+ * keeps it while the tab is absent.
+ */
+it('opens an Agent from the roster and reads its Runs tab in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The Workspace comes in through the shell's own connect flow, so the Team
+  // page adopts it and its Agents list has a Workspace to show.
+  await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'agent-journey')
+  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  await page.getByRole('button', { name: '添加 Agent' }).click()
+  const dialog = page.getByRole('dialog', { name: '添加 Agent' })
+  await dialog.getByLabel('名称').fill('builder')
+  await dialog.getByLabel('说明').fill('Runs the board work')
+  await dialog.getByLabel('角色').selectOption('worker')
+  await dialog.getByRole('button', { name: '创建 Agent' }).click()
+  await dialog.waitFor({ state: 'detached' })
+
+  // The roster row carries the Agent's handle, its role pill and its instance
+  // load; a row without them is the shell of a list, not the list.
+  const row = page.locator('[data-agent-row]').filter({ hasText: 'builder' })
+  await row.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await row.locator('[data-agent-handle]').textContent()).toBe('builder')
+  await expect.poll(async () => await row.locator('[data-member-role]').count()).toBe(1)
+  await expect.poll(async () => await row.locator('[data-agent-instances]').textContent()).toContain('/')
+  await expect.poll(async () => await row.locator('[data-agent-tokens]').textContent()).toBe('0')
+  // The toolbar filters the roster: the presence filter drops a seat that is
+  // not online.
+  const presenceFilter = page.getByLabel('按在线状态筛选')
+  await presenceFilter.selectOption('offline')
+  await expect.poll(async () => await page.locator('[data-agent-row]').count()).toBe(0)
+  await presenceFilter.selectOption('all')
+  await expect.poll(async () => await page.locator('[data-agent-row]').count()).toBe(1)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-roster.png'), fullPage: true })
+
+  // The row opens the Agent's own Session; the Runs tab is registered beside
+  // the Session's own views and reads the Host's run ledger.
+  await row.locator('button').first().click()
+  // The Agent's own Session opens blank; a blank Session hides the view
+  // strip, so the reader sends it a word first — the same Chat the header's
+  // button opens.
+  const memberComposer = page.locator('[data-composer-input][contenteditable="true"]')
+  await memberComposer.waitFor({ timeout: 30_000 })
+  await memberComposer.click()
+  await memberComposer.fill('开始工作')
+  await memberComposer.press('Enter')
+  const runsTab = page.getByRole('tab', { name: '运行' })
+  await runsTab.waitFor({ timeout: 30_000 })
+  await runsTab.click()
+  await page.locator('[data-team-agent-runs-panel]').waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await page.locator('[data-agent-runs-chart] [role="img"]').count()).toBe(1)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-runs.png'), fullPage: true })
+
+  // Stop is gated on a running Turn: an idle Agent's Stop is disabled, so the
+  // button never cancels a Session that is doing nothing.
+  const stop = page.locator('[data-agent-stop]')
+  await stop.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await stop.isDisabled()).toBe(true)
+
+  // 390×844: the page keeps its width without pushing the roster sideways.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)

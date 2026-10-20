@@ -11,6 +11,9 @@ import type {
   AgentTeamChannelRef,
   AgentTeamClaimRef,
   AgentTeamContextCheckpointRef,
+  AgentTeamDocCommentRef,
+  AgentTeamDecisionRef,
+  AgentTeamDocRef,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamOperation,
@@ -34,6 +37,10 @@ const threadRefSchema = z.string().regex(/^thread:[^:]+$/).transform(value => va
 const claimRefSchema = z.string().regex(/^claim:[^:]+$/).transform(value => value as AgentTeamClaimRef)
 const activityRefSchema = z.string().regex(/^activity:[^:]+$/).transform(value => value as AgentTeamActivityRef)
 const attachmentIdSchema = z.string().min(1).transform(value => value as AgentTeamAttachmentId)
+const docRefSchema = z.string().regex(/^doc:[^:]+$/).transform(value => value as AgentTeamDocRef)
+const docCommentRefSchema = z.string().regex(/^comment:[^:]+$/).transform(value => value as AgentTeamDocCommentRef)
+const docSectionIdSchema = z.string().regex(/^s[1-9][0-9]*$/)
+const decisionRefSchema = z.string().regex(/^decision:[^:]+$/).transform(value => value as AgentTeamDecisionRef)
 
 const actorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
@@ -83,6 +90,8 @@ const memberSchema = z.object({
   model: modelSelectionSchema.optional(),
   // Ledgers written before member capabilities existed omit the field.
   capabilities: memberCapabilitiesSchema.optional(),
+  // Ledgers written before roles existed omit the field.
+  role: z.union([z.literal('architect'), z.literal('leader'), z.literal('worker'), z.literal('orchestrator')]).optional(),
   privateMemoryPath: z.string().min(1),
   state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive'), z.literal('archived')]),
 }).strict()
@@ -150,6 +159,20 @@ const taskSchema = z.object({
   threadRef: threadRefSchema,
   status: z.union([z.literal('todo'), z.literal('in_progress'), z.literal('in_review'), z.literal('done'), z.literal('closed')]),
   resolution: z.union([z.literal('open'), z.literal('accepted'), z.literal('closed')]),
+  // Board fields, optional so every ledger written before the board replays
+  // unchanged. `assignee` is nullable because clearing an assignment is a real
+  // update, distinct from "this old Task never had the field".
+  title: z.string().optional(),
+  priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
+  assignee: memberIdSchema.nullable().optional(),
+  position: z.number().finite().optional(),
+}).strict()
+
+const taskPatchSchema = z.object({
+  title: z.string().optional(),
+  priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
+  assignee: memberIdSchema.nullable().optional(),
+  position: z.number().finite().optional(),
 }).strict()
 
 const threadSchema = z.object({
@@ -199,6 +222,60 @@ const inboxDeltaSchema = z.object({
   }).strict(),
 }).strict()
 
+const docSchema = z.object({
+  docRef: docRefSchema,
+  channelRef: channelRefSchema,
+  threadRef: threadRefSchema,
+  author: memberIdSchema,
+  title: z.string().min(1),
+  createdAtSequence: z.number().int().positive(),
+}).strict()
+
+const docSectionSchema = z.object({
+  sectionId: docSectionIdSchema,
+  heading: z.string().min(1),
+  markdown: z.string(),
+}).strict()
+
+const docCommentSchema = z.object({
+  commentRef: docCommentRefSchema,
+  docRef: docRefSchema,
+  sectionId: docSectionIdSchema,
+  quote: z.string(),
+  body: z.string().min(1),
+  author: memberIdSchema,
+  parentCommentRef: docCommentRefSchema.optional(),
+  sequence: z.number().int().positive(),
+}).strict().transform(omitUndefined)
+
+const decisionQuestionSchema = z.object({
+  prompt: z.string().min(1),
+  multiple: z.boolean(),
+  options: z.array(z.object({ label: z.string().min(1), description: z.string().min(1).optional() }).strict()),
+  recommended: z.array(z.number().int().nonnegative()),
+}).strict()
+
+const decisionNoticeSchema = z.discriminatedUnion('event', [
+  z.object({ decisionRef: decisionRefSchema, event: z.literal('asked'), context: z.string().min(1).optional(), questions: z.array(decisionQuestionSchema) }).strict(),
+  z.object({
+    decisionRef: decisionRefSchema,
+    event: z.literal('answered'),
+    answers: z.array(z.object({ selected: z.array(z.number().int().nonnegative()), text: z.string().min(1).optional() }).strict()),
+  }).strict(),
+  z.object({ decisionRef: decisionRefSchema, event: z.literal('withdrawn') }).strict(),
+])
+
+const docNoticeSchema = z.discriminatedUnion('event', [
+  z.object({ docRef: docRefSchema, event: z.literal('submitted'), docRevision: z.number().int().positive() }).strict(),
+  z.object({
+    docRef: docRefSchema,
+    event: z.literal('reviewed'),
+    docRevision: z.number().int().positive(),
+    verdict: z.enum(['approve', 'review', 'cancel']),
+    commentRefs: z.array(docCommentRefSchema),
+  }).strict(),
+])
+
 const claimSchema = z.object({
   claimRef: claimRefSchema,
   taskRef: taskRefSchema,
@@ -225,7 +302,8 @@ const claimActivitySchema = z.object({
 
 const taskActivitySchema = z.object({
   ...activityBase,
-  kind: z.union([z.literal('promote'), z.literal('accept'), z.literal('close'), z.literal('reopen')]),
+  kind: z.union([z.literal('promote'), z.literal('assign'), z.literal('accept'), z.literal('close'), z.literal('reopen')]),
+  assignee: memberIdSchema.optional(),
   releasedClaimRefs: z.array(claimRefSchema).min(1).optional(),
   completedClaimRefs: z.array(claimRefSchema).min(1).optional(),
   acceptedClaimRefs: z.array(claimRefSchema).optional(),
@@ -473,6 +551,10 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       task: taskSchema.optional(),
       thread: threadSchema,
       inbox: inboxDeltaSchema,
+      // Optional and forward-only: every reply recorded before Team Documents omits it.
+      doc: docNoticeSchema.optional(),
+      // Optional and forward-only: every reply recorded before decision cards omits it.
+      decision: decisionNoticeSchema.optional(),
     }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
@@ -504,6 +586,33 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       claims: z.array(claimSchema),
       inbox: inboxDeltaSchema,
     }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/task-created'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      mentions: z.array(memberIdSchema),
+      message: messageSchema,
+      task: taskSchema,
+      thread: threadSchema,
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/task-updated'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      baseRevision: z.number().int().positive(),
+      patch: taskPatchSchema,
+      activity: taskActivitySchema.optional(),
+      task: taskSchema,
+      thread: threadSchema,
+      inbox: inboxDeltaSchema,
+    }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
     ...operationBase,
@@ -629,6 +738,49 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       senderMemberId: memberIdSchema,
       recipientMemberId: memberIdSchema,
       body: z.string().min(1),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-created'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      doc: docSchema,
+      sections: z.array(docSectionSchema),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-section-written'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      docRef: docRefSchema,
+      threadRef: threadRefSchema,
+      baseDocRevision: z.number().int().positive(),
+      section: docSectionSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-comment-added'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      comment: docCommentSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/doc-comment-resolved'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      docRef: docRefSchema,
+      commentRef: docCommentRefSchema,
     }).strict(),
   }).strict(),
 ])

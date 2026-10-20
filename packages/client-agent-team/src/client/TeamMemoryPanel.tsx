@@ -98,11 +98,15 @@ export function TeamMemoryPanel({ workspaceId, memory, loadMembers, t }: TeamMem
         <div className={css.views} role="tablist">
           {views.map(([entry, label]) => <button key={entry} type="button" role="tab" aria-selected={view === entry} className={css.viewTab} onClick={() => setView(entry)}>{label}</button>)}
         </div>
-        {view === 'records' && <MemoryRecords key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
-        {view === 'tasks' && <MemoryTaskPicture key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
-        {view === 'feed' && <MemoryRuleFeed key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
-        {view === 'usage' && <MemoryUsage key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
-        {view === 'settings' && <MemorySettings key={workspaceId} workspaceId={workspaceId} memory={memory} loadMembers={loadMembers} onOutcome={onOutcome} t={t} />}
+        <div className={css.viewArea}>
+          {view === 'records' && <MemoryRecords key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
+          {view !== 'records' && <div className={css.scrollView} data-memory-scroll>
+            {view === 'tasks' && <MemoryTaskPicture key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
+            {view === 'feed' && <MemoryRuleFeed key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
+            {view === 'usage' && <MemoryUsage key={workspaceId} workspaceId={workspaceId} memory={memory} onOutcome={onOutcome} t={t} />}
+            {view === 'settings' && <MemorySettings key={workspaceId} workspaceId={workspaceId} memory={memory} loadMembers={loadMembers} onOutcome={onOutcome} t={t} />}
+          </div>}
+        </div>
       </>}
   </section>
 }

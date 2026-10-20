@@ -194,6 +194,7 @@
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
+.entryRowOpen { color: var(--dsw-alias-label-primary); font-weight: 600; }
 .entryArrow {
   align-items: center;
   display: inline-flex;

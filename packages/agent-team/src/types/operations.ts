@@ -9,6 +9,13 @@ import type {
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimsReleasedActivity,
+  AgentTeamDoc,
+  AgentTeamDocComment,
+  AgentTeamDecisionNotice,
+  AgentTeamDocNotice,
+  AgentTeamDocRef,
+  AgentTeamDocCommentRef,
+  AgentTeamDocSection,
   AgentTeamInboxDelta,
   AgentTeamMemberId,
   AgentTeamMessage,
@@ -17,6 +24,7 @@ import type {
   AgentTeamStoredThreadReadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
+  AgentTeamTaskPriority,
   AgentTeamTaskRef,
   AgentTeamThread,
   AgentTeamThreadAttention,
@@ -276,7 +284,12 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   }
 }
 
-/** Durable existing-Thread reply and any invitation/direct-mention facts. */
+/**
+ * Durable existing-Thread reply and any invitation/direct-mention facts. A
+ * reply that announces a Team Document submit or review carries that fact in
+ * `doc`, and one that asks, answers or withdraws a decision card carries it in
+ * `decision`: the Message is the public notice and its mention is the wake.
+ */
 export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/thread-replied'
   readonly data: {
@@ -287,6 +300,10 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
     readonly task?: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta
+    /** Absent on every ordinary reply, including every reply recorded before Team Documents. */
+    readonly doc?: AgentTeamDocNotice
+    /** Absent on every ordinary reply, including every reply recorded before decision cards. */
+    readonly decision?: AgentTeamDecisionNotice
   }
 }
 
@@ -602,6 +619,100 @@ export interface AgentTeamDmSentOperation extends AgentTeamOperationBase {
   }
 }
 
+/**
+ * Durable creation of one Team Document in a Thread, with its outline. It does
+ * not revise the Thread: the Doc's own revision fences later section writes.
+ */
+export interface AgentTeamDocCreatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-created'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly doc: AgentTeamDoc
+    /** The outline: one section per heading, in order, possibly with empty bodies. */
+    readonly sections: readonly AgentTeamDocSection[]
+  }
+}
+
+/** Durable write of one Doc section: replaces the section with the same id, or appends a new one. */
+export interface AgentTeamDocSectionWrittenOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-section-written'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly docRef: AgentTeamDocRef
+    /** The Doc's Thread, so the write's change scope needs no projection lookup. */
+    readonly threadRef: AgentTeamThreadRef
+    /** The Doc revision the writer read; the write is refused unless it is still current. */
+    readonly baseDocRevision: number
+    readonly section: AgentTeamDocSection
+  }
+}
+
+/**
+ * Durable comment on one Doc passage. A comment wakes nobody: the Human's
+ * comments wait as pending until a review verdict delivers them together.
+ */
+export interface AgentTeamDocCommentAddedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-comment-added'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    /** The Doc's Thread, so the comment's change scope needs no projection lookup. */
+    readonly threadRef: AgentTeamThreadRef
+    readonly comment: AgentTeamDocComment
+  }
+}
+
+/**
+ * Durable close of one comment thread: its root comment, with every reply under
+ * it. A resolved Human comment that no review delivered yet is withdrawn, so
+ * the next verdict no longer carries it.
+ */
+export interface AgentTeamDocCommentResolvedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/doc-comment-resolved'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    /** The Doc's Thread, so the change scope needs no projection lookup. */
+    readonly threadRef: AgentTeamThreadRef
+    readonly docRef: AgentTeamDocRef
+    readonly commentRef: AgentTeamDocCommentRef
+  }
+}
+
+/** Durable Human Task creation: the opening Message plus the Task overlay. */
+export interface AgentTeamTaskCreatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/task-created'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly mentions: readonly AgentTeamMemberId[]
+    readonly message: AgentTeamMessage
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
+/** Fields a Human may change on a Task without moving its status. */
+export interface AgentTeamTaskPatch {
+  readonly title?: string
+  readonly priority?: AgentTeamTaskPriority
+  readonly assignee?: AgentTeamMemberId | null
+  readonly position?: number
+}
+
+/** Durable Human Task field update; it does not revise the Thread's Messages. */
+export interface AgentTeamTaskUpdatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/task-updated'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly baseRevision: number
+    readonly patch: AgentTeamTaskPatch
+    /** The public `assign` Activity, present exactly when the patch moved the Task to a different Member. */
+    readonly activity?: AgentTeamTaskActivity
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
 /** Closed union of durable Agent Team operations. */
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
@@ -633,8 +744,40 @@ export type AgentTeamOperation =
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
   | AgentTeamTaskChangedOperation
+  | AgentTeamTaskCreatedOperation
+  | AgentTeamTaskUpdatedOperation
   | AgentTeamThreadAttentionChangedOperation
   | AgentTeamThreadReadOperation
   | AgentTeamMemberRemovedOperation
   | AgentTeamDmSentOperation
+  | AgentTeamDocCreatedOperation
+  | AgentTeamDocSectionWrittenOperation
+  | AgentTeamDocCommentAddedOperation
+  | AgentTeamDocCommentResolvedOperation
 
+/**
+ * Why a delivery took the cold fallback (task-16, ruling 3472: one try per Turn, then the
+ * Turn fails). The cause rides this field and a log line, never the ledger op, because the
+ * `thread.session.bind` data object is `.strict()` with a closed reason enum.
+ */
+export interface AgentTeamColdFallback {
+  readonly cause: 'no-handle' | 'cache-cold' | 'resume-failed' | 'stale-binding'
+  /** Whether the warm resume was attempted before the fallback was taken. */
+  readonly triedWarm: boolean
+}
+
+/** `resumeMemberSession` result: the Session the Member now runs, plus any fallback taken. */
+export interface AgentTeamResumeMemberSessionResult {
+  readonly sessionId: SessionId
+  readonly cache: 'warm' | 'cold'
+  /** `not-resumed`: the Member had no live Session, so nothing was resumed or seeded. */
+  readonly action: 'resumed' | 'seeded-new' | 'not-resumed'
+  /** Present only when this delivery took the cold fallback instead of the warm path. */
+  readonly coldFallback?: AgentTeamColdFallback
+}
+
+/** `forkMemberSession` result: the fresh Session that now carries the Thread, and its instance slot. */
+export interface AgentTeamForkMemberSessionResult {
+  readonly sessionId: SessionId
+  readonly slot: number
+}

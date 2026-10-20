@@ -20,7 +20,7 @@ This document is the procedure for publishing a version of `@ddvnguyen/moct-dsh-
    - Advance these spots only in the pass that publishes the version they name.
 4. **Sweep the prose for statements this release falsifies.** Grep the maintained documents for sentences conditioned on the release *not* having happened — `latest` is `<previous version>`, a capability described as unpublished, a peer range described as pending, a warm-line pin pairing an older DSH line with the last bundle release that still supports it. Correcting a document's current-state claim belongs in the release commit; rewriting shipped history does not (§7).
 5. **Confirm the working tree carries no uncommitted build input.** `prepack` is `npm run build` and `packages/*/lib/**` is inside the published `files` allowlist, so an uncommitted `src/` edit ships in the tarball. Untracked files outside the allowlist (`scripts/`, `.scratch/`) cannot ship and do not block a release. Never stash or revert another member's work to clear the tree — establish whose it is first.
-6. **Know what CI will and will not do.** The release commit's own run must be green on **both lanes** before tagging (§5). A documentation-only push produces no run at all: `ci.yml` ignores `**.md`, `docs/**`, and `assets/**`, so its evidence is `git diff --check`, link resolution, and a read-back from the remote.
+6. **Know what CI will and will not do.** The release commit's own run must be green on the **linux lane** before tagging (§5). A documentation-only push produces no run at all: `ci.yml` ignores `**.md`, `docs/**`, and `assets/**`, so its evidence is `git diff --check`, link resolution, and a read-back from the remote.
 
 ## 3. Check ladder
 
@@ -68,7 +68,7 @@ git push --dry-run origin master            # fence: this must list exactly mast
 git push origin master
 ```
 
-Wait for this run to be green on both lanes (§2.6) before tagging:
+Wait for this run to be green on the linux lane (§2.6) before tagging:
 
 ```sh
 git tag vX.Y.Z

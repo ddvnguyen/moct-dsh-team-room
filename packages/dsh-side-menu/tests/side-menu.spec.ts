@@ -94,7 +94,7 @@ describe('dsh-side-menu', () => {
     const { stop } = mount(MENU)
     const store = (globalThis as unknown as Record<string, { ids: Set<string> }>).__dshTopPanels
     expect(store).toBeDefined()
-    expect([...store!.ids].sort()).toEqual(['agent-team-settings', 'dsh-context'])
+    expect([...store!.ids].sort()).toEqual(['agent-team-board', 'agent-team-settings', 'dsh-context'])
     stop()
   })
 

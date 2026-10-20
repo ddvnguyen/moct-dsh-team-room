@@ -2,7 +2,7 @@
   "name": "@ddvnguyen/dsh-side-menu",
   "displayName": "DSH Side Menu",
   "description": "Reorganizes the Codex-style sidebar: moves most entries into the Extensions group and keeps only New Tasks, Team Settings, and Context Insights as top-level.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": "ddvnguyen",
   "keywords": ["dsh-plugin", "deepseek-harness", "codex-ui", "sidebar"],
   "type": "module",

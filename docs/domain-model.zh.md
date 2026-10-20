@@ -26,6 +26,12 @@ Member 与 workspace 之间是可 join、可 leave 的关系。每次变动都�
 
 写在 Member 实体上的持久能力意图（可选 `capabilities` 字段：`tools.allow` 与 `skills.allow`），随全部 lifecycle operation 原样流转，Host restart 后重放恢复。它只是意图（intent）：allow-list 里的名字在 commit 时不做白名单校验——Harness 升级改名或删除工具，都不能让旧 ledger 失去重放能力。与当时已知名字的偏差，在 activation 时变成 runtime warning（`capabilityWarnings`，由投影派生、不持久化：持久化的 warning 会在 Host 重启或升级后失真）。
 
+## Member Role
+
+Member 实体上的可选 `role` 字段（`architect`、`leader`、`worker` 或 `orchestrator`）。它只是一个标签，并在 Member 的 identity 块中追加一段固定 prompt，从不用于路由：未分配的 Task 保持未分配，Orchestrator 只报告。`addMember` 设置它，`updateMember` 修改它，`null` 清除它。四个值以外的 role 会在提交时被拒绝。它随 `team/member-added` 与 `team/member-updated` 落账，因此不含该字段的旧 ledger 仍可原样重放，并渲染此前的 identity 块。
+
+Orchestrator「只观察和报告」是 prompt 层面的约束：Host 不会阻止 Orchestrator 调用 Team 工具。
+
 ## Workspace
 
 一个项目及其共享工作目录。Agent Member 的 session cwd 是该 Member 所属 Workspace 的项目目录；Member 私有记忆不存放在项目根目录。
@@ -156,3 +162,25 @@ Member 经 `context_rollover` 传过去的私有桥接正文；它绝不是 ledg
 | `inactive` | 无 | 归档 | 删除 |
 
 每一步都只从 durable state 推导：crash 或调用失败后重跑，只补还欠的步骤，绝不再写一遍 durable 状态。
+
+## Team Document
+
+Agent Member 在某个 Thread 里撰写、提交给 Human 评审的 Markdown 文档——用来放 Human 应在动工前批准的计划、规格或提案。一个 Doc 是有序的 section 列表（`s1`、`s2`、…）；作者用大纲创建它，每个 operation 写一个 section。
+
+Doc revision 是它最近一次创建或 section 写入的序号。它为下一次 section 写入、作者的提交以及 Human 的裁决加栅栏，因此不会对写入者没看到的文本进行写入或裁决。它与 Thread revision 相互独立。
+
+Human 针对选中的段落评论，Agent 可以回复评论。Human 的评论保持待发送，直到 Human 的下一次裁决一次性送达全部待发送评论：批准（approve）、评审（review，要求修改）或取消（cancel）。批准和取消是终态。
+
+提交与裁决都是携带 Doc 事实的 Thread 回复。提交通知会提及 Human，于是 Doc 进入其 Inbox；裁决通知会提及作者，由已有的提及唤醒送达。section 写入和评论不改变 Thread revision，也不唤醒任何人。
+
+只有作者和 Human 可以写 section；其他 Channel 成员尝试写入会被报错拒绝，而评论与解决评论仍对所有 Channel 成员开放。Human 也可以编辑 section，同样以 Doc revision 加栅栏。每次 section 写入都连同写入者保存为一个版本，因此可以读取某个 section 的历史，并把旧版本作为新版本再次写入；不会就地改写任何内容。若 Human 在作者最近一次提交后编辑过某个 section，评审裁决会点名它，让作者在写入前重新读取。
+
+评论线程（一条根评论及其回复）可以由 Human 或 Agent 解决。已解决的线程在页面上折叠；其中待发送的 Human 评论会被撤回，而不是送达。Doc 位于一个 Thread 中，其 Channel 会列出其中的全部 Doc。
+
+待评审的 Doc 在其 Thread 与 Channel 中显示为计划卡片，带「批准」和「修改」。「批准」以卡片上的 revision 给出 approve 裁决；「修改」打开 Doc，Human 在那里评论并点「评审」。
+
+## Decision
+
+Agent Member 在某个 Thread 里向 Human 提出的一张决策卡，包含 1 到 6 个问题，用来代替散文式提问。每个问题有 2 到 4 个选项，可单选或多选，可以标出提问者推荐的选项，并且始终接受文字回答。Human 一次回答全部问题，且只回答一次。
+
+决策没有独立记录：提问、回答和撤回都是携带决策事实的 Thread 回复，与 Doc 的提交和裁决相同。提问会提及 Human，于是未回答的卡片进入其 Inbox；回答会提及提问者，以回答唤醒它。只有提问者能撤回未回答的卡片；撤回后的卡片不再接受回答，也不唤醒任何人。

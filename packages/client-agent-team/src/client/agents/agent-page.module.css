@@ -1,0 +1,197 @@
+/* The Agent page's Runs and Tasks tabs. Both live inside the host's
+   conversation view area, whose body already scrolls, so neither adds its own
+   scroll container; the table is the only place that may overflow sideways. */
+
+.muted {
+  color: var(--ml-text-tertiary, inherit);
+  font-size: var(--ml-text-caption, 12px);
+  margin: 8px 0 0;
+}
+
+.error {
+  color: var(--dsw-alias-state-error-primary, inherit);
+  font-size: var(--ml-text-caption, 12px);
+  margin: 8px 0 0;
+}
+
+.runs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chart {
+  align-items: center;
+  background: var(--ml-surface-raised, transparent);
+  border-radius: var(--ml-radius-lg, 8px);
+  display: flex;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.chartLegend {
+  color: var(--ml-text-tertiary, inherit);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--ml-text-micro, 11px);
+  gap: 1px;
+  line-height: 15px;
+}
+
+.chartLegend strong {
+  color: var(--ml-text, inherit);
+  font-size: var(--ml-text-label, 13px);
+  font-variant-numeric: tabular-nums;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  border-collapse: collapse;
+  font-size: var(--ml-text-caption, 12px);
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+}
+
+.table th {
+  border-bottom: 1px solid var(--ml-border, currentColor);
+  color: var(--ml-text-tertiary, inherit);
+  font-size: var(--ml-text-micro, 11px);
+  font-weight: 500;
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table td {
+  border-bottom: 1px solid var(--ml-border, transparent);
+  color: var(--ml-text-secondary, inherit);
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.table tbody[data-current] td {
+  color: var(--ml-text, inherit);
+}
+
+.runRow:hover td {
+  background: var(--ml-surface-hover, transparent);
+}
+
+.runOpen {
+  background: none;
+  border: 0;
+  color: var(--ml-brand, inherit);
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  text-align: left;
+}
+
+.runOpen:hover,
+.runOpen:focus-visible {
+  text-decoration: underline;
+}
+
+.numeric {
+  text-align: right;
+}
+
+.threads {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.failureRow td {
+  padding: 0 8px 8px;
+}
+
+.failureList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.failureChip {
+  align-items: baseline;
+  border: 1px solid var(--ml-border, currentColor);
+  border-radius: 999px;
+  corner-shape: round;
+  display: inline-flex;
+  font-size: var(--ml-text-micro, 11px);
+  gap: 5px;
+  max-width: 100%;
+  padding: 0 7px;
+}
+
+.failureChip[data-failure-tone='failed'] {
+  border-color: var(--dsw-alias-state-error-primary, currentColor);
+  color: var(--dsw-alias-state-error-primary, inherit);
+}
+
+.failureChip[data-failure-tone='action'] {
+  border-color: var(--ml-status-in-progress, currentColor);
+  color: var(--ml-status-in-progress, inherit);
+}
+
+.failureChip[data-failure-tone='cancelled'] {
+  color: var(--ml-text-tertiary, inherit);
+}
+
+.failureKind {
+  font-weight: 600;
+}
+
+.failureReason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failureTurn {
+  color: var(--ml-text-tertiary, inherit);
+}
+
+/* Tasks tab: one section per status, the same order as the Board's columns. */
+.tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.taskGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.taskGroupTitle {
+  align-items: center;
+  color: var(--ml-text-secondary, inherit);
+  display: flex;
+  font-size: var(--ml-text-micro, 11px);
+  font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.02em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.taskGroupCount {
+  color: var(--ml-text-tertiary, inherit);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.taskList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
