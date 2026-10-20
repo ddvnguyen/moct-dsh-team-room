@@ -5,7 +5,8 @@ import { registerContextTools } from './context-tools.ts'
 import { registerMemoryTools } from './memory-tools.ts'
 import { registerDocTools } from './doc-tools.ts'
 import { registerDecisionTools } from './decision-tools.ts'
-import { service, workspaceOf, workspaceParam } from './host-access.ts'
+import { registerActivityTools } from './activity-tools.ts'
+import { member, service, workspaceOf, workspaceParam } from './host-access.ts'
 import type {
   AgentTeamClaimRef,
   AgentTeamMemberId,
@@ -497,6 +498,9 @@ const teamMessage = markAgentTeamPreset(defineTool({
     const paths = attachmentPaths !== undefined && attachmentPaths.length > 0 ? { attachmentPaths } : {}
     if (args.action === 'start') {
       if (args.channelRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined || args.replyToMessageRef !== undefined) throw new Error('start requires channelRef and does not accept threadRef, taskRef, baseRevision, or replyToMessageRef')
+      if (args.asTask === true && member(agent).role === 'orchestrator') {
+        throw new Error('Orchestrators only report — they cannot create Tasks. Send the digest as a plain Thread (omit asTask).')
+      }
       const result = await host.sendMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
         channelRef: args.channelRef as never, body: args.body, asTask: args.asTask === true, ...paths })
       return messageOutcome(result, 'start')
@@ -598,6 +602,9 @@ const teamClaim = defineTool({
   async execute(args, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('team_claim requires an Agent session')
+    // The Orchestrator's surface withholds this tool; the refusal here is the
+    // second line of the same contract, for a surface that predates the role.
+    if (member(agent).role === 'orchestrator') throw new Error('Orchestrators only report — they never claim a Direction.')
     const host = service(agent)
     const base = { workspaceId: workspaceOf(args, agent), taskRef: args.taskRef as AgentTeamTaskRef }
     if (args.action === 'list') {
@@ -744,4 +751,5 @@ export function apply(ctx: Context): void {
   registerMemoryTools(ctx)
   registerDocTools(ctx)
   registerDecisionTools(ctx)
+  registerActivityTools(ctx)
 }

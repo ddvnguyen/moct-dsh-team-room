@@ -1237,6 +1237,12 @@ export interface AgentTeamRoomActivityRequest {
   readonly cursor?: string
   /** Event rows per page, 1–200; over-limit is clamped server-side, never rejected. */
   readonly limit?: number
+  /**
+   * ISO-8601 instant bounding the fold: Messages, Turns, failure notices and events older than it
+   * are excluded, and only Sessions with activity at or after it are listed (a listed Session's own
+   * totals still cover its whole life). Absent folds the whole scope.
+   */
+  readonly since?: string
 }
 
 /**

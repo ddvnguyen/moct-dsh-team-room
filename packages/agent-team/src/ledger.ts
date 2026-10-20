@@ -2422,6 +2422,20 @@ export class AgentTeamLedger {
     return Object.freeze({ decisions: Object.freeze(decisions) })
   }
 
+  /**
+   * Every open decision card of one Workspace, oldest ask first. The caller authorizes the reader
+   * (Workspace participation; a Member sees only Workspaces it belongs to) — there is no per-Channel
+   * filter here, because the digest reads the whole Workspace by design. Archived Channels hold no
+   * open cards that can still be answered, so they are excluded like an inactive surface.
+   */
+  openDecisions(workspaceId: WorkspaceId): readonly AgentTeamDecisionView[] {
+    const views = [...this.state.decisions.values()]
+      .filter(state => state.status === 'open')
+      .filter(state => this.state.channels.get(state.channelRef)?.workspaceId === workspaceId && this.state.channels.get(state.channelRef)?.state === 'active')
+      .map(state => decisionView(state))
+    return Object.freeze(views.sort((left, right) => left.askedAt.localeCompare(right.askedAt)))
+  }
+
   private decisionForActor(actor: AgentTeamHumanActor | AgentTeamMemberActor, workspaceId: WorkspaceId, decisionRef: AgentTeamDecisionRef): AgentTeamDecisionState {
     const state = this.state.decisions.get(this.requireRefKey(this.state.decisions, decisionRef, 'decision', 'decision card'))
     if (state === undefined) throw new Error(`unknown decision card '${decisionRef}'${this.unknownRefHint(decisionRef, 'decision', 'decision card')}`)
@@ -3019,6 +3033,14 @@ export class AgentTeamLedger {
    */
   roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
     const bounds = activityPageBounds(request.cursor, request.limit, 'room activity')
+    // A `since` window bounds the fold by the ledger instant: Messages, Turns, failure notices
+    // committed before it are excluded, and the event page stops at it (ordered is chronological,
+    // so the first older event ends the walk). A listed Session's totals still cover its whole
+    // life — Sessions are folded rows, not re-foldable per instant — so windowed Sessions are
+    // filtered to ones with activity at or after the window start and their run fields are
+    // whole-life numbers.
+    const sinceMs = request.since === undefined ? null : Date.parse(request.since)
+    if (request.since !== undefined && Number.isNaN(sinceMs)) throw new Error('room activity since must be an ISO-8601 instant')
 
     const channelRef = this.requireChannel(request.workspaceId, request.channelRef).channelRef
     const scope: 'channel' | 'thread' = request.threadRef === undefined ? 'channel' : 'thread'
@@ -3041,8 +3063,8 @@ export class AgentTeamLedger {
       ? (): boolean => false
       : (memberId: AgentTeamMemberId): boolean => this.isChannelMember(eventChannelRef, memberId)
 
-    const fold = this.activityFold(threadRefs)
-    return Object.freeze({ scope, ...this.activityPage(request.workspaceId, channels, threadRefs, memberInScope, fold, bounds.limit, bounds.cursor) })
+    const fold = this.activityFold(threadRefs, sinceMs)
+    return Object.freeze({ scope, ...this.activityPage(request.workspaceId, channels, threadRefs, memberInScope, fold, bounds.limit, bounds.cursor, sinceMs) })
   }
 
   /**
@@ -3076,8 +3098,8 @@ export class AgentTeamLedger {
       for (const memberId of this.state.memberships.get(channelRef) ?? []) workspaceMembers.add(memberId)
     }
 
-    const fold = this.activityFold(threadRefs)
-    const page = this.activityPage(request.workspaceId, null, threadRefs, memberId => workspaceMembers.has(memberId), fold, bounds.limit, bounds.cursor)
+    const fold = this.activityFold(threadRefs, null)
+    const page = this.activityPage(request.workspaceId, null, threadRefs, memberId => workspaceMembers.has(memberId), fold, bounds.limit, bounds.cursor, null)
     return Object.freeze({ ...page, perDay: activityPerDay(fold.sessionRuns) })
   }
 
@@ -3087,7 +3109,7 @@ export class AgentTeamLedger {
    * workspace reads differ only in which Thread refs they hand in. Read-only; bounded by ledger
    * size, never by the request.
    */
-  private activityFold(threadRefs: ReadonlySet<AgentTeamThreadRef>): {
+  private activityFold(threadRefs: ReadonlySet<AgentTeamThreadRef>, sinceMs: number | null): {
     readonly totals: AgentTeamRoomActivityTotals
     readonly perAgent: readonly AgentTeamRoomActivityAgent[]
     readonly sessions: readonly AgentTeamSessionRun[]
@@ -3108,6 +3130,7 @@ export class AgentTeamLedger {
     let messages = 0
     for (const message of this.state.messagesByRef.values()) {
       if (!inScope(message.threadRef)) continue
+      if (sinceMs !== null && Date.parse(message.occurredAt) < sinceMs) continue
       messages += 1
       bucketFor(message.sender).messages += 1
     }
@@ -3129,6 +3152,7 @@ export class AgentTeamLedger {
     for (const operation of this.state.sessionTurns.values()) {
       const turn = operation.data
       if (!turn.threadRefs.some(inScope)) continue
+      if (sinceMs !== null && Date.parse(operation.occurredAt) < sinceMs) continue
       turns += 1
       sessionIdsInScope.add(turn.sessionId)
       const bucket = bucketFor(turn.memberId)
@@ -3152,6 +3176,7 @@ export class AgentTeamLedger {
     for (const operation of this.state.ordered) {
       if (operation.kind !== 'team/turn-failure-notice') continue
       if (!inScope(operation.data.threadRef)) continue
+      if (sinceMs !== null && Date.parse(operation.occurredAt) < sinceMs) continue
       failedTurns += 1
       bucketFor(operation.data.memberId).failedTurns += 1
     }
@@ -3159,6 +3184,7 @@ export class AgentTeamLedger {
     const sessionRuns = [...sessionIdsInScope]
       .map(sessionId => this.state.sessionRuns.get(sessionId))
       .filter((run): run is AgentTeamSessionRun => run !== undefined)
+      .filter(run => sinceMs === null || Date.parse(run.lastAssistantAt) >= sinceMs)
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
     const sessions = sessionRuns.slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
 
@@ -3225,6 +3251,7 @@ export class AgentTeamLedger {
     fold: { readonly totals: AgentTeamRoomActivityTotals; readonly perAgent: readonly AgentTeamRoomActivityAgent[]; readonly sessions: readonly AgentTeamSessionRun[] },
     limit: number,
     cursor: number | null,
+    sinceMs: number | null,
   ): { totals: AgentTeamRoomActivityTotals; perAgent: readonly AgentTeamRoomActivityAgent[]; sessions: readonly AgentTeamSessionRun[]; events: readonly AgentTeamRoomActivityEvent[]; nextCursor?: string } {
     const fromSequence = cursor
     const page: AgentTeamRoomActivityEvent[] = []
@@ -3233,6 +3260,8 @@ export class AgentTeamLedger {
       const event = this.roomActivityEvent(this.state.ordered[index]!, channels, threadRefs, workspaceId, memberInScope)
       if (event === undefined) continue
       if (fromSequence !== null && event.sequence >= fromSequence) continue
+      // ordered is chronological, so the first event older than the window ends the walk.
+      if (sinceMs !== null && Date.parse(event.at) < sinceMs) break
       if (page.length < limit) page.push(event)
       else { nextCursor = String(page[page.length - 1]!.sequence); break }
     }
