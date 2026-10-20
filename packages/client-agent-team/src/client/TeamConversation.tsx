@@ -33,7 +33,11 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // this face owns the seat while the flag stands. The Human identity rides
     // along for the same reason it rides on the other two faces: a row that
     // names or draws the reader must draw the one identity every seat draws.
-    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
+    // The severity derivation's Remotes ride with it: the decision cards and
+    // Turn failures that lift a row into the action-required band, the roster
+    // the detail pane names actors from, and the read/unfollow Remotes the
+    // pane's actions speak.
+    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} loadMembers={loadMembers} loadDecisions={loadDecisions} answerDecision={answerDecision} threadTurnFailures={threadTurnFailures} readThread={readThread} changeAttention={changeAttention} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
   }
   if (current !== undefined && navigationState.threadRef !== undefined && navigationState.docRef !== undefined) {
     const { threadRef, channelRef, taskRef, taskNumber } = navigationState
