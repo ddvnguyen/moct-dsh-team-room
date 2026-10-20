@@ -2,9 +2,9 @@
 
 A client-only DeepSeek Harness plugin that organises the codex-ui sidebar and
 hides the hardcoded "IM Assistant" entry. It merges the two behaviours that
-previously shipped as separate build artefacts (`@ddvnguyen/dsh-side-menu` and
-`@ddvnguyen/dsh-hide-im-assistant`) into one package, one plugin row and one
-browser bundle.
+previously shipped as two separate build artefacts (the sidebar layout and the
+hidden IM Assistant entry) into one package, one plugin row and one browser
+bundle.
 
 ## What it does
 

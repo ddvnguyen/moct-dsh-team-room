@@ -14,14 +14,11 @@ packages/agent-team
 
 packages/sidebar          published on its own: @ddvnguyen/dsh-sidebar
   codex-ui sidebar layout + hidden IM Assistant entry
-
-packages/dsh-side-menu    published on its own: @ddvnguyen/dsh-side-menu
-  codex-ui sidebar layout
 ```
 
 这三个目录是同一发布包 `@ddvnguyen/moct-dsh-team-room` 的构建与导出接缝，由根 `package.json` 声明；它们都没有自己的 manifest。依赖方向是单向的：Host 从不导入 Client 或 tools 的实现内部，tools 在执行时解析 live Host service，Client 只消费 typed Remote、公开类型与 Harness slots——绝不通过相对路径进入另一个接缝的生成 `lib/`。
 
-其中两个目录是另一种东西：`packages/dsh-side-menu` 与 `packages/sidebar` 是独立发布的包（`@ddvnguyen/dsh-side-menu` 与 `@ddvnguyen/dsh-sidebar`），各有自己的 manifest、版本与发布流程。两者都是纯客户端的 codex-ui 插件，不导入那三个接缝的任何东西，根包的 `files` 列表也不打包它们。
+`packages/sidebar` 是另一种东西：独立发布的包 `@ddvnguyen/dsh-sidebar`，有自己的 manifest、版本与发布流程。它是纯客户端的 codex-ui 插件，不导入那三个接缝的任何东西，根包的 `files` 列表也不打包它。
 
 [`generated-and-seams.zh.md`](../development/generated-and-seams.zh.md) 负责接缝的具体机制、Host 模块布局与新增 operation 的清单。
 
@@ -35,6 +32,5 @@ packages/dsh-side-menu    published on its own: @ddvnguyen/dsh-side-menu
 - `packages/tool-agent-team` 在 tools 执行时解析 live Team service。它不创建第二个 service，也不直接写入 projections。
 - `packages/client-agent-team` 分为 Node 部分（`src/index.ts`）和 browser 部分（`src/client/`）。browser 部分通过 typed Remote 读取 Host projections，并通过 public Client slots 渲染。
 - `packages/sidebar` 拥有 codex-ui 侧边栏插件。它的 host 部分是一个空的 `apply`；browser 部分整理侧边栏并隐藏 IM Assistant 条目。它独立发布，不经由根 bundle。
-- `packages/dsh-side-menu` 单独拥有侧边栏布局。合并后的 `packages/sidebar` 插件带着同样的布局加上 IM Assistant 规则，因此一个 profile 只装其中一个，绝不同时装两个。
 
 接缝由第二个调用方、第二个 adapter 或独立持有的状态换来，绝不由行数换来。`index.ts` 与 `ledger.ts` 大，是因为它们承载 composition 与 authority，不是因为缺了一层；不要为了让单个文件变小而拆它们，也不要在真的出现第二份实现之前引入 `services/`、`utils/`、`adapters/` 目录。只做 re-export、只转发 props、只改名的模块不持有状态也不持有不变式：把调用内联，或删掉契约已经死掉的那一侧。

@@ -24,7 +24,7 @@
 
 ## 策略归谁
 
-`@ddvnguyen/dsh-side-menu` 通过 `globalThis.__dshTopPanels` 发布顶层面板 id（`dsh-context`、`agent-team-settings`），并用 CSS `order` 排列菜单子项。没有补丁时该发布不产生任何效果，主机保持自己的布局；该插件从不把 React 拥有的节点搬出菜单。
+`@ddvnguyen/dsh-sidebar` 通过 `globalThis.__dshTopPanels` 发布顶层面板 id（`dsh-context`、`agent-team-settings`），并用 CSS `order` 排列菜单子项。没有补丁时该发布不产生任何效果，主机保持自己的布局；该插件从不把 React 拥有的节点搬出菜单。
 
 ## 如何应用与保持应用
 

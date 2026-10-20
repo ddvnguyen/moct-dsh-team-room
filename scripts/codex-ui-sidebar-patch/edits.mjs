@@ -22,7 +22,7 @@
  *    Extensions group, which upstream puts every plugin panel into.
  *
  * The patch owns the mechanism only. The policy - which panels sit at the top
- * level - belongs to `@ddvnguyen/dsh-side-menu`, which publishes the ids
+ * level - belongs to `@ddvnguyen/dsh-sidebar`, which publishes the ids
  * through `globalThis.__dshTopPanels`.
  *
  * Every edit asserts its anchor. An anchor that is missing means the upstream

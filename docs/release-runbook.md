@@ -78,7 +78,7 @@ git push origin vX.Y.Z
 npm publish --tag <dist-tag> --access public
 ```
 
-Each plugin package (`packages/dsh-side-menu`, `packages/sidebar`) is published on its own, with its own version: run `npm publish --tag <dist-tag> --access public` inside that directory, after `npm run build` there. The manual `publish` workflow does the same through one typed confirm per package, so a run ships only what the operator typed.
+The plugin package (`packages/sidebar`) is published on its own, with its own version: run `npm publish --tag <dist-tag> --access public` inside that directory, after `npm run build` there. The manual `publish` workflow does the same through one typed confirm per package, so a run ships only what the operator typed.
 
 The explicit refspecs and their dry-run fences are load-bearing, not ceremony. A clone can carry pre-rewrite backup branches and local-only tags whose commits are deliberately absent from the remote, and `--all` / `--tags` publish them silently. This repository is public: a stray ref cannot be withdrawn. If a dry run lists a third ref, stop and find out whose it is.
 

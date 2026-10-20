@@ -78,7 +78,7 @@ git push origin vX.Y.Z
 npm publish --tag <dist-tag> --access public
 ```
 
-每个插件包（`packages/dsh-side-menu`、`packages/sidebar`）都独立发布，版本独立：在该目录内先 `npm run build`，再 `npm publish --tag <dist-tag> --access public`。手动 `publish` workflow 每个包一个 typed confirm，因此只会发布操作者输入过的包。
+插件包（`packages/sidebar`）独立发布，版本独立：在该目录内先 `npm run build`，再 `npm publish --tag <dist-tag> --access public`。手动 `publish` workflow 每个包一个 typed confirm，因此只会发布操作者输入过的包。
 
 显式 refspec 与它们的 dry-run 栅栏是承重的，不是仪式。本地克隆可能带着改写前的备份分支与仅本地 tag，其提交是刻意不进远端的，而 `--all` / `--tags` 会把它们静默推上去。本仓库是公开的：推错的 ref 无法收回。如果某次 dry run 列出了第三个 ref，停下来查清那是谁的。
 

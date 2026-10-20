@@ -24,7 +24,7 @@ The patch is applied by anchored edits (`scripts/codex-ui-sidebar-patch/edits.mj
 
 ## Who owns the policy
 
-`@ddvnguyen/dsh-side-menu` publishes the top-level panel ids (`dsh-context`, `agent-team-settings`) through `globalThis.__dshTopPanels` and orders the menu's children with CSS `order`. Without the patch the publication has no effect and the host keeps its own layout; the plugin never moves a React-owned node out of the menu.
+`@ddvnguyen/dsh-sidebar` publishes the top-level panel ids (`dsh-context`, `agent-team-settings`) through `globalThis.__dshTopPanels` and orders the menu's children with CSS `order`. Without the patch the publication has no effect and the host keeps its own layout; the plugin never moves a React-owned node out of the menu.
 
 ## How it is applied and kept applied
 

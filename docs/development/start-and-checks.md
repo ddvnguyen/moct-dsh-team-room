@@ -20,7 +20,7 @@ Install dependencies with the command specified by the root README:
 corepack pnpm install
 ```
 
-`pnpm-workspace.yaml` declares `packages/*`, so a directory with a manifest of its own is a workspace member: the plugin packages (`packages/dsh-side-menu`, `packages/sidebar`) are members with their own manifests, versions and publish runs.
+`pnpm-workspace.yaml` declares `packages/*`, so a directory with a manifest of its own is a workspace member: the plugin package (`packages/sidebar`) is a member with its own manifest, version and publish run.
 
 The three team seams (`packages/agent-team`, `packages/tool-agent-team`, `packages/client-agent-team`) have no manifest: they are build targets of the root package, not independently installable packages. The workspace file is still load-bearing — it disables automatic peer installation and carries the build-approval and release-age settings this repository relies on — so do not change or remove it because a directory lacks its own manifest. The root `node_modules` and adjacent Harness checkout provide the packages and source mappings needed for local development.
 
@@ -48,7 +48,7 @@ git diff --check HEAD
 Their responsibilities are:
 
 - `generate:typert` emits Typert Host/Remote artifacts from the Host face in `packages/agent-team/src/`.
-- `typecheck` regenerates Typert and checks Host, tools, Client, and the plugin packages' sources.
+- `typecheck` regenerates Typert and checks Host, tools, Client, and the plugin package's sources.
 - `check:docs` mechanically enforces the rules in [`AGENTS.md`](../AGENTS.md): bilingual pairing with a working switcher, a shared heading outline per pair (the same headings at the same levels), relative links, `#fragment` heading anchors, the per-file longest-block ceiling recorded in the script, and both indexes naming exactly the documents that exist. It covers the four README pairs as well — the repository root and one per package — plus the root contributing pair, each set with its own switcher wording. Run it on its own for a documentation-only change.
   - `node scripts/check-docs.mjs --budgets` prints the per-file longest-block table instead of deciding.
 - `check:core-skills` mechanically enforces the shipped skill contract under `packages/agent-team/core-skills/`: the front matter names the skill after its directory and its description names real triggers, the whole skill stays inside the reviewed budget in `scripts/check-core-skills.mjs`, every relative link stays inside the skill directory (an installer copies that directory alone), and every file under `references/` is linked from `SKILL.md`.
@@ -57,7 +57,7 @@ Their responsibilities are:
 - `check:facades` writes nothing: it recomputes the path facades from the adjacent Harness checkout and refuses a committed `tsconfig*.json` or `.generated-harness` marker that differs from the generated output, so a subpath added to `scripts/sync-paths.mjs` cannot land without its regenerated facades. `npm test` runs it, which is why a fresh clone regenerates the facades first (see [`environments-and-install.md`](./environments-and-install.md)).
 - `test` regenerates Typert, runs `check:facades`, `check:docs`, `check:core-skills`, `check:boundaries`, and `check:versions`, then runs Vitest. `scripts/isolate-dsh-home.setup.ts` gives each test file an isolated `DSH_HOME`; tests needing a particular home must save and restore it. Startup does not prune ledger-unknown Member directories; explicit Member removal removes that Member's private memory.
 - The Client bench (`packages/client-agent-team/tests/harness.tsx`) fails a spec whose rendered shipped slot entry crashed: the shipped error boundary contains the throw and reports it only through `console.error`, so an unguarded run stays green while the surface is gone. That bench also supplies what jsdom lacks (`ResizeObserver`, `document.fonts`) and the whole `conversation` service face — an absent observable member is not a missing method but a `WeakMap.set(undefined)` throw in the renderer's hook cache.
-- `build` uses the restricted Node cleaner to clear package `lib/` directories, regenerates Typert, builds all five source trees, and uses Harness `tsdown` for the Client bundles. The published artifact of the root package remains one npm package; the plugin packages are built beside it and published on their own.
+- `build` uses the restricted Node cleaner to clear package `lib/` directories, regenerates Typert, builds all four source trees, and uses Harness `tsdown` for the Client bundles. The published artifact of the root package remains one npm package; the plugin package is built beside it and published on its own.
 - `lint` runs oxlint.
 - `duplication` runs jscpd over `packages` and `scripts` using `.jscpd.json`; treat its output as a place to look, never as a verdict, because it reports moved and restructured code as readily as copied code.
 - `pack --dry-run` checks the root bundle's published contents; `prepack` runs the full build first, so it is a release prerequisite rather than an everyday check.
