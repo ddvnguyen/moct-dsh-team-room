@@ -13,7 +13,7 @@ const HUMAN = 'member:human'
  * roomActivity requests, so the tests can pin the window the tool derives and
  * the fields it copies. Only the fields the tool actually reads exist.
  */
-function session(options: { readonly channels?: readonly string[] } = {}) {
+function session(options: { readonly channels?: readonly string[]; readonly pageTruncated?: boolean } = {}) {
   const roomRequests: Array<Record<string, unknown>> = []
   const tenMinutesAgo = new Date(Date.now() - 10 * 60_000).toISOString()
   const twentyMinutesAgo = new Date(Date.now() - 20 * 60_000).toISOString()
@@ -30,8 +30,11 @@ function session(options: { readonly channels?: readonly string[] } = {}) {
       activities: [{ memberId: ANN, handle: 'ann', threadRef: THREAD, turnStartedAt: tenMinutesAgo, stepCount: 3, toolCount: 2, current: { tool: 'bash', label: 'running tests' }, updatedAt: tenMinutesAgo }],
     }),
     openDecisionsForAgent: () => [
-      { decisionRef: 'decision:a', threadRef: THREAD, askedAt: twentyMinutesAgo, questions: [{ prompt: 'Q1' }], status: 'open' },
-      { decisionRef: 'decision:b', threadRef: THREAD, askedAt: tenMinutesAgo, questions: [{ prompt: 'Q1' }, { prompt: 'Q2' }], status: 'open' },
+      { decisionRef: 'decision:a', channelRef: CHANNEL, threadRef: THREAD, askedAt: twentyMinutesAgo, questions: [{ prompt: 'Q1' }], status: 'open' },
+      { decisionRef: 'decision:b', channelRef: CHANNEL, threadRef: THREAD, askedAt: tenMinutesAgo, questions: [{ prompt: 'Q1' }, { prompt: 'Q2' }], status: 'open' },
+      // The Host's open-card read is Workspace-wide: this one lives in a Channel
+      // the caller cannot see and must not reach the digest.
+      { decisionRef: 'decision:private', channelRef: 'channel:elsewhere', threadRef: 'thread:elsewhere', askedAt: tenMinutesAgo, questions: [{ prompt: 'Q1' }], status: 'open' },
     ],
     viewForAgent: (_agent: unknown, request: Record<string, unknown>) => {
       calls.viewRequests.push(request)
@@ -64,6 +67,7 @@ function session(options: { readonly channels?: readonly string[] } = {}) {
           { sequence: 9, at: tenMinutesAgo, kind: 'team/message-sent', actor: '@ann', summary: 'posted the first digest' },
           { sequence: 8, at: twentyMinutesAgo, kind: 'team/decision-asked', actor: '@bob', summary: 'asked which release day' },
         ],
+        ...(options.pageTruncated === true ? { nextCursor: '8' } : {}),
       }
     },
   }
@@ -86,8 +90,9 @@ describe('team_activity', () => {
     expect(text).toContain('turns 4 · in 1,200 · out 300 · failed 1')
     // Bob's last proven activity is ten minutes ago; the idle line is derived, not asserted to the minute.
     expect(text).toMatch(/- @bob \(available\) · idle \d+m · turns 1 · in unknown · out unknown · failed 0/)
-    // The Human row is not an agent and carries no windowed usage: turns 0, unknown buckets.
-    expect(text).toContain('@Ddv (available) · turns 0 · in unknown')
+    // The Human row has no Turns in any visible Channel: nothing ran, so the
+    // window is a proven zero, not an unknown.
+    expect(text).toContain('@Ddv (available) · turns 0 · in 0 · out 0')
   })
 
   it('scopes the window to the caller\'s own channels and hands the Host the derived since instant', async () => {
@@ -109,6 +114,31 @@ describe('team_activity', () => {
     expect(text).toMatch(/- task:one · todo · high · assignee @member:agent-bob — Fix the flaky window test/)
     expect(text).toContain('- decision:a · thread:c98c24b1-2b37-4eb3-abf8-4137bc994b4e · asked')
     expect(text).toContain('2 question(s)')
+    // A card in a Channel the caller cannot see is not named at all.
+    expect(text).not.toContain('decision:private')
+  })
+
+  it('keeps an unproven bucket sticky across Channels instead of folding it into a total', async () => {
+    const twin = session({ channels: [CHANNEL, 'channel:other'] })
+    const host = (twin.exec as unknown as { agent: { ctx: { get(name: string): Record<string, unknown> | undefined } } }).agent.ctx.get('agentTeam')!
+    const proven = { memberId: BOB, messages: 0, turns: 1, tokensIn: 40, tokensOut: 10, cacheRead: null, cacheWrite: null, toolCalls: 0, runMs: 1_000, failedTurns: 0, sessionIds: [] }
+    const original = host.roomActivity as (request: Record<string, unknown>) => Record<string, unknown>
+    host.roomActivity = (request: Record<string, unknown>) => {
+      const answer = original(request)
+      // The second Channel reports a proven contribution for Bob; the first one
+      // left his input unproven, so the merge must stay unknown.
+      return (request.channelRef as string) === 'channel:other'
+        ? { ...answer, perAgent: [proven] }
+        : answer
+    }
+    const text = await run({ sinceMinutes: 90 }, twin.exec)
+    expect(text).toMatch(/- @bob \(available\) · idle \d+m · turns 2 · in unknown · out unknown · failed 0/)
+  })
+
+  it('marks the event page truncated when a Channel page stopped at its own cap', async () => {
+    const { exec } = session({ pageTruncated: true })
+    const text = await run({ sinceMinutes: 90 }, exec)
+    expect(text).toContain('+ more events beyond this page are not shown.')
   })
 
   it('marks truncation explicitly when a cap is crossed', async () => {

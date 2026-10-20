@@ -79,6 +79,13 @@ interface WindowUsage {
   tokensIn: number | null
   tokensOut: number | null
   failedTurns: number
+  /** False until a Channel contributed a row; a null seen after that stays sticky. */
+  counted: boolean
+}
+
+/** A Member with no rows in any visible Channel: nothing ran, so every bucket is a proven 0. */
+function emptyUsage(): WindowUsage {
+  return { turns: 0, tokensIn: 0, tokensOut: 0, failedTurns: 0, counted: true }
 }
 
 /** The one deterministic bounded subject, cut with an explicit truncation mark. */
@@ -99,8 +106,17 @@ function clampWindowMinutes(raw: number | undefined): number {
 function mergeUsage(target: WindowUsage, add: { turns: number; tokensIn: number | null; tokensOut: number | null; failedTurns: number }): void {
   target.turns += add.turns
   target.failedTurns += add.failedTurns
-  target.tokensIn = add.tokensIn === null ? null : (target.tokensIn ?? 0) + add.tokensIn
-  target.tokensOut = add.tokensOut === null ? null : (target.tokensOut ?? 0) + add.tokensOut
+  if (!target.counted) {
+    target.tokensIn = add.tokensIn
+    target.tokensOut = add.tokensOut
+    target.counted = true
+    return
+  }
+  // Null is absorbing in both directions: once this Member's bucket is unproven
+  // in any Channel it stays unproven, and it never turns a later number into a
+  // total that reads as if the gap had been measured.
+  target.tokensIn = target.tokensIn === null || add.tokensIn === null ? null : target.tokensIn + add.tokensIn
+  target.tokensOut = target.tokensOut === null || add.tokensOut === null ? null : target.tokensOut + add.tokensOut
 }
 
 const teamActivity = defineTool({
@@ -182,7 +198,11 @@ const teamActivity = defineTool({
     const view = host.viewForAgent(agent, { workspaceId, topLevelOnly: true, includeActivities: false, direction: 'before', includeCatalog: true })
     const statuses = host.members()
     const running = host.memberActivity({ workspaceId }).activities
-    const decisions = host.openDecisionsForAgent(agent, { workspaceId })
+    // Open cards are a Workspace-wide read on the Host, so the tool narrows them
+    // to the Channels this caller can see: a digest never names a Thread the
+    // reading Member could not open.
+    const visibleChannels = new Set(view.channels.map(channel => channel.channelRef))
+    const decisions = host.openDecisionsForAgent(agent, { workspaceId }).filter(decision => visibleChannels.has(decision.channelRef))
 
     // One windowed room-activity read per Channel the caller can see: usage
     // and sessions merge into per-Member rows, events feed one merged page.
@@ -192,10 +212,11 @@ const teamActivity = defineTool({
     const usageByMember = new Map<string, WindowUsage>()
     const lastActivityByMember = new Map<string, number>()
     const events: EventRow[] = []
+    let channelPageTruncated = false
     for (const channel of view.channels) {
       const activity = host.roomActivity({ workspaceId, channelRef: channel.channelRef, since, limit: EVENT_LIMIT })
       for (const agentUsage of activity.perAgent) {
-        const target = usageByMember.get(agentUsage.memberId) ?? { turns: 0, tokensIn: null, tokensOut: null, failedTurns: 0 }
+        const target = usageByMember.get(agentUsage.memberId) ?? { turns: 0, tokensIn: 0, tokensOut: 0, failedTurns: 0, counted: false }
         mergeUsage(target, agentUsage)
         usageByMember.set(agentUsage.memberId, target)
       }
@@ -205,6 +226,9 @@ const teamActivity = defineTool({
         if (!Number.isNaN(at) && (current === undefined || at > current)) lastActivityByMember.set(session.memberId, at)
       }
       events.push(...activity.events.map(event => ({ at: event.at, kind: event.kind, actor: event.actor, summary: event.summary })))
+      // A Channel whose own page stopped early has more rows than it returned,
+      // so the merged page is incomplete even when the merge itself fits.
+      if (activity.nextCursor !== undefined) channelPageTruncated = true
     }
     events.sort((left, right) => Date.parse(right.at) - Date.parse(left.at))
     const totalEvents = events.length
@@ -228,7 +252,7 @@ const teamActivity = defineTool({
         agentsTruncated = true
         break
       }
-      const usage = usageByMember.get(memberId) ?? { turns: 0, tokensIn: null, tokensOut: null, failedTurns: 0 }
+      const usage = usageByMember.get(memberId) ?? emptyUsage()
       const runningActivity = runningByMember.get(memberId)
       const activeTask = activeTaskByMember.get(memberId)
       const lastActivityMs = lastActivityByMember.get(memberId)
@@ -288,7 +312,7 @@ const teamActivity = defineTool({
       })),
       decisionsTruncated: decisions.length > DECISION_LIMIT,
       events: events.slice(0, EVENT_LIMIT),
-      eventsTruncated: totalEvents > EVENT_LIMIT,
+      eventsTruncated: totalEvents > EVENT_LIMIT || channelPageTruncated,
     }
   },
 })

@@ -136,6 +136,9 @@ describe('scheduled Orchestrator digest', () => {
     expect(prompt).toContain('team_activity')
     expect(prompt).toContain('team_message')
     expect(prompt).toContain('team-digest')
+    // The Workspace is named, not inferred: a Member that participates in more
+    // than one cannot resolve it from context.
+    expect(prompt).toContain(`workspace '${alpha}'`)
     // Report only: the prompt never authorizes a task-state change.
     expect(prompt?.toLowerCase()).toContain('do not claim, assign, or change any task')
 
@@ -167,6 +170,45 @@ describe('scheduled Orchestrator digest', () => {
 
     expect(worker.followup).not.toHaveBeenCalled()
     expect(host.view({ workspaceId: alpha }).channels.filter(channel => channel.name === 'team-digest')).toHaveLength(0)
+  })
+
+  it('delivers one digest per Member per tick even when it participates in several Workspaces', async () => {
+    const test = await harness({ digest: { enabled: true, intervalMinutes: 1 } })
+    const host = test.ctx.agentTeam
+    const orchestrator = await seatMember(host, { handle: 'digest-multi', role: 'orchestrator' })
+
+    // Two Workspaces for one seat. A second `followup` inside the same tick would
+    // steer the turn the first one started, so the tick must stop after one.
+    const internals = host as unknown as { requireLedger: () => { workspacesOf: (id: AgentTeamMemberId) => readonly string[] }; ensureDigestChannel: unknown }
+    const ledger = internals.requireLedger()
+    const original = ledger.workspacesOf.bind(ledger)
+    ledger.workspacesOf = (memberId: AgentTeamMemberId) => memberId === orchestrator.memberId ? [alpha, WorkspaceId('workspace:beta')] : original(memberId)
+
+    await vi.advanceTimersByTimeAsync(MINUTE)
+    await settle()
+
+    expect(orchestrator.followup).toHaveBeenCalledTimes(1)
+    expect(promptOf(orchestrator.followup)).toContain(`workspace '${alpha}'`)
+  })
+
+  it('never lets an oversized interval collapse into a 1 ms wake loop', async () => {
+    const test = await harness({ digest: { enabled: true, intervalMinutes: 1 } })
+    const host = test.ctx.agentTeam
+    const orchestrator = await seatMember(host, { handle: 'digest-long', role: 'orchestrator' })
+
+    // The row's live value, past both the schema cap and the 32-bit timer limit:
+    // `setTimeout` would clamp a raw `intervalMinutes * 60_000` to 1 ms.
+    const internals = host as unknown as { config: { digest: { intervalMinutes: { get: () => number } } }; digestDelayMs: () => number; armDigestTimer: () => void }
+    // The row's schema refuses this value at mount; the clamp is the second
+    // line of defence for a value that reaches the running Host anyway.
+    internals.config.digest.intervalMinutes = { get: () => 99_999_999 }
+    expect(internals.digestDelayMs()).toBe(2_147_483_647)
+
+    // The re-armed timer really waits, instead of firing once per millisecond.
+    internals.armDigestTimer()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settle()
+    expect(orchestrator.followup).not.toHaveBeenCalled()
   })
 
   it('creates the digest Channel once across ticks', async () => {
