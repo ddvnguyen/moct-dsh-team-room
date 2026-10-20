@@ -35,7 +35,13 @@ async function shippedHarnessName(): Promise<string> {
 // earns its characters. The 2026-09-15 Thread entry/re-entry rule moved it up
 // again on the operator's instruction, to stop leaving every wording-only
 // improvement squeezed into the last few characters.
-const PERSONA_CHARACTER_BUDGET = 15000
+// 2026-10-20: the Board line's Document/Ask rules and the sidebar line's
+// replacement of the unregistered {{cwd}} variable met in one persona, and the
+// two sets of rules are both deliberate. The text is not trimmed: a rule that
+// another line added on purpose is not this change's to delete. The budget
+// moves to cover the merged text, and the next wording-only change has to
+// find its characters inside it.
+const PERSONA_CHARACTER_BUDGET = 15200
 
 // The team-member preset rides the shipped patch as one declarative definition
 // row; these assertions scope to exactly that row, from its `- id:` marker to
