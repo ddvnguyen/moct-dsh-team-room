@@ -35,6 +35,7 @@
 | `npm run test:browser` | 组合、Remote 挂载、slot 接管或普通 DSH 恢复被破坏。需要相邻的 `../deepseek-harness` checkout；浏览器验收是本地步骤，从不在 CI 运行。 |
 | `npm run smoke:install` | 打包出的 tarball 无法安装、启动、响应 `agentTeam` Remote，或重启后丢失 Channel 与消息（`files` 漏掉发布文件会在这里而不是单元测试里暴露）。把已构建的树打包进一次性的 `DSH_HOME`，并在端口 0 上启动相邻 checkout；不需要凭据，也不需要 backend。 |
 | `npm pack --dry-run` | 本身不拦什么——把文件数记进发布报告。 |
+| 插件包内 `npm pack --dry-run` | 插件 tarball 缺 `cordis.patch.yml` 或 `lib/**`：它以 `file:` tarball 装进 DSH profile，tarball 坏了就是 lane 坏了。 |
 | `npm run check:artifact` | 会以破损形态发布的产物：混入的 `.ts`/`.tsx`、缺失的 `cordis.patch.yml`，或目标不在 tarball 里的运行时相对导入。要在 `npm run build` **之后**跑。 |
 | `npm run check:public-baseline` | 与 manifest 的已认证基线发生漂移的公开面（两个 README 与置顶的兼容性讨论）。 |
 | `git diff --check v<previous>..HEAD` | 发布改动集里任意位置的空白符损坏。裸 `git diff --check` 只看**未暂存**的改动，所以发布提交一旦落地它就静默通过——而梯子正是在那时跑的。 |
@@ -76,6 +77,8 @@ git push --dry-run origin vX.Y.Z            # 栅栏：这里必须只列这个 
 git push origin vX.Y.Z
 npm publish --tag <dist-tag> --access public
 ```
+
+每个插件包（`packages/dsh-side-menu`、`packages/sidebar`）都独立发布，版本独立：在该目录内先 `npm run build`，再 `npm publish --tag <dist-tag> --access public`。手动 `publish` workflow 每个包一个 typed confirm，因此只会发布操作者输入过的包。
 
 显式 refspec 与它们的 dry-run 栅栏是承重的，不是仪式。本地克隆可能带着改写前的备份分支与仅本地 tag，其提交是刻意不进远端的，而 `--all` / `--tags` 会把它们静默推上去。本仓库是公开的：推错的 ref 无法收回。如果某次 dry run 列出了第三个 ref，停下来查清那是谁的。
 

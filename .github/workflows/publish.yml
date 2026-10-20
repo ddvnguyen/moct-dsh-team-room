@@ -1,10 +1,13 @@
-# Manual publish of @ddvnguyen/moct-dsh-team-room to GitHub Packages.
+# Manual publish of the repository's packages to GitHub Packages.
 #
 # Never runs on push or PR: only a person pressing "Run workflow" starts it, and
-# the run must type the exact package.json version as `confirm`. It uses the
-# built-in GITHUB_TOKEN with `packages: write`; no personal token is stored or
-# handled anywhere. The build recipe mirrors ci.yml (certified Harness tag as the
-# sibling deepseek-harness), and the test gate runs before the publish step.
+# the run must type the exact version of every package it publishes — the root
+# bundle as `confirm`, the sidebar plugin as `confirm_sidebar`. A package whose
+# confirm is left empty is not published, and a confirm that does not match its
+# manifest fails the run: nothing ships that the operator did not type. It uses
+# the built-in GITHUB_TOKEN with `packages: write`; no personal token is stored
+# or handled anywhere. The build recipe mirrors ci.yml (certified Harness tag as
+# the sibling deepseek-harness), and the test gate runs before the publish step.
 #
 # Consumers need, in their .npmrc (token from their environment, never committed):
 #   @ddvnguyen:registry=https://npm.pkg.github.com
@@ -15,8 +18,12 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type the exact version from package.json to publish'
-        required: true
+        description: 'Type the exact version from package.json to publish @ddvnguyen/moct-dsh-team-room (empty to skip it)'
+        required: false
+        type: string
+      confirm_sidebar:
+        description: 'Type the exact version from packages/sidebar/package.json to publish @ddvnguyen/dsh-sidebar (empty to skip it)'
+        required: false
         type: string
 
 permissions:
@@ -34,15 +41,36 @@ jobs:
       - name: Check out this repository
         uses: actions/checkout@v4
 
-      - name: Confirm the typed version matches package.json
+      - name: Resolve which packages the typed versions confirm
+        id: requested
         env:
           CONFIRM: ${{ inputs.confirm }}
+          CONFIRM_SIDEBAR: ${{ inputs.confirm_sidebar }}
         run: |
-          version="$(node -p "require('./package.json').version")"
-          if [ "$version" != "$CONFIRM" ]; then
-            echo "confirm does not match package.json version '$version'" >&2
+          root_version="$(node -p "require('./package.json').version")"
+          sidebar_version="$(node -p "require('./packages/sidebar/package.json').version")"
+          root_publish=false
+          sidebar_publish=false
+          if [ -n "$CONFIRM" ]; then
+            if [ "$CONFIRM" != "$root_version" ]; then
+              echo "confirm does not match package.json version '$root_version'" >&2
+              exit 1
+            fi
+            root_publish=true
+          fi
+          if [ -n "$CONFIRM_SIDEBAR" ]; then
+            if [ "$CONFIRM_SIDEBAR" != "$sidebar_version" ]; then
+              echo "confirm_sidebar does not match packages/sidebar/package.json version '$sidebar_version'" >&2
+              exit 1
+            fi
+            sidebar_publish=true
+          fi
+          if [ "$root_publish" = false ] && [ "$sidebar_publish" = false ]; then
+            echo "no package confirmed: type the exact version of the package to publish" >&2
             exit 1
           fi
+          echo "root_publish=$root_publish" >> "$GITHUB_OUTPUT"
+          echo "sidebar_publish=$sidebar_publish" >> "$GITHUB_OUTPUT"
 
       - name: Enable the corepack shims
         run: |
@@ -85,7 +113,15 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@ddvnguyen'
 
-      - name: Publish
+      - name: Publish @ddvnguyen/moct-dsh-team-room
+        if: steps.requested.outputs.root_publish == 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish @ddvnguyen/dsh-sidebar
+        if: steps.requested.outputs.sidebar_publish == 'true'
+        working-directory: packages/sidebar
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -20,7 +20,9 @@
 corepack pnpm install
 ```
 
-`pnpm-workspace.yaml` 并不把 `packages/*` 声明为 workspace member。本仓库只发布一个根 npm 包。三个 `packages/*` 目录是这个 workspace 的构建目标，而不是可独立安装的 package。但该文件仍是承重配置。它关闭自动 peer 安装，并携带本仓库依赖的构建许可与发布年龄设置。因此不要因为某个目录没有自己的 manifest 就改动或删除它。根项目的 `node_modules` 和相邻 Harness checkout 提供本地开发所需的包与源码映射。
+`pnpm-workspace.yaml` 声明 `packages/*`，因此带自己 manifest 的目录就是 workspace member：两个插件包（`packages/dsh-side-menu`、`packages/sidebar`）是 member，各有自己的 manifest、版本与发布流程。
+
+三个 team 接缝（`packages/agent-team`、`packages/tool-agent-team`、`packages/client-agent-team`）没有 manifest：它们是根包的构建目标，不是可独立安装的 package。workspace 文件仍是承重配置：它关闭自动 peer 安装，并携带本仓库依赖的构建许可与发布年龄设置。因此不要因为某个目录没有自己的 manifest 就改动或删除它。根项目的 `node_modules` 和相邻 Harness checkout 提供本地开发所需的包与源码映射。
 
 ## 检查梯度
 根据改动范围运行最小但足够的检查：
@@ -46,7 +48,7 @@ git diff --check HEAD
 这些命令的职责如下：
 
 - `npm run generate:typert`：从 `packages/agent-team/src/` 的 Host face 生成 Typert Host/Remote artifacts。
-- `npm run typecheck`：先生成 Typert，再检查 Host、tools 和 Client 三个源码目录。
+- `npm run typecheck`：先生成 Typert，再检查 Host、tools、Client 与两个插件包的源码目录。
 - `npm run check:docs`：把 [`AGENTS.md`](../AGENTS.md) 的规则变成机械检查。检查六件事。第一，每份维护文档都有双语配对，切换器双向指对。第二，每对文档共享同一标题大纲：标题数量与层级一致。第三，所有相对链接可解析。第四，每个 `#fragment` 都指向目标文档真实存在的标题。第五，没有渲染块超出脚本中记录的单文件上限。第六，两个索引与现存文档集完全一致。同时覆盖四组 README 配对与仓库根的贡献指南配对。仓库根与每个 package 各一份 README，各自使用自己的切换器写法。只改文档时单独跑它即可。`node scripts/check-docs.mjs --budgets` 只打印单文件最长块表，不做判定。
 - `npm run check:core-skills`：把随包 skill 的出厂契约变成机械检查。检查五件事。front matter 的 `name` 与目录同名。`description` 说明真实触发场景。整个 skill 不超过 `scripts/check-core-skills.mjs` 中的审定字符预算。所有相对链接都不越出 skill 目录，安装器只复制该目录。`references/` 下的每个文件都被 `SKILL.md` 链接。
 - `npm run check:boundaries`：把下文的 package 接缝变成机械检查。`packages/*/src/` 下的文件不得用相对 specifier 跨越自己所在的 package 目录，去引用另一个 package。`import type` 豁免。运行时已被擦除。测试文件不在范围内：它们本就要把目录接起来。跨接缝的正确方式是用声明的 subpath，例如 `@ddvnguyen/moct-dsh-team-room/remote`。
@@ -55,7 +57,7 @@ git diff --check HEAD
 - `npm test`：先生成 Typert、跑 `check:facades`、`check:docs`、`check:core-skills`、`check:boundaries` 与 `check:versions`。再运行 Vitest。
 - Client 测试台（`packages/client-agent-team/tests/harness.tsx`）会让「渲染中的 shipped slot entry 崩过」的 spec 直接失败：shipped error boundary 会把异常吞掉、只经 `console.error` 报告，没有这道护栏时页面已经消失而套件仍然全绿。该测试台同时补齐 jsdom 缺的浏览器 API（`ResizeObserver`、`document.fonts`）与完整的 `conversation` service 面：缺一个 observable 成员不是「少一个方法」，而是 renderer hook cache 里的 `WeakMap.set(undefined)` 抛错。
 - Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一次性 `DSH_HOME`。隔离的是各 Member activation 的 `$DSH_HOME/agent-team/members/member:*` 私有 memory。需要特定 home 的测试自行保存/恢复该变量（见 `member-lifecycle.spec.ts`）。启动不会自动清理账本不认识的 Member 目录。显式 Member remove 才删除该 Member 的私有 memory。介质重置后的旧目录须由操作者手动删除 `member:` 目录。
-- `npm run build`：先由受限 Node cleaner 清空 Host、tools 与 Client 三个 package 的 `lib/`。再生成 Typert、构建三个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle。这样删除源码后遗留的旧产物不会进入 pack。最终发布物仍是一个根 npm 包。
+- `npm run build`：先由受限 Node cleaner 清空五个 package 的 `lib/`。再生成 Typert、构建五个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle。这样删除源码后遗留的旧产物不会进入 pack。根包的发布物仍是一个 npm 包；两个插件包在旁边构建，各自独立发布。
 - `npm run lint`：运行 oxlint。
 - `npm run duplication`：用 `.jscpd.json` 对 `packages` 与 `scripts` 跑 jscpd。它的输出只是"值得看一眼的地方"，不是结论。移动或重构过的代码同样会被报成重复。
 - `npm pack --dry-run`：检查根 bundle 的发布内容。`prepack` 会先跑完整 build。所以它是发布前置步骤，不是日常检查。

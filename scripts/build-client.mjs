@@ -24,6 +24,12 @@ const targets = [
     manifest: join(projectRoot, 'packages/dsh-side-menu/package.json'),
     env: {},
   },
+  {
+    name: '@ddvnguyen/dsh-sidebar',
+    dir: join(projectRoot, 'packages/sidebar'),
+    manifest: join(projectRoot, 'packages/sidebar/package.json'),
+    env: {},
+  },
 ]
 
 // Optional argument narrows the run to one package (used by that package's own
