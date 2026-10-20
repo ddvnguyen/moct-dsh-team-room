@@ -133,17 +133,27 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
   const [wide, setWide] = useState(false)
   const rootRef = useRef<HTMLElement>(null)
 
+  // One owner per generation. A wake can land while an earlier read is still in
+  // flight, so a refresh that finishes after a newer one must not write its
+  // rows back over fresher ones.
+  const refreshSequence = useRef(0)
   const refresh = useCallback(async () => {
+    const mine = ++refreshSequence.current
     if (!loadedRef.current) setLoading(true)
     const results = await Promise.all(workspaces.map(async workspace => {
       const result = await loadInbox({ workspaceId: workspace.workspaceId, limit: 100 })
       if (result.ok) {
-        keptSlicesRef.current.set(workspace.workspaceId, { items: result.value.items, recent: result.value.recent })
         return { ok: true as const, workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, items: result.value.items, recent: result.value.recent, hasMore: result.value.hasMore, humanMemberId: result.value.humanMemberId }
       }
       const kept = keptSlicesRef.current.get(workspace.workspaceId)
       return { ok: false as const, workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, items: kept?.items ?? [], recent: kept?.recent ?? [], message: result.error.message }
     }))
+    // Superseded (a newer refresh, or the page is gone): the newer generation
+    // owns the surface, and this read's rows are already stale.
+    if (!liveRef.current || mine !== refreshSequence.current) return
+    for (const result of results) {
+      if (result.ok) keptSlicesRef.current.set(result.workspaceId, { items: result.items, recent: result.recent })
+    }
     const failure = results.find(result => !result.ok)
     setHumanMemberId(results.find(result => result.ok)?.humanMemberId)
     const asRows = (items: readonly AgentTeamInboxItem[], workspaceId: WorkspaceId, workspaceTitle: string): TeamInboxRow[] =>
