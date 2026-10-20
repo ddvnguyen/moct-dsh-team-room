@@ -43,8 +43,8 @@
     "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
     "lint": "corepack pnpm dlx oxlint@1.76.0 --disable-typescript-plugin packages scripts",
     "duplication": "jscpd --config .jscpd.json packages scripts",
-    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json && tsc -p packages/dsh-side-menu/tsconfig.json && tsc -p packages/sidebar/tsconfig.json",
-    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && tsc -p packages/dsh-side-menu/tsconfig.build.json && tsc -p packages/sidebar/tsconfig.build.json && node scripts/build-client.mjs"
+    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json && tsc -p packages/sidebar/tsconfig.json",
+    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && tsc -p packages/sidebar/tsconfig.build.json && node scripts/build-client.mjs"
   },
   "dsh": {
     "bundle": {

@@ -19,12 +19,6 @@ const targets = [
     env: { DSH_AGENT_TEAM_BUILD_RUNTIME: '1' },
   },
   {
-    name: '@ddvnguyen/dsh-side-menu',
-    dir: join(projectRoot, 'packages/dsh-side-menu'),
-    manifest: join(projectRoot, 'packages/dsh-side-menu/package.json'),
-    env: {},
-  },
-  {
     name: '@ddvnguyen/dsh-sidebar',
     dir: join(projectRoot, 'packages/sidebar'),
     manifest: join(projectRoot, 'packages/sidebar/package.json'),

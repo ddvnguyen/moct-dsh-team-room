@@ -17,20 +17,20 @@ X=/mnt/workspace/clouds/dsh-x
 P=$X/data/home/profiles/web
 REPO=${REPO:-/home/ddv/multica_workspaces/moct-27c35c5a56cb/task-2158361e75df/workdir/moct-repo}
 MOCT_VERSION=${MOCT_VERSION:-0.0.1-261019.2315}
-SIDE_MENU_VERSION=${SIDE_MENU_VERSION:-0.1.3}
+SIDEBAR_VERSION=${SIDEBAR_VERSION:-0.1.0}
 CODEX_UI_VERSION=${CODEX_UI_VERSION:-1.1.43}
 
 step() { printf '\n== %s\n' "$1"; }
 
 step "profile package.json"
-python3 - "$P" "$MOCT_VERSION" "$SIDE_MENU_VERSION" "$CODEX_UI_VERSION" "$X/artifacts" <<'PY'
+python3 - "$P" "$MOCT_VERSION" "$SIDEBAR_VERSION" "$CODEX_UI_VERSION" "$X/artifacts" <<'PY'
 import re, sys
-profile, moct, side, codex, artifacts = sys.argv[1:6]
+profile, moct, sidebar, codex, artifacts = sys.argv[1:6]
 path = f"{profile}/package.json"
 text = open(path).read()
 text = re.sub(r'("@michengai/dsh-codex-ui": ")[^"]+(")', rf'\g<1>{codex}\g<2>', text)
 text = re.sub(r'("@ddvnguyen/moct-dsh-team-room": ")[^"]+(")', rf'\g<1>file:{artifacts}/ddvnguyen-moct-dsh-team-room-{moct}.tgz\g<2>', text)
-text = re.sub(r'("@ddvnguyen/dsh-side-menu": ")[^"]+(")', rf'\g<1>file:{artifacts}/ddvnguyen-dsh-side-menu-{side}.tgz\g<2>', text)
+text = re.sub(r'("@ddvnguyen/dsh-sidebar": ")[^"]+(")', rf'\g<1>file:{artifacts}/ddvnguyen-dsh-sidebar-{sidebar}.tgz\g<2>', text)
 open(path, "w").write(text)
 print(text)
 PY

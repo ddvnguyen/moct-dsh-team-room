@@ -14,14 +14,11 @@ packages/agent-team
 
 packages/sidebar          published on its own: @ddvnguyen/dsh-sidebar
   codex-ui sidebar layout + hidden IM Assistant entry
-
-packages/dsh-side-menu    published on its own: @ddvnguyen/dsh-side-menu
-  codex-ui sidebar layout
 ```
 
 These three directories are the build and export seams of one published package, `@ddvnguyen/moct-dsh-team-room`, declared by the root `package.json`; none has a manifest of its own. Dependency direction is one-way: Host never imports Client or tool implementation internals, tools resolve the live Host service at execution time, and Client consumes typed Remote plus public types and Harness slots — never another seam's generated `lib/` by relative path.
 
-Two of the directories are a different kind of thing: `packages/dsh-side-menu` and `packages/sidebar` are standalone published packages (`@ddvnguyen/dsh-side-menu` and `@ddvnguyen/dsh-sidebar`), each with its own manifest, version and publish run. Both are client-only codex-ui plugins that import nothing from the three seams, and the root package's `files` list does not ship them.
+`packages/sidebar` is a different kind of thing: a standalone published package, `@ddvnguyen/dsh-sidebar`, with its own manifest, version and publish run. It is a client-only codex-ui plugin that imports nothing from the three seams, and the root package's `files` list does not ship it.
 
 [`generated-and-seams.md`](../development/generated-and-seams.md) owns the seam mechanics, the Host module layout, and the operation-extension checklist.
 
@@ -35,6 +32,5 @@ Two of the directories are a different kind of thing: `packages/dsh-side-menu` a
 - `packages/tool-agent-team` resolves the live Team service at execution time. It does not create another service or write projections directly.
 - `packages/client-agent-team` has a Node half (`src/index.ts`) and browser half (`src/client/`). The browser half reads Host projections through typed Remote and renders them through public Client slots.
 - `packages/sidebar` owns the codex-ui sidebar plugin. Its host half is an empty `apply`; its browser half organises the sidebar and hides the IM Assistant entry. It is published on its own, not through the root bundle.
-- `packages/dsh-side-menu` owns the sidebar layout on its own. The merged `packages/sidebar` plugin carries the same layout plus the IM-assistant rule, so a profile installs one of them, never both.
 
 A seam is earned by a second caller, a second adapter, or independently owned state — never by line count. `index.ts` and `ledger.ts` are large because they hold composition and authority, not because a layer is missing; do not split either to make a file smaller, and do not introduce `services/`, `utils/`, or `adapters/` directories before a real second implementation exists. A module that only re-exports, only forwards props, or only renames a call carries no state and no invariant: keep that call inline or delete the dead side of the contract.
