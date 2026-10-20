@@ -164,4 +164,33 @@ describe('Team Overview page', () => {
     expect(spend.textContent).toContain('2026-09-13')
     await b.runtime.dispose()
   })
+
+  it('shows an unproven spend bucket as unknown instead of a quiet zero', async () => {
+    const unknown = aggregate({
+      perDay: [{ day: '2026-09-13', tokensIn: null, tokensOut: 40, runMs: 1500, perAgent: [{ memberId: 'member:builder', tokensIn: null, tokensOut: 40, runMs: 1500 }] }],
+    })
+    const b = await openOverviewFace({ initialChannels: true })
+    b.seedWorkspaceActivity(unknown)
+    const spend = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-team-overview-spend]')
+      expect(found).toBeTruthy()
+      return found as HTMLElement
+    })
+    // The input side was never recorded, so the row states that instead of
+    // summing an out-only number as if the day had been measured.
+    const row = await waitFor(() => {
+      const found = spend.querySelector('[data-team-overview-spend-agent="member:builder"]')
+      expect(found).toBeTruthy()
+      return found as HTMLElement
+    })
+    expect(row.getAttribute('data-unknown')).toBe('true')
+    expect(row.textContent).toContain('输入用量未记录')
+    // The day carries the same verdict, and a day with no bucket at all stays a
+    // proven zero.
+    const days = spend.querySelector('[data-team-overview-spend-days]')!
+    const marked = days.querySelector('[data-unknown="true"]')
+    expect(marked?.getAttribute('title')).toContain('2026-09-13')
+    expect(days.querySelectorAll('[data-unknown="true"]').length).toBe(1)
+    await b.runtime.dispose()
+  })
 })
