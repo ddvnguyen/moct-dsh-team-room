@@ -11,6 +11,9 @@ Host checks: (1) relevant unread must be read, otherwise `unread_required`; (2) 
 
 Human close releases active Claims and ends Attention. Reopen restores an open Task but not previous Attention periods.
 
+## Role fence
+A Member with the role `orchestrator` reports and never acts: its surface withholds `team_claim`, and a `team_message` with `asTask` is refused for it. The fence is the role, not the prompt — the tool is absent from the Orchestrator's request, and a surface that predates the role still refuses the call. The rest of the Team surface stays whole, so the Orchestrator reads, posts, asks, and answers.
+
 ## Human Remote boundary
 The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`, and it consumes the Host's Human Inbox slice as the 「收件箱 / Inbox」 queue: one Inbox call per visible Workspace — the whole unread slice, `directCount` per row and `totalUnreadCount` for the badge — merged across Workspaces into the badge and the Inbox page.
 
@@ -21,7 +24,7 @@ Neither slice names an archived Channel's Threads: archival ends participation a
 The Client merges the per-Workspace Inbox calls in the Client; there is no home-level Inbox ledger or Remote.
 
 ## Team Member context boundary
-The explicit `team-member` preset contains coding tools, background jobs, the skill loader tool, compaction, all eight Team tools, Workspace instruction discovery, and private-memory context. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md`. Each Member private root has `memory.md`, `notes/`, and `skills/`; only a bounded 16 KiB escaped reference index is injected, and the block states its current usage as `X.X KiB / 16 KiB` with a percentage. Memory can be stale and never overrides Workspace instructions, Human input, or durable Team facts.
+The explicit `team-member` preset contains coding tools, background jobs, the skill loader tool, compaction, all model-facing Team tools, Workspace instruction discovery, and private-memory context. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md`. Each Member private root has `memory.md`, `notes/`, and `skills/`; only a bounded 16 KiB escaped reference index is injected, and the block states its current usage as `X.X KiB / 16 KiB` with a percentage. Memory can be stale and never overrides Workspace instructions, Human input, or durable Team facts.
 
 Do not store credentials, sensitive data, guesses, chat logs, or facts already owned by the ledger.
 

@@ -47,6 +47,7 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'team_message',
   'team_claim',
   'team_view',
+  'team_activity',
   'context_rollover',
   'context_checkpoint',
   'context_status',
@@ -57,6 +58,34 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'team_doc',
   'team_ask',
 ] as const)
+
+/**
+ * Team tools an Orchestrator member never receives, even if its capabilities
+ * ask for them: the mutation-capable surface. The role is otherwise a prompt
+ * and display fact ("never a routing rule"), but the Orchestrator's contract
+ * is stricter — it must not be able to change task state even when prompted —
+ * so `team_claim` is subtracted at the restriction seam rather than left to
+ * the prompt section. `team_message` stays: it is the only way a digest is
+ * posted, and its Task-creating `asTask` form is rejected in the tool itself.
+ */
+export const ORCHESTRATOR_EXCLUDED_TOOL_NAMES: readonly string[] = Object.freeze(['team_claim'])
+
+/** The allow-list one Member's role subtracts from; identity for every non-Orchestrator. */
+function roleFilteredAllow(member: AgentTeamAgentMember, allow: readonly string[]): readonly string[] {
+  if (member.role !== 'orchestrator') return allow
+  return allow.filter(name => !ORCHESTRATOR_EXCLUDED_TOOL_NAMES.includes(name))
+}
+
+/**
+ * The Team tools one Member's surface must carry: the whole Team set, minus
+ * what the Member's role excludes. The preset check reads this, so an
+ * Orchestrator's deliberately withheld `team_claim` is not reported as a
+ * broken preset composition.
+ */
+export function requiredTeamToolNames(member: AgentTeamAgentMember): readonly string[] {
+  if (member.role !== 'orchestrator') return AGENT_TEAM_TOOL_NAMES
+  return AGENT_TEAM_TOOL_NAMES.filter(name => !ORCHESTRATOR_EXCLUDED_TOOL_NAMES.includes(name))
+}
 
 /** Copy a Remote-supplied capability overlay into owned frozen storage. */
 export function deepCopyCapabilities(capabilities: AgentTeamMemberCapabilities): AgentTeamMemberCapabilities {
@@ -159,6 +188,15 @@ export class MemberRuntime {
     const configured = member.capabilities?.tools?.allow
     if (configured === undefined) {
       this.capabilityWarnings.delete(member.memberId)
+      // No allow-list is unrestricted — except the Orchestrator, whose excluded
+      // surface must be absent even from an unrestricted Member. The
+      // restriction is then the whole known surface minus the exclusions.
+      if (member.role !== 'orchestrator') return
+      const allow = roleFilteredAllow(member, this.deps.ctx.tools.schemas(scopeOf(agentCtx)).map(tool => tool.name))
+      if (allow.length === 0) return
+      const dispose = agentCtx.tools.restrict({ allow })
+      this.memberRestrictions.set(member.memberId, dispose)
+      this.enforcedToolAllow.set(member.memberId, Object.freeze([...allow]))
       return
     }
     // Drop names the current surface does not know rather than failing the
@@ -169,7 +207,7 @@ export class MemberRuntime {
     const knownSet = new Set(known)
     const dropped = configured.filter(name => !knownSet.has(name))
     this.setCapabilityWarnings(member.memberId, dropped.map(name => ({ name, knownNames: known })))
-    const allow = [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])]
+    const allow = roleFilteredAllow(member, [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])])
     if (allow.length === 0) return
     // tools.restrict() requires a scoped context and rejects names outside
     // the inherited surface; both errors surface as this Member's activation
@@ -186,9 +224,14 @@ export class MemberRuntime {
    */
   applySlotToolPolicy(agentCtx: Context, member: AgentTeamAgentMember): void {
     const configured = member.capabilities?.tools?.allow
-    if (configured === undefined) return
     const knownSet = new Set(this.deps.ctx.tools.schemas(scopeOf(agentCtx)).map(tool => tool.name))
-    const allow = [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])]
+    if (configured === undefined) {
+      if (member.role !== 'orchestrator') return
+      const allow = roleFilteredAllow(member, [...knownSet])
+      if (allow.length > 0) agentCtx.tools.restrict({ allow })
+      return
+    }
+    const allow = roleFilteredAllow(member, [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])])
     if (allow.length > 0) agentCtx.tools.restrict({ allow })
   }
 

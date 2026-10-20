@@ -139,3 +139,14 @@ That class answers the localizable question "what kind of problem is this", whil
 The opener under the Task or Thread identity is **one clamped line at every width and for every Thread kind**, with the full text on its `title`. A Task's title runs long and embeds unbreakable refs, and a discussion's opener is its own anchor message, repeated in full in the timeline directly below — so a second line in the band spends header height on text the reader can already see, and makes the band's height depend on how much someone happened to type.
 
 One line keeps a long opener and a two-character one at the same band height (measured: 114px either way on a taskless Thread).
+
+## Team Overview page
+The Overview page answers one question — what is going on in this Workspace right now and today — in four parts: the live agents strip, the needs-attention list, the spend chart, and the workspace event feed. It renders the Host's workspace aggregate; the only state it keeps is the pages it has already fetched.
+
+The live strip draws one card per Member seat: presence from the roster, and the running Turn's tool, step count and elapsed time from the `memberActivity` snapshot. A seat with no running Turn states its standing instead of a tool, and the elapsed time ticks on its own, so a live Turn does not need a change to look alive. Pressing a card opens that Member's Session.
+
+Needs attention folds three sources: open decision cards, errored Turns, and Tasks waiting in review. Decision cards are read for the Threads the feed already names, and those probes are bounded — the list fills a short column, it does not sweep the Workspace. Every row opens its Thread through the same navigation action the other seats use.
+
+The feed is the aggregate's event list: newest first, one page at a time, paged by cursor. A page that reaches the end of the feed names no cursor, and the control that loads the next page disappears with it.
+
+Spend draws the aggregate's per-day buckets in the Host's local day: one bar per Member for the newest day, one bar per day over the last fortnight. The input bucket stays null while a Session ran a Turn whose input split was never reported — the same sticky null the totals carry — so an unproven bucket reads as unknown rather than as zero.

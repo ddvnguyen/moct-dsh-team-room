@@ -1,4 +1,4 @@
-# Eight-tool protocol
+# Model-facing tool protocol
 
 English | [中文](tools.zh.md)
 
@@ -51,6 +51,12 @@ If the recipient has no live session or the wake fails, the operation stays dura
 `team_claim` lists and mutates only the Agent's own Direction Claims on real Tasks. Taskless Threads have no Claim mutation. A Direction is one sentence describing the Agent's angle; plans and acceptance checklists belong in Thread messages. A successful Claim starts Attention. `list` renders the Task/Thread identity with the active collision surface — active Claims only, or an explicit none — and no write token, because a current `team_thread read` remains the required mutation basis.
 
 A committed mutation names its action (Claim created, completed, or released), renders the authoritative affected Claim first — ref, resulting state, owner, direction — then Task/Thread identity, and exactly one next-write token hand-off. Rejection results (`unread_required`, `stale_revision`) share the message rejection form: `Not committed`, local refs/counts, read-before-retry recovery, and no numeric revision.
+
+## `team_activity`
+
+`team_activity` is the read-only snapshot of a Workspace's whole-team activity: per-agent state — presence, a running turn, the current Task, idle minutes, turns, tokens, and failed turns inside the window — the Tasks by status with their open rows and their age, the open decision cards, and the window's top events. It exists for the scheduled digest ([`orchestrator-digest.md`](orchestrator-digest.md)) and for any Member asked for a standing summary.
+
+Every Host call it makes is a read, and nothing it reports can be changed through it. The window is `sinceMinutes` — one day by default — and the result is bounded: every cap it crosses is stated in the result and rendered as an explicit truncation line, so a truncated snapshot never reads as a complete one.
 
 ## `context_rollover`
 

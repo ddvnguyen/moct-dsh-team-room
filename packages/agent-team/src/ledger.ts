@@ -190,6 +190,9 @@ import type {
   AgentTeamRoomActivityRequest,
   AgentTeamRoomActivityResult,
   AgentTeamRoomActivityTotals,
+  AgentTeamWorkspaceActivity,
+  AgentTeamWorkspaceActivityDay,
+  AgentTeamWorkspaceActivityRequest,
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateChannelResult,
   AgentTeamUpdateMemberRequest,
@@ -754,6 +757,73 @@ const ROOM_ACTIVITY_SEQUENCE = /^\d+$/
 
 /** Character bound of one event summary; the first line wins, then the bound (contract §19.1). */
 const ROOM_ACTIVITY_SUMMARY_LIMIT = 200
+
+/**
+ * Shared request bounds of every activity read. A cursor is an opaque sequence token: anything
+ * that cannot be one is rejected here as a typed bad-request rather than silently paging from the
+ * newest event, so a stale or mangled cursor is a visible failure instead of a duplicated page.
+ * `Number` is not the test: it reads an empty string and a whitespace-padded one as 0 and 12,
+ * which would replay a page the caller never asked for, so the token must be a plain run of digits
+ * to count at all. Over-limit is clamped, never rejected.
+ */
+function activityPageBounds(cursor: string | undefined, limit: number | undefined, label: string): { cursor: number | null; limit: number } {
+  const sequence = cursor === undefined ? null : ROOM_ACTIVITY_SEQUENCE.test(cursor) ? Number(cursor) : null
+  if (cursor !== undefined && sequence === null) throw new Error(`${label} cursor must be a non-negative decimal sequence`)
+  return { cursor: sequence, limit: Math.min(Math.max(limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT) }
+}
+
+/** The local calendar day of one stored ISO instant, `YYYY-MM-DD` in the Host's timezone. */
+function localDayKey(instant: string): string {
+  const date = new Date(instant)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/**
+ * The per-day spend buckets of a workspace activity read: every Session run bucketed by the local
+ * day its `startedAt` falls in. The team fold sits on the day and each Member's share sits beside
+ * it, so the Overview can draw both the 14-day total and today's per-agent bars from one read.
+ * `tokensIn` sticks to null per bucket the same way the totals do: one Session with unproven
+ * input turns the day's input unproven, and never folds to 0 (§3.2). Ascending by day.
+ */
+function activityPerDay(runs: readonly AgentTeamSessionRun[]): readonly AgentTeamWorkspaceActivityDay[] {
+  interface DayBucket { tokensIn: number; tokensInKnown: boolean; tokensOut: number; runMs: number; perAgent: Map<AgentTeamMemberId, { tokensIn: number; tokensInKnown: boolean; tokensOut: number; runMs: number }> }
+  const byDay = new Map<string, DayBucket>()
+  for (const run of runs) {
+    const day = localDayKey(run.startedAt)
+    if (day === '') continue
+    const bucket = byDay.get(day) ?? { tokensIn: 0, tokensInKnown: true, tokensOut: 0, runMs: 0, perAgent: new Map() }
+    byDay.set(day, bucket)
+    const agentBucket = bucket.perAgent.get(run.memberId) ?? { tokensIn: 0, tokensInKnown: true, tokensOut: 0, runMs: 0 }
+    bucket.perAgent.set(run.memberId, agentBucket)
+    const runInputKnown = run.unknownInputTurns === 0
+    if (!runInputKnown) { bucket.tokensInKnown = false; agentBucket.tokensInKnown = false } else {
+      bucket.tokensIn += run.tokensIn
+      agentBucket.tokensIn += run.tokensIn
+    }
+    bucket.tokensOut += run.tokensOut
+    bucket.runMs += run.runMs
+    agentBucket.tokensOut += run.tokensOut
+    agentBucket.runMs += run.runMs
+  }
+  return [...byDay.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([day, bucket]) => Object.freeze({
+      day,
+      tokensIn: bucket.tokensInKnown ? bucket.tokensIn : null,
+      tokensOut: bucket.tokensOut,
+      runMs: bucket.runMs,
+      perAgent: Object.freeze([...bucket.perAgent.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([memberId, agentBucket]) => Object.freeze({
+          memberId,
+          tokensIn: agentBucket.tokensInKnown ? agentBucket.tokensIn : null,
+          tokensOut: agentBucket.tokensOut,
+          runMs: agentBucket.runMs,
+        }))),
+    }))
+}
 
 /**
  * The four usage buckets of one Turn. Each row names the result field, the Turn-usage field it
@@ -2352,6 +2422,20 @@ export class AgentTeamLedger {
     return Object.freeze({ decisions: Object.freeze(decisions) })
   }
 
+  /**
+   * Every open decision card of one Workspace, oldest ask first. The caller authorizes the reader
+   * (Workspace participation; a Member sees only Workspaces it belongs to) — there is no per-Channel
+   * filter here, because the digest reads the whole Workspace by design. Archived Channels hold no
+   * open cards that can still be answered, so they are excluded like an inactive surface.
+   */
+  openDecisions(workspaceId: WorkspaceId): readonly AgentTeamDecisionView[] {
+    const views = [...this.state.decisions.values()]
+      .filter(state => state.status === 'open')
+      .filter(state => this.state.channels.get(state.channelRef)?.workspaceId === workspaceId && this.state.channels.get(state.channelRef)?.state === 'active')
+      .map(state => decisionView(state))
+    return Object.freeze(views.sort((left, right) => left.askedAt.localeCompare(right.askedAt)))
+  }
+
   private decisionForActor(actor: AgentTeamHumanActor | AgentTeamMemberActor, workspaceId: WorkspaceId, decisionRef: AgentTeamDecisionRef): AgentTeamDecisionState {
     const state = this.state.decisions.get(this.requireRefKey(this.state.decisions, decisionRef, 'decision', 'decision card'))
     if (state === undefined) throw new Error(`unknown decision card '${decisionRef}'${this.unknownRefHint(decisionRef, 'decision', 'decision card')}`)
@@ -2948,25 +3032,90 @@ export class AgentTeamLedger {
    * Messages of the scope: bounded by ledger size, never by the request.
    */
   roomActivity(request: AgentTeamRoomActivityRequest): AgentTeamRoomActivityResult {
-    // A cursor is an opaque sequence token. Anything that cannot be one is rejected here as a
-    // typed bad-request rather than silently paging from the newest event, so a stale or mangled
-    // cursor is a visible failure instead of a duplicated page. `Number` is not the test: it reads
-    // an empty string and a whitespace-padded one as 0 and 12, which would replay a page the
-    // caller never asked for, so the token must be a plain run of digits to count at all.
-    const cursor = request.cursor === undefined ? null : ROOM_ACTIVITY_SEQUENCE.test(request.cursor) ? Number(request.cursor) : null
-    if (request.cursor !== undefined && cursor === null) throw new Error('room activity cursor must be a non-negative decimal sequence')
-    const limit = Math.min(Math.max(request.limit ?? ROOM_ACTIVITY_LIMIT_DEFAULT, 1), ROOM_ACTIVITY_EVENT_LIMIT)
+    const bounds = activityPageBounds(request.cursor, request.limit, 'room activity')
+    // A `since` window bounds the fold by the ledger instant: Messages, Turns, failure notices
+    // committed before it are excluded, and the event page stops at it (ordered is chronological,
+    // so the first older event ends the walk). A listed Session's totals still cover its whole
+    // life — Sessions are folded rows, not re-foldable per instant — so windowed Sessions are
+    // filtered to ones with activity at or after the window start and their run fields are
+    // whole-life numbers.
+    const sinceMs = request.since === undefined ? null : Date.parse(request.since)
+    if (request.since !== undefined && Number.isNaN(sinceMs)) throw new Error('room activity since must be an ISO-8601 instant')
 
     const channelRef = this.requireChannel(request.workspaceId, request.channelRef).channelRef
     const scope: 'channel' | 'thread' = request.threadRef === undefined ? 'channel' : 'thread'
     const threadContext = request.threadRef === undefined ? undefined : this.threadContextFrom(this.state, request.workspaceId, { threadRef: request.threadRef })
-    // The Thread’s own Channel must be the requested one, and that Channel must still be active: a
+    // The Thread's own Channel must be the requested one, and that Channel must still be active: a
     // Thread paired with a foreign or archived Channel is not-found, never an empty success.
     if (threadContext !== undefined && threadContext.channelRef !== channelRef) throw new Error(`Thread '${request.threadRef}' does not belong to Channel '${channelRef}'`)
     if (threadContext === undefined && this.state.channels.get(channelRef)?.state === 'archived') throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
     const threadRefs: ReadonlySet<AgentTeamThreadRef> = threadContext === undefined
       ? this.channelThreadRefs(channelRef)
       : new Set<AgentTeamThreadRef>([threadContext.thread.threadRef])
+
+    // The event feed's Channel edge: a Thread scope projects its Thread's own Channel, so the
+    // Channel-wide facts (member lifecycle, workspace joins) ride the Thread feed too. The
+    // resolved Thread always carries a Channel; the empty set keeps that unreachable edge a
+    // closed match instead of the workspace-wide one `null` names.
+    const eventChannelRef = scope === 'thread' ? (threadContext?.channelRef ?? null) : channelRef
+    const channels: ReadonlySet<AgentTeamChannelRef> = eventChannelRef === null ? new Set() : new Set<AgentTeamChannelRef>([eventChannelRef])
+    const memberInScope = eventChannelRef === null
+      ? (): boolean => false
+      : (memberId: AgentTeamMemberId): boolean => this.isChannelMember(eventChannelRef, memberId)
+
+    const fold = this.activityFold(threadRefs, sinceMs)
+    return Object.freeze({ scope, ...this.activityPage(request.workspaceId, channels, threadRefs, memberInScope, fold, bounds.limit, bounds.cursor, sinceMs) })
+  }
+
+  /**
+   * Workspace-wide activity read: the room-activity fold over every Channel of one Workspace at
+   * once (contract §19.1). Read-only — no receipt, no lock, no wake. An empty Workspace is a valid
+   * empty aggregate, not an error, because the Overview page must render before any Channel exists.
+   *
+   * The fold is the same one `roomActivity` runs — `activityFold` over the Workspace's Thread refs,
+   * `roomActivityEvent` for the feed — with the scope widened instead of a second projection: a
+   * Channel-level fact (member lifecycle, workspace joins) matches any Channel of the Workspace,
+   * and a Member counts while they still hold a projection row in one of them. On top of the fold
+   * sit the per-day spend buckets the Overview page charts: every in-scope Session run bucketed by
+   * the local calendar day its `startedAt` falls in, the team fold per day plus each Member's share.
+   */
+  workspaceActivity(request: AgentTeamWorkspaceActivityRequest): AgentTeamWorkspaceActivity {
+    const bounds = activityPageBounds(request.cursor, request.limit, 'workspace activity')
+
+    const channels = new Set<AgentTeamChannelRef>()
+    for (const channel of this.state.channels.values()) {
+      if (channel.workspaceId === request.workspaceId) channels.add(channel.channelRef)
+    }
+    const threadRefs = new Set<AgentTeamThreadRef>()
+    for (const threadRef of this.state.threads.keys()) {
+      const channelRef = this.channelRefForThreadFrom(this.state, threadRef)
+      if (channelRef !== undefined && channels.has(channelRef)) threadRefs.add(threadRef)
+    }
+    // "Still has a projection row": for the workspace scope that is one Membership row in any of
+    // its Channels, computed once instead of per operation.
+    const workspaceMembers = new Set<AgentTeamMemberId>()
+    for (const channelRef of channels) {
+      for (const memberId of this.state.memberships.get(channelRef) ?? []) workspaceMembers.add(memberId)
+    }
+
+    const fold = this.activityFold(threadRefs, null)
+    const page = this.activityPage(request.workspaceId, null, threadRefs, memberId => workspaceMembers.has(memberId), fold, bounds.limit, bounds.cursor, null)
+    return Object.freeze({ ...page, perDay: activityPerDay(fold.sessionRuns) })
+  }
+
+  /**
+   * The usage fold every activity read shares: one pass over the Messages, Turn records, failure
+   * notices and Session runs of a Thread-ref scope. Scope-blind on purpose — the Channel and
+   * workspace reads differ only in which Thread refs they hand in. Read-only; bounded by ledger
+   * size, never by the request.
+   */
+  private activityFold(threadRefs: ReadonlySet<AgentTeamThreadRef>, sinceMs: number | null): {
+    readonly totals: AgentTeamRoomActivityTotals
+    readonly perAgent: readonly AgentTeamRoomActivityAgent[]
+    readonly sessions: readonly AgentTeamSessionRun[]
+    /** Every in-scope Session run, unsliced — the per-day buckets fold over all of them. */
+    readonly sessionRuns: readonly AgentTeamSessionRun[]
+  } {
     const inScope = (threadRef: AgentTeamThreadRef): boolean => threadRefs.has(threadRef)
 
     const byMember = new Map<AgentTeamMemberId, RoomActivityMemberTotals>()
@@ -2981,6 +3130,7 @@ export class AgentTeamLedger {
     let messages = 0
     for (const message of this.state.messagesByRef.values()) {
       if (!inScope(message.threadRef)) continue
+      if (sinceMs !== null && Date.parse(message.occurredAt) < sinceMs) continue
       messages += 1
       bucketFor(message.sender).messages += 1
     }
@@ -3002,6 +3152,7 @@ export class AgentTeamLedger {
     for (const operation of this.state.sessionTurns.values()) {
       const turn = operation.data
       if (!turn.threadRefs.some(inScope)) continue
+      if (sinceMs !== null && Date.parse(operation.occurredAt) < sinceMs) continue
       turns += 1
       sessionIdsInScope.add(turn.sessionId)
       const bucket = bucketFor(turn.memberId)
@@ -3025,15 +3176,17 @@ export class AgentTeamLedger {
     for (const operation of this.state.ordered) {
       if (operation.kind !== 'team/turn-failure-notice') continue
       if (!inScope(operation.data.threadRef)) continue
+      if (sinceMs !== null && Date.parse(operation.occurredAt) < sinceMs) continue
       failedTurns += 1
       bucketFor(operation.data.memberId).failedTurns += 1
     }
 
-    const sessions = [...sessionIdsInScope]
+    const sessionRuns = [...sessionIdsInScope]
       .map(sessionId => this.state.sessionRuns.get(sessionId))
       .filter((run): run is AgentTeamSessionRun => run !== undefined)
+      .filter(run => sinceMs === null || Date.parse(run.lastAssistantAt) >= sinceMs)
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
-      .slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
+    const sessions = sessionRuns.slice(0, ROOM_ACTIVITY_SESSION_LIMIT)
 
     // Sticky null, per bucket: a bucket is unproven for a Member once any of its Turns left that
     // bucket unreported, and stays unproven in this scope — the signature of an unknown, never a 0.
@@ -3079,50 +3232,49 @@ export class AgentTeamLedger {
       unrecordedTurns,
     })
 
-    const eventChannelRef = scope === 'thread' ? (threadContext?.channelRef ?? null) : channelRef
-    return Object.freeze(this.roomActivityEvents(request.workspaceId, eventChannelRef, threadRefs, scope, totals, perAgent, sessions, limit, cursor))
+    return { totals, perAgent, sessions, sessionRuns }
   }
 
-
   /**
-   * The bounded event feed of a room-activity scope: one row per committed operation that belongs
-   * to the scope, newest first, one page. Read-only; it walks `state.ordered` from the head, so a
+   * The bounded event feed of an activity scope: one row per committed operation that belongs to
+   * the scope, newest first, one page. Read-only; it walks `state.ordered` from the head, so a
    * page costs the operations it scans, never a second index. A Message contributes an opening-line
    * preview bounded to 200 characters — a body is never returned whole (contract §19.1).
+   * `channels === null` is the workspace scope: a Channel-level fact matches any Channel of the
+   * Workspace, and `memberInScope` carries the corresponding "still on the roster" question.
    */
-  private roomActivityEvents(
+  private activityPage(
     workspaceId: WorkspaceId,
-    channelRef: AgentTeamChannelRef | null,
+    channels: ReadonlySet<AgentTeamChannelRef> | null,
     threadRefs: ReadonlySet<AgentTeamThreadRef>,
-    scope: 'channel' | 'thread',
-    totals: AgentTeamRoomActivityTotals,
-    perAgent: readonly AgentTeamRoomActivityAgent[],
-    sessions: readonly AgentTeamSessionRun[],
+    memberInScope: (memberId: AgentTeamMemberId) => boolean,
+    fold: { readonly totals: AgentTeamRoomActivityTotals; readonly perAgent: readonly AgentTeamRoomActivityAgent[]; readonly sessions: readonly AgentTeamSessionRun[] },
     limit: number,
     cursor: number | null,
-  ): AgentTeamRoomActivityResult {
+    sinceMs: number | null,
+  ): { totals: AgentTeamRoomActivityTotals; perAgent: readonly AgentTeamRoomActivityAgent[]; sessions: readonly AgentTeamSessionRun[]; events: readonly AgentTeamRoomActivityEvent[]; nextCursor?: string } {
     const fromSequence = cursor
     const page: AgentTeamRoomActivityEvent[] = []
     let nextCursor: string | undefined
     for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
-      const event = this.roomActivityEvent(this.state.ordered[index]!, channelRef, threadRefs, workspaceId)
+      const event = this.roomActivityEvent(this.state.ordered[index]!, channels, threadRefs, workspaceId, memberInScope)
       if (event === undefined) continue
       if (fromSequence !== null && event.sequence >= fromSequence) continue
+      // ordered is chronological, so the first event older than the window ends the walk.
+      if (sinceMs !== null && Date.parse(event.at) < sinceMs) break
       if (page.length < limit) page.push(event)
       else { nextCursor = String(page[page.length - 1]!.sequence); break }
     }
-    return Object.freeze({
-      scope,
-      totals,
-      perAgent,
-      sessions,
-      events: Object.freeze(page),
-      ...(nextCursor === undefined ? {} : { nextCursor }),
-    })
+    return { totals: fold.totals, perAgent: fold.perAgent, sessions: fold.sessions, events: Object.freeze(page), ...(nextCursor === undefined ? {} : { nextCursor }) }
   }
 
-  /** One committed operation projected into an event row, or undefined when it is out of scope. */
-  private roomActivityEvent(operation: AgentTeamOperation, channelRef: AgentTeamChannelRef | null, threadRefs: ReadonlySet<AgentTeamThreadRef>, workspaceId: WorkspaceId): AgentTeamRoomActivityEvent | undefined {
+  /**
+   * One committed operation projected into an event row, or undefined when it is out of scope.
+   * `channels === null` is the workspace scope: the operation's own Channel is never matched,
+   * only its Workspace. `memberInScope` answers "does this Member still have a projection row
+   * here" — in the read's Channel for a Channel feed, in any of its Channels for a workspace feed.
+   */
+  private roomActivityEvent(operation: AgentTeamOperation, channels: ReadonlySet<AgentTeamChannelRef> | null, threadRefs: ReadonlySet<AgentTeamThreadRef>, workspaceId: WorkspaceId, memberInScope: (memberId: AgentTeamMemberId) => boolean): AgentTeamRoomActivityEvent | undefined {
     const base = { sequence: operation.sequence, at: operation.occurredAt, actor: roomActivityActor(operation.actor) }
     const event = (kind: string, summary: string, scope: { threadRef?: AgentTeamThreadRef | undefined; taskRef?: AgentTeamTaskRef | undefined; messageRef?: AgentTeamMessageRef | undefined }): AgentTeamRoomActivityEvent =>
       Object.freeze({ ...base, kind, summary: roomActivitySummary(summary), ...(scope.threadRef === undefined ? {} : { threadRef: scope.threadRef }), ...(scope.taskRef === undefined ? {} : { taskRef: scope.taskRef }), ...(scope.messageRef === undefined ? {} : { messageRef: scope.messageRef }) })
@@ -3186,13 +3338,16 @@ export class AgentTeamLedger {
       }
       case 'team/channel-member-added':
       case 'team/channel-member-removed':
-        if (operation.data.workspaceId !== workspaceId || channelRef === null || operation.data.channelRef !== channelRef) return undefined
+        // A workspace feed takes the fact from any of its Channels; a Channel feed only from its own.
+        if (operation.data.workspaceId !== workspaceId) return undefined
+        if (channels !== null && !channels.has(operation.data.channelRef)) return undefined
         return event(operation.kind, roomActivityMemberSummary(operation.kind, this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId), {})
       case 'team/member-workspace-joined':
       case 'team/member-workspace-left':
-        // Workspace participation is Team-wide, not Thread-scoped: it reaches only a Channel feed.
-        if (channelRef === null || operation.data.workspaceId !== workspaceId) return undefined
-        if (!this.isChannelMember(channelRef, operation.data.memberId)) return undefined
+        // Workspace participation is Team-wide, not Thread-scoped: it reaches a Channel feed for
+        // its own Members, and a workspace feed for any Member still on one of its Channels.
+        if (operation.data.workspaceId !== workspaceId) return undefined
+        if (!memberInScope(operation.data.memberId)) return undefined
         return event(operation.kind, roomActivityMemberSummary(operation.kind, this.state.members.get(operation.data.memberId)?.handle ?? operation.data.memberId), {})
       case 'team/member-added':
       case 'team/member-updated':
@@ -3204,11 +3359,10 @@ export class AgentTeamLedger {
       case 'team/member-session-rolled-over':
       case 'team/member-session-restarted':
       case 'team/member-context-cleared':
-        // Member lifecycle is never Thread-scoped, so it belongs to the Channel feed only, and
-        // only when the Member still has a projection row in this Channel.
-        if (channelRef === null) return undefined
+        // Member lifecycle is never Thread-scoped: it belongs to the Channel feed whose Channel
+        // still holds the Member's projection row, or to the workspace feed holding any row.
         if (this.state.members.get(operation.data.member.memberId) === undefined) return undefined
-        if (!this.isChannelMember(channelRef, operation.data.member.memberId)) return undefined
+        if (!memberInScope(operation.data.member.memberId)) return undefined
         return event(operation.kind, roomActivityMemberSummary(operation.kind, operation.data.member.handle), {})
       case 'team/doc-created': {
         if (!threadRefs.has(operation.data.doc.threadRef)) return undefined

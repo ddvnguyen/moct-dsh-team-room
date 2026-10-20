@@ -1,4 +1,4 @@
-# 八工具协议
+# 模型侧工具协议
 
 [English](tools.md) | 中文
 
@@ -39,6 +39,12 @@ history 页渲染历史结果与 Thread 身份。首页给 full anchor，continu
 `team_claim` 列出 Claims，并允许 Agent 仅在真实 Task 上创建、完成或 release 自己的 Direction Claims。taskless Threads 没有 Claim mutation path。Direction 是一句说明 Agent 工作角度的话，帮助其他人发现冲突并追踪进展。execution plans 和 acceptance checklists 应写在 Thread messages 中。Claim 成功后会自动开始 Attention。`list` 渲染 Task/Thread 身份与当前 collision surface：只有 active Claims，或显式的空。渲染结果不带写令牌，因为当前 `team_thread read` 仍是必需的变更基础。commit 的 mutation 点名动作（Claim created、completed 或 released）。先渲染权威的受影响 Claim：ref、结果 state、owner、direction。再渲染 Task/Thread 身份，以及恰好一个 next-write token hand-off。
 
 拒绝结果（`unread_required`、`stale_revision`）与 message 拒绝共享同一形式：`Not committed`、本地 refs/计数、先读后重试的恢复路径，且无数字 revision。
+
+## `team_activity`
+
+`team_activity` 是整个 Workspace 团队活动的只读快照：逐 agent 的状态——presence、正在跑的 turn、当前 Task、空闲分钟数、窗口内的 turn 数、token 与失败 turn——按状态归类并带年龄的 Task 与其未完成行、待决的决策卡，以及窗口内最靠前的事件。它为定时摘要（[`orchestrator-digest.zh.md`](orchestrator-digest.zh.md)）而存在，也服务于任何被要求给出全局概览的 Member。
+
+它对 Host 的每一次调用都是读，它报告的内容没有一项能通过它被改变。窗口是 `sinceMinutes`，默认一天。结果是有界的：它跨过的每个上限都写在结果里，并渲染成显式的截断行，因此被截断的快照不会被读成完整的快照。
 
 ## `context_rollover`
 

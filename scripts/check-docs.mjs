@@ -98,6 +98,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'architecture/package-ownership.md': [552, 343],
   'architecture/tools-and-preset.md': [616, 540],
   'architecture/workspace-session-storage.md': [576, 584],
+  'architecture/team-board-runtime.md': [490, 304],
   'development/README.md': [105, 64],
   'development/codex-ui-sidebar-patch.md': [612, 402],
   'development/environments-and-install.md': [597, 569],
@@ -122,7 +123,9 @@ const BLOCK_CHARACTER_CEILINGS = {
   'team-collaboration/boundaries.md': [642, 578],
   'team-collaboration/memory-and-context.md': [581, 573],
   'team-collaboration/model-and-time.md': [530, 598],
+  'team-collaboration/orchestrator-digest.md': [347, 175],
   'team-collaboration/tools.md': [573, 564],
+  'user/team-board.md': [355, 248],
 }
 
 const args = process.argv.slice(2)

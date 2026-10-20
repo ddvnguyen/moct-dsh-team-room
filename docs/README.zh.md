@@ -19,13 +19,15 @@
 | [`architecture/README.zh.md`](architecture/README.zh.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
 | [`architecture/package-ownership.zh.md`](architecture/package-ownership.zh.md) | 三个 package 目录、唯一的发布 manifest，以及各接缝之间单向的依赖方向 | 修改 package 接缝、manifest 或 import 方向 |
 | [`architecture/host-authority.zh.md`](architecture/host-authority.zh.md) | Host 拥有什么：ledger、生命周期、projection、Session 持久化、Attention、上下文压力、私有记忆与 member capabilities | 修改 Host 运行时、持久化、重放、Attention 或记忆行为 |
-| [`architecture/tools-and-preset.zh.md`](architecture/tools-and-preset.zh.md) | 八个 model-facing 工具、各自定义在哪个模块，以及隔离的 `team-member` preset | 修改某个 model-facing 工具或 preset 挂载的内容 |
+| [`architecture/tools-and-preset.zh.md`](architecture/tools-and-preset.zh.md) | model-facing 工具、各自定义在哪个模块，以及隔离的 `team-member` preset | 修改某个 model-facing 工具或 preset 挂载的内容 |
 | [`architecture/client-and-remote.zh.md`](architecture/client-and-remote.zh.md) | typed Remote 声明、Client plugin 与 slot composition、Client 数据与呈现边界 | 修改 RPC、Client plugin 加载、slot 或 projection |
 | [`architecture/workspace-session-storage.zh.md`](architecture/workspace-session-storage.zh.md) | 复用 Harness 的 Workspace、Session 和存储，而不另建并行 Team 状态 | 修改 Workspace 选择、Session 存储或 ledger 路由 |
+| [`architecture/team-board-runtime.zh.md`](architecture/team-board-runtime.zh.md) | 团队看板的运行时接缝：Task 的 op kind、`workspaceActivity` 聚合、摘要定时器与 Multica 复用策略 | 修改看板这一串的 ledger 记录、Overview 聚合、摘要计划或移植的 Multica 文件时 |
 | [`domain-model.zh.md`](domain-model.zh.md) | 稳定的 Agent Team 领域词汇 | 修改领域语义、类型命名或正式协作合同 |
-| [`team-collaboration/README.zh.md`](team-collaboration/README.zh.md) | 已实现的八工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
+| [`team-collaboration/README.zh.md`](team-collaboration/README.zh.md) | 已实现的工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
 | [`team-collaboration/model-and-time.zh.md`](team-collaboration/model-and-time.zh.md) | 协作模型与 Member 时间感知 | 修改 Thread、Task、Claim 的含义或时间提示 |
-| [`team-collaboration/tools.zh.md`](team-collaboration/tools.zh.md) | 八个 model-facing 工具及全部工具共用的规则 | 修改某个工具的合同、ref 或它周围的 mutation fence |
+| [`team-collaboration/tools.zh.md`](team-collaboration/tools.zh.md) | model-facing 工具及全部工具共用的规则 | 修改某个工具的合同、ref 或它周围的 mutation fence |
+| [`team-collaboration/orchestrator-digest.zh.md`](team-collaboration/orchestrator-digest.zh.md) | Orchestrator 角色、它的定时摘要，以及如何配置摘要 | 修改 Orchestrator 角色、摘要调度或摘要落点时 |
 | [`team-collaboration/attention-and-messaging.zh.md`](team-collaboration/attention-and-messaging.zh.md) | Attention、Inbox、mention、面向人类的消息与 ref 引用 | 修改通知、mention 投递或消息呈现 |
 | [`team-collaboration/boundaries.zh.md`](team-collaboration/boundaries.zh.md) | Mutation fence、Human Remote 边界与 Team Member 上下文边界 | 修改谁能改什么，或 Member 能看到别的 Session 的什么 |
 | [`team-collaboration/memory-and-context.zh.md`](team-collaboration/memory-and-context.zh.md) | Member memory、上下文压力归属、Agent notification 与 assembled acceptance | 修改记忆维护、上下文压力处理或验收必须证明什么 |
@@ -39,6 +41,7 @@
 | [`frontend-design/board.zh.md`](frontend-design/board.zh.md) | 看板：Workspace kanban、卡片解剖、拖拽规则与实时活动 | 修改看板页面、其列/卡片/筛选或拖拽规则时 |
 | [`frontend-design/refresh-copy-accessibility.zh.md`](frontend-design/refresh-copy-accessibility.zh.md) | 刷新语义、文案、可访问性与演进 | 修改刷新行为、文案或可访问性 |
 | [`harness-navigation.zh.md`](harness-navigation.zh.md) | 本仓库与 `../deepseek-harness` 的查阅路线、源码入口、已知接入陷阱 | 不确定应该查哪个 Harness 文档/package/source 时 |
+| [`user/team-board.zh.md`](user/team-board.zh.md) | 团队看板的运维者指南：角色、看板与拖拽规则、Task 详情、停止与聊天、总览、收件箱分级、摘要与 Multica 归属 | 组建团队，或向读者解释 Team Board 的某个界面时 |
 
 ## 文档规则
 
@@ -51,3 +54,4 @@
 - **改 Client 或 UI：** UI 体系查 [`frontend-design/README.zh.md`](frontend-design/README.zh.md)，跨仓库路线查 [`harness-navigation.zh.md`](harness-navigation.zh.md)。
 - **改安装、构建、测试或 Remote 生成：** 查 [`development/README.zh.md`](development/README.zh.md)，再看对应 `package.json` / script 的实际实现。
 - **发布一个版本：** 流程与各道门查 [`release-runbook.zh.md`](release-runbook.zh.md)；放宽 peer 范围之前必须先做的认证查 [`dsh-release-compatibility.zh.md`](dsh-release-compatibility.zh.md)。
+- **组建或讲解一个团队：** 运维者路线查 [`user/team-board.zh.md`](user/team-board.zh.md)：看板、Task 详情、总览与收件箱。

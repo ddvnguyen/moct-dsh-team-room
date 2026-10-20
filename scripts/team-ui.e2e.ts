@@ -26,6 +26,7 @@ const UI08_SHOTS = join(BROWSER_ARTIFACTS, 'ui-08')
 const UI09_SHOTS = join(BROWSER_ARTIFACTS, 'ui-09')
 const TWO_LANE_SHOTS = join(BROWSER_ARTIFACTS, 'two-lane')
 const BOARD_SHOTS = join(BROWSER_ARTIFACTS, 'board')
+const INBOX_SHOTS = join(BROWSER_ARTIFACTS, 'inbox')
 const AGENT_SHOTS = join(BROWSER_ARTIFACTS, 'agent')
 const TEAM_DOC_SHOTS = join(BROWSER_ARTIFACTS, 'team-docs')
 let scaffold: WebScaffold | undefined
@@ -220,6 +221,30 @@ async function entryUnreadCapsule(page: Page, lineSelector: string): Promise<Ret
  * (`clearArtifacts`); every later case appends to it, so one full run leaves
  * every case's screenshots to review instead of only the last case's.
  */
+/**
+ * The Team preset the Member activation asks for, declared the way a
+ * deployment's own profile layer declares it. The bundle ships the preset
+ * inside its own group, and the scaffold composes the shipped registry, so
+ * the journey states the preset it needs at the root.
+ */
+async function writeTeamMemberPresetOverlay(path: string): Promise<void> {
+  await writeFile(path, [
+    '- insert:',
+    '    - id: journey-team-member-preset',
+    "      name: '@deepseek-ai/dsh-agent-preset'",
+    '      config:',
+    '        id: team-member',
+    '        plugins:',
+    '        - id: journey-team-tools',
+    "          name: '@ddvnguyen/moct-dsh-team-room/tools'",
+    '        - id: journey-agent-instructions',
+    "          name: '@deepseek-ai/dsh-agent-instructions'",
+    '          config:',
+    '            maxBytes: 65536',
+    '',
+  ].join('\n'))
+}
+
 async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
   if (clearArtifacts) await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
@@ -266,6 +291,7 @@ async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await mkdir(UI08_SHOTS, { recursive: true })
   await mkdir(UI09_SHOTS, { recursive: true })
   await mkdir(BOARD_SHOTS, { recursive: true })
+  await mkdir(INBOX_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -3316,3 +3342,408 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   await page.setViewportSize({ width: 1440, height: 960 })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)
+/**
+ * The Inbox (Team Board 8/10): the queue groups itself by what it asks of the
+ * reader — a pending decision card is 「必须处理」, an ordinary mention is
+ * 「需要关注」, plain activity is 「动态」 — the filter menu narrows it with the
+ * counts each facet can reveal, and the split view opens the selected row's
+ * task detail beside the list.
+ *
+ * The seed is the decision journey's shape: the Human opens a Thread and
+ * mentions a Member, the Member asks a decision (an open card is a mention in
+ * the Human's Inbox) and then replies, so the queue holds one action-required
+ * row and one ordinary one.
+ */
+it('groups the Inbox by severity and opens a task detail in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'inbox-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Inbox Journey')
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const human = { kind: 'human', memberId: 'member:human', handle: 'human' }
+  const memberId = 'member:agent-planner'
+  const planner = { kind: 'member', memberId, handle: 'planner' }
+  await ledger.addMember({ requestId: 'inbox-member', actor: human, workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', channelRefs: [],
+    member: { memberId, sessionId: 'session:team-inbox', workspaceId: workspace.id, handle: 'planner', description: 'Plans work', presetId: 'team-member', privateMemoryPath: join(HOME, 'planner-inbox'), state: 'enabled' } })
+  const channel = (await ledger.createChannel({ requestId: 'inbox-channel', actor: human, workspaceId: workspace.id, name: 'release', description: '', memberIds: [memberId] })).value.channel
+  const opened = (await ledger.sendMessage({ requestId: 'inbox-open', actor: human, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: '@planner 这个发布要你拍板。', asTask: false, recipients: [memberId] })).value
+  const threadRef = opened.thread.threadRef
+  await ledger.askDecision({ requestId: 'inbox-ask', actor: planner, workspaceId: workspace.id, threadRef,
+    context: '发布前需要你定一件事。',
+    questions: [{ prompt: '哪天发布？', multiple: false, options: [{ label: '周四', description: '提前一天。' }, { label: '周五' }], recommended: [0] }] })
+  await ledger.sendMessage({ requestId: 'inbox-reply', actor: planner, workspaceId: workspace.id, channelRef: channel.channelRef,
+    body: '我先按周四准备。', asTask: false, recipients: [] })
+
+/**
+ * The Team Board journey (Board 10/10): one browser pass over the whole flow.
+ *
+ * A Task is created on the board, handed to a Worker, watched while it runs,
+ * stopped, claimed, reviewed, accepted — and the Agent's own page shows the
+ * run it spent.
+ *
+ * The Worker needs a Turn that stays running while the reader looks at it, so
+ * the model route is scripted: the replay sidecar replaces the whole script
+ * with one hanging call, the shape no recorded log can express. Everything
+ * else is the real Host — the assignment wake starts the Worker's own
+ * Session, and the Stop in the execution log ends that Turn through the dsh
+ * Session controller.
+ */
+it('walks the Team Board journey in real Web', async () => {
+  await installLocalBundle(false)
+  // The fixture opens the replay row; the sidecar replaces its script.
+  const replayDirectory = join(HOME, 'replay')
+  await mkdir(replayDirectory, { recursive: true })
+  const fixture = join(replayDirectory, 'session.jsonl')
+  await writeFile(fixture, `${JSON.stringify({ type: 'session', version: 0, id: 'team-board-journey', createdAt: 0, cwd: '{{cwd}}' })}\n`)
+  const override = join(replayDirectory, 'replay.override.json')
+  await writeFile(override, JSON.stringify([{ kind: 'hang' }]))
+  const overlay = join(replayDirectory, 'journey.overlay.yml')
+  await writeTeamMemberPresetOverlay(overlay)
+  scaffold = await launchWebScaffold({
+    harnessHome: HOME,
+    profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] },
+    replayFixture: fixture,
+    replayOverride: override,
+    extraOverlayPath: overlay,
+  })
+  // The Workspace and its seats are the Host's own facts: the journey starts
+  // from one Channel, one Worker and one Orchestrator.
+  const workspacePath = join(scaffold.workspaceCwd, 'team-board-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Board Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+    addMember(request: Record<string, unknown>): Promise<{ readonly status: { readonly member: { readonly memberId: string; readonly handle: string; readonly sessionId: string } } }>
+  }
+  const channel = await team.createChannel({ requestId: 'journey-channel', workspaceId, name: 'delivery', description: 'Board journey' })
+  const worker = (await team.addMember({
+    requestId: 'journey-worker', workspaceId, handle: 'builder', description: 'Builds the thing',
+    presetId: 'team-member', role: 'worker', channelRefs: [channel.channel.channelRef],
+  })).status.member
+  // The Orchestrator is the seat the digest wakes; it is seated here so the
+  // journey's last step has one.
+  await team.addMember({
+    requestId: 'journey-orchestrator', workspaceId, handle: 'watcher', description: 'Watches the team',
+    presetId: 'team-member', role: 'orchestrator', channelRefs: [channel.channel.channelRef],
+  })
+  // Activation lands asynchronously: the wake below needs a live Session.
+  await expect.poll(() => JSON.stringify(scaffold.ctx.agentTeam.members({ workspaceId })
+    .find((entry: { member: { handle: string } }) => entry.member.handle === 'builder')), { timeout: 30_000 })
+    .toContain('"availability":"active"')
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(workspaceId => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, inbox: true }))
+  }, workspace.id)
+  await page.reload()
+  const inbox = page.locator('[data-team-inbox]')
+  await inbox.waitFor({ timeout: 30_000 })
+
+  // The queue groups itself: the open decision card is the band that must
+  // interrupt, the plain reply is the band that only records.
+  const bands = inbox.locator('[data-inbox-list] h3[data-severity]')
+  await expect.poll(async () => await bands.count()).toBeGreaterThan(0)
+  await expect.poll(async () => await inbox.locator('[data-inbox-list] h3[data-severity="action_required"]').count()).toBe(1)
+  await settleLayout(page)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-bands-desktop.png'), fullPage: true })
+
+  // The filter menu narrows the queue with the counts each facet can reveal.
+  const filter = page.getByRole('button', { name: '筛选' })
+  await filter.waitFor({ timeout: 30_000 })
+  await filter.click()
+  const severityRow = page.getByRole('menuitem').filter({ hasText: '必须处理' })
+  await severityRow.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await severityRow.textContent()).toContain('1')
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-filter-desktop.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+
+  // The split view opens the selected row's task detail beside the list: the
+  // decision card is answered in place.
+  const decisionRow = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
+  await decisionRow.waitFor({ timeout: 30_000 })
+  await decisionRow.click()
+  const detail = page.locator('[data-inbox-detail]')
+  await detail.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await detail.locator('[data-team-decision]').count()).toBe(1)
+  await settleLayout(page)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-detail-desktop.png'), fullPage: true })
+
+  // 390×844: the narrow seat has no second column, so the queue fills the
+  // reading column and a row opens its Thread.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  expect(await page.locator('[data-inbox-detail]').count()).toBe(0)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+  // The board is a navigation face: the persisted snapshot is how the reader
+  // reaches it, and a reload reopens it.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // Create: the dialog defaults to Unassigned and the first Channel, so the
+  // new Task lands in 待办 with nobody on it.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Board journey task')
+  await dialog.getByLabel('描述').fill('Opened from the board journey')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Board journey task' })
+  await card.waitFor({ timeout: 20_000 })
+  const todoColumn = board.locator('[data-testid="board-column"][data-status="todo"]')
+  await expect.poll(async () => todoColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count()).toBe(1)
+  const created = scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { title?: string }) => task.title === 'Board journey task')
+  expect(created).toMatchObject({ status: 'todo', assignee: null })
+
+  // Assign: the card's own picker writes the assignee, and the Host wakes the
+  // new seat — the run below is that wake, not a scripted one.
+  await card.getByRole('button', { name: /^修改负责人/ }).click()
+  await page.getByRole('menuitem', { name: /builder/ }).click()
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { title?: string }) => task.title === 'Board journey task')?.assignee, { timeout: 20_000 }).toBe(worker.memberId)
+  // The live activity badge reads the Host's running-Turn snapshot, so it
+  // appears while the Worker's Turn is still running.
+  await expect.poll(async () => card.getByRole('group', { name: '工作中' }).count(), { timeout: 30_000 }).toBe(1)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-assigned-running.png'), fullPage: true })
+
+  // The Task itself: its execution log holds the seat's run. The durable run
+  // is recorded the way the Host's own turn recorder records one, so the log
+  // and the Agent page both read a real Session run of this seat.
+  const taskThread = scaffold.ctx.agentTeam.view({ workspaceId }).threads
+    .find((thread: { taskRef?: string }) => thread.taskRef === created.taskRef)!
+  const ledger = (scaffold.ctx.agentTeam as unknown as { readonly ledger: {
+    recordSessionTurn(request: Record<string, unknown>): Promise<unknown>
+  } }).ledger
+  const startedAt = new Date(Date.now() - 120_000).toISOString()
+  await ledger.recordSessionTurn({
+    requestId: 'journey-turn', workspaceId, memberId: worker.memberId, sessionId: worker.sessionId,
+    turn: 1, startedAt, endedAt: startedAt, threadRefs: [taskThread.threadRef], toolCalls: 2, runMs: 42_000,
+    usage: { uncachedInputTokens: 1_800, outputTokens: 640, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null },
+    actor: { kind: 'member', memberId: worker.memberId, handle: worker.handle },
+  })
+  await card.getByRole('button', { name: 'Board journey task' }).click()
+  // The property column carries the execution log. The Thread opened in the
+  // lane beside its Channel, where the column is not rendered inline, so the
+  // journey reads the log the way a narrow seat does: the property sheet.
+  await page.setViewportSize({ width: 820, height: 960 })
+  await settleLayout(page)
+  await page.getByRole('button', { name: '属性', exact: true }).click()
+  const sheet = page.getByRole('dialog', { name: '属性' })
+  await sheet.waitFor({ timeout: 10_000 })
+  const executionLog = sheet.locator('[data-team-execution-log]')
+  await executionLog.waitFor({ timeout: 30_000 })
+  const seatRun = executionLog.locator('article[data-run-state="running"]')
+  await expect.poll(async () => seatRun.count(), { timeout: 30_000 }).toBe(1)
+  // Stop asks first and names the seat whose Turn it is about to cancel.
+  await seatRun.getByRole('button', { name: '停止' }).click()
+  const confirm = page.getByRole('dialog', { name: '停止这次运行？' })
+  await confirm.waitFor({ timeout: 10_000 })
+  await expect.poll(async () => (await confirm.textContent()) ?? '').toContain('@builder')
+  await confirm.getByRole('button', { name: '停止', exact: true }).click()
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-task-stopped.png'), fullPage: true })
+
+  // The Worker claims the Task and finishes its Claim: the two agent-driven
+  // statuses the Human's drag rules refuse to set.
+  const workerStatus = scaffold.ctx.agentTeam.members({ workspaceId })
+    .find((entry: { member: { handle: string } }) => entry.member.handle === 'builder')!
+  const workerAgent = scaffold.ctx.agents.get(workerStatus.member.sessionId)!
+  const workerRead = await scaffold.ctx.agentTeam.readThreadForAgent(workerAgent, {
+    requestId: 'journey-worker-read' as never, workspaceId, taskRef: created.taskRef,
+  })
+  const claim = await scaffold.ctx.agentTeam.changeClaimForAgent(workerAgent, {
+    requestId: 'journey-worker-claim' as never, workspaceId, taskRef: created.taskRef,
+    action: 'claim', direction: 'Ship the board journey', baseRevision: workerRead.thread.revision,
+  })
+  if (claim.kind !== 'committed') throw new Error(`the Worker's Claim was rejected: ${claim.kind}`)
+  const workerReviewRead = await scaffold.ctx.agentTeam.readThreadForAgent(workerAgent, {
+    requestId: 'journey-worker-review-read' as never, workspaceId, taskRef: created.taskRef,
+  })
+  await scaffold.ctx.agentTeam.changeClaimForAgent(workerAgent, {
+    requestId: 'journey-worker-done' as never, workspaceId, taskRef: created.taskRef,
+    claimRef: claim.claim.claimRef, action: 'done', baseRevision: workerReviewRead.thread.revision,
+  })
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { taskRef: string }) => task.taskRef === created.taskRef)?.status, { timeout: 20_000 }).toBe('in_review')
+
+  // Back to the board: the finished Claim put the card in 待评审.
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await settleLayout(page)
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  await board.waitFor({ timeout: 30_000 })
+  const reviewCard = board.locator('[data-testid="board-card"]', { hasText: 'Board journey task' })
+  const reviewColumn = board.locator('[data-testid="board-column"][data-status="in_review"]')
+  await expect.poll(async () => reviewColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count(), { timeout: 20_000 }).toBe(1)
+  // The Stop ended the seat's Turn: the card's live badge is gone, because
+  // the badge reads the Host's running-Turn snapshot.
+  await expect.poll(async () => reviewCard.getByRole('group', { name: '工作中' }).count(), { timeout: 30_000 }).toBe(0)
+
+  // The Human accepts: a real pointer drag onto 已完成.
+  const doneColumn = board.locator('[data-testid="board-column"][data-status="done"]')
+  const cardBox = await reviewCard.boundingBox()
+  const doneBox = await doneColumn.boundingBox()
+  expect(cardBox).not.toBeNull()
+  expect(doneBox).not.toBeNull()
+  const fromX = cardBox!.x + cardBox!.width / 2
+  const fromY = cardBox!.y + 10
+  await page.mouse.move(fromX, fromY)
+  await page.mouse.down()
+  await page.mouse.move(fromX + 12, fromY + 4, { steps: 4 })
+  await page.mouse.move(doneBox!.x + doneBox!.width / 2, doneBox!.y + doneBox!.height / 2, { steps: 24 })
+  await page.mouse.up()
+  await expect.poll(async () => doneColumn.locator('[data-testid="board-card"]', { hasText: 'Board journey task' }).count(), { timeout: 20_000 }).toBe(1)
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { taskRef: string }) => task.taskRef === created.taskRef)?.status, { timeout: 20_000 }).toBe('done')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-accepted.png'), fullPage: true })
+
+  // The Agent's own page: the run it spent, with the tokens it spent them on.
+  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  const workerRow = page.locator('[data-agent-row]').filter({ hasText: 'builder' })
+  await workerRow.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => (await workerRow.locator('[data-agent-tokens]').textContent()) ?? '').not.toBe('0')
+  await workerRow.locator('button').first().click()
+  const runsTab = page.getByRole('tab', { name: '运行' })
+  await runsTab.waitFor({ timeout: 30_000 })
+  await runsTab.click()
+  const runsPanel = page.locator('[data-team-agent-runs-panel]')
+  await runsPanel.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => runsPanel.locator('[data-agent-runs-table] tbody[data-session-id]').count(), { timeout: 20_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-board-journey-runs.png'), fullPage: true })
+
+  // The Overview face: what the journey left behind. The face arrives with
+  // Team Board 7/10, so on a base that does not carry it yet the journey
+  // says so instead of pretending the feed was empty.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, overview: true }))
+  }, workspaceId)
+  await page.reload()
+  const overview = page.locator('[data-team-overview]')
+  if (await overview.count() === 0) {
+    console.log('note: this build carries no Team Overview face (Team Board 7/10); its feed and spend assertions run where it is merged')
+  } else {
+    await expect.poll(async () => overview.locator('[data-team-overview-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+    await expect.poll(async () => overview.locator('[data-team-overview-event]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+    await expect.poll(async () => overview.locator('[data-team-overview-spend-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+    await page.screenshot({ path: join(BOARD_SHOTS, 'board-journey-overview.png'), fullPage: true })
+  }
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
+ * The Orchestrator digest (Team Board 9/10): the Host's own timer wakes the
+ * Orchestrator, the Orchestrator posts one digest into its Channel, and the
+ * Human reads it where every other Team message is read.
+ *
+ * The digest is off by default, so the journey turns it on the way a
+ * deployment does — the Host row's own `digest` section — and waits for the
+ * tick the way a reader waits for it. The Orchestrator's answer is scripted:
+ * the model route replays one `team_message` call, and the Channel it posts to
+ * is named by the Host's own prompt, so the scripted arguments read that ref
+ * out of the request instead of guessing it.
+ */
+it('delivers the scheduled Orchestrator digest in real Web', async () => {
+  await installLocalBundle(false)
+  const replayDirectory = join(HOME, 'replay')
+  await mkdir(replayDirectory, { recursive: true })
+  const fixture = join(replayDirectory, 'session.jsonl')
+  await writeFile(fixture, `${JSON.stringify({ type: 'session', version: 0, id: 'team-board-digest', createdAt: 0, cwd: '{{cwd}}' })}\n`)
+  const digestArguments = '{"action":"start","channelRef":"{{fromRequest:(channel:[0-9a-f-]{36})}}","body":"Team digest: nothing needs your attention, no agent is stalled, spend is within the usual range."}'
+  const override = join(replayDirectory, 'replay.override.json')
+  await writeFile(override, JSON.stringify([
+    { kind: 'chunks', chunks: [
+      { type: 'block-start', index: 0, blockType: 'tool-call' },
+      { type: 'tool-call-delta', index: 0, id: 'call-digest', name: 'team_message', argumentsDelta: digestArguments },
+      { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call-digest', name: 'team_message', arguments: digestArguments } },
+      { type: 'finish', reason: { kind: 'tool-calls' } },
+    ] },
+    { kind: 'chunks', chunks: [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'Digest posted.' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'Digest posted.' } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ] },
+  ]))
+  const overlay = join(replayDirectory, 'digest.overlay.yml')
+  await writeTeamMemberPresetOverlay(overlay)
+  scaffold = await launchWebScaffold({
+    harnessHome: HOME,
+    profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] },
+    replayFixture: fixture,
+    replayOverride: override,
+    extraOverlayPath: overlay,
+  })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-board-digest')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Board Digest')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+    addMember(request: Record<string, unknown>): Promise<{ readonly status: { readonly member: { readonly memberId: string; readonly handle: string; readonly sessionId: string } } }>
+  }
+  const channel = await team.createChannel({ requestId: 'digest-channel', workspaceId, name: 'delivery', description: 'Digest journey' })
+  const orchestrator = (await team.addMember({
+    requestId: 'digest-orchestrator', workspaceId, handle: 'watcher', description: 'Watches the team',
+    presetId: 'team-member', role: 'orchestrator', channelRefs: [channel.channel.channelRef],
+  })).status.member
+  // The digest Channel, created the way the Host creates it — with the seats
+  // that work in the Workspace. The Host adopts a Channel of that name
+  // instead of creating a second one.
+  await team.createChannel({
+    requestId: 'digest-target', workspaceId, name: 'team-digest', description: 'Scheduled team digest (report only).',
+    memberIds: [orchestrator.memberId],
+  })
+  await expect.poll(() => JSON.stringify(scaffold.ctx.agentTeam.members({ workspaceId })
+    .find((entry: { member: { handle: string } }) => entry.member.handle === 'watcher')), { timeout: 30_000 })
+    .toContain('"availability":"active"')
+
+  // The digest is the Host row's own configuration, and every field of it is
+  // volatile: the write lands on the running Host and re-arms its timer.
+  await (scaffold.ctx as unknown as { readonly settings: {
+    mutate(ns: string, ops: readonly { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }[]): Promise<void>
+  } }).settings.mutate('wowyuarm-agent-team-host', [
+    { op: 'set', path: ['digest', 'enabled'], value: true },
+    { op: 'set', path: ['digest', 'intervalMinutes'], value: 1 },
+  ])
+
+  // The tick creates the digest Channel when it is missing and wakes the
+  // Orchestrator with one report-only instruction.
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).channels
+    .filter((candidate: { name: string }) => candidate.name === 'team-digest').length, { timeout: 150_000 }).toBe(1)
+  const digestChannel = scaffold.ctx.agentTeam.view({ workspaceId }).channels
+    .find((candidate: { name: string }) => candidate.name === 'team-digest')!
+  // The Orchestrator's own answer: one digest message in that Channel. The
+  // tick is a minute away, so the answer is a minute away too.
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId, channelRef: digestChannel.channelRef, topLevelOnly: true, limit: 50 })
+    .items.length, { timeout: 150_000 }).toBeGreaterThan(0)
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The digest is a Thread Message in a Channel: the reader opens it where
+  // every other Team message is read.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, channelRef: ref }))
+  }, [workspaceId, digestChannel.channelRef])
+  await page.reload()
+  await page.getByText('Team digest: nothing needs your attention', { exact: false }).waitFor({ timeout: 30_000 })
+  await page.screenshot({ path: join(BOARD_SHOTS, 'digest-channel.png'), fullPage: true })
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)

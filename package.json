@@ -1,6 +1,6 @@
 {
   "name": "@ddvnguyen/moct-dsh-team-room",
-  "version": "0.0.1-261020.0215",
+  "version": "0.0.1-261020.2213",
   "license": "MIT",
   "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
   "icon": "assets/icon.svg",
@@ -38,12 +38,13 @@
     "check:public-baseline": "node scripts/check-public-baseline.mjs .",
     "test": "npm run generate:typert && npm run check:facades && npm run check:docs && npm run check:core-skills && npm run check:boundaries && npm run check:versions && npm run check:multica && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
+    "test:browser:overview": "npm run build && node scripts/run-browser-overview.mjs",
     "preview": "node scripts/check-preview-credentials.mjs && npm run build && node scripts/run-preview.mjs",
     "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
     "lint": "corepack pnpm dlx oxlint@1.76.0 --disable-typescript-plugin packages scripts",
     "duplication": "jscpd --config .jscpd.json packages scripts",
-    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json && tsc -p packages/dsh-side-menu/tsconfig.json",
-    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && tsc -p packages/dsh-side-menu/tsconfig.build.json && node scripts/build-client.mjs"
+    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json && tsc -p packages/dsh-side-menu/tsconfig.json && tsc -p packages/sidebar/tsconfig.json",
+    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && tsc -p packages/dsh-side-menu/tsconfig.build.json && tsc -p packages/sidebar/tsconfig.build.json && node scripts/build-client.mjs"
   },
   "dsh": {
     "bundle": {

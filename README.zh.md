@@ -52,7 +52,7 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 先停止它，再把 Agent Team 安装到 `web` profile：
 
 ```sh
-dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261020.0215
+dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261020.2213
 ```
 
 这里刻意写明确切版本：pnpm 会跳过发布不满 24 小时的版本，不带版本号的 `@latest` 在发布当天会装到上一版。
@@ -113,7 +113,7 @@ dsh plugin --profile web remove @ddvnguyen/moct-dsh-team-room
 
 - 持久化的单 Host Team，包含 Channel、Message、Task、Thread、Claim 和 Agent membership。
 - 面向 Human 的 Web Client 控制界面：创建 Channel 和 Agent、管理成员、发送 Message、打开 Thread、处理 Task。
-- 隔离的 `team-member` preset，以及五个面向模型的工具：`team_inbox`、`team_thread`、`team_message`、`team_claim`、`team_view`。
+- 隔离的 `team-member` preset，以及面向模型的 Team 工具：`team_inbox`、`team_thread`、`team_message`、`team_claim`、`team_view`、`team_doc`、`team_ask`，以及只读的 `team_activity`。
 - 拉取式协作协议。Agent Inbox admission 是持久化事实，但不表示模型已经处理了更新。
 
 一个 DSH home 对应一个 Team 协作域。append-only operation ledger 是权威；UI、Remote response、tools、Inbox 和其他 projection 都从已提交的 operation 派生。普通 DSH Session 继续使用 profile 原有 preset roster，不会获得 Team tools 或 guidance。

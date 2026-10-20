@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { IconAgentPresetOutlineRegular, IconListPenOutlineRegular, IconQueueOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineRegular, IconGaugeOutlineRegular, IconListPenOutlineRegular, IconQueueOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamAddMemberRequest } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceSelector } from './TeamWorkspaceSelector.tsx'
@@ -24,7 +24,7 @@ function InboxMark({ unread }: { readonly unread: number }) {
   </span>
 }
 
-export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, loadMemberActivity, loadBoard, loadMemberSessions, openMemberSession, openAgentDetail, channelsOnly }: TeamSidebarProps & {
+export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWorkspace, selectChannel, selectInbox, selectOverview, t, useWorkspaces, loadMembers, loadInbox, subscribeChanges, subscribeReads, addMember, loadChannels, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, archiveMember, joinWorkspace, leaveWorkspace, joinChannel, removeChannelMember, loadModels, loadMemberActivity, loadBoard, loadMemberSessions, openMemberSession, openAgentDetail, channelsOnly }: TeamSidebarProps & {
   /** The Team tab is the Channel view only: the Agents config lives on the rail's Team Settings page. The rail seat keeps its own Agents group. */
   readonly channelsOnly?: boolean
 }) {
@@ -41,9 +41,20 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
   // embedded Member Session covers that page: the Inbox stays the remembered
   // face underneath — closing the overlay returns to it, marker included —
   // but the card is not a second current page while an Agent holds the seat.
-  const overviewIsCurrent = navigationState.channelRef === undefined && navigationState.memberSessionId === undefined && navigationState.inbox !== true
+  const overviewIsCurrent = navigationState.channelRef === undefined && navigationState.memberSessionId === undefined && navigationState.inbox !== true && navigationState.overview !== true
   const inboxIsCurrent = navigationState.inbox === true && navigationState.memberSessionId === undefined
+  // The Overview face is its own page, not this browser: it takes the marker
+  // while it stands, and the workspace browser keeps its own marker only when
+  // the face is closed.
+  const overviewFaceIsCurrent = navigationState.overview === true && navigationState.memberSessionId === undefined
   const [creatingAgents, setCreatingAgents] = useState<readonly AgentTeamAddMemberRequest[]>([])
+  // The Overview face stands on one Workspace, so it adopts the browsed one
+  // first: the Workspace selection comes before the face, never after it,
+  // because selecting a Workspace clears the face.
+  const openOverview = (): void => {
+    if (selectedId !== undefined) selectWorkspace(selectedId)
+    selectOverview()
+  }
   // Rail icons request expansion and name the section to reveal once wide.
   const [pendingSection, setPendingSection] = useState<SidebarSection>()
   const channelsRef = useRef<HTMLDivElement>(null)
@@ -105,12 +116,14 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
 
   useEffect(() => {
     // The Inbox page is global and needs no selected Workspace, so the
-    // auto-select must not yank the seat back to a Workspace overview.
-    if (navigationState.inbox === true) return
+    // auto-select must not yank the seat back to a Workspace overview. The
+    // Overview face is workspace-scoped, but it stands on a Workspace this
+    // seat already chose: adopting another one would clear the face itself.
+    if (navigationState.inbox === true || navigationState.overview === true) return
     if (navigationState.mode === 'team' && selectedId !== undefined && selectedId !== selected) {
       selectWorkspace(selectedId)
     }
-  }, [navigationState.inbox, navigationState.mode, selected, selectedId, selectWorkspace])
+  }, [navigationState.inbox, navigationState.overview, navigationState.mode, selected, selectedId, selectWorkspace])
 
   useEffect(() => {
     if (!wide || pendingSection === undefined) return
@@ -124,6 +137,11 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
       <Tooltip label={inboxLabel} side="right">
         <button type="button" className={css.railButton} aria-label={inboxLabel} aria-current={inboxIsCurrent ? 'page' : undefined} onClick={() => { selectInbox(); expandSidebar() }}>
           <InboxMark unread={inboxTotal} />
+        </button>
+      </Tooltip>
+      <Tooltip label={t('overview')} side="right">
+        <button type="button" className={css.railButton} aria-label={t('overview')} aria-current={overviewFaceIsCurrent ? 'page' : undefined} onClick={() => { openOverview(); expandSidebar() }}>
+          <IconGaugeOutlineRegular size={16} />
         </button>
       </Tooltip>
       <Tooltip label={t('channels')} side="right">
@@ -152,6 +170,10 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
     <button type="button" className={css.inboxCard} aria-label={inboxLabel} aria-current={inboxIsCurrent ? 'page' : undefined} onClick={selectInbox}>
       <InboxMark unread={inboxTotal} />
       <span className={css.inboxCardLabel}>{t('inboxTitle')}</span>
+    </button>
+    <button type="button" className={css.inboxCard} aria-label={t('overview')} aria-current={overviewFaceIsCurrent ? 'page' : undefined} onClick={openOverview}>
+      <IconGaugeOutlineRegular size={16} />
+      <span className={css.inboxCardLabel}>{t('overview')}</span>
     </button>
     <TeamWorkspaceSelector workspaces={workspaces} selectedId={selectedId} current={overviewIsCurrent} onSelect={selectWorkspace} t={t} />
     {selectedId !== undefined && <div className={css.workspaceSection}>

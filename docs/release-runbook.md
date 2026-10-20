@@ -35,6 +35,7 @@ Run in this order; a failure stops the release, and a fix re-runs from the faile
 | `npm run test:browser` | Broken composition, Remote mounting, slot takeover, or ordinary-DSH restoration. Needs the adjacent `../deepseek-harness` checkout; browser acceptance is a local step and never runs in CI. |
 | `npm run smoke:install` | The packed tarball does not install, boot, answer the `agentTeam` Remote, or keep a Channel and Message across a restart (a `files` entry that drops a shipped file shows up here, not in unit tests). Packs the built tree into a throwaway `DSH_HOME` and boots the sibling checkout on port 0; no credentials, no backend. |
 | `npm pack --dry-run` | Nothing by itself — record the file count for the release report. |
+| `npm pack --dry-run` in a plugin package | The plugin's tarball without its `cordis.patch.yml` or its `lib/**`: it is installed into a DSH profile as a `file:` tarball, so a broken tarball is a broken lane. |
 | `npm run check:artifact` | An artifact that would ship broken: stray `.ts`/`.tsx`, a missing `cordis.patch.yml`, or a runtime relative import whose target is not in the tarball. Run it *after* `npm run build`. |
 | `npm run check:public-baseline` | A public surface that drifted from the manifest's certified baseline (both READMEs and the pinned compatibility discussion). |
 | `git diff --check v<previous>..HEAD` | Whitespace damage anywhere in the release's change set. The bare `git diff --check` inspects only *unstaged* work, so it passes silently once the release is committed — which is when the ladder runs. |
@@ -76,6 +77,8 @@ git push --dry-run origin vX.Y.Z            # fence: this must list exactly the 
 git push origin vX.Y.Z
 npm publish --tag <dist-tag> --access public
 ```
+
+Each plugin package (`packages/dsh-side-menu`, `packages/sidebar`) is published on its own, with its own version: run `npm publish --tag <dist-tag> --access public` inside that directory, after `npm run build` there. The manual `publish` workflow does the same through one typed confirm per package, so a run ships only what the operator typed.
 
 The explicit refspecs and their dry-run fences are load-bearing, not ceremony. A clone can carry pre-rewrite backup branches and local-only tags whose commits are deliberately absent from the remote, and `--all` / `--tags` publish them silently. This repository is public: a stray ref cannot be withdrawn. If a dry run lists a third ref, stop and find out whose it is.
 

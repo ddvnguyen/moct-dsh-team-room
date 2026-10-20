@@ -85,6 +85,29 @@ Agent page.
 - `agents/agent-page-model.ts` holds the pure derivations (current Task,
   today's tokens, stop targets, buckets) with node-level specs.
 
+## Inbox
+
+The Team Inbox follows Multica's inbox: one queue grouped by what it asks of
+the reader, facet filters with their counts, and a split view that opens the
+selected row's task detail beside the list.
+
+- `inbox/inbox-items.ts` holds the row model: the Host's projection joined
+  with the Thread's open decision cards (#109) and its failed Turns, and the
+  severity they imply.
+- `inbox/inbox-display.ts` holds the grouping and the labels: the bands, the
+  reason word and the detail subject.
+- `inbox/InboxList.tsx` derives from `inbox-list.tsx`: the virtualized
+  scroller (`react-virtuoso`), the arrow-key walk over the rows, and the band
+  headings riding the same list.
+- `inbox/InboxListItem.tsx` derives from `inbox-list-item.tsx` and
+  `inbox-detail-label.tsx`: the avatar stack, the Task number and title, the
+  reason word, the time-ago and the unread dot.
+- `inbox/InboxFilterMenu.tsx` derives from `inbox-filter-menu.tsx`: unread,
+  severity, channel and agent, with the counts the ported
+  `multica/inbox-filter.ts` computes.
+- `inbox/inbox.module.css` carries the bands, the rows and the split view on
+  `--ml-*`.
+
 ## Token map
 
 `--ml-*` maps onto the host's `--dsw-*` aliases wherever an equivalent exists,

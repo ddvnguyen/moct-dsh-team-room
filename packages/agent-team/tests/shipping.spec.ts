@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -183,19 +184,31 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('mode: native')
     expect(preset).toContain("name: '@ddvnguyen/moct-dsh-team-room/member-context'")
     expect(preset).toContain("name: '@deepseek-ai/dsh-command-compact'")
-    // Every lib directory that can enter the pack must be cleaned, so a
-    // deleted source module cannot leave stale output behind.
+    // Every lib directory that can enter a pack must be cleaned, so a
+    // deleted source module cannot leave stale output behind. The root
+    // package ships its own three; a directory with a manifest of its own
+    // (a plugin package) is published as its own package, so its lib
+    // enters that package's pack instead of the root one.
     const cleanScript = await readFile(resolve(root, 'scripts/clean-build-outputs.mjs'), 'utf8')
     const cleanTargets = [...cleanScript.matchAll(/['"](packages\/[^'"]+\/lib)['"]/g)].map(match => match[1])
     const shippedLibDirs = (JSON.parse(manifestText) as { files: string[] }).files
       .filter(pattern => pattern.startsWith('packages/') && pattern.endsWith('/lib/**/*'))
       .map(pattern => pattern.slice(0, -'/**/*'.length))
-    // `packages/dsh-side-menu` is its own plugin package: it ships from its own
-    // manifest, so the repository build cleans its `lib` while this bundle's
-    // tarball does not carry it.
-    const sideMenuManifest = JSON.parse(await readFile(resolve(root, 'packages/dsh-side-menu/package.json'), 'utf8')) as { files: string[] }
-    expect(sideMenuManifest.files).toContain('lib')
-    expect(cleanTargets.filter(target => target !== undefined && !target.startsWith('packages/dsh-side-menu/'))).toEqual(shippedLibDirs)
+    // A directory with a manifest of its own is published as its own package:
+    // it ships from that manifest, so the repository build cleans its `lib`
+    // while this bundle's tarball does not carry it.
+    const ownPackageLibDirs: string[] = []
+    for (const entry of await readdir(resolve(root, 'packages'), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const ownManifestPath = resolve(root, 'packages', entry.name, 'package.json')
+      if (!existsSync(ownManifestPath)) continue
+      const ownManifest = JSON.parse(await readFile(ownManifestPath, 'utf8')) as { files: string[] }
+      expect(ownManifest.files).toContain('lib')
+      ownPackageLibDirs.push(`packages/${entry.name}/lib`)
+    }
+    expect([...cleanTargets].sort()).toEqual([...shippedLibDirs, ...ownPackageLibDirs].sort())
+    // A separately published package never travels inside the root package.
+    for (const directory of ownPackageLibDirs) expect(shippedLibDirs).not.toContain(directory)
     const buildCommand = (JSON.parse(manifestText) as { scripts: { build: string } }).scripts.build
     expect(buildCommand.indexOf('npm run clean:build-outputs')).toBeGreaterThanOrEqual(0)
     expect(buildCommand.indexOf('npm run generate:typert')).toBeGreaterThan(buildCommand.indexOf('npm run clean:build-outputs'))

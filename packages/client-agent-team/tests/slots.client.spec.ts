@@ -362,9 +362,9 @@ describe('Team Settings rail row', () => {
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     // One Team tab, carrying the Channel section and the Agents section
-    // (see team-tab-body.tsx). The Board is not among them: it is a menu item
-    // in the main list.
-    expect(strip.inserted).toEqual(['team'])
+    // (see team-tab-body.tsx), plus the workspace Overview tab beside it. The
+    // Board is not among them: it is a menu item in the main list.
+    expect(strip.inserted).toEqual(['team', 'overview'])
     expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings', 'agent-team-board'])
     await fiber.dispose()
   })

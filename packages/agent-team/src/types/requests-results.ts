@@ -1237,6 +1237,12 @@ export interface AgentTeamRoomActivityRequest {
   readonly cursor?: string
   /** Event rows per page, 1–200; over-limit is clamped server-side, never rejected. */
   readonly limit?: number
+  /**
+   * ISO-8601 instant bounding the fold: Messages, Turns, failure notices and events older than it
+   * are excluded, and only Sessions with activity at or after it are listed (a listed Session's own
+   * totals still cover its whole life). Absent folds the whole scope.
+   */
+  readonly since?: string
 }
 
 /**
@@ -1288,6 +1294,55 @@ export interface AgentTeamRoomActivityResult {
   readonly scope: 'channel' | 'thread'
   readonly totals: AgentTeamRoomActivityTotals
   readonly perAgent: readonly AgentTeamRoomActivityAgent[]
+  readonly sessions: readonly AgentTeamSessionRun[]
+  readonly events: readonly AgentTeamRoomActivityEvent[]
+  readonly nextCursor?: string
+}
+
+/**
+ * Workspace-wide activity read request: every Channel of one Workspace folded into
+ * one aggregate. Read-only, like `roomActivity`; no Channel ref is needed, so the
+ * read works even before any Channel exists.
+ */
+export interface AgentTeamWorkspaceActivityRequest {
+  readonly workspaceId: WorkspaceId
+  /** Opaque continuation token from a previous page's `nextCursor`; absent for the newest page. */
+  readonly cursor?: string
+  /** Event rows per page, 1–200; over-limit is clamped server-side, never rejected. */
+  readonly limit?: number
+}
+
+/**
+ * One per-day spend bucket of the workspace aggregate, in the Host's local day.
+ * `tokensIn` is null while any contributing Session ran a Turn whose uncached
+ * input split was unreported (the same sticky null the totals use, §3.2).
+ */
+export interface AgentTeamWorkspaceActivityDayAgent {
+  readonly memberId: AgentTeamMemberId
+  readonly tokensIn: number | null
+  readonly tokensOut: number
+  readonly runMs: number
+}
+
+/** One local day's spend: the team fold on the day, plus each Member's share of it. */
+export interface AgentTeamWorkspaceActivityDay {
+  /** Local calendar day, `YYYY-MM-DD` in the Host's timezone. Ascending order. */
+  readonly day: string
+  readonly tokensIn: number | null
+  readonly tokensOut: number
+  readonly runMs: number
+  readonly perAgent: readonly AgentTeamWorkspaceActivityDayAgent[]
+}
+
+/**
+ * The workspace-activity read result: the `roomActivity` fold over every Channel of
+ * the Workspace at once — totals, per-seat shares, Session runs and the bounded
+ * newest-first event feed — plus the per-day spend buckets the Overview page charts.
+ */
+export interface AgentTeamWorkspaceActivity {
+  readonly totals: AgentTeamRoomActivityTotals
+  readonly perAgent: readonly AgentTeamRoomActivityAgent[]
+  readonly perDay: readonly AgentTeamWorkspaceActivityDay[]
   readonly sessions: readonly AgentTeamSessionRun[]
   readonly events: readonly AgentTeamRoomActivityEvent[]
   readonly nextCursor?: string

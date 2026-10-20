@@ -21,6 +21,8 @@ Client remote service
 
 读取请求各自声明用途，不共用一种投影形状。只有当调用方要整个请求 scope 的 Task/Thread/Claim catalog（模型侧 `team_view` 渲染的 address book）时才传 `includeCatalog`；Client 的读取从不传它，只渲染自己请求的那一页。
 
+有一个读取完全不需要 Channel：`workspaceActivity` 把一个 Workspace 下的所有 Channel 折成一页——总量、各 seat 的份额、Session runs、最新在前的动态 feed，以及按天的消耗桶。因此 Workspace 在任何 Channel 存在之前就能作答。空 Workspace 是合法的空聚合，不是错误。
+
 ## Remote failure vocabulary
 生成的 Remote methods resolve 为 `RemoteResult`。`{ ok: true, value }` 携带业务结果，`{ ok: false, error }` 携带失败：稳定的 `code` 是判别字段，`details` 随 `code` 收窄，无需 cast。
 
@@ -52,7 +54,7 @@ Client plugin apply
 
 panel row 与 Team mode 是同一件事：这一行是 shell 自己的 rail button，选中它即进入 mode，另一个 panel 拿走中栏即离开 mode。selection 为 null 时 Team 不介入——嵌入的 Member Session 视图会清空 panel 来独占中栏，mode 必须活过这一段——离开 mode 由 mode 自己的 foot row 清空 panel。恢复的 mode 会重新选中自己的 panel，除非挂载时已有 panel 被选中：那时那个 panel 保留中栏，mode 主动让位。
 
-Team 与 Agents 两个 tab 位于侧栏的 tab strip。strip 没有公开的注册 API：strip 的所有者把私有的 `__dshNativeTabs` registry 挂在它的 `sidebar.workspaces` component 上，`team-tab.ts` 向其中 insert；找不到 registry 时静默退出，保留 rail 行。
+Overview、Team 与 Agents 三个 tab 位于侧栏的 tab strip。strip 没有公开的注册 API：strip 的所有者把私有的 `__dshNativeTabs` registry 挂在它的 `sidebar.workspaces` component 上，`team-tab.ts` 向其中 insert；找不到 registry 时静默退出，保留 rail 行。
 
 目前有两个宿主拥有 strip。官方侧栏加 `@michengai/dsh-automation` 会挂 registry。`@michengai/dsh-codex-ui` 替换官方侧栏，使 automation 退出，且在 1.1.33 不挂任何 registry，所以这两个 tab 需要 codex-ui 自己承载 registry（同一个 key、同一个挂载点、同一个 `{ id, label, order, matchSession, render }` descriptor）。
 
@@ -71,7 +73,7 @@ UI work 的边界如下：
 
   Human Client 消费 Host 的 Inbox 投影，但绝不维护并行 Inbox authority。投影有两片。第一片是「收件箱 / Inbox」队列：合并各 Workspace 的徽标与页，覆盖读者的整片未读。mention 只在其中计数，绝不是准入条件。第二片是该读者写过 Message 的「最近活跃」段。回复过的 Thread 无论是否 follow 都算他的。按最新活跃降序，Host 侧每个 Workspace 上限 10，合并到页面上最多 5 条。第二片永不进入 agent 的 Inbox。打开页不确认任何内容。
 
-  Thread reads 使用 Host projections（`readThread`、`threadHistory`）和 Host mutations（replies、promotion、Task actions）。 当前 Thread UI 不提供 Attention controls 或 observations。这些 controls 的 Host Remote methods 留给后续自有 UI。 Browser 会持久化四样东西。Team navigation mode、Workspace selection、最近选中的 Channel 或 Thread，还有 Inbox 页位置。回到 Team 时恢复位置。unread 或 Attention 不持久化。
+  Thread reads 使用 Host projections（`readThread`、`threadHistory`）和 Host mutations（replies、promotion、Task actions）。 当前 Thread UI 不提供 Attention controls 或 observations。这些 controls 的 Host Remote methods 留给后续自有 UI。 Browser 会持久化五样东西。Team navigation mode、Workspace selection、最近选中的 Channel 或 Thread、Inbox 页位置，还有 Overview 页。回到 Team 时恢复位置。unread 或 Attention 不持久化。Overview 页与 Channel 页一样以 Workspace 为范围：选中 Workspace 或 Channel 即离开它，页面数据始终实时读取。
 
   Agent Inbox 仍由 Host 持有，并通过 `team_inbox` 提供。
 - Sidebar row order（Channels/Agents）是每个 browser 的 Human presentation preference，保存在 `localStorage`。加载时折叠到 Remote default order 上。保留的 refs 保持顺序，移除的 refs 丢弃，新的 refs 追加。它从不成为 ledger fact。Whole-row native drag 复用 Harness list interaction model。它是 Team-owned rows 唯一的重排控件。

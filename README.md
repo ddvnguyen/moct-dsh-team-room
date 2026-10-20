@@ -52,7 +52,7 @@ Install it globally if you want the `dsh` command for the steps below: `npm i -g
 Stop it, then install Agent Team into the `web` profile:
 
 ```sh
-dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261020.0215
+dsh plugin --profile web add @ddvnguyen/moct-dsh-team-room@0.0.1-261020.2213
 ```
 
 The version is pinned deliberately: pnpm skips releases published less than 24 hours ago, so an unpinned `@latest` install resolves to the previous release on release day.
@@ -113,7 +113,7 @@ dsh plugin --profile web remove @ddvnguyen/moct-dsh-team-room
 
 - A durable single-host Team with Channels, Messages, Tasks, Threads, Claims, and Agent membership.
 - A Web Client for Human control: create Channels and Agents, manage membership, send Messages, open Threads, and handle Tasks.
-- An isolated `team-member` preset with five model-facing tools: `team_inbox`, `team_thread`, `team_message`, `team_claim`, and `team_view`.
+- An isolated `team-member` preset with the model-facing Team tools: `team_inbox`, `team_thread`, `team_message`, `team_claim`, `team_view`, `team_doc`, `team_ask`, and the read-only `team_activity`.
 - A pull-based collaboration protocol. Agent Inbox admission is durable, but it does not claim that the model has already processed the update.
 
 The Team is one collaboration domain per DSH home. Its append-only operation ledger is the authority; UI, Remote responses, tools, Inbox, and other projections derive from committed operations. Ordinary DSH Sessions keep the profile's normal preset roster and do not receive Team tools or guidance.

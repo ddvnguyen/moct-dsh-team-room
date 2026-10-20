@@ -109,9 +109,25 @@ The count reads `99+` past ninety-nine, and the mention split inside it reaches 
 
 That line is its own size container: the count capsule's 18px floor, its 8px gap, and this instant's 28px together need 62px — 70px once the count reaches two digits — and below that width the instant is not drawn at all, because a queue row that cannot hold both keeps the count and its own edge instead of hanging the instant past it; the row keeps its two-line shape, and the Thread states the exact instant.
 
-### Section counts and row activation
+### Section counts
 
-Each section heading carries its own slice's count — the queue's, and the tail's as the five it was capped to — inset to that same 34px column. Clicking a row selects the row's Workspace and opens its Thread.
+Each section heading carries its own slice's count — the queue's, and the tail's as the five it was capped to — inset to that same 34px column.
+
+### Severity bands
+
+The queue is grouped by what it asks of the reader, in Multica's order: 「必须处理」 (action required) first, then 「需要关注」 (attention), then 「动态」 (activity). A band prints its own count, and a band with no rows prints no heading at all.
+
+A band is derived, never stored: an open decision card (#109) or a Task waiting for the Human's accept is action required, a mention or a failed Turn is attention, everything else is activity. The decision cards and the failed Turns are side reads of the Thread, so a row settles into its band when those reads land.
+
+The band is also the word the row carries — 「待你决策」, 「等你验收」, 「提到你」, 「有 Turn 失败」 or 「有新动态」 — in the band's own ink, so a row that must interrupt reads as one before its gist is reached.
+
+### Filters and the split view
+
+The header carries the facet menu: unread, severity, channel and agent, each with the count that facet can reveal. The severity counts cover the queue only, because a band is what waits of the reader, while the other facets narrow both sections.
+
+On a seat at least 720px wide the page splits: the queue on the left, the selected row's task detail on the right. A plain click selects the row into the detail pane and a modifier click opens its Thread; on a narrow seat the click opens the Thread and the detail follows it full-screen.
+
+The detail pane shows the Task's own properties — status, priority, assignee, the people on it — the reason the row is in the queue, the failed Turns it carries, an open decision card to answer in place, and the three actions the reader has: open the Thread, mark it read, archive it. Archive is the reader's own unfollow, so it is offered only where an unfollow can land.
 
 ### States and subscriptions
 

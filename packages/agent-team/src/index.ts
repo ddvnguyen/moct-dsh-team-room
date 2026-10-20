@@ -48,7 +48,7 @@ import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
 import { cacheVerdict, type CacheVerdict } from './cache-verdict.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime } from './member-runtime.ts'
+import { deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime, requiredTeamToolNames } from './member-runtime.ts'
 import { memberInstances } from './member-instances.ts'
 import { routeThreads } from './instance-router.ts'
 import { UNLIMITED_WARM_LIMIT, warmDecision, type WarmLimit } from './warm-limit.ts'
@@ -207,6 +207,7 @@ import type {
   AgentTeamUpdateMemberResult,
   AgentTeamView,
   AgentTeamSessionRun,
+  AgentTeamChannelRef,
   AgentTeamThreadSessionBinding,
   AgentTeamViewRequest,
   AgentTeamThreadReplyStat,
@@ -215,6 +216,8 @@ import type {
   AgentTeamThreadSummaryCommittedData,
   AgentTeamRoomActivityRequest,
   AgentTeamRoomActivityResult,
+  AgentTeamWorkspaceActivity,
+  AgentTeamWorkspaceActivityRequest,
   AgentTeamColdFallback,
   AgentTeamResumeMemberSessionResult,
   AgentTeamForkMemberSessionResult,
@@ -250,6 +253,10 @@ const SLOT_IDLE_END_MS = 15 * 60 * 1000
 const slotKey = (memberId: AgentTeamMemberId, slot: number): string => `${memberId}#${slot}`
 const routeKey = (memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): string => `${memberId}|${threadRef}`
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
+/** The scheduled digest wake; its own summary so it is distinguishable from Inbox and recovery notices. */
+const DIGEST_NOTICE_SUMMARY = 'Scheduled team digest.'
+const DIGEST_CHANNEL_DEFAULT = 'team-digest'
+const DIGEST_DAILY_AT = /^([01]\d|2[0-3]):([0-5]\d)$/
 const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
 
 /**
@@ -489,6 +496,26 @@ export interface Config {
   readonly jev: TeamJudgeSettings
   /** Poisoned-seat auto-recovery: default OFF (flag + card) until a deployment opts in. */
   readonly poisonRecovery: TeamPoisonRecoverySettings
+  /** The scheduled Orchestrator digest: default OFF until a deployment opts in. */
+  readonly digest: TeamDigestSettings
+}
+
+/**
+ * The Host row's `digest` fields: the scheduled, report-only Orchestrator
+ * digest. Every field is volatile like the rest of the row, so enabling the
+ * digest or retiming it lands on the running Host without a restart — the
+ * scheduler re-arms from the live values on every volatile update and after
+ * every tick.
+ */
+export interface TeamDigestSettings {
+  /** Whether the digest scheduler runs at all; default false. */
+  readonly enabled: Volatile<boolean>
+  /** Minutes between ticks — also the report window the digest prompt asks for; default 1440. */
+  readonly intervalMinutes: Volatile<number>
+  /** Optional daily fire time 'HH:MM' (local); when set it replaces the interval, the interval stays the report window. */
+  readonly dailyAt: Volatile<string | undefined>
+  /** Name of the Channel the digest is posted to; created when missing. Default: team-digest. */
+  readonly channel: Volatile<string>
 }
 
 /** The Host row's `poisonRecovery` fields, as the settings service reads and writes them. */
@@ -573,6 +600,21 @@ const TEAM_POISON_RECOVERY_SETTINGS_SCHEMA = z.object({
 })
 
 /**
+ * The scheduled Orchestrator digest (issue #134): a Host-side timer wakes every
+ * enabled Orchestrator member when idle and prompts one report-only digest
+ * into the digest Channel. Default OFF. The timer is a plain re-arming
+ * `setTimeout`, not the dsh `schedule` service: a schedule reminder binds to a
+ * sessionId, and a Member's session changes on rollover/renewal — the Host
+ * resolves the live handle at every tick instead.
+ */
+const TEAM_DIGEST_SETTINGS_SCHEMA = z.object({
+  enabled: z.boolean().default(false).volatile().description('Wake enabled Orchestrator members on schedule to post a team digest. Default: false.'),
+  intervalMinutes: z.number().default(1440).volatile().description('Minutes between digest ticks; also the report window the digest prompt asks for. Minimum 1. Default: 1440 (daily). Ignored while dailyAt is set.'),
+  dailyAt: z.string().volatile().description("Optional daily fire time 'HH:MM' (Host-local). When set it replaces the interval as the fire schedule; intervalMinutes stays the report window. Invalid values fall back to the interval."),
+  channel: z.string().default(DIGEST_CHANNEL_DEFAULT).volatile().description("Name of the Channel digests are posted to, created when missing. Default: 'team-digest'."),
+})
+
+/**
  * The Host row's whole schema: the profile fields verbatim, so their volatility
  * and defaults stay owned by {@link HUMAN_PROFILE_SETTINGS_SCHEMA}, plus the
  * gate and the judge. A patch layer that targets this row replaces its whole
@@ -583,6 +625,7 @@ export const TEAM_HOST_ROW_SETTINGS_SCHEMA = z.object({
   gate: TEAM_PRESSURE_GATE_SCHEMA,
   jev: TEAM_JUDGE_SETTINGS_SCHEMA,
   poisonRecovery: TEAM_POISON_RECOVERY_SETTINGS_SCHEMA,
+  digest: TEAM_DIGEST_SETTINGS_SCHEMA,
 })
 
 /** The default thread-summary model has no LLM service to call; the caller logs this once per Thread. */
@@ -732,6 +775,8 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private readonly notificationAttempts = new Map<AgentTeamMemberId, number>()
   private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
+  /** The re-arming digest scheduler handle; absent while the digest is disabled between ticks. */
+  private digestTimer?: ReturnType<typeof setTimeout> | undefined
   /**
    * New-release check behind the settings footnote. Memory-only and
    * background-refreshed, so the profile read path never waits on the
@@ -1030,6 +1075,10 @@ export default class AgentTeam extends TypertRemoteService {
       // derived from the gate's deadline, so a write that raises both must not
       // be reconciled against the deadline it replaced.
       this.refreshGate()
+      // The digest re-arms from the live values, so enabling, disabling or
+      // retiming it lands without a restart; armDigestTimer is clear-first, so
+      // a re-arm during a running tick cannot double-schedule.
+      this.armDigestTimer()
       void this.contextJudge.sync().catch(error => {
         this.ctx.logger.warn('agent-team: the relatedness judge could not be reconciled: %s', error instanceof Error ? error.message : String(error))
       })
@@ -1271,6 +1320,8 @@ export default class AgentTeam extends TypertRemoteService {
       this.pressurePolicy.dispose()
       if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
       this.attachmentGcTimer = undefined
+      if (this.digestTimer !== undefined) clearTimeout(this.digestTimer)
+      this.digestTimer = undefined
       this.emitChanged()
       // Every lifecycle operation enqueued before `accepting` flipped is in
       // one of the two maps (new ones reject at enqueue), so this snapshot
@@ -1307,6 +1358,7 @@ export default class AgentTeam extends TypertRemoteService {
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
     this.startAttachmentGc(ledger)
+    this.startDigestScheduler()
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
     const persistedSessions = new Set((await this.persistedSessionHeaders()).map(snapshot => snapshot.header.id))
@@ -2175,6 +2227,119 @@ export default class AgentTeam extends TypertRemoteService {
     this.attachmentGcTimer.unref?.()
   }
 
+  /**
+   * The scheduled Orchestrator digest (issue #134): a Host-side timer, not the
+   * dsh `schedule` service — a schedule reminder binds to a sessionId, and a
+   * Member's session changes on rollover/renewal, while this scheduler resolves
+   * the live handle at every tick. One re-arming `setTimeout`; disposed with the
+   * Host in the `agentTeam.dispose` effect and re-armed from the live config on
+   * every volatile update and after every tick.
+   */
+  private startDigestScheduler(): void {
+    this.armDigestTimer()
+  }
+
+  /** (Re)arm the single digest timer from the live config; a disabled digest leaves no timer. */
+  private armDigestTimer(): void {
+    if (this.digestTimer !== undefined) clearTimeout(this.digestTimer)
+    this.digestTimer = undefined
+    // A disposed Host arms nothing: a tick that was still running when the Host
+    // shut down re-arms in its `finally`, and that re-arm must not outlive it.
+    if (!this.accepting) return
+    if (!this.config.digest.enabled.get()) return
+    const timer = setTimeout(() => {
+      this.digestTimer = undefined
+      void this.runDigestTick()
+        .catch(error => {
+          this.ctx.logger.warn(`agent-team: digest tick failed: ${error instanceof Error ? error.message : String(error)}`)
+        })
+        .finally(() => { this.armDigestTimer() })
+    }, this.digestDelayMs())
+    timer.unref?.()
+    this.digestTimer = timer
+  }
+
+  /** Delay to the next digest tick: the next daily HH:MM when set (invalid values warn and fall back), else the interval. */
+  private digestDelayMs(): number {
+    const dailyAt = this.config.digest.dailyAt.get()?.trim()
+    if (dailyAt !== undefined && dailyAt !== '') {
+      if (!DIGEST_DAILY_AT.test(dailyAt)) {
+        this.ctx.logger.warn(`agent-team: digest dailyAt '${dailyAt}' is not HH:MM; falling back to intervalMinutes`)
+      } else {
+        const [hours = 0, minutes = 0] = dailyAt.split(':').map(Number)
+        const now = new Date()
+        const next = new Date()
+        next.setHours(hours, minutes, 0, 0)
+        if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1)
+        return next.getTime() - now.getTime()
+      }
+    }
+    return Math.max(1, Math.floor(this.config.digest.intervalMinutes.get())) * 60_000
+  }
+
+  /**
+   * One tick: for every enabled Orchestrator member with a live session, and
+   * for each Workspace it participates in, make sure the digest Channel exists
+   * and deliver the report-only prompt — idle members get one ordinary turn
+   * (`followup`); a busy member is skipped and simply caught by the next tick,
+   * because a digest must never steer a running turn.
+   */
+  private async runDigestTick(): Promise<void> {
+    if (!this.accepting) return
+    if (!this.config.digest.enabled.get()) return
+    const ledger = this.requireLedger()
+    const channelName = this.config.digest.channel.get()?.trim() || DIGEST_CHANNEL_DEFAULT
+    const windowMinutes = Math.max(1, Math.floor(this.config.digest.intervalMinutes.get()))
+    for (const member of ledger.listMembers()) {
+      if (member.state !== 'enabled' || member.role !== 'orchestrator') continue
+      const handle = this.handles.get(member.memberId)
+      // No live handle (not yet activated, suspended, between generations): the next tick catches it.
+      if (handle === undefined) continue
+      if (handle.agent.status !== 'idle') continue
+      for (const workspaceId of ledger.workspacesOf(member.memberId)) {
+        try {
+          const channelRef = await this.ensureDigestChannel(ledger, workspaceId, channelName)
+          const prompt = `Scheduled digest time. Call team_activity for the last ${windowMinutes} minutes, then post one digest message with team_message to ${channelRef} (#${channelName}) covering: 1) what needs my attention 2) stalled or looping agents 3) cost outliers 4) progress. Report only — do not claim, assign, or change any task, and take no other action.`
+          handle.agent.followup(createUserMessage({
+            content: [{ type: 'text', text: prompt }],
+            source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: DIGEST_NOTICE_SUMMARY },
+          }))
+          this.ctx.logger.info(`agent-team: digest prompt delivered to member '${member.handle}' for workspace '${workspaceId}' (window ${windowMinutes}m, channel '${channelName}')`)
+        } catch (error) {
+          // One Workspace's fault must not hold the other members' digests.
+          this.ctx.logger.warn(`agent-team: digest delivery failed for member '${member.handle}' in workspace '${workspaceId}': ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+    }
+  }
+
+  /**
+   * The digest Channel for one Workspace, by name: the Workspace's existing
+   * active Channel when one matches, else created once through the ordinary
+   * channel-creation ledger op under a deterministic request id. The lookup
+   * reads the Workspace's whole Channel list (no member filter), because the
+   * Host owns the Workspace and the Channel may predate this Member's seat in
+   * it; the id makes the creation replay-safe, and the Human actor is what
+   * every Host-side channel creation uses.
+   */
+  private async ensureDigestChannel(ledger: AgentTeamLedger, workspaceId: WorkspaceId, name: string): Promise<AgentTeamChannelRef> {
+    const view = ledger.view({ workspaceId, topLevelOnly: true, includeActivities: false, direction: 'before' })
+    const existing = view.channels.find(channel => channel.state === 'active' && channel.name === name)
+    if (existing !== undefined) return existing.channelRef
+    const memberIds = ledger.listMembers()
+      .filter(candidate => candidate.state === 'enabled' && ledger.participatesIn(candidate.memberId, workspaceId))
+      .map(candidate => candidate.memberId)
+    const result = await ledger.createChannel({
+      requestId: `agent-team:digest:${workspaceId}:${name}` as AgentTeamRequestId,
+      workspaceId,
+      name,
+      description: 'Scheduled team digest (report only).',
+      memberIds,
+      actor: agentTeamHumanActor(),
+    })
+    return result.value.channel.channelRef
+  }
+
   private automaticResumeText(): string {
     return 'Your previous turn ended early due to a temporary service error. Please continue the work you were doing before the error.'
   }
@@ -2250,7 +2415,11 @@ export default class AgentTeam extends TypertRemoteService {
           this.assertSeatModel(request.memberId, active.agent, 'model change')
           effect = 'applied'
         }
-        if (!this.memberRuntime.appliedCapabilitiesMatch(current.memberId, current.capabilities)) {
+        // A role edit changes the excluded tool surface too: the Orchestrator's
+        // restriction is derived from the role, not only from capabilities, so
+        // a role swap must reach the same turn-boundary reapply a capability
+        // edit uses even when the stored capabilities themselves are unchanged.
+        if (!isDeepStrictEqual(previous?.role ?? undefined, current.role ?? undefined) || !this.memberRuntime.appliedCapabilitiesMatch(current.memberId, current.capabilities)) {
           try {
             effect = await this.applyCapabilityEdit(active, current)
           } catch (error) {
@@ -2738,6 +2907,18 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+  /**
+   * Workspace-activity read: the room-activity fold over every Channel of one Workspace (contract
+   * §19.1), plus the per-day spend buckets. Read-only — no receipt, no unread change, no wake, no
+   * new operation. Needs no Channel ref, so it answers before any Channel exists: an empty
+   * Workspace is a valid empty aggregate, and only an unknown Workspace rejects.
+   */
+  @Remote('workspaceActivity')
+  workspaceActivity(request: AgentTeamWorkspaceActivityRequest): AgentTeamWorkspaceActivity {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().workspaceActivity(request)
+  }
+
   /** Errored-Turn notices of one Thread for the human view, every notice kept; read-only (no receipt, no unread change, no wake). */
   @Remote('threadTurnFailures')
   threadTurnFailures(request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef: AgentTeamThreadRef }): readonly AgentTeamThreadTurnFailure[] {
@@ -2895,6 +3076,12 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.memberActor(agent)
     this.requireAgentWorkspace(actor, request.workspaceId)
     return this.requireLedger().decision(actor, request)
+  }
+
+  /** Open decision cards of one Workspace the calling Member participates in; the digest's read path. */
+  openDecisionsForAgent(agent: Agent, request: { readonly workspaceId: WorkspaceId }): readonly AgentTeamDecisionView[] {
+    this.requireAgentWorkspace(this.memberActor(agent), request.workspaceId)
+    return this.requireLedger().openDecisions(request.workspaceId)
   }
 
   /**
@@ -4066,7 +4253,7 @@ export default class AgentTeam extends TypertRemoteService {
         try {
           await this.ctx.agentPresets.mount(agentCtx, member.presetId)
           this.memberRuntime.applyMemberToolPolicy(agentCtx, member)
-          this.validateMemberPreset(agentCtx)
+          this.validateMemberPreset(agentCtx, member)
         } catch (error) {
           // Tag composition failures with their own class: the activation
           // diagnostic routes preset-composition (install/runtime split)
@@ -4327,7 +4514,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  private validateMemberPreset(agentCtx: Context): void {
+  private validateMemberPreset(agentCtx: Context, member: AgentTeamAgentMember): void {
     const scope = scopeOf(agentCtx)
     const teamMessage = this.ctx.tools.get('team_message', scope)
     if ((teamMessage as Record<PropertyKey, unknown> | undefined)?.[AGENT_TEAM_PRESET_MARKER] !== true) {
@@ -4339,7 +4526,10 @@ export default class AgentTeam extends TypertRemoteService {
       throw new Error('selected preset is not team-enabled')
     }
     const available = new Set(this.ctx.tools.schemas(scope).map(tool => tool.name))
-    const missing = AGENT_TEAM_TOOL_NAMES.filter(name => !available.has(name))
+    // The Orchestrator's surface deliberately withholds the mutation-capable
+    // Team tools, so the required set follows the Member's role: a withheld
+    // tool is not a broken preset composition.
+    const missing = requiredTeamToolNames(member).filter(name => !available.has(name))
     if (missing.length > 0) throw new Error(`team-enabled preset is missing tools: ${missing.join(', ')}`)
   }
 
@@ -5106,7 +5296,7 @@ export default class AgentTeam extends TypertRemoteService {
       try {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.memberRuntime.applySlotToolPolicy(agentCtx, member)
-        this.validateMemberPreset(agentCtx)
+        this.validateMemberPreset(agentCtx, member)
       } catch (error) {
         throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
       }

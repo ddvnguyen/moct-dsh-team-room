@@ -13,6 +13,8 @@ Host face declaration → generate:typert → Typert Host + Remote client → ct
 
 Read requests state their purpose instead of sharing one projection shape. `view` takes `includeCatalog` only when the caller wants the Task/Thread/Claim catalog of the whole request scope — the address book the model-facing `team_view` renders; the Client's reads never ask for it and render the page they requested.
 
+One read needs no Channel at all: `workspaceActivity` folds every Channel of one Workspace into a single page — totals, per-seat shares, Session runs, the newest-first event feed and the per-day spend buckets — so a Workspace answers before any Channel exists. An empty Workspace is a valid empty aggregate, not an error.
+
 ## Remote failure vocabulary
 Generated Remote methods resolve a `RemoteResult`: `{ ok: true, value }` carries the business result, `{ ok: false, error }` carries a failure whose stable `code` discriminates and whose `details` the code narrows without a cast.
 
@@ -35,7 +37,7 @@ Activation mounts `agentTeamRemote`, waits for `remote.agentTeam`, then register
 
 The panel row and Team mode are one fact: the row is the shell's own rail button, selecting it enters the mode, and another panel taking the column leaves it. A null selection is left alone — an embedded Member Session view clears the panel to own the column and the mode has to survive that — while the mode's own foot row clears the panel itself. A restored mode re-selects its panel unless a panel was already selected at mount, in which case that panel keeps the column and the mode stands down.
 
-The Team and Agents tabs live in the sidebar's tab strip. The strip has no public registration API: its owner attaches a private `__dshNativeTabs` registry to its `sidebar.workspaces` component, and `team-tab.ts` inserts into it, standing down (rail row kept) when none is found.
+The Overview, Team and Agents tabs live in the sidebar's tab strip, in that order. The strip has no public registration API: its owner attaches a private `__dshNativeTabs` registry to its `sidebar.workspaces` component, and `team-tab.ts` inserts into it, standing down (rail row kept) when none is found.
 
 Two hosts own a strip. The official sidebar with `@michengai/dsh-automation` attaches the registry. `@michengai/dsh-codex-ui` replaces the official sidebar, which makes automation stand down, and as of 1.1.33 attaches nothing, so the tabs need codex-ui to host the registry (same key, same attach site, same `{ id, label, order, matchSession, render }` descriptor).
 
@@ -50,7 +52,7 @@ New Channel composition defaults to taskless and exposes default-off 「作为�
 
 The Human Client consumes the Host's Inbox projection (the 「收件箱 / Inbox」 queue: the merged per-Workspace badge and page, covering each reader's whole unread slice — mentions are counted inside it, never its admission rule, plus a second 「最近活跃」 slice — the Threads that reader has written a Message in, so a Thread they replied to is theirs whether or not they follow it, newest activity first, each Workspace's own slice bounded to ten while the merged page shows at most five, which an Agent's Inbox never carries); it never keeps a parallel Inbox authority, and opening the page acknowledges nothing.
 
-Team navigation mode, Workspace selection, the last Channel/Thread, and the Inbox page position are browser-persisted; unread and Attention are Host-owned.
+Team navigation mode, Workspace selection, the last Channel/Thread, the Inbox page position and the Overview face are browser-persisted; unread and Attention are Host-owned. The Overview face is workspace-scoped like the Channel face: selecting a Workspace or a Channel leaves it, and the page's own data is always read live.
 
 The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage` preference, merged over Remote defaults.
 

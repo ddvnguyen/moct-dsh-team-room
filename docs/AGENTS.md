@@ -14,6 +14,8 @@ A change that invalidates a documented fact updates the owning document in the s
 | The model-facing tool set, its defining modules, or the `team-member` preset | [`architecture/tools-and-preset.md`](architecture/tools-and-preset.md) |
 | Typed Remote, Client plugin and slot composition, or the Client data/presentation boundary | [`architecture/client-and-remote.md`](architecture/client-and-remote.md) |
 | Reuse of Harness Workspace, Session, or storage | [`architecture/workspace-session-storage.md`](architecture/workspace-session-storage.md) |
+| The Team Board's ledger records, the `workspaceActivity` aggregate, the digest timer, or a ported Multica file | [`architecture/team-board-runtime.md`](architecture/team-board-runtime.md) |
+| What an operator is told about roles, the board's drag rules, task detail, Stop and Chat, the Overview, Inbox severities, or the digest setup | [`user/team-board.md`](user/team-board.md) |
 | The collaboration model, Thread/Task/Claim semantics, or Member time awareness | [`team-collaboration/model-and-time.md`](team-collaboration/model-and-time.md) |
 | A model-facing tool contract, or a rule shared by every tool | [`team-collaboration/tools.md`](team-collaboration/tools.md) |
 | Attention, Inbox, mentions, or how a Message is rendered | [`team-collaboration/attention-and-messaging.md`](team-collaboration/attention-and-messaging.md) |
