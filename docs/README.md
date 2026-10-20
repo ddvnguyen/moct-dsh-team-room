@@ -22,6 +22,7 @@ This directory contains the maintained engineering documentation for this reposi
 | [`architecture/tools-and-preset.md`](architecture/tools-and-preset.md) | The model-facing tools, their defining modules, and the isolated `team-member` preset | Changing a model-facing tool or what the preset mounts |
 | [`architecture/client-and-remote.md`](architecture/client-and-remote.md) | The typed Remote declaration, Client plugin and slot composition, and the Client data/presentation boundary | Changing RPC, Client plugin loading, slots, or projection |
 | [`architecture/workspace-session-storage.md`](architecture/workspace-session-storage.md) | Reuse of Harness Workspace, Session, and storage instead of parallel Team state | Changing Workspace selection, Session storage, or ledger routing |
+| [`architecture/team-board-runtime.md`](architecture/team-board-runtime.md) | The Team Board runtime seams: Task op kinds, the `workspaceActivity` aggregate, the digest timer, and the Multica reuse policy | Changing the Board stack's ledger records, the Overview aggregate, the digest schedule, or a ported Multica file |
 | [`domain-model.md`](domain-model.md) | Stable Agent Team vocabulary | Changing domain semantics, type names, or the collaboration contract |
 | [`team-collaboration/README.md`](team-collaboration/README.md) | The implemented tool, Thread Attention, Inbox, reading, mention, and mutation-fence contract | Changing collaboration semantics, model-facing tools, or Agent notifications |
 | [`team-collaboration/model-and-time.md`](team-collaboration/model-and-time.md) | The collaboration model and Member time awareness | Changing what a Thread, Task, Claim, or a time notice means |
@@ -40,6 +41,7 @@ This directory contains the maintained engineering documentation for this reposi
 | [`frontend-design/board.md`](frontend-design/board.md) | The Board: the workspace kanban, card anatomy, drag rules, and live activity | Changing the Board page, its columns/cards/filters, or its drag rules |
 | [`frontend-design/refresh-copy-accessibility.md`](frontend-design/refresh-copy-accessibility.md) | Refresh semantics, copy, accessibility, and evolution | Changing refresh behavior, copy, or accessibility |
 | [`harness-navigation.md`](harness-navigation.md) | Routes through this repository and `../deepseek-harness`, including source entry points and integration traps | Unsure which Harness document, package, source, or test to inspect |
+| [`user/team-board.md`](user/team-board.md) | The operator's guide to the Team Board: roles, the board and its drag rules, task detail, Stop and Chat, Overview, Inbox severities, the digest, and the Multica attribution | Setting up a team, or explaining one of the Team Board surfaces to a reader |
 
 ## Documentation rules
 
@@ -52,3 +54,4 @@ Editing or adding a document under `docs/`? Routing branches and the maintenance
 - **Client or UI changes:** [`frontend-design/README.md`](frontend-design/README.md) for the UI system, [`harness-navigation.md`](harness-navigation.md) for the cross-repository route.
 - **Installation, build, tests, or Remote generation:** [`development/README.md`](development/README.md), then the actual `package.json` or script implementation.
 - **Publishing a release:** [`release-runbook.md`](release-runbook.md) for the procedure and its gates, then [`dsh-release-compatibility.md`](dsh-release-compatibility.md) for the certification that must precede any peer-range change.
+- **Setting up or explaining a team:** [`user/team-board.md`](user/team-board.md) for the operator's route through the Board, the Task detail, the Overview and the Inbox.
