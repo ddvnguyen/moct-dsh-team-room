@@ -49,6 +49,7 @@ import type {
   AgentTeamUpdateChannelRequest,
   AgentTeamUpdateMemberRequest,
   AgentTeamViewRequest,
+  AgentTeamWorkspaceActivityRequest,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import agentTeamRemote from '@ddvnguyen/moct-dsh-team-room/remote'
 import type {} from '@deepseek-ai/dsh-client-connection/client'
@@ -93,9 +94,10 @@ const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsP
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 const GuardedBoardPanel = withSlotBoundary('main:team-board', TeamBoardPanel as never)
-import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
+import { OVERVIEW_TAB_ID, OVERVIEW_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
+import { renderOverviewTabBody } from './overview-tab-body.tsx'
 import { TeamBoardPanel } from './board-panel-body.tsx'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
@@ -414,6 +416,13 @@ function teamSharedRemotes(
     // the Host's ledger stays untouched, and the session/event wake that
     // follows moves the run row through the activity scope.
     stopSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => ctx.remote.session.cancel({ sessionId }),
+    // The Overview page's aggregate (Board 7/10): read-only and uncached — the
+    // page owns its cursor paging, so a query cache keyed on the request would
+    // fight the append-on-page state it keeps itself.
+    loadWorkspaceActivity: (request: AgentTeamWorkspaceActivityRequest) => ctx.remote.agentTeam.workspaceActivity(request),
+    // The Overview needs-attention slice reads decision cards too; a read is
+    // seat-independent, so it rides the shared remotes beside the other reads.
+    loadDecisions: (request: AgentTeamDecisionsRequest) => ctx.remote.agentTeam.decisions(request),
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
     // L1 (issue 57, item 3): the Human's own Thread Attention op. It toggles
     // the reading Human's follow of one Thread and nothing else — the request
@@ -506,7 +515,6 @@ function teamSeatInject(
       writeDocSection: (request: AgentTeamWriteDocSectionRequest) => ctx.remote.agentTeam.writeDocSection(request),
       resolveDocComment: (request: AgentTeamResolveDocCommentRequest) => ctx.remote.agentTeam.resolveDocComment(request),
       loadDocSectionHistory: (request: AgentTeamDocSectionHistoryRequest) => ctx.remote.agentTeam.docSectionHistory(request),
-      loadDecisions: (request: AgentTeamDecisionsRequest) => ctx.remote.agentTeam.decisions(request),
       answerDecision: (request: AgentTeamAnswerDecisionRequest) => ctx.remote.agentTeam.answerDecision(request),
     } : {}),
     ...(name === 'sidebar.workspaces' ? {
@@ -536,6 +544,7 @@ function teamPageActions(ctx: ClientContext, navigation: TeamNavigation): Partia
     selectThread: (threadRef, channelRef, taskRef, taskNumber) => { actions.selectThread(threadRef, channelRef, taskRef, taskNumber); showTeamPage() },
     selectInbox: () => { actions.selectInbox(); showTeamPage() },
     selectBoard: () => { actions.selectBoard(); showTeamPage() },
+    selectOverview: () => { actions.selectOverview(); showTeamPage() },
   }
 }
 
@@ -803,6 +812,21 @@ function applyUi(ctx: ClientContext): void {
     onInserted: () => { dropTeamRow(); agentsTab.set(true) },
   }), 'agent-team: interim native tab')
 
+  // The Overview tab (Board 7/10): the workspace Overview page over the same
+  // seat share, beside the one Teams tab. The strip owns the selection, so no
+  // navigation flag is claimed here — opening an agent card or a thread link
+  // hands the main column over through the shared navigation actions.
+  const overviewTabRender = (props: NativeTabRenderProps): unknown => {
+    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
+    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
+      renderOverviewTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
+  }
+  ctx.effect(() => insertTeamTab(ctx, {
+    id: OVERVIEW_TAB_ID,
+    order: OVERVIEW_TAB_ORDER,
+    label: () => ctx.locale.bind(NS)('overview'),
+    render: overviewTabRender,
+  }), 'agent-team: overview native tab')
 
 
   // A14: the Agent detail's tabs ride the host's conversation tab strip

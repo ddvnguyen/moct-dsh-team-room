@@ -215,6 +215,8 @@ import type {
   AgentTeamThreadSummaryCommittedData,
   AgentTeamRoomActivityRequest,
   AgentTeamRoomActivityResult,
+  AgentTeamWorkspaceActivity,
+  AgentTeamWorkspaceActivityRequest,
   AgentTeamColdFallback,
   AgentTeamResumeMemberSessionResult,
   AgentTeamForkMemberSessionResult,
@@ -2736,6 +2738,18 @@ export default class AgentTeam extends TypertRemoteService {
     } catch (error) {
       throw new RemoteError('team/room-activity-not-found', error instanceof Error ? error.message : String(error), request.threadRef === undefined ? { channelRef: request.channelRef } : { channelRef: request.channelRef, threadRef: request.threadRef })
     }
+  }
+
+  /**
+   * Workspace-activity read: the room-activity fold over every Channel of one Workspace (contract
+   * §19.1), plus the per-day spend buckets. Read-only — no receipt, no unread change, no wake, no
+   * new operation. Needs no Channel ref, so it answers before any Channel exists: an empty
+   * Workspace is a valid empty aggregate, and only an unknown Workspace rejects.
+   */
+  @Remote('workspaceActivity')
+  workspaceActivity(request: AgentTeamWorkspaceActivityRequest): AgentTeamWorkspaceActivity {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().workspaceActivity(request)
   }
 
   /** Errored-Turn notices of one Thread for the human view, every notice kept; read-only (no receipt, no unread change, no wake). */

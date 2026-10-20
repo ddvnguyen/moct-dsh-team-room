@@ -33,6 +33,8 @@ import type {
   AgentTeamMemberActivityResult,
   AgentTeamUpdateTaskRequest,
   AgentTeamUpdateTaskResult,
+  AgentTeamWorkspaceActivityRequest,
+  AgentTeamWorkspaceActivity,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -139,9 +141,15 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & TeamNavigationActions
   & {
     navigation: TeamNavigationSource
+    /** The Human's own identity: the display name and avatar every seat that names or draws them reads. */
+    humanIdentity: TeamHumanIdentitySource
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
     /** Human direct-only Inbox slice; the badge sums each visible Workspace's total. */
     loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
+    /** The workspace-wide activity aggregate the Overview tab renders (Board 7/10); read-only, uncached. */
+    loadWorkspaceActivity: (request: AgentTeamWorkspaceActivityRequest) => Promise<RemoteResult<AgentTeamWorkspaceActivity>>
+    /** The decision cards of one Thread; the Overview needs-attention slice reads them through the shared remotes. */
+    loadDecisions: (request: AgentTeamDecisionsRequest) => Promise<RemoteResult<AgentTeamDecisionsResult>>
     /** Fired after every committed durable Thread read; the badge refreshes without waiting for a changes wake. */
     subscribeReads: (listener: () => void) => () => void
     subscribeChanges: SubscribeTeamChanges
@@ -244,6 +252,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */
   loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
+  /** The workspace-wide activity aggregate the Overview page renders (Board 7/10); read-only, uncached. */
+  loadWorkspaceActivity: (request: AgentTeamWorkspaceActivityRequest) => Promise<RemoteResult<AgentTeamWorkspaceActivity>>
   /** Human direct-only Inbox slice; the Inbox page merges one call per visible Workspace. */
   loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   /** Human-only Thread Attention observations; the Thread composer ranks the returned followers first. */

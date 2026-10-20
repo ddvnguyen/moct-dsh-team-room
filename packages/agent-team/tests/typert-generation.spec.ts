@@ -83,6 +83,7 @@ describe('Agent Team generated Typert boundary', () => {
       'updateMemorySettings',
       'updateTask',
       'view',
+      'workspaceActivity',
       'writeDocSection',
     ]
     expect(host.invocations.map(invocation => invocation.method).sort()).toEqual(expected)
