@@ -124,7 +124,7 @@ preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用�
 
 ## Human 的 Memory 页面
 
-只属于 Human 的动作和整理动作放在 Team Settings 页面上：同一 Workspace 的 Agents 下方有一个 Memory 区块，包含记录（pending 队列在前）、按 Channel 分组的 task picture、rule feed、每个 home 对 always-load 上限的占用，以及 memory 设置。
+只属于 Human 的动作和整理动作放在 Team Detail 页面上：同一 Workspace 的 Memory 分区包含记录（pending 队列在前）、按 Channel 分组的 task picture、rule feed、每个 home 对 always-load 上限的占用，以及 memory 设置。
 
 页面通过七个 Host 方法访问 backend：`memoryList`、`memoryRecord`、`memoryRuleFeed`、`memoryUsage`、`memorySettings`、`updateMemorySettings`、`memoryAct`。每个请求只指定 Workspace，且必须是 Host 已知的 Workspace；Host 把 ledger 中的 Human Member 作为 actor，并以整个 Workspace 为范围读取。ledger 中没有 Human Member 时以 `NO_HUMAN` 拒绝。
 

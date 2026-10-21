@@ -157,39 +157,41 @@ describe('Team mode and the shell main panel', () => {
     expect(snapshot.mode).toBe('team')
   })
 
-  it('keeps the Agents list on Team Settings while the strip has no Agents tab', async () => {
+  it('keeps the Agents list in the Team Detail page while the strip has no Agents tab', async () => {
     const b = await runtimeWithTeam({ nativeTabs: false, mode: 'team', workspaceId: 'w1', initialChannels: true })
-    fireEvent.click(await b.view.findByRole('button', { name: '团队设置' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '团队详情' }))
     const page = await waitFor(() => {
-      const found = b.view.container.querySelector('[data-team-settings-page]')
+      const found = b.view.container.querySelector('[data-team-detail-page]')
       expect(found).not.toBeNull()
       return found as HTMLElement
     })
+    // The roster is the page's Agents section, whatever the strip carries.
+    fireEvent.click(within(page).getByRole('tab', { name: 'Agents' }))
     expect(await within(page).findByRole('button', { name: '添加 Agent' })).toBeTruthy()
     expect(page.querySelector('[data-team-agents-moved]')).toBeNull()
   })
 
-  it('opens Team Settings from its rail row, then a Channel pick from the tab returns to the Team page', async () => {
+  it('opens the Team Detail page from its rail row, then a Channel pick from the tab returns to the Team page', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
     expect(await b.view.findByRole('button', { name: '# engineering' })).toBeTruthy()
 
-    fireEvent.click(b.view.getByRole('button', { name: '团队设置' }))
+    fireEvent.click(b.view.getByRole('button', { name: '团队详情' }))
 
     await waitFor(() => expect(b.panelInfo.getSnapshot().activePanelId).toBe('agent-team-settings'))
     const page = await waitFor(() => {
-      const found = b.view.container.querySelector('[data-team-settings-page]')
+      const found = b.view.container.querySelector('[data-team-detail-page]')
       expect(found).not.toBeNull()
       return found as HTMLElement
     })
-    expect(page.querySelector('h2')?.textContent).toBe('团队设置')
-    // The Agents list moved to its tab, so the page no longer lists it (and
-    // carries no notice about it); the Team mode it was opened from stays.
-    expect(page.querySelector('[data-team-agents-moved]')).toBeNull()
+    expect(page.querySelector('h2')?.textContent).toBe('团队详情')
+    // The page opens on the Overview, so the roster waits for its section; the
+    // Team mode it was opened from stays.
+    expect(page.querySelector('[data-team-detail-section="overview"]')).not.toBeNull()
     expect(within(page).queryByRole('button', { name: '添加 Agent' })).toBeNull()
     expect(b.runtime.ctx.teamNavigation.getSnapshot().mode).toBe('team')
 
     fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
-    await waitFor(() => expect(b.view.container.querySelector('[data-team-settings-page]')).toBeNull())
+    await waitFor(() => expect(b.view.container.querySelector('[data-team-detail-page]')).toBeNull())
     expect(b.panelInfo.getSnapshot().activePanelId).toBeNull()
   })
 

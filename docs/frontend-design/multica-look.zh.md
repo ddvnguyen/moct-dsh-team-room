@@ -137,5 +137,5 @@ Team Inbox 按 Multica 的 inbox 重构：一条队列按「它在要求读者�
 
 ## 署名
 
-`NOTICE`、`licenses/MULTICA-LICENSE` 以及团队设置 → 关于中的一行承载 Multica
+`NOTICE`、`licenses/MULTICA-LICENSE` 以及团队详情 → 设置中的一行承载 Multica
 License 署名。仅限内部使用；对第三方提供托管服务需要 Index Labs 的商业许可。

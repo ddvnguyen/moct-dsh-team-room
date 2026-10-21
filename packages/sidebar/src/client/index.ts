@@ -35,21 +35,23 @@ import { MARKER, hideImAssistant } from '../hide.ts'
 /** The panels that belong next to "New task" rather than inside Extensions.
  *  The ids are the ones the owning plugins register with
  *  `sidebar.panellist`: dsh-context owns Context Insights, the Team Room owns
- *  Team Settings and the Board. */
+ *  Team Detail and the Board. */
 const TOP_PANEL_IDS = ['dsh-context', 'agent-team-settings', 'agent-team-board']
 
 /** The key the patched codex-ui reads the top-level panel list from. */
 const TOP_PANELS_KEY = '__dshTopPanels'
 
-/** Entries that stay at the top level, in this order. Both languages. */
+/** Entries that stay at the top level, in this order. Both languages.
+ *  The Team row's label is the one the Team Detail page registered; a label
+ *  that is not listed here folds back into Extensions without a word. */
 const KEEP_ORDER = [
   'New task',
   'New Task',
   '新建任务',
   'Context Insights',
   '上下文洞察',
-  'Team Settings',
-  '团队设置',
+  'Team Detail',
+  '团队详情',
   'Board',
   '看板',
 ]

@@ -324,14 +324,14 @@ describe('Team Client slot takeover', () => {
   })
 })
 
-describe('Team Settings rail row', () => {
+describe('Team Detail rail row', () => {
   type PanelRow = { options: { id: string; label: () => string } }
   const panelRows = (slots: SlotRegistry) => slots.entries('sidebar.panellist') as unknown as PanelRow[]
   const panel = (ctx: Context) => ctx.get('layout') as unknown as {
     selectPanel: (id: string | null) => void
     panelInfo: { getSnapshot: () => { activePanelId: string | null } }
   }
-  it('registers the rail row as Team Settings with a locale thunk, and its page as a main seat', async () => {
+  it('registers the rail row as Team Detail with a locale thunk, and its page as a main seat', async () => {
     const { registry } = nativeStrip()
     const { ctx, slots } = await bench(null, registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })
@@ -342,7 +342,7 @@ describe('Team Settings rail row', () => {
     // A thunk, not a captured string: a language switch relabels the row.
     expect(typeof rows[0]!.options.label).toBe('function')
     const locale = ctx.get('locale') as LocaleRuntime
-    expect(rows[0]!.options.label()).toBe(locale.bind('team' as never)('teamSettingsGroup' as never))
+    expect(rows[0]!.options.label()).toBe(locale.bind('team' as never)('teamDetail' as never))
     expect(slots.entriesOfSlot('main').map(entry => (entry.options as { key?: string }).key))
       .toEqual(expect.arrayContaining(['agent-team', 'agent-team-board', 'agent-team-settings', 'conversation']))
 
@@ -362,14 +362,15 @@ describe('Team Settings rail row', () => {
     const fiber = withStrip.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     // One Team tab, carrying the Channel section and the Agents section
-    // (see team-tab-body.tsx), plus the workspace Overview tab beside it. The
-    // Board is not among them: it is a menu item in the main list.
-    expect(strip.inserted).toEqual(['team', 'overview'])
+    // (see team-tab-body.tsx). The workspace Overview is not a tab: it is a
+    // section of the Team Detail page. The Board is not among them either: it
+    // is a menu item in the main list.
+    expect(strip.inserted).toEqual(['team'])
     expect(panelRows(withStrip.slots).map(row => row.options.id)).toEqual(['agent-team-settings', 'agent-team-board'])
     await fiber.dispose()
   })
 
-  it('opens Team Settings without leaving Team mode, and a Channel pick from the tab hands the column back to the Team page', async () => {
+  it('opens the Team Detail page without leaving Team mode, and a Channel pick from the tab hands the column back to the Team page', async () => {
     const strip = nativeStrip()
     const { ctx, slots } = await bench(null, strip.registry)
     const fiber = ctx.plugin({ inject: [...inject], apply })

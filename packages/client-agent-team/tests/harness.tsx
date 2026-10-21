@@ -111,11 +111,9 @@ function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作
 /**
  * The real strip renders one tab body at a time; this renders the Team one and,
  * with `agentsTab`, the Agents one beside it, so specs of either body do not
- * read each other's controls. The Overview tab follows the same rule with
- * `overviewTab`: its body mounts the whole Overview page, which would otherwise
- * stand in every sidebar spec's way.
+ * read each other's controls.
  */
-function nativeTabStrip(showAgents = false, showOverview = false) {
+function nativeTabStrip(showAgents = false) {
   const tabs: Array<{ readonly id: string; readonly render: (props: never) => unknown }> = []
   const listeners = new Set<() => void>()
   let version = 0
@@ -133,7 +131,7 @@ function nativeTabStrip(showAgents = false, showOverview = false) {
   // The strip hands each tab the shipped entry's own props, as the host does.
   function StripWorkspace(props: Record<string, unknown>) {
     useSyncExternalStore(registry.subscribe, () => version)
-    return <div data-baseline-workspaces>普通工作区{tabs.filter(tab => (showAgents || tab.id !== 'agents') && (showOverview || tab.id !== 'overview')).map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
+    return <div data-baseline-workspaces>普通工作区{tabs.filter(tab => showAgents || tab.id !== 'agents').map(tab => <div key={tab.id} data-native-tab={tab.id}>{tab.render(props as never) as ReactNode}</div>)}</div>
   }
   return Object.assign(StripWorkspace, { __dshNativeTabs: registry })
 }
@@ -177,7 +175,7 @@ interface SeededMessage {
   readonly replyToMessageRef?: string
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; overviewTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
+export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: boolean; agentsTab?: boolean; mainPanelId?: string; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string; seedReplyStats?: readonly AgentTeamThreadReplyStat[]; seedTurnFailures?: readonly AgentTeamThreadTurnFailure[];
   /** Seed the execution log's per-seat Session runs (contract §4 threadSessions); mutable via `setThreadSessions`. */
   seedThreadSessions?: readonly AgentTeamThreadSessionRuns[];
   /** Seed the open decision cards of the Threads (#109); mutable via `setDecisions`. */
@@ -1053,7 +1051,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   // session-maybe seat's adoption semantics (remount on no-session) through
   // real element identity of the root's [data-phase] node.
   await runtime.mount({ inject: [...injectConversation], apply: applyConversation })
-  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip(options?.agentsTab === true, options?.overviewTab === true)) as never)
+  const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, (options?.nativeTabs === false ? BaselineWorkspace : nativeTabStrip(options?.agentsTab === true)) as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()

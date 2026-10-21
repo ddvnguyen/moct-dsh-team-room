@@ -86,15 +86,6 @@ export const PARENT_SLOT = 'sidebar'
 export const TAB_ID = 'team'
 export const TAB_ORDER = 3
 
-
-/**
- * The workspace Overview tab, beside the one Teams tab: the strip reads
- * `Tasks | Overview | Teams | Scheduled`. Order 1 sorts it before the Teams tab
- * (order 3) and the owner's `schedule` (30).
- */
-export const OVERVIEW_TAB_ID = 'overview'
-export const OVERVIEW_TAB_ORDER = 1
-
 /** Retry budget, mirroring the owner plugin's own 20 × 250 ms schedule. */
 const RETRY_INTERVAL_MS = 250
 const RETRY_LIMIT = 20

@@ -1,0 +1,131 @@
+/* The Team Detail page: the side menu's team row opens one page that holds the
+ * workspace Overview, the Agents roster, the Team memory and the team's own
+ * settings, one section at a time. The sub-nav is a horizontal strip of
+ * underline tabs, the shape Multica's own detail pages use; the sections below
+ * it read the Workspace scope the header picked. Host tokens only, the same
+ * aliases the sibling settings page uses. */
+
+.section {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 980px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The page borrows the main seat, which is a fixed-height flex parent: the
+ * page must be allowed to shrink (min-height 0) and own the overflow, or the
+ * records below the fold are unreachable. */
+.page {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px 24px;
+  flex: 1 1 auto;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* The page names what owns it: the side menu lists it among the Harness's own
+ * panels, where a bare 「团队详情」 leaves the reader guessing. */
+.intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The sub-nav's rule: one line under the four tabs, the active one owning the
+ * segment of it that says where the reader is. */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.navTab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.navTab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.navTab[aria-selected='true'] {
+  color: var(--dsw-alias-label-primary);
+  border-bottom-color: var(--dsw-alias-brand-primary);
+  font-weight: 500;
+}
+
+.navTab:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* The section body: one column that owns its own height, so a section that
+ * scrolls (the memory records) scrolls inside the page and not the seat. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settingsIntro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* License attribution required by the Multica License. Deliberately quiet:
+   it is a legal line, not a section of the page. */
+.about {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary));
+}
+
+@container (max-width: 420px) {
+  .nav {
+    flex-wrap: wrap;
+  }
+
+  .navTab {
+    padding: 8px;
+  }
+}

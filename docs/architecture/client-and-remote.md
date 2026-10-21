@@ -37,7 +37,7 @@ Activation mounts `agentTeamRemote`, waits for `remote.agentTeam`, then register
 
 The panel row and Team mode are one fact: the row is the shell's own rail button, selecting it enters the mode, and another panel taking the column leaves it. A null selection is left alone — an embedded Member Session view clears the panel to own the column and the mode has to survive that — while the mode's own foot row clears the panel itself. A restored mode re-selects its panel unless a panel was already selected at mount, in which case that panel keeps the column and the mode stands down.
 
-The Overview, Team and Agents tabs live in the sidebar's tab strip, in that order. The strip has no public registration API: its owner attaches a private `__dshNativeTabs` registry to its `sidebar.workspaces` component, and `team-tab.ts` inserts into it, standing down (rail row kept) when none is found.
+The Team tab lives in the sidebar's tab strip. The strip has no public registration API: its owner attaches a private `__dshNativeTabs` registry to its `sidebar.workspaces` component, and `team-tab.ts` inserts into it, standing down (rail row kept) when none is found. The workspace Overview is not a tab: it is a section of the Team Detail page (`agent-team-settings`), the side menu's row that carries the Overview, Agents, memory and the team's own settings.
 
 Two hosts own a strip. The official sidebar with `@michengai/dsh-automation` attaches the registry. `@michengai/dsh-codex-ui` replaces the official sidebar, which makes automation stand down, and as of 1.1.33 attaches nothing, so the tabs need codex-ui to host the registry (same key, same attach site, same `{ id, label, order, matchSession, render }` descriptor).
 
@@ -52,7 +52,7 @@ New Channel composition defaults to taskless and exposes default-off 「作为�
 
 The Human Client consumes the Host's Inbox projection (the 「收件箱 / Inbox」 queue: the merged per-Workspace badge and page, covering each reader's whole unread slice — mentions are counted inside it, never its admission rule, plus a second 「最近活跃」 slice — the Threads that reader has written a Message in, so a Thread they replied to is theirs whether or not they follow it, newest activity first, each Workspace's own slice bounded to ten while the merged page shows at most five, which an Agent's Inbox never carries); it never keeps a parallel Inbox authority, and opening the page acknowledges nothing.
 
-Team navigation mode, Workspace selection, the last Channel/Thread, the Inbox page position and the Overview face are browser-persisted; unread and Attention are Host-owned. The Overview face is workspace-scoped like the Channel face: selecting a Workspace or a Channel leaves it, and the page's own data is always read live.
+Team navigation mode, Workspace selection, the last Channel/Thread, the Inbox page position and the Board page position are browser-persisted; unread and Attention are Host-owned. The workspace Overview is not a navigation face: it lives in the Team Detail page, keeps its own Workspace scope, and always reads its data live.
 
 The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage` preference, merged over Remote defaults.
 
