@@ -582,6 +582,17 @@ export type AgentTeamDocVerdict = 'approve' | 'review' | 'cancel'
 /** Stable identifier of one decision card. */
 export type AgentTeamDecisionRef = Branded<'AgentTeamDecisionRef'>
 
+/**
+ * Stable identifier of one recorded decision.
+ *
+ * A stored record is minted once, when the operation that carries it is
+ * written, and is durable with that operation. A record derived from an
+ * operation written before decision records existed takes the derived form
+ * `decisionRecord:<operationId>`, so the same ledger derives the same ref on
+ * every replay.
+ */
+export type AgentTeamDecisionRecordRef = Branded<'AgentTeamDecisionRecordRef'>
+
 /** One choice on a decision question. */
 export interface AgentTeamDecisionOption {
   /** One or two words, shown on the button. */

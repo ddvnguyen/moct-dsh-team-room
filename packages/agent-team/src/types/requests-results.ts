@@ -1,4 +1,4 @@
-import type { AgentTeamSessionRun, AgentTeamSessionTurnRecordedData } from "./operations.ts"
+import type { AgentTeamDecisionRecordSource, AgentTeamSessionRun, AgentTeamSessionTurnRecordedData } from "./operations.ts"
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
 import type { SessionId as AgentTeamMemberSessionId, SessionLogOffset as AgentTeamMemberSessionLogOffset, SessionSeq as AgentTeamMemberSessionSeq } from "@deepseek-ai/dsh-session"
 import type {
@@ -18,6 +18,7 @@ import type {
   AgentTeamDecisionAnswer,
   AgentTeamDecisionNotice,
   AgentTeamDecisionQuestion,
+  AgentTeamDecisionRecordRef,
   AgentTeamDecisionRef,
   AgentTeamDecisionStatus,
   AgentTeamDoc,
@@ -1610,10 +1611,51 @@ export interface AgentTeamDecisionView {
   /** The member who answered or withdrew, and when. */
   readonly closedBy?: AgentTeamMemberId
   readonly closedAt?: string
+  /**
+   * The Task the card belongs to, when its Thread has one. Absent on a card
+   * asked on a taskless Thread. It answers "which Task is this card on?" for
+   * the thread-scoped read; the issue view's decision rows are task-scoped by
+   * construction and do not need it.
+   */
+  readonly taskRef?: AgentTeamTaskRef
 }
 
 export interface AgentTeamDecisionsResult {
   readonly decisions: readonly AgentTeamDecisionView[]
+}
+
+/**
+ * One recorded decision, as the issue view reads it: who decided, what was
+ * decided, why, when, and the source it came from.
+ *
+ * A record is immutable once written: a changed mind is a new record, and the
+ * record it supersedes stays listed.
+ */
+export interface AgentTeamDecisionRecord {
+  readonly recordRef: AgentTeamDecisionRecordRef
+  /** The Task the decision belongs to, once its Thread has one. */
+  readonly taskRef?: AgentTeamTaskRef
+  /** The Human (`member:human`) or the seat that decided. */
+  readonly decidedBy: AgentTeamMemberId
+  /** One line: what was decided. */
+  readonly decided: string
+  /** Why, in the decider's words. Empty when the decision carried none. */
+  readonly rationale: string
+  readonly decidedAt: string
+  /** Where the decision came from: the ask card, or the plan. */
+  readonly source: AgentTeamDecisionRecordSource
+  /** The earlier plan record on this Task that this one supersedes. */
+  readonly supersedes?: AgentTeamDecisionRecordRef
+}
+
+/** The decision records of one Task, oldest first. */
+export interface AgentTeamDecisionRecordsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+}
+
+export interface AgentTeamDecisionRecordsResult {
+  readonly records: readonly AgentTeamDecisionRecord[]
 }
 
 /** A committed ask, answer or withdrawal: the Thread notice and the decision fact it carries. */

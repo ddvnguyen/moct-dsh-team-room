@@ -55,8 +55,14 @@ import type {
   AgentTeamDocCreatedOperation,
   AgentTeamAnswerDecisionRequest,
   AgentTeamAskDecisionRequest,
+  AgentTeamDecisionAnswer,
   AgentTeamDecisionNotice,
   AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRecord,
+  AgentTeamDecisionRecordPayload,
+  AgentTeamDecisionRecordRef,
+  AgentTeamDecisionRecordsRequest,
+  AgentTeamDecisionRecordsResult,
   AgentTeamDecisionRef,
   AgentTeamDecisionRequest,
   AgentTeamDecisionView,
@@ -209,17 +215,21 @@ import type { AgentTeamRepliedThread } from './turn-threads.ts'
 import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
 import { assertMemberRole } from './member-roles.ts'
 import type { AgentTeamDocState } from './team-docs.ts'
-import type { AgentTeamDecisionState } from './team-decisions.ts'
+import type { AgentTeamDecisionRecordState, AgentTeamDecisionState } from './team-decisions.ts'
 import {
   askedDecisionState,
   closedDecisionState,
   decisionAnswerBody,
   decisionAskBody,
+  decisionRationale,
+  decisionRecordView,
+  decisionSummary,
   decisionView,
   decisionWithdrawBody,
   normalizeDecisionAnswers,
   normalizeDecisionContext,
   normalizeDecisionQuestions,
+  planApprovalSummary,
 } from './team-decisions.ts'
 import {
   createdDocState,
@@ -540,7 +550,7 @@ export interface AgentTeamAuthorizedReviewDocRequest extends AgentTeamReviewDocR
 export interface AgentTeamLedgerOptions {
   readonly operationId?: () => AgentTeamOperationId
   readonly occurredAt?: () => string
-  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') => string
+  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision' | 'decisionRecord') => string
 }
 
 /** Internal append result indicating whether this call committed a new record. */
@@ -670,6 +680,12 @@ interface Projection {
   readonly decisions: Map<AgentTeamDecisionRef, AgentTeamDecisionState>
   /** Decision cards per Thread, in ask order. */
   readonly decisionsByThread: Map<AgentTeamThreadRef, AgentTeamDecisionRef[]>
+  /** Recorded decisions, folded from the decision record an operation carries, or derived from the notice it already carried. */
+  readonly decisionRecords: Map<AgentTeamDecisionRecordRef, AgentTeamDecisionRecordState>
+  /** Recorded decisions per Thread, in the order they were recorded. */
+  readonly decisionRecordsByThread: Map<AgentTeamThreadRef, AgentTeamDecisionRecordRef[]>
+  /** Recorded decisions per Task, in the order they were recorded. */
+  readonly decisionRecordsByTask: Map<AgentTeamTaskRef, AgentTeamDecisionRecordRef[]>
 }
 
 /** Minimal replay-time Attention observation; the read projection adds the current Task ref. */
@@ -677,6 +693,15 @@ interface AgentTeamAttentionObservation {
   readonly sequence: number
   readonly memberId: AgentTeamMemberId
   readonly action: 'follow' | 'unfollow'
+}
+
+/**
+ * The recordRef of a record derived from an operation: a function of the
+ * operation, never minted, so a replay of the same ledger derives the same
+ * ref and the indexes keep the same keys.
+ */
+function derivedDecisionRecordRef(operationId: AgentTeamOperationId): AgentTeamDecisionRecordRef {
+  return `decisionRecord:${operationId}` as AgentTeamDecisionRecordRef
 }
 
 function sessionTurnKey(sessionId: SessionId, turn: number): string {
@@ -723,7 +748,8 @@ function emptyProjection(): Projection {
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map(),
-    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map() }
+    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map(),
+    decisionRecords: new Map(), decisionRecordsByThread: new Map(), decisionRecordsByTask: new Map() }
 }
 
 /**
@@ -984,7 +1010,7 @@ export class AgentTeamLedger {
   private readonly confirmations = new Map<AgentTeamConfirmationToken, Confirmation>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
-  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') => string
+  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision' | 'decisionRecord') => string
   private operationTail: Promise<void> = Promise.resolve()
   /**
    * Runtime human display name. Durable identity stays `member:human`; only
@@ -2319,7 +2345,8 @@ export class AgentTeamLedger {
       const notice: AgentTeamDocNotice = Object.freeze({ docRef: state.doc.docRef, event: 'reviewed', docRevision: state.revision,
         verdict: request.verdict, commentRefs: Object.freeze([...commentRefs]) })
       const body = docReviewNoticeBody(state.doc, author.handle, notice, request.note, humanEditedDocHeadings(state, humanMemberId))
-      const operation = this.docNoticeOperation(request, state, body, [author.memberId], notice)
+      const record = request.verdict === 'approve' ? this.planApprovalRecord(state, request.note) : undefined
+      const operation = this.docNoticeOperation(request, state, body, [author.memberId], notice, record)
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.docNoticeResult(operation))
@@ -2377,7 +2404,8 @@ export class AgentTeamLedger {
       }
       const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'answered' as const, answers })
       const body = decisionAnswerBody(asker.handle, state.decisionRef, state.questions, answers)
-      const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId], { decision: notice })
+      const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId],
+        { decision: notice, decisionRecord: this.answerDecisionRecord(state, answers) })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2405,10 +2433,43 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * The decision fact the Human's answer records, attached to the very
+   * operation that answers the card: one decision, one operation, one record.
+   */
+  private answerDecisionRecord(state: AgentTeamDecisionState, answers: readonly AgentTeamDecisionAnswer[]): AgentTeamDecisionRecordPayload {
+    const taskRef = this.state.threads.get(state.threadRef)?.taskRef
+    return Object.freeze({
+      recordRef: this.ref('decisionRecord'),
+      ...(taskRef === undefined ? {} : { taskRef }),
+      decided: decisionSummary(state.questions, answers),
+      rationale: decisionRationale(answers),
+      source: Object.freeze({ kind: 'ask' as const, decisionRef: state.decisionRef, messageRef: state.messageRef }),
+    })
+  }
+
+  /**
+   * The decision fact the Human's approval records, attached to the very
+   * operation that carries the verdict. The plan's Task is the Task its Thread
+   * is bound to; M-39's durable `AgentTeamDoc.taskRef` takes precedence once
+   * that card lands.
+   */
+  private planApprovalRecord(state: AgentTeamDocState, note: string | undefined): AgentTeamDecisionRecordPayload {
+    const taskRef = this.state.threads.get(state.doc.threadRef)?.taskRef
+    return Object.freeze({
+      recordRef: this.ref('decisionRecord'),
+      ...(taskRef === undefined ? {} : { taskRef }),
+      decided: planApprovalSummary(state.doc.title),
+      rationale: note?.trim() ?? '',
+      source: Object.freeze({ kind: 'plan' as const, docRef: state.doc.docRef, docRevision: state.revision }),
+    })
+  }
+
   /** One decision card, for a reader allowed in its Channel. */
   decision(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDecisionRequest): AgentTeamDecisionView {
     const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
-    return decisionView(this.decisionForActor(authorized, request.workspaceId, request.decisionRef))
+    const state = this.decisionForActor(authorized, request.workspaceId, request.decisionRef)
+    return decisionView(state, this.state.threads.get(state.threadRef)?.taskRef)
   }
 
   /** The decision cards of one Thread, oldest first. */
@@ -2417,9 +2478,40 @@ export class AgentTeamLedger {
     const { thread } = this.threadContextForActor(authorized, request.workspaceId, { threadRef: request.threadRef })
     const decisions = (this.state.decisionsByThread.get(thread.threadRef) ?? []).flatMap(decisionRef => {
       const state = this.state.decisions.get(decisionRef)
-      return state === undefined ? [] : [decisionView(state)]
+      return state === undefined ? [] : [decisionView(state, thread.taskRef)]
     })
     return Object.freeze({ decisions: Object.freeze(decisions) })
+  }
+
+  /**
+   * The decision records of one Task, oldest first. The records are the
+   * owner's decisions on that Task: who decided, what was decided, why, when,
+   * and the source it came from.
+   */
+  decisionRecords(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDecisionRecordsRequest): AgentTeamDecisionRecordsResult {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    const records = (this.state.decisionRecordsByTask.get(request.taskRef) ?? []).flatMap(recordRef => {
+      const state = this.state.decisionRecords.get(recordRef)
+      return state === undefined ? [] : [state]
+    })
+    return Object.freeze({ records: Object.freeze(this.decisionRecordViews(records)) })
+  }
+
+  /**
+   * The records of one Task as readers see them. `supersedes` is derived here,
+   * never stored: the newest plan record on the Task supersedes the plan
+   * record before it, and an ask card is never superseded — a card answers
+   * once, and a second card is a new question rather than a reversal.
+   */
+  private decisionRecordViews(records: readonly AgentTeamDecisionRecordState[]): readonly AgentTeamDecisionRecord[] {
+    let previousPlan: AgentTeamDecisionRecordRef | undefined
+    return records.map(state => {
+      if (state.source.kind !== 'plan') return decisionRecordView(state)
+      const view = decisionRecordView(state, previousPlan)
+      previousPlan = state.recordRef
+      return view
+    })
   }
 
   /**
@@ -2432,7 +2524,7 @@ export class AgentTeamLedger {
     const views = [...this.state.decisions.values()]
       .filter(state => state.status === 'open')
       .filter(state => this.state.channels.get(state.channelRef)?.workspaceId === workspaceId && this.state.channels.get(state.channelRef)?.state === 'active')
-      .map(state => decisionView(state))
+      .map(state => decisionView(state, this.state.threads.get(state.threadRef)?.taskRef))
     return Object.freeze(views.sort((left, right) => left.askedAt.localeCompare(right.askedAt)))
   }
 
@@ -2525,8 +2617,10 @@ export class AgentTeamLedger {
     body: string,
     mentions: readonly AgentTeamMemberId[],
     notice: AgentTeamDocNotice,
+    record?: AgentTeamDecisionRecordPayload,
   ): AgentTeamThreadRepliedOperation {
-    return this.noticeReplyOperation(request, state.doc.threadRef, state.doc.channelRef, body, mentions, { doc: notice })
+    return this.noticeReplyOperation(request, state.doc.threadRef, state.doc.channelRef, body, mentions,
+      { doc: notice, ...(record === undefined ? {} : { decisionRecord: record }) })
   }
 
   /**
@@ -2541,7 +2635,7 @@ export class AgentTeamLedger {
     channelRef: AgentTeamChannelRef,
     body: string,
     mentions: readonly AgentTeamMemberId[],
-    notice: { readonly doc: AgentTeamDocNotice } | { readonly decision: AgentTeamDecisionNotice },
+    notice: { readonly doc?: AgentTeamDocNotice; readonly decision?: AgentTeamDecisionNotice; readonly decisionRecord?: AgentTeamDecisionRecordPayload },
   ): AgentTeamThreadRepliedOperation {
     const thread = this.requireThread(threadRef)
     const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
@@ -4066,6 +4160,89 @@ export class AgentTeamLedger {
     }
   }
 
+  /**
+   * Fold the decision fact one operation carries.
+   *
+   * The payload wins: an operation that stores its record yields exactly that
+   * record, so one decision is one operation and therefore exactly one record.
+   * An operation written before decision records existed is derived from the
+   * notice it already carried, with a recordRef that is a function of the
+   * operation — never minted — so a replay derives the same ref and the same
+   * indexes.
+   */
+  private foldDecisionRecord(target: Projection, operation: AgentTeamOperation): void {
+    if (operation.kind !== 'team/thread-replied') return
+    const { message, thread } = operation.data
+    const decidedAt = message.occurredAt ?? operation.occurredAt
+    const payload = operation.data.decisionRecord
+    if (payload !== undefined) {
+      this.recordDecision(target, Object.freeze({
+        recordRef: payload.recordRef,
+        ...(payload.taskRef === undefined ? {} : { taskRef: payload.taskRef }),
+        decidedBy: operation.actor.memberId,
+        decided: payload.decided,
+        rationale: payload.rationale,
+        decidedAt,
+        source: payload.source,
+      }), thread.threadRef)
+      return
+    }
+    const decision = operation.data.decision
+    if (decision?.event === 'answered') {
+      const card = target.decisions.get(decision.decisionRef)
+      this.recordDecision(target, Object.freeze({
+        recordRef: derivedDecisionRecordRef(operation.operationId),
+        ...(thread.taskRef === undefined ? {} : { taskRef: thread.taskRef }),
+        decidedBy: operation.actor.memberId,
+        decided: decisionSummary(card?.questions ?? [], decision.answers),
+        rationale: decisionRationale(decision.answers),
+        decidedAt,
+        source: Object.freeze({ kind: 'ask' as const, decisionRef: decision.decisionRef, messageRef: card?.messageRef ?? message.messageRef }),
+      }), thread.threadRef)
+      return
+    }
+    const doc = operation.data.doc
+    if (doc?.event === 'reviewed' && doc.verdict === 'approve') {
+      const title = target.docs.get(doc.docRef)?.doc.title ?? ''
+      this.recordDecision(target, Object.freeze({
+        recordRef: derivedDecisionRecordRef(operation.operationId),
+        ...(thread.taskRef === undefined ? {} : { taskRef: thread.taskRef }),
+        decidedBy: operation.actor.memberId,
+        decided: planApprovalSummary(title),
+        // The review note of an approval written before decision records existed was
+        // never structured: it lived in the notice body as prose, and a projection
+        // cannot invent it.
+        rationale: '',
+        decidedAt,
+        source: Object.freeze({ kind: 'plan' as const, docRef: doc.docRef, docRevision: doc.docRevision }),
+      }), thread.threadRef)
+    }
+  }
+
+  /** Index one recorded decision: by ref, by its Thread, and by its Task when it has one. */
+  private recordDecision(target: Projection, state: AgentTeamDecisionRecordState, threadRef: AgentTeamThreadRef): void {
+    target.decisionRecords.set(state.recordRef, state)
+    target.decisionRecordsByThread.set(threadRef, [...(target.decisionRecordsByThread.get(threadRef) ?? []), state.recordRef])
+    if (state.taskRef !== undefined) {
+      target.decisionRecordsByTask.set(state.taskRef, [...(target.decisionRecordsByTask.get(state.taskRef) ?? []), state.recordRef])
+    }
+  }
+
+  /**
+   * Give a Thread's recorded decisions the Task the Thread was promoted to. A
+   * decision made before the Thread had a Task is still a decision: it joins
+   * the Task's list when the Thread is promoted.
+   */
+  private attachThreadRecordsToTask(target: Projection, threadRef: AgentTeamThreadRef, taskRef: AgentTeamTaskRef): void {
+    for (const recordRef of target.decisionRecordsByThread.get(threadRef) ?? []) {
+      const state = target.decisionRecords.get(recordRef)
+      if (state === undefined || state.taskRef !== undefined) continue
+      const attached = Object.freeze({ ...state, taskRef })
+      target.decisionRecords.set(recordRef, attached)
+      target.decisionRecordsByTask.set(taskRef, [...(target.decisionRecordsByTask.get(taskRef) ?? []), recordRef])
+    }
+  }
+
   private replay(): void {
     const records = this.sortedRecords()
     this.validateRecords(records)
@@ -5054,6 +5231,7 @@ export class AgentTeamLedger {
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.recordTaskNumber(target, operation.data.task)
+      this.attachThreadRecordsToTask(target, operation.data.thread.threadRef, operation.data.task.taskRef)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
@@ -5087,6 +5265,7 @@ export class AgentTeamLedger {
         const decisionState = target.decisions.get(decision.decisionRef)
         if (decisionState !== undefined) target.decisions.set(decision.decisionRef, closedDecisionState(decisionState, decision, operation.actor.memberId, message.occurredAt ?? operation.occurredAt))
       }
+      this.foldDecisionRecord(target, operation)
       return
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
@@ -6868,7 +7047,8 @@ export class AgentTeamLedger {
   private ref(kind: 'doc'): AgentTeamDocRef
   private ref(kind: 'comment'): AgentTeamDocCommentRef
   private ref(kind: 'decision'): AgentTeamDecisionRef
-  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') {
+  private ref(kind: 'decisionRecord'): AgentTeamDecisionRecordRef
+  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision' | 'decisionRecord') {
     return this.createRef(kind)
   }
 
