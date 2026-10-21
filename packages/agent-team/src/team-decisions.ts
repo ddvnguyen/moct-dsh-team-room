@@ -4,11 +4,15 @@ import type {
   AgentTeamDecisionNotice,
   AgentTeamDecisionOption,
   AgentTeamDecisionQuestion,
+  AgentTeamDecisionRecord,
+  AgentTeamDecisionRecordRef,
+  AgentTeamDecisionRecordSource,
   AgentTeamDecisionRef,
   AgentTeamDecisionStatus,
   AgentTeamDecisionView,
   AgentTeamMemberId,
   AgentTeamMessageRef,
+  AgentTeamTaskRef,
   AgentTeamThreadRef,
 } from './types.ts'
 
@@ -39,6 +43,22 @@ export interface AgentTeamDecisionState {
   readonly answers?: readonly AgentTeamDecisionAnswer[]
   readonly closedBy?: AgentTeamMemberId
   readonly closedAt?: string
+}
+
+/**
+ * Replay-derived state of one recorded decision. The ledger rebuilds it from
+ * the decision record the operation carries, or — for an operation written
+ * before decision records existed — from the notice that operation already
+ * carried. It is never a second durable authority.
+ */
+export interface AgentTeamDecisionRecordState {
+  readonly recordRef: AgentTeamDecisionRecordRef
+  readonly taskRef?: AgentTeamTaskRef
+  readonly decidedBy: AgentTeamMemberId
+  readonly decided: string
+  readonly rationale: string
+  readonly decidedAt: string
+  readonly source: AgentTeamDecisionRecordSource
 }
 
 function bounded(value: string, limit: number, name: string): string {
@@ -112,8 +132,44 @@ export function closedDecisionState(state: AgentTeamDecisionState, notice: Agent
   return state
 }
 
-export function decisionView(state: AgentTeamDecisionState): AgentTeamDecisionView {
-  return Object.freeze({ ...state })
+export function decisionView(state: AgentTeamDecisionState, taskRef?: AgentTeamTaskRef): AgentTeamDecisionView {
+  return Object.freeze({ ...state, ...(taskRef === undefined ? {} : { taskRef }) })
+}
+
+/**
+ * One recorded decision as the issue view reads it. `supersedes` is the link
+ * the ledger derives, never a stored field: the newest plan record on a Task
+ * supersedes the plan record before it.
+ */
+export function decisionRecordView(state: AgentTeamDecisionRecordState, supersedes?: AgentTeamDecisionRecordRef): AgentTeamDecisionRecord {
+  return Object.freeze({ ...state, ...(supersedes === undefined ? {} : { supersedes }) })
+}
+
+/**
+ * The one line a decision record carries: what was picked, or what was
+ * written. The same composition runs at write time and when the ledger
+ * derives a record from an operation written before decision records existed,
+ * so a stored and a derived record of the same answer read alike.
+ */
+export function decisionSummary(questions: readonly AgentTeamDecisionQuestion[], answers: readonly AgentTeamDecisionAnswer[]): string {
+  const parts = answers.flatMap((answer, index) => {
+    const question = questions[index]
+    const picks = answer.selected.map(pick => question?.options[pick]?.label ?? `option ${pick + 1}`)
+    const text = answer.text?.trim() ?? ''
+    if (picks.length === 0) return text === '' ? [] : [text]
+    return text === '' ? [picks.join(', ')] : [`${picks.join(', ')} — ${text}`]
+  })
+  return parts.length === 0 ? 'answered' : parts.join('; ')
+}
+
+/** Why the Human decided, in their own words: the free text of every answer that carries any. */
+export function decisionRationale(answers: readonly AgentTeamDecisionAnswer[]): string {
+  return answers.map(answer => answer.text?.trim() ?? '').filter(text => text !== '').join('\n')
+}
+
+/** The one line a plan approval carries. */
+export function planApprovalSummary(title: string): string {
+  return `Approved plan "${title}"`
 }
 
 function letter(index: number): string {

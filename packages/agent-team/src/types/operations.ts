@@ -12,6 +12,8 @@ import type {
   AgentTeamDoc,
   AgentTeamDocComment,
   AgentTeamDecisionNotice,
+  AgentTeamDecisionRecordRef,
+  AgentTeamDecisionRef,
   AgentTeamDocNotice,
   AgentTeamDocRef,
   AgentTeamDocCommentRef,
@@ -19,6 +21,7 @@ import type {
   AgentTeamInboxDelta,
   AgentTeamMemberId,
   AgentTeamMessage,
+  AgentTeamMessageRef,
   AgentTeamRequestId,
   AgentTeamStoredMessage,
   AgentTeamStoredThreadReadFact,
@@ -304,7 +307,53 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
     readonly doc?: AgentTeamDocNotice
     /** Absent on every ordinary reply, including every reply recorded before decision cards. */
     readonly decision?: AgentTeamDecisionNotice
+    /** Absent on every ordinary reply, including every reply recorded before decision records. */
+    readonly decisionRecord?: AgentTeamDecisionRecordPayload
   }
+}
+
+/**
+ * Where one recorded decision came from: the ask card the Human answered, or
+ * the plan the Human approved. A record names its source, so a reader can find
+ * the Thread fact it was made from.
+ */
+export type AgentTeamDecisionRecordSource =
+  | {
+    readonly kind: 'ask'
+    readonly decisionRef: AgentTeamDecisionRef
+    /** The Thread reply that asked; the card renders in its place in the timeline. */
+    readonly messageRef: AgentTeamMessageRef
+  }
+  | {
+    readonly kind: 'plan'
+    readonly docRef: AgentTeamDocRef
+    /** The Doc revision the Human approved. */
+    readonly docRevision: number
+  }
+
+/**
+ * The decision fact one operation carries.
+ *
+ * It rides the operation that already records the decision — the Human's
+ * answer to an ask card, or the Human's approval of a plan — so one decision
+ * is one operation and therefore exactly one record. The field is optional and
+ * forward-only: every operation recorded before decision records existed omits
+ * it, and the ledger derives the record it would have carried.
+ */
+export interface AgentTeamDecisionRecordPayload {
+  readonly recordRef: AgentTeamDecisionRecordRef
+  /**
+   * The Task the decision belongs to, when the Thread had one at write time.
+   * Absent on a taskless Thread: the decision is still recorded, and it joins
+   * the Task's list when the Thread is promoted.
+   */
+  readonly taskRef?: AgentTeamTaskRef
+  /** One line: what was decided. */
+  readonly decided: string
+  /** Why, in the decider's words. Empty when the decision carried none. */
+  readonly rationale: string
+  /** Where the decision came from: the ask card, or the plan. */
+  readonly source: AgentTeamDecisionRecordSource
 }
 
 /** Durable Human promotion of a taskless Thread into a real Task, announced by a structured Task activity. */
