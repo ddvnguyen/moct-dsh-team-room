@@ -86,7 +86,7 @@ describe('Team mode and the shell main panel', () => {
     expect(css).not.toMatch(/newSession|panelList/u)
   })
 
-  it('lists the Agents in the Team tab, beside the Channels, not on Team Settings', async () => {
+  it('lists the Agents in the Team tab, beside the Channels, not as a separate tab', async () => {
     const b = await runtimeWithTeam({ workspaceId: 'w1', initialChannels: true })
     const tab = await waitFor(() => {
       const found = b.view.container.querySelector<HTMLElement>('[data-native-tab="team"]')

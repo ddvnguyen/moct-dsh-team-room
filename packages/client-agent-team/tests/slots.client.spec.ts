@@ -137,10 +137,10 @@ describe('Team Client slot takeover', () => {
     // The shell keeps one sidebar: the Team adds nothing to its section seat,
     // in or out of the mode.
     expect(slots.entries(SECTIONS)).toHaveLength(0)
-    // The Team page and Team Settings main seats are registered for the life of
+    // The Team page and Team Detail main seats are registered for the life of
     // the client, beside the shipped conversation seat the mode shadows when it
     // opens. With no native tab strip, the rail keeps the fallback Team row
-    // beside the Team Settings row.
+    // beside the Team Detail row.
     expect(slots.entriesOfSlot('main')).toHaveLength(4)
     expect(slots.entriesOfSlot('sidebar.settings')).toHaveLength(1)
     expect(slots.entries('sidebar.panellist')).toHaveLength(3)

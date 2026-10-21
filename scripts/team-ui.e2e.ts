@@ -3271,7 +3271,7 @@ it('creates a board task and drags it to Done in real Web', async () => {
  * beside it, and Stop is gated on a Turn that is actually running.
  *
  * The strip has no Agents tab in this scaffold (no native-tab registry), so the
- * roster is the Team Settings page's own Agents list — exactly where the page
+ * roster is the Team Detail page's own Agents list — exactly where the page
  * keeps it while the tab is absent.
  */
 it('opens an Agent from the roster and reads its Runs tab in real Web', async () => {
@@ -3284,7 +3284,9 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   // The Workspace comes in through the shell's own connect flow, so the Team
   // page adopts it and its Agents list has a Workspace to show.
   await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'agent-journey')
-  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
+  // The roster is a section of the Team Detail page now, not its first paint.
+  await page.getByRole('tab', { name: 'Agents' }).click()
   await page.getByRole('button', { name: '添加 Agent' }).click()
   const dialog = page.getByRole('dialog', { name: '添加 Agent' })
   await dialog.getByLabel('名称').fill('builder')
@@ -3613,7 +3615,8 @@ it('walks the Team Board journey in real Web', async () => {
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-accepted.png'), fullPage: true })
 
   // The Agent's own page: the run it spent, with the tokens it spent them on.
-  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
+  await page.getByRole('tab', { name: 'Agents' }).click()
   const workerRow = page.locator('[data-agent-row]').filter({ hasText: 'builder' })
   await workerRow.waitFor({ timeout: 30_000 })
   await expect.poll(async () => (await workerRow.locator('[data-agent-tokens]').textContent()) ?? '').not.toBe('0')
@@ -3626,22 +3629,15 @@ it('walks the Team Board journey in real Web', async () => {
   await expect.poll(async () => runsPanel.locator('[data-agent-runs-table] tbody[data-session-id]').count(), { timeout: 20_000 }).toBeGreaterThan(0)
   await page.screenshot({ path: join(AGENT_SHOTS, 'agent-board-journey-runs.png'), fullPage: true })
 
-  // The Overview face: what the journey left behind. The face arrives with
-  // Team Board 7/10, so on a base that does not carry it yet the journey
-  // says so instead of pretending the feed was empty.
-  await page.evaluate(id => {
-    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, overview: true }))
-  }, workspaceId)
-  await page.reload()
+  // The Overview: what the journey left behind. It is the first section of the
+  // Team Detail page now, so the journey opens that row and reads it there.
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
   const overview = page.locator('[data-team-overview]')
-  if (await overview.count() === 0) {
-    console.log('note: this build carries no Team Overview face (Team Board 7/10); its feed and spend assertions run where it is merged')
-  } else {
-    await expect.poll(async () => overview.locator('[data-team-overview-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
-    await expect.poll(async () => overview.locator('[data-team-overview-event]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
-    await expect.poll(async () => overview.locator('[data-team-overview-spend-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
-    await page.screenshot({ path: join(BOARD_SHOTS, 'board-journey-overview.png'), fullPage: true })
-  }
+  await expect.poll(async () => overview.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => overview.locator('[data-team-overview-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect.poll(async () => overview.locator('[data-team-overview-event]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect.poll(async () => overview.locator('[data-team-overview-spend-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-journey-overview.png'), fullPage: true })
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 300_000)

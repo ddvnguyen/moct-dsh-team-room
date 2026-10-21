@@ -30,7 +30,7 @@ const SHELL_ROWS = [
   ['Plugins', /^Plugins$/u],
   ['Automation tasks', /^Automation tasks$/u],
   ['Context Insights', /^Context Insights$/u],
-  ['Team Settings', /^Team Settings$/u],
+  ['Team Detail', /^Team Detail$/u],
 ]
 
 /**
@@ -82,7 +82,7 @@ export async function checkTeamTabSidebar({ origin, cookie, channels }) {
     // row; the four core rows must be there at the start in any profile.
     const base = await snapshot()
     const required = Object.entries(base.rows).filter(([, shown]) => shown).map(([row]) => row)
-    for (const core of ['New Session', 'Plugins', 'Automation tasks', 'Team Settings']) {
+    for (const core of ['New Session', 'Plugins', 'Automation tasks', 'Team Detail']) {
       if (!required.includes(core)) failures.push(`base: "${core}" is not visible`)
     }
     const check = async label => {

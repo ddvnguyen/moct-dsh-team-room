@@ -2,11 +2,11 @@
  *
  *  The codex-ui sidebar renders one `nav.dcu-menu`. Since codex-ui 1.1.39 the
  *  plugin panels (Tasks, Plugin Market, Automation tasks, Team, Context
- *  Insights, Team Settings) are children of the Extensions group, which owns
+ *  Insights, Team Detail) are children of the Extensions group, which owns
  *  the toggle and the panel with Experts/Skills/Plugins/Connectors; the
  *  "New task" button and the group itself are the menu's direct children.
  *
- *  The wanted layout is: New task, Context Insights, Team Settings at the top
+ *  The wanted layout is: New task, Context Insights, Team Detail at the top
  *  level, and every other entry presented as part of Extensions. Two pieces
  *  do that:
  *

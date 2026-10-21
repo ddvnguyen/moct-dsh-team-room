@@ -3,7 +3,7 @@
  *
  * The Board is a whole-page destination: the kanban surface wants the whole
  * main column, not the narrow strip the sidebar's tab row offers. It is
- * therefore a *panel* — a row in the sidebar's main list, like Team Settings
+ * therefore a *panel* — a row in the sidebar's main list, like Team Detail
  * and Context Insights — and this body is the page behind that row.
  *
  * The page itself is the Team seat's `board` face (`TeamConversation` renders
