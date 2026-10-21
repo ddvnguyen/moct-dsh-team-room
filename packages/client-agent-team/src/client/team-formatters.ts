@@ -146,6 +146,9 @@ export interface MentionSegment {
   readonly name?: string
 }
 
+/** The Human's member id: one seat that is Team authority, never an Agent projection. */
+export const HUMAN_MEMBER_ID = 'member:human' as AgentTeamMemberId
+
 /** The Human's handle before they could rename themselves; the Host keeps it as an alias. */
 export const HUMAN_HISTORIC_HANDLE = 'human'
 
@@ -242,7 +245,7 @@ export function mentionedMemberIds(body: string, members: readonly AgentTeamClie
   // The draft's author is the Human reader, and a Message never mentions its
   // own author: resolving with that sender drops a self-call exactly where
   // delivery would.
-  return resolveBodyMentions(body, candidates, 'member:human' as AgentTeamMemberId).memberIds
+  return resolveBodyMentions(body, candidates, HUMAN_MEMBER_ID).memberIds
 }
 
 /**

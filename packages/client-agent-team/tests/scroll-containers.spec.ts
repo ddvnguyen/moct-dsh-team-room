@@ -11,7 +11,7 @@ const rule = (file: string, selector: string): string => {
 }
 
 describe('scroll containers', () => {
-  it.each([['team-settings.module.css', '.page'], ['agent-detail.module.css', '.viewBody']])('%s %s scrolls inside a flex parent', (file, selector) => {
+  it.each([['team-detail.module.css', '.page'], ['agent-detail.module.css', '.viewBody']])('%s %s scrolls inside a flex parent', (file, selector) => {
     const body = rule(file, selector)
     expect(body).toMatch(/overflow-y:\s*auto/)
     expect(body).toMatch(/min-height:\s*0/)

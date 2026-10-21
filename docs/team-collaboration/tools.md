@@ -162,7 +162,7 @@ The block comes from the backend's inject route for the current Task and Channel
 
 ## The Human's Memory page
 
-The human-only and curation verbs live on the Team Settings page instead, in a Memory section under the Agents for the same Workspace: records (the pending queue first), the task picture grouped by Channel, the rule feed, each home's use of the always-load cap, and the memory settings.
+The human-only and curation verbs live on the Team Detail page instead, in its Memory section for the same Workspace: records (the pending queue first), the task picture grouped by Channel, the rule feed, each home's use of the always-load cap, and the memory settings.
 
 The page reaches the backend through seven Host methods — `memoryList`, `memoryRecord`, `memoryRuleFeed`, `memoryUsage`, `memorySettings`, `updateMemorySettings`, `memoryAct`. Each request names only its Workspace, which must be one the Host knows; the Host adds the ledger's Human Member as the actor and reads with the whole Workspace in scope. A ledger with no Human Member refuses with `NO_HUMAN`.
 

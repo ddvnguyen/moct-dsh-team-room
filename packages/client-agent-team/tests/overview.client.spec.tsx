@@ -48,28 +48,23 @@ function decisionView(threadRef: string, overrides: Partial<AgentTeamDecisionVie
 }
 
 /**
- * The Overview page mounts in two surfaces: the native tab body (the strip's
- * `data-team-overview-tab`) and the TeamConversation face (the persisted
- * `overview` flag with the tab strip absent). Both mount the identical page
- * component, so the specs pin each surface once.
+ * The Overview page mounts in one surface: the Overview section of the Team
+ * Detail page, the side menu's team row. The native tab and the conversation
+ * face that used to carry it are gone, so the specs pin the page through the
+ * page that owns it.
  */
-async function openOverviewTab(seed?: Parameters<typeof runtimeWithTeam>[0]) {
+async function openTeamDetail(seed?: Parameters<typeof runtimeWithTeam>[0]) {
   localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: 'w1' }))
-  const b = await runtimeWithTeam({ ...seed, overviewTab: true })
-  b.seedWorkspaceActivity(aggregate())
-  return b
-}
-
-async function openOverviewFace(seed?: Parameters<typeof runtimeWithTeam>[0]) {
-  localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: 'w1', overview: true }))
-  const b = await runtimeWithTeam({ ...seed, nativeTabs: false })
+  const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', ...seed })
+  fireEvent.click(await b.view.findByRole('button', { name: '团队详情' }))
+  await waitFor(() => expect(b.view.container.querySelector('[data-team-detail-page]')).toBeTruthy())
   b.seedWorkspaceActivity(aggregate())
   return b
 }
 
 describe('Team Overview page', () => {
   it('updates the live strip on an activity change', async () => {
-    const b = await openOverviewFace({ initialChannels: true })
+    const b = await openTeamDetail({ initialChannels: true })
     const strip = await waitFor(() => {
       const found = b.view.container.querySelector('[data-team-overview-strip]')
       expect(found).toBeTruthy()
@@ -90,7 +85,7 @@ describe('Team Overview page', () => {
   })
 
   it('lists a pending decision and a failed turn under needs attention', async () => {
-    const b = await openOverviewFace({ initialChannels: true })
+    const b = await openTeamDetail({ initialChannels: true })
     b.seedDecisions([decisionView('thread:1')])
     const attention = await waitFor(() => {
       const found = b.view.container.querySelector('[data-team-overview-attention]')
@@ -116,7 +111,7 @@ describe('Team Overview page', () => {
       first: aggregate({ events: [eventRow(4), eventRow(3)], nextCursor: '3' }),
       rest: aggregate({ events: [eventRow(2), eventRow(1)] }),
     }
-    const b = await openOverviewTab({ initialChannels: true })
+    const b = await openTeamDetail({ initialChannels: true })
     b.seedWorkspaceActivity(request => (request as { cursor?: string }).cursor === undefined ? pages.first! : pages.rest!)
     const feed = await b.view.findByTestId('overview-feed')
     await waitFor(() => expect(feed.querySelectorAll('[data-team-overview-event]')).toHaveLength(2))
@@ -133,23 +128,22 @@ describe('Team Overview page', () => {
     await b.runtime.dispose()
   })
 
-  it('opens the Overview face from the Team browser entry and keeps it across a reload', async () => {
+  it('opens the Overview inside the Team Detail page and keeps no Overview entry of its own', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     b.seedWorkspaceActivity(aggregate())
-    const entry = await b.view.findByRole('button', { name: '总览' })
-    expect(entry.getAttribute('aria-current')).toBeNull()
-    fireEvent.click(entry)
-    // The face is the main column's page: the same component the tab body
-    // mounts, driven by the persisted navigation fact.
+    // The Team browser no longer carries an Overview entry: the page has one
+    // home, the Overview section of the Team Detail page.
+    expect(b.view.queryByRole('button', { name: '总览' })).toBeNull()
+    fireEvent.click(await b.view.findByRole('button', { name: '团队详情' }))
+    // The Overview stands as the page's first section, over the Workspace the
+    // Team navigation last selected.
     await waitFor(() => expect(b.view.container.querySelector('[data-team-overview]')).toBeTruthy())
-    expect(JSON.parse(localStorage.getItem('dsh.agent-team.navigation') ?? '{}').overview).toBe(true)
-    // The entry is the one current row while the face stands.
-    expect(entry.getAttribute('aria-current')).toBe('page')
+    expect(b.view.container.querySelector('[data-team-detail-section="overview"]')).toBeTruthy()
     await b.runtime.dispose()
   })
 
   it('renders the spend chart totals from the per-day buckets', async () => {
-    const b = await openOverviewFace({ initialChannels: true })
+    const b = await openTeamDetail({ initialChannels: true })
     const spend = await waitFor(() => {
       const found = b.view.container.querySelector('[data-team-overview-spend]')
       expect(found).toBeTruthy()
@@ -162,6 +156,35 @@ describe('Team Overview page', () => {
     const days = spend.querySelector('[data-team-overview-spend-days]')
     expect(days?.querySelectorAll('[class*="dayBar"]').length).toBeGreaterThan(0)
     expect(spend.textContent).toContain('2026-09-13')
+    await b.runtime.dispose()
+  })
+
+  it('shows an unproven spend bucket as unknown instead of a quiet zero', async () => {
+    const unknown = aggregate({
+      perDay: [{ day: '2026-09-13', tokensIn: null, tokensOut: 40, runMs: 1500, perAgent: [{ memberId: 'member:builder', tokensIn: null, tokensOut: 40, runMs: 1500 }] }],
+    })
+    const b = await openTeamDetail({ initialChannels: true })
+    b.seedWorkspaceActivity(unknown)
+    const spend = await waitFor(() => {
+      const found = b.view.container.querySelector('[data-team-overview-spend]')
+      expect(found).toBeTruthy()
+      return found as HTMLElement
+    })
+    // The input side was never recorded, so the row states that instead of
+    // summing an out-only number as if the day had been measured.
+    const row = await waitFor(() => {
+      const found = spend.querySelector('[data-team-overview-spend-agent="member:builder"]')
+      expect(found).toBeTruthy()
+      return found as HTMLElement
+    })
+    expect(row.getAttribute('data-unknown')).toBe('true')
+    expect(row.textContent).toContain('输入用量未记录')
+    // The day carries the same verdict, and a day with no bucket at all stays a
+    // proven zero.
+    const days = spend.querySelector('[data-team-overview-spend-days]')!
+    const marked = days.querySelector('[data-unknown="true"]')
+    expect(marked?.getAttribute('title')).toContain('2026-09-13')
+    expect(days.querySelectorAll('[data-unknown="true"]').length).toBe(1)
     await b.runtime.dispose()
   })
 })

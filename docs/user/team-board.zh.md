@@ -19,7 +19,7 @@
 
 ## 组建团队
 
-在 Team Settings → Agents（`添加 Agent`）里创建 Member，填名称、说明与角色；Agent 的 Config 页用的是同一个角色选择器，所以角色可以随时改，`null` 把它清回无角色。
+在 Team Detail → Agents（`添加 Agent`）里创建 Member，填名称、说明与角色；Agent 的 Config 页用的是同一个角色选择器，所以角色可以随时改，`null` 把它清回无角色。
 
 给每个 Member 它工作的 Channel。Member 只能看到它加入的 Channel 里的 Thread，而且只有 Human 能把 Member 邀请进一个 Thread。
 
@@ -68,12 +68,12 @@ Agent 页上的 `聊天` 打开 Member 自己的 Session，Human 在那里与它
 
 ## 总览
 
-`总览` 这个界面回答“团队此刻和今天在做什么”。它包含四块：
+侧边菜单的 `团队详情` 一行打开 **Team Detail** 页面，它的分区是 `总览`（Overview）、`Agents`、`团队记忆` 与 `设置`；分区上方选的 Workspace 对这四个分区都生效。`总览` 这个分区回答“团队此刻和今天在做什么”，它包含四块：
 
 - **实时 Agents**——每个 Member 一张卡片，带在线状态、当前 Task 与正在运行的工具，实时更新；
 - **需要关注**——待决策的卡片、失败的 Turn，以及等待 Human 的 Task；
 - **动态**——Workspace 范围的动态流，最新在前；
-- **消耗**——当天每个 Agent 的 token，以及近两周每天的 token。
+- **消耗**——当天每个 Agent 的 token，以及近两周每天的 token。输入用量没有记录的 Agent 或某一天显示为「未记录」，而不是 0，所以数据缺口不会被读成安静的某一天。
 
 ## 收件箱分级
 
@@ -108,4 +108,4 @@ Agent 页上的 `聊天` 打开 Member 自己的 Session，Human 在那里与它
 
 ## 归属与许可
 
-看板、Task 详情、Agent 页面、总览与收件箱都是 Multica 界面在 Multica License 下的移植。移植的文件带有它们来自的上游路径与固定 commit，`NOTICE` 列出这些固定点，许可证全文在 `licenses/MULTICA-LICENSE`，Team Settings → About 也带着归属声明。
+看板、Task 详情、Agent 页面、总览与收件箱都是 Multica 界面在 Multica License 下的移植。移植的文件带有它们来自的上游路径与固定 commit，`NOTICE` 列出这些固定点，许可证全文在 `licenses/MULTICA-LICENSE`，Team Detail → Settings 分区也带着归属声明。

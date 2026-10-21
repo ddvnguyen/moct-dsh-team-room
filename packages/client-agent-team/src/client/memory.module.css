@@ -1,11 +1,11 @@
-/* The Team memory section of Team Settings: the same 760px column and token
+/* The Team memory section of the Team Detail page: the same 760px column and token
  * set as the Agents section above it. Record text keeps its own line breaks
  * (pre-wrap) because it is shown as the characters it is, never as markup. */
 
 .memory {
   display: flex;
   flex-direction: column;
-  /* The Team Settings page is a flex column: the header above stays put and
+  /* The Team Detail page is a flex column: the header above stays put and
    * this section takes what is left (never under 480px, then the page scrolls),
    * so only the record list below scrolls, in its own bounded container. */
   flex: 1 0 480px;

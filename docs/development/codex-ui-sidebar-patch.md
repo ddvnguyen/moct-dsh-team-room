@@ -7,7 +7,7 @@ English | [中文](codex-ui-sidebar-patch.zh.md)
 `@michengai/dsh-codex-ui` renders the sidebar the Team Room lives in. Two of the requirements cannot be expressed through its public slots:
 
 - **A plugin tab in the strip.** The strip (`Tasks | Channels | Schedule`) has no public registration API. The automation plugin owns a private registry (`__dshNativeTabs`) that the Team Room already uses to publish its `Teams` tab.
-- **A panel next to "New task".** Since codex-ui 1.1.39 every plugin panel is rendered inside the Extensions group, so `Context Insights` and `Team Settings` can no longer sit at the top level.
+- **A panel next to "New task".** Since codex-ui 1.1.39 every plugin panel is rendered inside the Extensions group, so `Context Insights` and `Team Detail` can no longer sit at the top level.
 
 The patch adds both to the published codex-ui bundle. It is the mechanism; the policy stays in this repository.
 

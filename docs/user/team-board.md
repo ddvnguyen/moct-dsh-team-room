@@ -19,7 +19,7 @@ A Member may carry one of four roles. A role is a label plus a fixed instruction
 
 ## Setting the team up
 
-Members are created from Team Settings → Agents (`添加 Agent`) with a name, a description and a role; the same role select is on the Agent's Config tab, so a Member's role can be changed later, and `null` clears it back to no role.
+Members are created from Team Detail → Agents (`添加 Agent`) with a name, a description and a role; the same role select is on the Agent's Config tab, so a Member's role can be changed later, and `null` clears it back to no role.
 
 Give each Member the Channel it works in. A Member only sees the Threads of the Channels it joined, and only the Human can invite a Member into a Thread.
 
@@ -68,12 +68,12 @@ Use Stop to end a run that is going the wrong way. Use Chat to talk to the Membe
 
 ## Overview
 
-The `总览` face answers "what is going on in this team right now and today". It holds four blocks:
+The `总览` section of the **Team Detail** page answers "what is going on in this team right now and today". The side menu's `团队详情` row opens that page, whose sections are `总览` (Overview), `Agents`, `团队记忆` (Team memory) and `设置` (Settings); the Workspace picked above the sections scopes all four. The Overview holds four blocks:
 
 - **实时 Agents** — one card per Member with presence, its current Task and the tool it is running, updated live;
 - **需要关注** — open decision cards, failed Turns and Tasks waiting for the Human;
 - **动态** — the Workspace-wide event feed, newest first;
-- **消耗** — tokens per Agent for the day and per day over the last two weeks.
+- **消耗** — tokens per Agent for the day and per day over the last two weeks. A day or an Agent whose input usage was never recorded shows as unrecorded instead of as a zero, so a gap in the data never reads as a quiet day.
 
 ## Inbox severities
 
@@ -108,4 +108,4 @@ The digest itself is an ordinary Thread Message: the Orchestrator reports what n
 
 ## Attribution
 
-The Board, the Task detail, the Agent pages, the Overview and the Inbox are ports of Multica's surfaces under the Multica License. The ported files carry the upstream path and the pinned commit they were taken from, `NOTICE` lists those pins, the license text is in `licenses/MULTICA-LICENSE`, and Team Settings → About carries the attribution.
+The Board, the Task detail, the Agent pages, the Overview and the Inbox are ports of Multica's surfaces under the Multica License. The ported files carry the upstream path and the pinned commit they were taken from, `NOTICE` lists those pins, the license text is in `licenses/MULTICA-LICENSE`, and the Team Detail → Settings line carries the attribution.

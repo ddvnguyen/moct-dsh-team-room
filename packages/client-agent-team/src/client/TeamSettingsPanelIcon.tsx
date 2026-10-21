@@ -1,5 +1,5 @@
 /**
- * The Team Settings entry's glyph in the sidebar's panel list: the shipped
+ * The Team Detail entry's glyph in the sidebar's panel list: the shipped
  * settings mark, so the row reads as configuration beside the shipped Plugins
  * and scheduled-task entries. The sidebar owns the button, the label, and the
  * selected state around it.

@@ -68,7 +68,7 @@ describe('Team slot boundary', () => {
     // The host's own boundary never fired: this alert is the Team's.
     expect(b.view.container.querySelector('[data-slot-error]')).toBeNull()
     // Sibling slots stay mounted: the rail rows are other registrations.
-    expect(b.view.getByRole('button', { name: '团队设置' })).toBeTruthy()
+    expect(b.view.getByRole('button', { name: '团队详情' })).toBeTruthy()
     expect(b.view.container.querySelector('[data-native-tab="team"]')).not.toBeNull()
 
     // Retry while the cause persists fails again, visibly, without losing the alert.

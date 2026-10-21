@@ -257,6 +257,14 @@ const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
 const DIGEST_NOTICE_SUMMARY = 'Scheduled team digest.'
 const DIGEST_CHANNEL_DEFAULT = 'team-digest'
 const DIGEST_DAILY_AT = /^([01]\d|2[0-3]):([0-5]\d)$/
+/**
+ * The longest delay `setTimeout` honours: a larger one is clamped to 1 ms by
+ * Node, which would turn a mis-set interval into a continuous wake loop. 35,791
+ * minutes is the last whole minute that still fits, so the setting is capped
+ * there rather than silently shortened at arm time.
+ */
+const DIGEST_INTERVAL_MINUTES_MAX = 35_791
+const DIGEST_TIMER_MAX_MS = 2_147_483_647
 const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
 
 /**
@@ -609,7 +617,7 @@ const TEAM_POISON_RECOVERY_SETTINGS_SCHEMA = z.object({
  */
 const TEAM_DIGEST_SETTINGS_SCHEMA = z.object({
   enabled: z.boolean().default(false).volatile().description('Wake enabled Orchestrator members on schedule to post a team digest. Default: false.'),
-  intervalMinutes: z.number().default(1440).volatile().description('Minutes between digest ticks; also the report window the digest prompt asks for. Minimum 1. Default: 1440 (daily). Ignored while dailyAt is set.'),
+  intervalMinutes: z.number().min(1).max(DIGEST_INTERVAL_MINUTES_MAX).default(1440).volatile().description(`Minutes between digest ticks; also the report window the digest prompt asks for. 1 to ${DIGEST_INTERVAL_MINUTES_MAX}. Default: 1440 (daily). Ignored while dailyAt is set.`),
   dailyAt: z.string().volatile().description("Optional daily fire time 'HH:MM' (Host-local). When set it replaces the interval as the fire schedule; intervalMinutes stays the report window. Invalid values fall back to the interval."),
   channel: z.string().default(DIGEST_CHANNEL_DEFAULT).volatile().description("Name of the Channel digests are posted to, created when missing. Default: 'team-digest'."),
 })
@@ -2274,7 +2282,7 @@ export default class AgentTeam extends TypertRemoteService {
         return next.getTime() - now.getTime()
       }
     }
-    return Math.max(1, Math.floor(this.config.digest.intervalMinutes.get())) * 60_000
+    return Math.min(DIGEST_TIMER_MAX_MS, Math.max(1, Math.floor(this.config.digest.intervalMinutes.get())) * 60_000)
   }
 
   /**
@@ -2289,21 +2297,29 @@ export default class AgentTeam extends TypertRemoteService {
     if (!this.config.digest.enabled.get()) return
     const ledger = this.requireLedger()
     const channelName = this.config.digest.channel.get()?.trim() || DIGEST_CHANNEL_DEFAULT
-    const windowMinutes = Math.max(1, Math.floor(this.config.digest.intervalMinutes.get()))
+    const windowMinutes = Math.min(DIGEST_INTERVAL_MINUTES_MAX, Math.max(1, Math.floor(this.config.digest.intervalMinutes.get())))
     for (const member of ledger.listMembers()) {
       if (member.state !== 'enabled' || member.role !== 'orchestrator') continue
       const handle = this.handles.get(member.memberId)
       // No live handle (not yet activated, suspended, between generations): the next tick catches it.
       if (handle === undefined) continue
       if (handle.agent.status !== 'idle') continue
+      // One digest turn per member per tick. A Member is one Agent, so a second
+      // `followup` while the first Workspace's turn runs would steer it; the next
+      // tick picks up whatever Workspace this one did not cover.
+      let delivered = false
       for (const workspaceId of ledger.workspacesOf(member.memberId)) {
+        if (delivered) break
         try {
           const channelRef = await this.ensureDigestChannel(ledger, workspaceId, channelName)
-          const prompt = `Scheduled digest time. Call team_activity for the last ${windowMinutes} minutes, then post one digest message with team_message to ${channelRef} (#${channelName}) covering: 1) what needs my attention 2) stalled or looping agents 3) cost outliers 4) progress. Report only — do not claim, assign, or change any task, and take no other action.`
+          // The Workspace is named in the prompt, not inferred: `team_activity`
+          // refuses to guess one for a Member that participates in several.
+          const prompt = `Scheduled digest time. Call team_activity with workspace '${workspaceId}' for the last ${windowMinutes} minutes, then post one digest message with team_message to ${channelRef} (#${channelName}, workspace '${workspaceId}') covering: 1) what needs my attention 2) stalled or looping agents 3) cost outliers 4) progress. Report only — do not claim, assign, or change any task, and take no other action.`
           handle.agent.followup(createUserMessage({
             content: [{ type: 'text', text: prompt }],
             source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: DIGEST_NOTICE_SUMMARY },
           }))
+          delivered = true
           this.ctx.logger.info(`agent-team: digest prompt delivered to member '${member.handle}' for workspace '${workspaceId}' (window ${windowMinutes}m, channel '${channelName}')`)
         } catch (error) {
           // One Workspace's fault must not hold the other members' digests.
