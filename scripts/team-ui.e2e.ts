@@ -3378,6 +3378,58 @@ it('groups the Inbox by severity and opens a task detail in real Web', async () 
   await ledger.sendMessage({ requestId: 'inbox-reply', actor: planner, workspaceId: workspace.id, channelRef: channel.channelRef,
     body: '我先按周四准备。', asTask: false, recipients: [] })
 
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(workspaceId => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, inbox: true }))
+  }, workspace.id)
+  await page.reload()
+  const inbox = page.locator('[data-team-inbox]')
+  await inbox.waitFor({ timeout: 30_000 })
+
+  // The queue groups itself: the open decision card is the band that must
+  // interrupt, the plain reply is the band that only records.
+  const bands = inbox.locator('[data-inbox-list] h3[data-severity]')
+  await expect.poll(async () => await bands.count()).toBeGreaterThan(0)
+  await expect.poll(async () => await inbox.locator('[data-inbox-list] h3[data-severity="action_required"]').count()).toBe(1)
+  await settleLayout(page)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-bands-desktop.png'), fullPage: true })
+
+  // The filter menu narrows the queue with the counts each facet can reveal.
+  const filter = page.getByRole('button', { name: '筛选' })
+  await filter.waitFor({ timeout: 30_000 })
+  await filter.click()
+  const severityRow = page.getByRole('menuitem').filter({ hasText: '必须处理' })
+  await severityRow.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await severityRow.textContent()).toContain('1')
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-filter-desktop.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+
+  // The split view opens the selected row's task detail beside the list: the
+  // decision card is answered in place.
+  const decisionRow = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
+  await decisionRow.waitFor({ timeout: 30_000 })
+  await decisionRow.click()
+  const detail = page.locator('[data-inbox-detail]')
+  await detail.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await detail.locator('[data-team-decision]').count()).toBe(1)
+  await settleLayout(page)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-detail-desktop.png'), fullPage: true })
+
+  // 390×844: the narrow seat has no second column, so the queue fills the
+  // reading column and a row opens its Thread.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  expect(await page.locator('[data-inbox-detail]').count()).toBe(0)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+
 /**
  * The Team Board journey (Board 10/10): one browser pass over the whole flow.
  *
@@ -3440,52 +3492,6 @@ it('walks the Team Board journey in real Web', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
   const consoleWatch = watchConsole(page)
   await page.goto(scaffold.authenticatedUrl)
-  await page.evaluate(workspaceId => {
-    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, inbox: true }))
-  }, workspace.id)
-  await page.reload()
-  const inbox = page.locator('[data-team-inbox]')
-  await inbox.waitFor({ timeout: 30_000 })
-
-  // The queue groups itself: the open decision card is the band that must
-  // interrupt, the plain reply is the band that only records.
-  const bands = inbox.locator('[data-inbox-list] h3[data-severity]')
-  await expect.poll(async () => await bands.count()).toBeGreaterThan(0)
-  await expect.poll(async () => await inbox.locator('[data-inbox-list] h3[data-severity="action_required"]').count()).toBe(1)
-  await settleLayout(page)
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-bands-desktop.png'), fullPage: true })
-
-  // The filter menu narrows the queue with the counts each facet can reveal.
-  const filter = page.getByRole('button', { name: '筛选' })
-  await filter.waitFor({ timeout: 30_000 })
-  await filter.click()
-  const severityRow = page.getByRole('menuitem').filter({ hasText: '必须处理' })
-  await severityRow.waitFor({ timeout: 30_000 })
-  await expect.poll(async () => await severityRow.textContent()).toContain('1')
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-filter-desktop.png'), fullPage: true })
-  await page.keyboard.press('Escape')
-
-  // The split view opens the selected row's task detail beside the list: the
-  // decision card is answered in place.
-  const decisionRow = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
-  await decisionRow.waitFor({ timeout: 30_000 })
-  await decisionRow.click()
-  const detail = page.locator('[data-inbox-detail]')
-  await detail.waitFor({ timeout: 30_000 })
-  await expect.poll(async () => await detail.locator('[data-team-decision]').count()).toBe(1)
-  await settleLayout(page)
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-detail-desktop.png'), fullPage: true })
-
-  // 390×844: the narrow seat has no second column, so the queue fills the
-  // reading column and a row opens its Thread.
-  await page.setViewportSize({ width: 390, height: 844 })
-  await settleLayout(page)
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
-  expect(await page.locator('[data-inbox-detail]').count()).toBe(0)
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-390.png'), fullPage: true })
-  await page.setViewportSize({ width: 1440, height: 960 })
-  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
-}, 180_000)
   // The board is a navigation face: the persisted snapshot is how the reader
   // reaches it, and a reload reopens it.
   await page.evaluate(id => {
