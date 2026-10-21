@@ -152,6 +152,6 @@ have no host equivalent and are documented literals.
 
 ## Attribution
 
-`NOTICE`, `licenses/MULTICA-LICENSE` and the Team Settings → About line carry
+`NOTICE`, `licenses/MULTICA-LICENSE` and the Team Detail → Settings line carry
 the Multica License attribution. Internal use only; a hosted third-party
 service needs a commercial license from Index Labs.

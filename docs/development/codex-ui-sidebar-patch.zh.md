@@ -7,7 +7,7 @@
 `@michengai/dsh-codex-ui` 渲染 Team Room 所在的侧栏。其中两项需求无法通过它的公开 slot 表达：
 
 - **页签条里的插件页签。** 页签条（`Tasks | Channels | Schedule`）没有公开的注册 API。automation 插件持有一个私有注册表（`__dshNativeTabs`），Team Room 已经用它发布自己的 `Teams` 页签。
-- **紧挨 "New task" 的面板。** 自 codex-ui 1.1.39 起，所有插件面板都渲染在 Extensions 分组内，`Context Insights` 与 `Team Settings` 无法再留在顶层。
+- **紧挨 "New task" 的面板。** 自 codex-ui 1.1.39 起，所有插件面板都渲染在 Extensions 分组内，`Context Insights` 与 `Team Detail` 无法再留在顶层。
 
 补丁把这两项能力加进已发布的 codex-ui 包。补丁只提供机制，策略仍由本仓库决定。
 

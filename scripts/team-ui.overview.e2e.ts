@@ -185,18 +185,19 @@ it('captures the Team Overview face at desktop width and at 390x844', async () =
     feed.onSessionEvent(seat.memberId, { type: 'tool/call', data: { turn: 1, callId: `call-${index}`, name: 'Bash', arguments: JSON.stringify({ command: 'npm test' }) }, time: now - 30_000 })
   }
 
-  // The Team's own column: the rail row enters Team mode, and the Overview
-  // face is the Team page's workspace-scoped face. The face is a persisted
-  // navigation fact, so the lane writes it the way the browser does and
-  // reloads — the same path a reader takes when they reopen the page.
+  // The Team's own column: the rail row enters Team mode, and the Overview is
+  // the Team Detail page's first section. The page is opened from the side
+  // menu's row, and the Workspace it scopes to is the persisted navigation
+  // fact the lane writes the way the browser does.
   const panelRail = page.locator('nav[class*="panelList"]')
   await panelRail.getByRole('button', { name: '团队', exact: true }).click()
   await page.evaluate((workspaceId) => {
-    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, overview: true }))
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId }))
   }, workspace.id)
   await page.reload()
-  const overviewEntry = page.getByRole('button', { name: '总览' })
-  await expect.poll(() => overviewEntry.count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(0)
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
+  const overviewEntry = page.getByRole('tab', { name: '总览' })
+  await expect.poll(() => overviewEntry.count(), { timeout: 20_000 }).toBe(1)
 
   const overview = page.locator('[data-team-overview]')
   await expect.poll(() => overview.count(), { timeout: 15_000 }).toBe(1)

@@ -68,7 +68,7 @@ import { TeamJudgeForm, TeamJudgeFormSeat, type TeamJudgeSection } from './judge
 import { TeamHumanIdentity } from './human-identity.ts'
 import { TeamEnvironmentCheck } from './environment-check.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
-import { BOARD_PANEL_ID, TEAM_PANEL_ID, TEAM_SETTINGS_PANEL_ID, TeamNavigation, type TeamNavigationActions } from './navigation.ts'
+import { BOARD_PANEL_ID, TEAM_PANEL_ID, TEAM_DETAIL_PANEL_ID, TeamNavigation, type TeamNavigationActions } from './navigation.ts'
 import { TeamChangeStream, TeamReadStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
 import { TeamQueries, type TeamQueryIdentity } from './team-queries.ts'
 import { TeamDraftStore } from './drafts.ts'
@@ -76,7 +76,7 @@ import { createTeamTriggerCatalogLoader } from './trigger-catalog.ts'
 import { TeamPanelIcon } from './TeamPanelIcon.tsx'
 import { BoardPanelIcon } from './BoardPanelIcon.tsx'
 import { TeamSettingsPanelIcon } from './TeamSettingsPanelIcon.tsx'
-import { TeamSettingsPage } from './TeamSettingsPage.tsx'
+import { TeamDetailPage } from './TeamDetailPage.tsx'
 import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
@@ -90,14 +90,12 @@ import { useShellSidebarCollapsed } from './shell-sidebar.ts'
 const GuardedPanelIcon = withSlotBoundary('sidebar.panellist:team', TeamPanelIcon as never, { quiet: true })
 const GuardedSettingsPanelIcon = withSlotBoundary('sidebar.panellist:team-settings', TeamSettingsPanelIcon as never, { quiet: true })
 const GuardedBoardPanelIcon = withSlotBoundary('sidebar.panellist:team-board', BoardPanelIcon as never, { quiet: true })
-const GuardedSettingsPage = withSlotBoundary('main:team-settings', TeamSettingsPage as never)
+const GuardedSettingsPage = withSlotBoundary('main:team-detail', TeamDetailPage as never)
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 const GuardedBoardPanel = withSlotBoundary('main:team-board', TeamBoardPanel as never)
-import { OVERVIEW_TAB_ID, OVERVIEW_TAB_ORDER, insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
-import { createAgentsTabState, type AgentsTabState } from './agents-tab-state.ts'
+import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
-import { renderOverviewTabBody } from './overview-tab-body.tsx'
 import { TeamBoardPanel } from './board-panel-body.tsx'
 import { renderTeamTabBody } from './team-tab-body.tsx'
 import { en, zh, type TeamKey } from './locales.ts'
@@ -171,7 +169,7 @@ function leaveTeamFromUi(ctx: ClientContext, navigation: TeamNavigation): void {
  *   open, and the panel Team mode is entered as. Its main seat lives for the
  *   life of the client, because `layout.selectPanel` only accepts a panel whose
  *   main entry is live.
- * - `TEAM_SETTINGS_PANEL_ID` is the rail's Team Settings row and its page.
+ * - `TEAM_DETAIL_PANEL_ID` is the side menu's Team Detail row and its page.
  *
  * The rail's Team row is a fallback only: the Channel view's home is the
  * native Team tab, and the row stands while that tab is not in the strip. The
@@ -186,7 +184,6 @@ function registerTeamPanel(
   reads: TeamReadStream,
   drafts: TeamDraftStore,
   humanIdentity: TeamHumanIdentity,
-  agentsTab: AgentsTabState,
 ): () => void {
   const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
   const dropTeamRow = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
@@ -223,14 +220,14 @@ function registerTeamPanel(
   }, GuardedBoardPanel as never))
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',
-    id: TEAM_SETTINGS_PANEL_ID,
+    id: TEAM_DETAIL_PANEL_ID,
     order: 20,
-    label: () => ctx.locale.bind(NS)('teamSettingsGroup'),
+    label: () => ctx.locale.bind(NS)('teamDetail'),
     locale: NS,
   }, GuardedSettingsPanelIcon as never))
   ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main',
-    key: TEAM_SETTINGS_PANEL_ID,
+    key: TEAM_DETAIL_PANEL_ID,
     priority: -100,
     locale: NS,
     inject: () => ({
@@ -239,7 +236,9 @@ function registerTeamPanel(
       workspaceList: ctx.workspaces.list,
       initialWorkspaceId: () => navigation.getSnapshot().workspaceId,
       memory: teamMemoryRemotes(ctx),
-      agentsTab,
+      // The Overview's thread links hand the column to the Team page, the same
+      // way a pick in the Teams tab does.
+      selectThread: teamPageActions(ctx, navigation).selectThread,
     }),
   }, GuardedSettingsPage as never))
   return dropTeamRow
@@ -529,7 +528,7 @@ function teamSeatInject(
  * one sidebar while they land. The list lives in the Team tab of the native
  * strip; the page it opens is the Team `main` seat, which stands in for the
  * conversation while Team mode holds. A pick therefore clears whatever panel
- * holds the column (the Team Settings page, a shipped panel) and enters the mode
+ * holds the column (the Team Detail page, a shipped panel) and enters the mode
  * directly. It never selects `TEAM_PANEL_ID`: that panel belongs to the rail
  * fallback row, and the sidebar is no longer swapped when the mode is entered.
  */
@@ -544,7 +543,6 @@ function teamPageActions(ctx: ClientContext, navigation: TeamNavigation): Partia
     selectThread: (threadRef, channelRef, taskRef, taskNumber) => { actions.selectThread(threadRef, channelRef, taskRef, taskNumber); showTeamPage() },
     selectInbox: () => { actions.selectInbox(); showTeamPage() },
     selectBoard: () => { actions.selectBoard(); showTeamPage() },
-    selectOverview: () => { actions.selectOverview(); showTeamPage() },
   }
 }
 
@@ -697,8 +695,7 @@ function applyUi(ctx: ClientContext): void {
   ctx.on('connection/reset', () => { changes.recover(); queries.newGeneration() })
   const reads = new TeamReadStream()
 
-  const agentsTab = createAgentsTabState()
-  const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity, agentsTab)
+  const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
 
   registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
 
@@ -719,9 +716,9 @@ function applyUi(ctx: ClientContext): void {
         if (snapshot.mode !== 'team') navigation.actions().enterTeam()
         return
       }
-      // The Team Settings page is mode-neutral: it borrows the column without
+      // The Team Detail page is mode-neutral: it borrows the column without
       // ending the mode, so the Team tab and seats stand beside it.
-      if (active !== null && active !== TEAM_SETTINGS_PANEL_ID && snapshot.mode === 'team') navigation.actions().leaveTeam()
+      if (active !== null && active !== TEAM_DETAIL_PANEL_ID && snapshot.mode === 'team') navigation.actions().leaveTeam()
     }
     const unsubscribe = ctx.layout.panelInfo.subscribe(sync)
     // A reload keeps the mode it was left in, so it re-selects the panel that
@@ -809,25 +806,8 @@ function applyUi(ctx: ClientContext): void {
     // strip re-selects a tab whenever the main session changes, and a session
     // no tab claims snaps it to Tasks (human fact 4160).
     matchSession: sessionId => navigation.getSnapshot().memberSessionId === sessionId,
-    onInserted: () => { dropTeamRow(); agentsTab.set(true) },
+    onInserted: () => { dropTeamRow() },
   }), 'agent-team: interim native tab')
-
-  // The Overview tab (Board 7/10): the workspace Overview page over the same
-  // seat share, beside the one Teams tab. The strip owns the selection, so no
-  // navigation flag is claimed here — opening an agent card or a thread link
-  // hands the main column over through the shared navigation actions.
-  const overviewTabRender = (props: NativeTabRenderProps): unknown => {
-    const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
-    return createElement(TeamSlotBoundary, { slot: 'native-tab', t: bound as never },
-      renderOverviewTabBody({ ...teamTabSeat, t: bound } as unknown as TeamSidebarProps, props))
-  }
-  ctx.effect(() => insertTeamTab(ctx, {
-    id: OVERVIEW_TAB_ID,
-    order: OVERVIEW_TAB_ORDER,
-    label: () => ctx.locale.bind(NS)('overview'),
-    render: overviewTabRender,
-  }), 'agent-team: overview native tab')
-
 
   // A14: the Agent detail's tabs ride the host's conversation tab strip
   // (`conversation.view`). The strip is global, so the entries are registered only

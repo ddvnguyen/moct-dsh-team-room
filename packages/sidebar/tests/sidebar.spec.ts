@@ -11,7 +11,7 @@ const MENU = `
   <nav class="dcu-menu">
     <button type="button">New task</button>
     <button type="button" class="dcu-global-panel">Context Insights</button>
-    <button type="button" class="dcu-global-panel">Team Settings</button>
+    <button type="button" class="dcu-global-panel">Team Detail</button>
     <div class="dcu-extensions-group">
       <button type="button" class="dcu-extensions-toggle" aria-expanded="true">Extensions</button>
       <div class="dcu-extension-panel" data-open="true">
@@ -40,7 +40,7 @@ const LEGACY_MENU = `
     <button type="button" class="dcu-global-panel" aria-label="Plugin Market">Plugin Market</button>
     <button type="button" class="dcu-global-panel" aria-label="Automation tasks">Automation tasks</button>
     <button type="button" class="dcu-global-panel" aria-label="Context Insights">Context Insights</button>
-    <button type="button" class="dcu-global-panel" aria-label="Team Settings">Team Settings</button>
+    <button type="button" class="dcu-global-panel" aria-label="Team Detail">Team Detail</button>
     <button type="button">New task</button>
     <div class="dcu-extensions-group">
       <button type="button" class="dcu-extensions-toggle" aria-expanded="true">Extensions</button>
@@ -121,10 +121,10 @@ describe('dsh-sidebar', () => {
     expect([...topPanels().ids].sort()).toEqual(['agent-team-board', 'agent-team-settings', 'dsh-context'])
   })
 
-  it('keeps New task, Context Insights and Team Settings at the top level', async () => {
+  it('keeps New task, Context Insights and Team Detail at the top level', async () => {
     mount(MENU)
     await settle()
-    const expected = ['New task', 'Context Insights', 'Team Settings']
+    const expected = ['New task', 'Context Insights', 'Team Detail']
     for (const [index, label] of expected.entries()) {
       const el = byLabel(label)
       expect(el.style.order).toBe(String(index))

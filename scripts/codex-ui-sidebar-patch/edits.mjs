@@ -17,7 +17,7 @@
  *    strip (Tasks | <plugin tabs> | Channels | Schedule). The Team Room adds
  *    its `Teams` tab this way.
  * 2. A top-level panel list (`__dshTopPanels`), so the plugin panels a
- *    deployment wants next to "New task" (Context Insights, Team Settings)
+ *    deployment wants next to "New task" (Context Insights, Team Detail)
  *    are rendered as top-level menu entries instead of as children of the
  *    Extensions group, which upstream puts every plugin panel into.
  *

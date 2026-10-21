@@ -67,7 +67,7 @@ describe('moveSidebarItem persistence semantics', () => {
 
 describe('useSidebarOrder with two readers of one list', () => {
   it('keeps each reader identity-stable while they hold different refs at the same moment', () => {
-    // The rail's Agents group and the Team Settings page read one list; while
+    // The rail's Agents group and the Team Detail page read one list; while
     // one is still loading its refs differ, and neither read may evict the other.
     const loaded = ['a', 'b'] as Ref[]
     const loading = [] as Ref[]

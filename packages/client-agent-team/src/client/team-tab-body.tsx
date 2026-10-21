@@ -3,7 +3,7 @@
  *
  * The body is the Channel view: the Inbox, the Workspace selector and the
  * Channels list the Team rail seat also shows. The Agents config is not here:
- * it lives on the rail's Team Settings page. Picking a Channel goes through the same
+ * it lives on the Team Detail page. Picking a Channel goes through the same
  * navigation actions as the rail, so the conversation opens in the main column
  * and the tab never mounts `TeamConversation` itself.
  *

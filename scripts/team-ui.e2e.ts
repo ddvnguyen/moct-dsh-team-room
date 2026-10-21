@@ -3271,7 +3271,7 @@ it('creates a board task and drags it to Done in real Web', async () => {
  * beside it, and Stop is gated on a Turn that is actually running.
  *
  * The strip has no Agents tab in this scaffold (no native-tab registry), so the
- * roster is the Team Settings page's own Agents list — exactly where the page
+ * roster is the Team Detail page's own Agents list — exactly where the page
  * keeps it while the tab is absent.
  */
 it('opens an Agent from the roster and reads its Runs tab in real Web', async () => {
@@ -3284,7 +3284,9 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   // The Workspace comes in through the shell's own connect flow, so the Team
   // page adopts it and its Agents list has a Workspace to show.
   await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'agent-journey')
-  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
+  // The roster is a section of the Team Detail page now, not its first paint.
+  await page.getByRole('tab', { name: 'Agents' }).click()
   await page.getByRole('button', { name: '添加 Agent' }).click()
   const dialog = page.getByRole('dialog', { name: '添加 Agent' })
   await dialog.getByLabel('名称').fill('builder')
@@ -3376,6 +3378,58 @@ it('groups the Inbox by severity and opens a task detail in real Web', async () 
   await ledger.sendMessage({ requestId: 'inbox-reply', actor: planner, workspaceId: workspace.id, channelRef: channel.channelRef,
     body: '我先按周四准备。', asTask: false, recipients: [] })
 
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(workspaceId => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, inbox: true }))
+  }, workspace.id)
+  await page.reload()
+  const inbox = page.locator('[data-team-inbox]')
+  await inbox.waitFor({ timeout: 30_000 })
+
+  // The queue groups itself: the open decision card is the band that must
+  // interrupt, the plain reply is the band that only records.
+  const bands = inbox.locator('[data-inbox-list] h3[data-severity]')
+  await expect.poll(async () => await bands.count()).toBeGreaterThan(0)
+  await expect.poll(async () => await inbox.locator('[data-inbox-list] h3[data-severity="action_required"]').count()).toBe(1)
+  await settleLayout(page)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-bands-desktop.png'), fullPage: true })
+
+  // The filter menu narrows the queue with the counts each facet can reveal.
+  const filter = page.getByRole('button', { name: '筛选' })
+  await filter.waitFor({ timeout: 30_000 })
+  await filter.click()
+  const severityRow = page.getByRole('menuitem').filter({ hasText: '必须处理' })
+  await severityRow.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await severityRow.textContent()).toContain('1')
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-filter-desktop.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+
+  // The split view opens the selected row's task detail beside the list: the
+  // decision card is answered in place.
+  const decisionRow = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
+  await decisionRow.waitFor({ timeout: 30_000 })
+  await decisionRow.click()
+  const detail = page.locator('[data-inbox-detail]')
+  await detail.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => await detail.locator('[data-team-decision]').count()).toBe(1)
+  await settleLayout(page)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-detail-desktop.png'), fullPage: true })
+
+  // 390×844: the narrow seat has no second column, so the queue fills the
+  // reading column and a row opens its Thread.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+  expect(await page.locator('[data-inbox-detail]').count()).toBe(0)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)
+
+
 /**
  * The Team Board journey (Board 10/10): one browser pass over the whole flow.
  *
@@ -3438,52 +3492,6 @@ it('walks the Team Board journey in real Web', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
   const consoleWatch = watchConsole(page)
   await page.goto(scaffold.authenticatedUrl)
-  await page.evaluate(workspaceId => {
-    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId, inbox: true }))
-  }, workspace.id)
-  await page.reload()
-  const inbox = page.locator('[data-team-inbox]')
-  await inbox.waitFor({ timeout: 30_000 })
-
-  // The queue groups itself: the open decision card is the band that must
-  // interrupt, the plain reply is the band that only records.
-  const bands = inbox.locator('[data-inbox-list] h3[data-severity]')
-  await expect.poll(async () => await bands.count()).toBeGreaterThan(0)
-  await expect.poll(async () => await inbox.locator('[data-inbox-list] h3[data-severity="action_required"]').count()).toBe(1)
-  await settleLayout(page)
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-bands-desktop.png'), fullPage: true })
-
-  // The filter menu narrows the queue with the counts each facet can reveal.
-  const filter = page.getByRole('button', { name: '筛选' })
-  await filter.waitFor({ timeout: 30_000 })
-  await filter.click()
-  const severityRow = page.getByRole('menuitem').filter({ hasText: '必须处理' })
-  await severityRow.waitFor({ timeout: 30_000 })
-  await expect.poll(async () => await severityRow.textContent()).toContain('1')
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-filter-desktop.png'), fullPage: true })
-  await page.keyboard.press('Escape')
-
-  // The split view opens the selected row's task detail beside the list: the
-  // decision card is answered in place.
-  const decisionRow = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
-  await decisionRow.waitFor({ timeout: 30_000 })
-  await decisionRow.click()
-  const detail = page.locator('[data-inbox-detail]')
-  await detail.waitFor({ timeout: 30_000 })
-  await expect.poll(async () => await detail.locator('[data-team-decision]').count()).toBe(1)
-  await settleLayout(page)
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-detail-desktop.png'), fullPage: true })
-
-  // 390×844: the narrow seat has no second column, so the queue fills the
-  // reading column and a row opens its Thread.
-  await page.setViewportSize({ width: 390, height: 844 })
-  await settleLayout(page)
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
-  expect(await page.locator('[data-inbox-detail]').count()).toBe(0)
-  await page.screenshot({ path: join(INBOX_SHOTS, 'inbox-390.png'), fullPage: true })
-  await page.setViewportSize({ width: 1440, height: 960 })
-  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
-}, 180_000)
   // The board is a navigation face: the persisted snapshot is how the reader
   // reaches it, and a reload reopens it.
   await page.evaluate(id => {
@@ -3613,7 +3621,8 @@ it('walks the Team Board journey in real Web', async () => {
   await page.screenshot({ path: join(BOARD_SHOTS, 'board-accepted.png'), fullPage: true })
 
   // The Agent's own page: the run it spent, with the tokens it spent them on.
-  await page.getByRole('button', { name: '团队设置', exact: true }).click()
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
+  await page.getByRole('tab', { name: 'Agents' }).click()
   const workerRow = page.locator('[data-agent-row]').filter({ hasText: 'builder' })
   await workerRow.waitFor({ timeout: 30_000 })
   await expect.poll(async () => (await workerRow.locator('[data-agent-tokens]').textContent()) ?? '').not.toBe('0')
@@ -3626,22 +3635,15 @@ it('walks the Team Board journey in real Web', async () => {
   await expect.poll(async () => runsPanel.locator('[data-agent-runs-table] tbody[data-session-id]').count(), { timeout: 20_000 }).toBeGreaterThan(0)
   await page.screenshot({ path: join(AGENT_SHOTS, 'agent-board-journey-runs.png'), fullPage: true })
 
-  // The Overview face: what the journey left behind. The face arrives with
-  // Team Board 7/10, so on a base that does not carry it yet the journey
-  // says so instead of pretending the feed was empty.
-  await page.evaluate(id => {
-    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, overview: true }))
-  }, workspaceId)
-  await page.reload()
+  // The Overview: what the journey left behind. It is the first section of the
+  // Team Detail page now, so the journey opens that row and reads it there.
+  await page.getByRole('button', { name: '团队详情', exact: true }).click()
   const overview = page.locator('[data-team-overview]')
-  if (await overview.count() === 0) {
-    console.log('note: this build carries no Team Overview face (Team Board 7/10); its feed and spend assertions run where it is merged')
-  } else {
-    await expect.poll(async () => overview.locator('[data-team-overview-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
-    await expect.poll(async () => overview.locator('[data-team-overview-event]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
-    await expect.poll(async () => overview.locator('[data-team-overview-spend-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
-    await page.screenshot({ path: join(BOARD_SHOTS, 'board-journey-overview.png'), fullPage: true })
-  }
+  await expect.poll(async () => overview.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => overview.locator('[data-team-overview-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect.poll(async () => overview.locator('[data-team-overview-event]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await expect.poll(async () => overview.locator('[data-team-overview-spend-agent]').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'board-journey-overview.png'), fullPage: true })
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 300_000)

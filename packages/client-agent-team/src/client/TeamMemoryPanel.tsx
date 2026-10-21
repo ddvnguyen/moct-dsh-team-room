@@ -1,5 +1,5 @@
 /**
- * The Human's Memory page (memory M3): a section of Team Settings under the
+ * The Human's Memory page (memory M3): a section of the Team Detail page under the
  * same Workspace selector as Agents.
  *
  * Record text is Team data. Titles, bodies, attrs and version history render
