@@ -54,6 +54,8 @@ The Human Client consumes the Host's Inbox projection (the 「收件箱 / Inbox�
 
 Team navigation mode, Workspace selection, the last Channel/Thread, the Inbox page position and the Board page position are browser-persisted; unread and Attention are Host-owned. The workspace Overview is not a navigation face: it lives in the Team Detail page, keeps its own Workspace scope, and always reads its data live.
 
+The issue surface is an orthogonal slot over those faces, not a face of its own: the snapshot carries the Task whose issue is open and how it is presented (the whole-column page, or the dialog over the live face), the face behind it stays where it was, and closing the issue returns the reader to it. The issue's content is the Host's `issueView` snapshot — one read per issue, variant-agnostic — and the client renders the seven regions it carries; the presentation is the client's, never a field on the read model.
+
 The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage` preference, merged over Remote defaults.
 
 An embedded Member Session uses the shipped composer unmodified: the Team registers no member-session composer surface — no seat shadow, no trigger sources, no dock strip. rc.1 moved the trigger-menu overlay into `conversation.composer.bar`'s children (a shadowing entry would inherit — and strand — the overlay), and the Team's own command/member reference entry points carried no irreplaceable value over the shipped vocabulary, so they were removed together.

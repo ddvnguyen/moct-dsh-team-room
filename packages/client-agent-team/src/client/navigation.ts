@@ -51,14 +51,27 @@ export interface TeamNavigationSnapshot {
   /**
    * Durable position of the Board page, beside the Inbox: a navigation fact
    * that clears the Channel/Thread faces the same way, and a reload reopens
-   * it. A board Task pick (a card click) leaves the flag through the Thread
-   * setters, like an Inbox row pick does.
+   * it. A board Task pick (a card click) opens the issue surface over it — the
+   * issue slot, not this flag — so the board stays behind the issue.
    */
   board?: boolean
   /** Runtime-only Member Session embedded in the conversation seat; never persisted. */
   memberSessionId?: SessionId
   /** Runtime-only session to restore when the Member view closes; never persisted. */
   returnToSessionId?: SessionId
+  /**
+   * The Task whose issue surface is open, if any. **Orthogonal to the face
+   * flags**: the face behind the issue (board / inbox / overview / thread) stays
+   * where it was, so closing the issue returns to exactly where the reader was.
+   * The issue is not a face — a face flag would clear the face underneath it.
+   */
+  issueRef?: AgentTeamTaskRef
+  /**
+   * How the issue surface is presented. Absent means the issue is not open.
+   * `page` is the whole-column presentation; `slice` is the dialog over the
+   * live face (the slice chrome is M-38's; the slot is this client's).
+   */
+  issueVariant?: 'slice' | 'page'
 }
 
 const STORAGE_KEY = 'dsh.agent-team.navigation'
@@ -74,9 +87,15 @@ function readSnapshot(): TeamNavigationSnapshot {
       ...(typeof parsed.channelRef === 'string' ? { channelRef: parsed.channelRef as AgentTeamChannelRef } : {}),
       ...(parsed.inbox === true ? { inbox: true } : {}),
       ...(parsed.board === true ? { board: true } : {}),
+      // The Task identity and the issue slot are restored on their own, not
+      // inside the Thread branch: the issue surface is mutually exclusive with
+      // the Thread face, so a position that carries a Task and no Thread — the
+      // issue position — would lose its Task on reload.
+      ...(typeof parsed.taskRef === 'string' ? { taskRef: parsed.taskRef as AgentTeamTaskRef } : {}),
+      ...(typeof parsed.issueRef === 'string' ? { issueRef: parsed.issueRef as AgentTeamTaskRef } : {}),
+      ...(parsed.issueVariant === 'slice' || parsed.issueVariant === 'page' ? { issueVariant: parsed.issueVariant } : {}),
       ...(hasThread ? {
         threadRef: parsed.threadRef as AgentTeamThreadRef,
-        ...(typeof parsed.taskRef === 'string' ? { taskRef: parsed.taskRef as AgentTeamTaskRef } : {}),
         ...(typeof parsed.taskNumber === 'number' && Number.isInteger(parsed.taskNumber) && parsed.taskNumber > 0 ? { taskNumber: parsed.taskNumber } : {}),
         ...(typeof parsed.docRef === 'string' ? { docRef: parsed.docRef as AgentTeamDocRef } : {}),
       } : {}),
@@ -89,7 +108,7 @@ function readSnapshot(): TeamNavigationSnapshot {
 function persistSnapshot(snapshot: TeamNavigationSnapshot): void {
   if (typeof localStorage === 'undefined') return
   try {
-    const { mode, workspaceId, channelRef, taskRef, threadRef, taskNumber, docRef, inbox, board } = snapshot
+    const { mode, workspaceId, channelRef, taskRef, threadRef, taskNumber, docRef, inbox, board, issueRef, issueVariant } = snapshot
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       mode,
       ...(workspaceId === undefined ? {} : { workspaceId }),
@@ -100,6 +119,8 @@ function persistSnapshot(snapshot: TeamNavigationSnapshot): void {
       ...(threadRef === undefined ? {} : { threadRef }),
       ...(taskNumber === undefined ? {} : { taskNumber }),
       ...(docRef === undefined ? {} : { docRef }),
+      ...(issueRef === undefined ? {} : { issueRef }),
+      ...(issueVariant === undefined ? {} : { issueVariant }),
     }))
   } catch {
     // Local persistence is a convenience; private mode and quota failures do not block navigation.
@@ -118,6 +139,19 @@ export interface TeamNavigationActions {
   selectInbox: () => void
   /** Open the Board page; clears the Channel/Thread faces the same way. */
   selectBoard: () => void
+  /**
+   * Open the issue surface of one Task, over the face the reader is on. The
+   * face flags are untouched: the issue is an orthogonal slot, so closing it
+   * returns to exactly where the reader was.
+   */
+  openIssue: (taskRef: AgentTeamTaskRef, variant: 'slice' | 'page') => void
+  /** Close the issue surface; the face behind it stays where it was. */
+  closeIssue: () => void
+  /**
+   * Move the open issue between its presentations — the slice dialog and the
+   * whole-column page. The Task stays the same; only the presentation moves.
+   */
+  setIssueVariant: (variant: 'slice' | 'page') => void
   backToWorkspace: () => void
   /** Leave the selected Channel for the workspace Channel list; keeps mode and Workspace. */
   backToChannels: () => void
@@ -158,6 +192,9 @@ export class TeamNavigation {
       },
       selectInbox: () => { this.clearMemberSession(); this.setInbox() },
       selectBoard: () => { this.clearMemberSession(); this.setBoard() },
+      openIssue: (taskRef, variant) => { this.clearMemberSession(); this.setIssue(taskRef, variant) },
+      closeIssue: () => { this.clearMemberSession(); this.setIssue(undefined) },
+      setIssueVariant: variant => { this.clearMemberSession(); this.setIssueVariant(variant) },
       backToWorkspace: () => { this.clearMemberSession(); this.setThread(undefined) },
       backToChannels: () => { this.clearMemberSession(); this.clearChannel() },
       enterMemberSession: (sessionId, returnToSessionId) => { this.setMemberSession(sessionId, returnToSessionId) },
@@ -240,6 +277,32 @@ export class TeamNavigation {
     const { channelRef: _channelRef, ...base } = this.snapshot
     if (this.snapshot.channelRef === undefined) return
     this.snapshot = base
+    this.commit()
+  }
+
+  /**
+   * The issue slot: the Task whose issue surface is open and how it is
+   * presented. It is orthogonal to the face flags — the face behind it stays
+   * exactly where it was, so closing the issue returns the reader to it.
+   */
+  private setIssue(taskRef: AgentTeamTaskRef | undefined, variant?: 'slice' | 'page'): void {
+    if (taskRef === undefined) {
+      if (this.snapshot.issueRef === undefined && this.snapshot.issueVariant === undefined) return
+      const { issueRef: _issueRef, issueVariant: _issueVariant, ...base } = this.snapshot
+      this.snapshot = base
+      this.commit()
+      return
+    }
+    if (this.snapshot.issueRef === taskRef && this.snapshot.issueVariant === variant) return
+    this.snapshot = { ...this.snapshot, issueRef: taskRef, issueVariant: variant ?? 'slice' }
+    this.commit()
+  }
+
+  /** Move the open issue between its presentations; the Task stays the same. */
+  private setIssueVariant(variant: 'slice' | 'page'): void {
+    if (this.snapshot.issueRef === undefined) return
+    if (this.snapshot.issueVariant === variant) return
+    this.snapshot = { ...this.snapshot, issueVariant: variant }
     this.commit()
   }
 

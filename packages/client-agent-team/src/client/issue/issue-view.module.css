@@ -1,0 +1,377 @@
+/*
+ * The issue view's own styles: the seven regions, laid out like Multica's
+ * issue page — a wide content column with the property column beside it.
+ *
+ * Derived from multica-x packages/views/issues/components/issue-detail.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
+ * Copyright Index Labs. Multica License.
+ *
+ * Every value reads the scoped `--ml-*` variables of `multica-look.module.css`;
+ * the sheet that carries the property column under the narrow width is the
+ * dsh `Modal` the Thread page already uses for the same fold.
+ */
+
+/* The page host: the column the tree sits in. */
+.pageSurface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pageFoot {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 20px;
+}
+
+/* The page: a header band over a two-column body. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 20px 28px;
+}
+
+.head {
+  display: grid;
+  gap: 6px;
+}
+
+.crumb {
+  align-items: center;
+  color: var(--ml-text-tertiary);
+  display: flex;
+  font-size: var(--ml-text-caption);
+  gap: 6px;
+  line-height: var(--ml-text-caption-line);
+}
+
+.crumbChannel {
+  color: var(--ml-text-secondary);
+}
+
+.titleRow {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.number {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-title-sm);
+  line-height: var(--ml-text-title-sm-line);
+}
+
+.title {
+  background: none;
+  border: 0;
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  cursor: text;
+  font: inherit;
+  font-size: var(--ml-text-title);
+  font-weight: 600;
+  line-height: var(--ml-text-title-line);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0 4px;
+  text-align: left;
+}
+
+.title:hover {
+  background: var(--ml-surface-hover);
+}
+
+.title:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+.titlePlaceholder {
+  color: var(--ml-text-faint);
+  font-weight: 400;
+}
+
+.titleEditor {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.titleInput {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border-strong);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  flex: 1;
+  font: inherit;
+  font-size: var(--ml-text-title);
+  font-weight: 600;
+  line-height: var(--ml-text-title-line);
+  min-width: 0;
+  padding: 2px 6px;
+}
+
+.titleInput:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+.titleError {
+  color: var(--ml-priority-urgent);
+  flex-basis: 100%;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+.statusChip {
+  align-items: center;
+  color: var(--ml-text-secondary);
+  display: inline-flex;
+  font-size: var(--ml-text-caption);
+  gap: 4px;
+  line-height: var(--ml-text-caption-line);
+}
+
+/* The body row: the content column and the property column side by side. */
+.bodyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.content {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+  padding-right: 18px;
+}
+
+.side {
+  border-left: 1px solid var(--ml-border);
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 20px 14px;
+}
+
+/* One region: a heading and the rows under it. */
+.region {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.regionHeading {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: var(--ml-text-micro-line);
+  text-transform: uppercase;
+}
+
+/* The description record: body, author, and the provenance of the body. */
+.description {
+  color: var(--ml-text);
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.descriptionMeta {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+/* Property rows: one labelled row per fact, the label column sizing to the
+   widest label the way Multica's subgrid rows do. */
+.propSection {
+  display: grid;
+  gap: 2px;
+}
+
+.propRow {
+  align-items: center;
+  border-radius: var(--ml-radius-sm);
+  column-gap: 8px;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  min-height: 28px;
+  padding: 0 4px;
+}
+
+.propLabel {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.propControl {
+  align-items: center;
+  color: var(--ml-text);
+  display: flex;
+  font-size: var(--ml-text-body);
+  gap: 6px;
+  line-height: var(--ml-text-body-line);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The comment list: one row per Message, replies indented under their parent. */
+.commentList {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.reply {
+  border-left: 2px solid var(--ml-border);
+  margin-left: 12px;
+  padding-left: 10px;
+}
+
+.activityList {
+  display: grid;
+  gap: 6px;
+}
+
+.activityRow {
+  align-items: baseline;
+  color: var(--ml-text-secondary);
+  display: flex;
+  font-size: var(--ml-text-caption);
+  gap: 8px;
+  line-height: var(--ml-text-caption-line);
+}
+
+.activityMark {
+  background: var(--ml-border-strong);
+  border-radius: 50%;
+  flex: none;
+  height: 5px;
+  width: 5px;
+}
+
+.activityText {
+  overflow-wrap: anywhere;
+}
+
+.decisionList {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.decisionRow {
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.decisionHead {
+  color: var(--ml-text);
+  font-size: var(--ml-text-body);
+  font-weight: 600;
+  line-height: var(--ml-text-body-line);
+  overflow-wrap: anywhere;
+}
+
+.decisionMeta {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+.empty {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+/* The control that reads the next page of a bounded region. */
+.moreButton {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  padding: 4px 10px;
+}
+
+.moreButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.moreButton:hover:not(:disabled) {
+  background: var(--ml-surface-hover);
+  color: var(--ml-text);
+}
+
+.moreButton:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+.error {
+  color: var(--ml-priority-urgent);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+/* The narrow-width opener: the property column folds into a dsh Modal. */
+.sheetOpener {
+  align-self: flex-start;
+  display: none;
+}
+
+.modalBody {
+  max-height: min(65vh, 520px);
+  overflow-y: auto;
+}
+
+/* Under the narrow width the property column leaves the grid and the opener
+   appears; the Modal carries the same region. */
+@media (max-width: 768px) {
+  .bodyRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    display: none;
+  }
+
+  .sheetOpener {
+    display: inline-flex;
+  }
+}
+
