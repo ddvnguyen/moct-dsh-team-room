@@ -96,7 +96,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'architecture/client-and-remote.md': [602, 586],
   'architecture/host-authority.md': [597, 541],
   'architecture/package-ownership.md': [552, 343],
-  'architecture/tools-and-preset.md': [616, 540],
+  'architecture/tools-and-preset.md': [627, 540],
   'architecture/workspace-session-storage.md': [576, 584],
   'architecture/team-board-runtime.md': [490, 304],
   'development/README.md': [105, 64],

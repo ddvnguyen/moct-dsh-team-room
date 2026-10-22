@@ -157,6 +157,15 @@ function stampOperationMessages(operation: z.output<typeof storedAgentTeamOperat
   return operation as AgentTeamOperation
 }
 
+const taskDescriptionSchema = z.object({
+  body: z.string(),
+  author: memberIdSchema,
+  occurredAt: z.string(),
+  source: z.union([z.literal('anchor'), z.literal('approvedPlan')]),
+  planRef: docRefSchema.optional(),
+  editedAt: z.string().optional(),
+}).strict()
+
 const taskSchema = z.object({
   taskRef: taskRefSchema,
   channelRef: channelRefSchema,
@@ -173,6 +182,9 @@ const taskSchema = z.object({
   // The description's own fence, optional so every ledger written before the
   // description existed replays unchanged.
   descriptionRevision: z.number().int().nonnegative().optional(),
+  // The description record, optional for the same reason: a Task whose
+  // description was never written has none.
+  description: taskDescriptionSchema.optional(),
 }).strict()
 
 const taskPatchSchema = z.object({
@@ -181,6 +193,7 @@ const taskPatchSchema = z.object({
   assignee: memberIdSchema.nullable().optional(),
   position: z.number().finite().optional(),
   descriptionRevision: z.number().int().nonnegative().optional(),
+  description: taskDescriptionSchema.optional(),
 }).strict()
 
 const threadSchema = z.object({
