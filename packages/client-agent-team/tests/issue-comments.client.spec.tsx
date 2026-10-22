@@ -134,6 +134,19 @@ describe('IssueComments', () => {
     expect(card.querySelectorAll('[data-comment-replies] [data-comment-replies]')).toHaveLength(0)
   })
 
+  it('stands a reply whose parent is not on screen at root level, with its quote', async () => {
+    const orphan = messageFact(9, 'message:orphan', 'the orphaned reply', ann, { replyToMessageRef: 'message:elsewhere' as AgentTeamMessageRef })
+    const resolveMessageRefs = vi.fn(async () => ({
+      ok: true,
+      value: { resolved: [{ messageRef: 'message:elsewhere', threadRef: 'thread:plan', sender: ann, excerpt: 'the parent, off screen' }] },
+    })) as unknown as IssueCommentsProps['resolveMessageRefs']
+    const { view } = renderComments({ comments: region([orphan]), resolveMessageRefs })
+    const card = view.container.querySelector('[data-comment-card]') as HTMLElement
+    expect(card.getAttribute('data-comment-orphan')).toBe('')
+    // The quote names the message it answers, so the reply is never a bare row.
+    await waitFor(() => { expect(card.querySelector('[data-comment-quote]')?.textContent).toContain('the parent, off screen') })
+  })
+
   it('pages older comments through the page that owns the history read', async () => {
     const onLoadOlder = vi.fn()
     const { view } = renderComments({

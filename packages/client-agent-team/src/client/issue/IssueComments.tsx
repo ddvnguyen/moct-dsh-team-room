@@ -103,6 +103,7 @@ export function IssueComments({
     const node = tree.roots.find(candidate => candidate.fact.message.messageRef === root.message.messageRef)
     if (node === undefined) return []
     return node.replies.map(reply => ({
+      messageRef: reply.fact.message.messageRef,
       author: { name: nameOf(reply.fact.message.sender), kind: reply.fact.message.sender === humanMemberId ? 'human' : 'agent' },
       body: reply.fact.message.body,
       human: reply.fact.message.sender === humanMemberId,
@@ -187,6 +188,7 @@ export function IssueComments({
                   {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
                   {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
                   replies={repliesOf(fact)}
+                  orphan={root.orphan}
                   onReply={() => { setReplyTarget(fact.message.messageRef) }}
                   t={t}
                 />

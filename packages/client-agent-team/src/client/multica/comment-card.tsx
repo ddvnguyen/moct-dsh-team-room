@@ -12,7 +12,7 @@
 import { Fragment, useMemo } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AgentTeamMessageAttachment } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamMessageAttachment, AgentTeamMessageRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamConversationProps } from '../slots.ts'
 import { TeamAttachmentStrip } from '../attachment-strip.tsx'
 import { formatAbsoluteTime, formatMessageTime, planMessageBody, type MentionHandle } from '../team-formatters.ts'
@@ -32,6 +32,8 @@ export interface CommentCardAuthor {
 
 /** One reply: a row under its parent, with the message it answers. */
 export interface CommentCardReply {
+  /** The reply's own identity: the row's key and the anchor a quote jumps to. */
+  readonly messageRef: AgentTeamMessageRef
   readonly author: CommentCardAuthor
   readonly body: string
   /** The Human's input stays literal text; an Agent's body renders as Markdown. */
@@ -57,6 +59,11 @@ export interface CommentCardProps {
   readonly replyTo?: { readonly senderName: string; readonly excerpt: string } | undefined
   /** The replies under this comment. Never nested deeper than one level. */
   readonly replies?: readonly CommentCardReply[] | undefined
+  /**
+   * The comment answers a message that is not on screen, so it stands at root
+   * level with its quote instead of under a parent nobody can see.
+   */
+  readonly orphan?: boolean | undefined
   /** Answers this comment; the composer takes the message as its target. */
   readonly onReply?: (() => void) | undefined
   readonly t?: TeamConversationProps['t'] | undefined
@@ -70,9 +77,9 @@ export interface CommentCardProps {
  * author, the instant, the body and the attachments, and it never re-derives
  * any of them.
  */
-export function CommentCard({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, replies, onReply, t }: CommentCardProps) {
+export function CommentCard({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, replies, orphan, onReply, t }: CommentCardProps) {
   return (
-    <article className={[look.multicaLook, css.card].join(' ')} data-comment-card="">
+    <article className={[look.multicaLook, css.card].join(' ')} data-comment-card="" data-comment-orphan={orphan === true ? '' : undefined}>
       <header className={css.header}>
         <ActorAvatar name={author.name} kind={author.kind} {...(author.avatarUrl === undefined ? {} : { avatarUrl: author.avatarUrl })} size="sm" />
         <span className={css.name} {...(author.title === undefined ? {} : { title: author.title })}>{author.name}</span>
@@ -95,7 +102,7 @@ export function CommentCard({ author, body, human, occurredAt, mentionNames, att
       )}
       {replies !== undefined && replies.length > 0 && (
         <div className={css.replies} data-comment-replies="">
-          {replies.map((reply, index) => <CommentRow key={index} {...reply} {...(loadAttachment === undefined ? {} : { loadAttachment })} t={t} />)}
+          {replies.map(reply => <CommentRow key={reply.messageRef} {...reply} {...(loadAttachment === undefined ? {} : { loadAttachment })} t={t} />)}
         </div>
       )}
     </article>
@@ -103,7 +110,7 @@ export function CommentCard({ author, body, human, occurredAt, mentionNames, att
 }
 
 /** One reply row: the same card, one indent step below its parent. */
-export function CommentRow({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, t }: CommentCardReply & {
+function CommentRow({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, t }: CommentCardReply & {
   readonly loadAttachment?: TeamConversationProps['getAttachment'] | undefined
   readonly t?: TeamConversationProps['t'] | undefined
 }) {
