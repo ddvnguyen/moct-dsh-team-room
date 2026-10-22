@@ -104,3 +104,22 @@ npm run test:browser
 `test:browser` 不覆盖这两条 preview 通道。改动 scaffold composition 或 profile resolution 之后，必须手工启动它们各一次。
 
 `test:browser` 固定使用 keyless、确定性的 Host/Client 驱动，不读取真实 provider 凭据。代表性链路从已有 Thread 开始。Human 两次确认邀请未关注 Agent。随后验证 Agent Inbox 读取/回复、Human Channel 与 Thread、页面 reload 后的 Host 持久事实。退出 Team mode 后验证普通 DSH surface 恢复。
+
+## Stack guard 的评审通道
+stack PR（`integration` → `master`）由 train 的 guard `.github/workflows/stack-pr.yml` 合并。它对实现 PR 的唯一放行条件是 **merged**：实现 PR 只有通过自己的 merge commit 才能进入发布分支，因此未合并的 PR 不在 stack 中，放它过去等于发布一个残缺的 stack。
+
+stack PR 自身的合并由一条 confirm marker 把关：marker 发在 stack PR 上，并写出它即将合并的 head：
+
+```text
+<!-- moct-approve -->
+reviewed: <40 lowercase hex>
+approved-by: Lead|Architect
+```
+
+marker 必须在合并**之前**发出，只认**那一个 head**（PR 被重写就要重新发），并且只是评审的**记录**，不能替代评审。评审的正式记录是 Multica 卡片上的 verdict，marker 会引用它。
+
+GitHub 承担不了这道关卡。`reviewDecision` 的枚举只有 `APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED`；GitHub 拒绝记录 PR 作者自己的 approving review，而本工作区里人和所有 agent 共用一个账号，所以 `reviewDecision` 永远不是 `APPROVED`。**在单一 GitHub 身份下，`approved-by:` 只是一个声明，不是事实**：能保证的是"评审存在、记录在卡片上，并且在 PR 里被点名"，而不是"PR 被作者以外的人评审过"。
+
+verdict 里还带着未决问题的 PR，不能发 marker——先回答问题，再发 marker、再合并。
+
+评审轮次、guard 以及第二账号方案的完整说明见 [`ddvnguyen/moct` 的 deploy runbook](https://github.com/ddvnguyen/moct/blob/main/docs/deploy-runbook.md)。

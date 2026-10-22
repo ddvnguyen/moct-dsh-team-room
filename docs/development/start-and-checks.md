@@ -99,3 +99,22 @@ A command-line overlay is not an equivalent mount. The Host row's Human-profile 
 `test:browser` does not cover the two preview lanes, so boot them by hand after any change to scaffold composition or profile resolution.
 
 The browser journey uses a deterministic keyless Host/Client driver. It covers Agent Inbox reading/replying, Human Channel and Thread navigation, persistence after reload, and restoration of the ordinary DSH surface after leaving Team mode.
+
+## The stack guard's review route
+The stack PR (`integration` → `master`) is merged by the train's guard, `.github/workflows/stack-pr.yml`. Its only non-blocking condition for an implementation PR is **merged**: an implementation PR reaches the released branch only through its merge commit, so an open PR is not in the stack, and letting one through would ship a partial stack.
+
+The stack PR's own merge is gated on a confirm marker posted on the stack PR, naming the head it is about to merge:
+
+```text
+<!-- moct-approve -->
+reviewed: <40 lowercase hex>
+approved-by: Lead|Architect
+```
+
+The marker is posted **before** the merge, names **that head only** (a rewritten PR needs a new marker), and is the **record** of a review — never a substitute for one. The review of record is the verdict on the Multica card, and the marker cites it.
+
+GitHub cannot carry that gate. `reviewDecision` is an enum of `APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED`; GitHub refuses an approving review from a PR's own author, and in this workspace the human and every agent share one account, so `reviewDecision` is never `APPROVED`. **Under a single GitHub identity `approved-by:` is a claim, not a fact**: the guarantee is that a review exists, is recorded on the card, and is named in the PR.
+
+A marker may not be posted on a PR whose verdict carries an open question — answer it first, then post the marker and merge.
+
+The train's full description of the review round, the guard and the second-account option is in [`ddvnguyen/moct`'s deploy runbook](https://github.com/ddvnguyen/moct/blob/main/docs/deploy-runbook.md).
