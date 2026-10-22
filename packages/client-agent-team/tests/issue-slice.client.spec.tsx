@@ -84,6 +84,7 @@ function seams(loadIssueView: TeamConversationProps['loadIssueView']): Omit<Issu
     threadTurnFailures: vi.fn(async () => ({ ok: true as const, value: [] })),
     openMemberSession: vi.fn(),
     stopSession: vi.fn(),
+    resolveTaskRefs: vi.fn(async () => ({ ok: true as const, value: { resolved: [{ threadRef: 'thread:one', channelRef: 'channel:room', taskRef: 'task:one' }] } })),
     subscribeChanges: vi.fn(() => () => {}),
   } as unknown as Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 'issueContext' | 't'>
 }
@@ -157,6 +158,24 @@ describe('the issue slice', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
     expect(navigation.getSnapshot().workspaceId).toBe(workspaceId)
+  })
+
+  it('opens the Task\'s Thread from the slice, and closes the slice on the way', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    const host = seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...host} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+    const resolveTaskRefs = host.resolveTaskRefs as unknown as ReturnType<typeof vi.fn>
+
+    // The Thread is the face the card used to open; the slice keeps the way
+    // into it, and closes on the way — a dialog over the Thread would be a
+    // dialog nobody asked for.
+    fireEvent.click(view.getByRole('button', { name: zh.issueGoToThread }))
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
+    await waitFor(() => expect(resolveTaskRefs).toHaveBeenCalled())
   })
 
   it('Escape returns the focus to the control the issue was opened from', async () => {
