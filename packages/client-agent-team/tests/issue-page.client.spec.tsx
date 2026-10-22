@@ -19,6 +19,7 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
+import { TeamDraftStore } from '../src/client/drafts.ts'
 import { IssuePage } from '../src/client/issue/IssuePage.tsx'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
@@ -119,6 +120,9 @@ function renderPage(options: {
       loadChannels={vi.fn(async () => ({ ok: true as const, value: { humanMemberId: human } as unknown as AgentTeamView }))}
       humanName="ddvnguyen"
       loadThreadHistory={loadThreadHistory}
+      reply={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } })) as unknown as TeamConversationProps['reply']}
+      drafts={new TeamDraftStore()}
+      loadTriggerCatalog={vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog']}
       updateTask={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } as unknown as AgentTeamUpdateTaskResult }))}
       changeTask={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } as unknown as AgentTeamTaskResult }))}
       answerDecision={vi.fn(async () => ({ ok: true as const, value: {} as unknown as AgentTeamDecisionNoticeResult }))}

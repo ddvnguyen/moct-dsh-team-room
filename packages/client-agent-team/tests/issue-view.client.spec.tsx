@@ -13,6 +13,7 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
+import { TeamDraftStore } from '../src/client/drafts.ts'
 import { IssueView } from '../src/client/issue/IssueView.tsx'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
@@ -121,6 +122,15 @@ function renderView(overrides: Partial<React.ComponentProps<typeof IssueView>> =
       onAssignee={() => {}}
       onLoadOlderComments={() => {}}
       loadingOlderComments={false}
+      commentWrite={{
+        workspaceId,
+        taskRef,
+        baseRevision: 7,
+        reply: vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } })) as unknown as TeamConversationProps['reply'],
+        drafts: new TeamDraftStore(),
+        loadTriggerCatalog: vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog'],
+        draftKey: `issue:${taskRef}`,
+      }}
       onAnswerDecision={async () => undefined}
       execution={execution}
       pending={false}
@@ -142,9 +152,13 @@ describe('IssueView', () => {
     expect(view.getByText(zh.propStatus)).toBeTruthy()
     expect(view.getByText(zh.propPriority)).toBeTruthy()
     expect(view.getByText(zh.propAssignee)).toBeTruthy()
-    // 4. Comments: both the comment and its reply.
-    expect(view.getByText('First comment.')).toBeTruthy()
-    expect(view.getByText('A reply.')).toBeTruthy()
+    // 4. Comments: both the comment and its reply. A reply quotes the message
+    //    it answers, so the parent's body appears twice on screen — once as
+    //    the card body, once as the quote — and the assertion names the
+    //    bodies, not the whole page.
+    const bodies = [...view.container.querySelectorAll('[data-comment-body]')].map(node => node.textContent)
+    expect(bodies).toEqual(['First comment.', 'A reply.'])
+    expect(view.container.querySelector('[data-comment-quote]')?.textContent).toContain('First comment.')
     // 5. Activity.
     expect(view.getByText(zh.issueActivityLabel)).toBeTruthy()
     // 6. Decisions.
