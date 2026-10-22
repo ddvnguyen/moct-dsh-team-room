@@ -2310,8 +2310,10 @@ export default class AgentTeam extends TypertRemoteService {
       if (handle === undefined) continue
       if (handle.agent.status !== 'idle') continue
       // One digest turn per member per tick. A Member is one Agent, so a second
-      // `followup` while the first Workspace's turn runs would steer it; the next
-      // tick picks up whatever Workspace this one did not cover.
+      // `followup` while the first Workspace's turn runs would steer it. The
+      // Workspace rotation is not round-robin: the loop always restarts at the
+      // Member's first Workspace, so a Member that works in several Workspaces
+      // digests that one Workspace on every tick.
       let delivered = false
       for (const workspaceId of ledger.workspacesOf(member.memberId)) {
         if (delivered) break

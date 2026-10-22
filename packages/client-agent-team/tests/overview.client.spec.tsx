@@ -161,7 +161,10 @@ describe('Team Overview page', () => {
 
   it('shows an unproven spend bucket as unknown instead of a quiet zero', async () => {
     const unknown = aggregate({
-      perDay: [{ day: '2026-09-13', tokensIn: null, tokensOut: 40, runMs: 1500, perAgent: [{ memberId: 'member:builder', tokensIn: null, tokensOut: 40, runMs: 1500 }] }],
+      perDay: [
+        { day: '2026-09-12', tokensIn: 100, tokensOut: 40, runMs: 1500, perAgent: [{ memberId: 'member:builder', tokensIn: 100, tokensOut: 40, runMs: 1500 }] },
+        { day: '2026-09-13', tokensIn: null, tokensOut: 40, runMs: 1500, perAgent: [{ memberId: 'member:builder', tokensIn: null, tokensOut: 40, runMs: 1500 }] },
+      ],
     })
     const b = await openTeamDetail({ initialChannels: true })
     b.seedWorkspaceActivity(unknown)
@@ -185,6 +188,24 @@ describe('Team Overview page', () => {
     const marked = days.querySelector('[data-unknown="true"]')
     expect(marked?.getAttribute('title')).toContain('2026-09-13')
     expect(days.querySelectorAll('[data-unknown="true"]').length).toBe(1)
+    // An unrecorded day draws a fixed mark: its height never varies with the
+    // data, so it cannot read as the biggest spender of the fortnight on an
+    // axis whose height means spend.
+    const unknownDayFill = marked?.querySelector('span') as HTMLElement | null
+    expect(unknownDayFill?.style.height).toBe('6px')
+    expect(unknownDayFill?.style.height).not.toBe('100%')
+    // A measured day still scales with its own tokens.
+    const measuredDay = [...days.querySelectorAll('div')].find(day => day.getAttribute('title')?.includes('2026-09-12'))
+    const measuredFill = measuredDay?.querySelector('span') as HTMLElement | null
+    expect(measuredFill?.style.height).toMatch(/%$/)
+    expect(measuredFill?.style.height).not.toBe('6px')
+    // One unknown treatment in the panel: the per-agent mark and the per-day
+    // mark resolve to the same class, so the two panels cannot draw
+    // "unrecorded" two different ways.
+    const agentFill = row.querySelector('span span') as HTMLElement | null
+    expect(agentFill).toBeTruthy()
+    expect(agentFill?.className).toBe(unknownDayFill?.className)
+    expect(agentFill?.className).toContain('unknownSpendMark')
     await b.runtime.dispose()
   })
 })
