@@ -1,0 +1,129 @@
+/*
+ * The Multica comment card's own classes.
+ *
+ * Derived from multica-x packages/views/issues/components/comment-card.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
+ * Copyright Index Labs. Multica License.
+ *
+ * Upstream styles the card with Tailwind utilities over its token layer
+ * (`bg-card`, `text-caption`, `border-border`, `rounded-xs`, `pl-8` …). The
+ * Team Room has no PostCSS step and no Tailwind, so every class is
+ * re-authored here on the `--ml-*` variables of the Multica look layer, and
+ * the one-step indent upstream keeps as padding becomes a margin here.
+ */
+
+.card {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-lg);
+  color: var(--ml-text);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--ml-text-body);
+  gap: var(--ml-card-gap);
+  line-height: var(--ml-text-body-line);
+  padding: var(--ml-card-padding);
+}
+
+.header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+}
+
+.replyAction {
+  background: none;
+  border: 0;
+  border-radius: var(--ml-radius-xs);
+  color: var(--ml-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  margin-left: auto;
+  padding: 2px 6px;
+}
+
+.replyAction:hover {
+  background: var(--ml-surface-hover);
+  color: var(--ml-text);
+}
+
+.replyAction:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.quote {
+  border-left: 2px solid var(--ml-border);
+  color: var(--ml-text-tertiary);
+  display: flex;
+  font-size: var(--ml-text-caption);
+  gap: 6px;
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+  overflow: hidden;
+  padding-left: 8px;
+  white-space: nowrap;
+}
+
+.quoteAuthor {
+  flex: none;
+  font-weight: 600;
+}
+
+.quoteText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.body {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mention {
+  background: var(--ml-surface-selected);
+  border-radius: var(--ml-radius-xs);
+  color: var(--ml-brand);
+  font-size: var(--ml-text-caption);
+  margin: 0 2px;
+  padding: 0 4px;
+}
+
+.attachments {
+  margin-top: 2px;
+}
+
+/* Upstream keeps every reply inside the root card, one indent step below the
+   root body, separated by a hairline. The step is a margin here: the reply
+   row is inside the card's own padding, so a margin is what reads as the
+   deeper step. */
+.replies {
+  border-top: 1px solid var(--ml-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ml-card-gap);
+  margin-top: var(--ml-card-gap);
+  padding-left: 16px;
+  padding-top: var(--ml-card-gap);
+}
+
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}

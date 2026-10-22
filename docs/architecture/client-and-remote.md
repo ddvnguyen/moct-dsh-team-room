@@ -61,3 +61,5 @@ The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage`
 An embedded Member Session uses the shipped composer unmodified: the Team registers no member-session composer surface — no seat shadow, no trigger sources, no dock strip. rc.1 moved the trigger-menu overlay into `conversation.composer.bar`'s children (a shadowing entry would inherit — and strand — the overlay), and the Team's own command/member reference entry points carried no irreplaceable value over the shipped vocabulary, so they were removed together.
 
 Ordinary and member sessions share the same composer and vocabulary. Reuse public primitives and `--dsw-*` tokens, keep CSS in CSS Modules, and preserve Team mode restoration and narrow layouts.
+
+The issue's comment region reads the contract's `comments` region and pages the same facts the Thread page pages, through the same history read: one store, two views. The decision region owns the ask message, so the comment region skips it, and a reply hangs under its parent one level deep because the ledger records one parent per message. Editing a comment, resolve and reactions are not in this cut: the ledger is append-only.

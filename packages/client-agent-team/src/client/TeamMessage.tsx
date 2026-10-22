@@ -1,11 +1,11 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { MarkdownText, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamMessageRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamConversationProps } from './slots.ts'
 import type { ResolvedMemberRef } from './refs.ts'
-import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
+import { TeamAttachmentStrip } from './attachment-strip.tsx'
 import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersion, type ResolvedTaskRef } from './refs.ts'
 import { cachedResolvedThreadRef, resolveUnknownThreadRefs, useResolvedThreadRefVersion, type ResolvedThreadRef } from './refs.ts'
 import { formatMessageTime, isSingleBrandedRef, memberHue, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames, type MentionHandle } from './team-formatters.ts'
@@ -481,51 +481,4 @@ function renderRefs(text: string, onOpenRef: ((ref: string) => void) | undefined
     }
     return <Fragment key={index}>{segment.text}</Fragment>
   })
-}
-
-/** One message's attachment strip: image thumbnails with a large view, or name chips when bytes are gone. */
-function TeamAttachmentStrip({ attachments, loadAttachment, t }: {
-  readonly attachments: readonly AgentTeamMessageAttachment[]
-  readonly loadAttachment?: TeamConversationProps['getAttachment'] | undefined
-  readonly t?: TeamConversationProps['t'] | undefined
-}) {
-  const [zoomed, setZoomed] = useState<AgentTeamMessageAttachment>()
-  return <div className={css.attachmentStrip}>
-    {attachments.map(attachment => <TeamAttachment
-      key={attachment.attachmentId}
-      attachment={attachment}
-      {...(loadAttachment === undefined ? {} : { loadAttachment })}
-      {...(t === undefined ? {} : { t })}
-      onZoom={setZoomed}
-    />)}
-    {zoomed !== undefined && <Modal open {...(css.attachmentModal === undefined ? {} : { className: css.attachmentModal })} title={zoomed.name} closeLabel={t?.('close') ?? 'Close'} onClose={() => { setZoomed(undefined) }}>
-      <img className={css.attachmentZoom} src={cachedAttachmentDataUrl(zoomed.attachmentId) ?? undefined} alt={zoomed.name} />
-    </Modal>}
-  </div>
-}
-
-function TeamAttachment({ attachment, loadAttachment, t, onZoom }: {
-  readonly attachment: AgentTeamMessageAttachment
-  readonly loadAttachment?: TeamConversationProps['getAttachment'] | undefined
-  readonly t?: TeamConversationProps['t'] | undefined
-  readonly onZoom: (attachment: AgentTeamMessageAttachment) => void
-}) {
-  const wantsPreview = loadAttachment !== undefined && attachment.mediaType.startsWith('image/')
-  const [dataUrl, setDataUrl] = useState<string | null | undefined>(wantsPreview ? cachedAttachmentDataUrl(attachment.attachmentId) : null)
-  useEffect(() => {
-    if (!wantsPreview || dataUrl !== undefined) return
-    let mounted = true
-    void loadAttachmentDataUrl(loadAttachment, attachment).then(url => { if (mounted) setDataUrl(url) })
-    return () => { mounted = false }
-  }, [wantsPreview, dataUrl, loadAttachment, attachment])
-  const expired = t?.('attachmentExpired') ?? 'File no longer cached'
-  if (wantsPreview && dataUrl !== null) {
-    return <button type="button" className={css.attachmentThumb} aria-label={t?.('viewImage', { name: attachment.name }) ?? attachment.name} title={attachment.name} onClick={() => { onZoom(attachment) }}>
-      <img src={dataUrl} alt={attachment.name} />
-    </button>
-  }
-  return <span className={css.attachmentChip} title={wantsPreview ? expired : `${attachment.name} · ${formatByteSize(attachment.byteSize)}`}>
-    <span className={css.attachmentChipName}>{attachment.name}</span>
-    <span className={css.attachmentChipSize}>{wantsPreview ? expired : formatByteSize(attachment.byteSize)}</span>
-  </span>
 }
