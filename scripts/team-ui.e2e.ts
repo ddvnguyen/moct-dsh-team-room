@@ -3899,6 +3899,8 @@ it('walks the Team history with the browser back and forward buttons in real Web
   await page.getByTestId('board-create-submit').click()
   const card = board.locator('[data-testid="board-card"]', { hasText: 'History journey task' })
   await card.waitFor({ timeout: 20_000 })
+  const taskRef = await card.getAttribute('data-task-ref')
+  expect(taskRef).toBeTruthy()
 
   // A filter is not a place: it changes what the board shows, not where the
   // reader is, so it creates no history entry.
@@ -3925,11 +3927,55 @@ it('walks the Team history with the browser back and forward buttons in real Web
   // A reload keeps the stack: the position is restored and the browser's back
   // still walks the path it walked before the reload.
   await page.reload()
+  // The app's own panel selection is the host's state, and it does not
+  // survive a reload: the reader re-enters the Team the way they left it.
+  await page.getByRole('button', { name: '团队', exact: true }).click()
   await expect.poll(async () => page.locator('[data-team-thread]').count(), { timeout: 30_000 }).toBe(1)
   await page.evaluate(() => { history.back() })
   await expect.poll(async () => page.getByTestId('team-board-page').count(), { timeout: 30_000 }).toBe(1)
   expect(await page.evaluate(() => location.pathname)).toBe(path)
   await page.screenshot({ path: join(BOARD_SHOTS, 'history-back-on-the-board.png'), fullPage: true })
+
+  // The issue the link names: the issue slot over the board. The URL is the
+  // link a reader copies, so the query carries the issue and its variant —
+  // and the path is still the document's.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      mode: 'team', workspaceId: id, board: true, issueRef: ref, issueVariant: 'page',
+    }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  await page.locator('[data-team-issue-page]').waitFor({ timeout: 30_000 })
+  const sharedUrl = new URL(page.url())
+  expect(sharedUrl.pathname).toBe(path)
+  expect(sharedUrl.searchParams.get('issue')).toBe(taskRef)
+  expect(sharedUrl.searchParams.get('variant')).toBe('page')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'history-issue-link.png'), fullPage: true })
+
+  // The shared link in a fresh tab: the stored position there carries no
+  // issue, so the query is what opens it. The tab is one of the same
+  // browser's — it carries the session and the reader's stored position,
+  // which is what makes the link work for a reader.
+  const sharedContext = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  await sharedContext.addCookies(await page.context().cookies())
+  const sharedTab = await sharedContext.newPage()
+  const sharedSnapshot = await page.evaluate(() => {
+    const raw = localStorage.getItem('dsh.agent-team.navigation')
+    if (raw === null) return null
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    delete parsed.issueRef
+    delete parsed.issueVariant
+    return JSON.stringify(parsed)
+  })
+  await sharedTab.addInitScript(seed => {
+    if (seed !== null) localStorage.setItem('dsh.agent-team.navigation', seed)
+  }, sharedSnapshot)
+  await sharedTab.goto(page.url())
+  await sharedTab.locator('[data-team-issue-page]').waitFor({ timeout: 30_000 })
+  await expect.poll(async () => sharedTab.locator('[data-issue-comments]').count(), { timeout: 30_000 }).toBe(1)
+  expect(await sharedTab.evaluate(() => location.pathname)).toBe(path)
+  await sharedTab.screenshot({ path: join(BOARD_SHOTS, 'history-shared-link.png'), fullPage: true })
+  await sharedTab.close()
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 300_000)

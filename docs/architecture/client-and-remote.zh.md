@@ -77,11 +77,15 @@ UI work 的边界如下：
 
   Issue 界面是与这些 face 正交的一个 slot，不是新的 face：snapshot 里记着当前打开的 issue 所属的 Task 以及它的呈现方式（整列的页面，或浮在当前 face 之上的对话框），底下的 face 原地不动，关闭 issue 就回到原处。issue 的内容是 Host 的 `issueView` 快照——每个 issue 一次读取，不带 variant——client 渲染它携带的七个 region；呈现方式是 client 的事，永远不是读模型上的字段。
 
-  浏览器自己的后退/前进按钮会走过这些位置。Team 在导航快照之上维护一个历史栈：每次导航压入一个 `pushState` 条目——URL 不变，只带一个 state 对象，所以应用保留自己的挂载路径，URL 也不掺进路由这件事——而 `popstate` 是位置唯一的回放路径，所以浏览器按钮和座位自己的后退控件不会各走各的。
+  浏览器自己的后退/前进按钮会走过这些位置。Team 在导航快照之上维护一个历史栈：每次导航压入一个 `pushState` 条目——路径永远是文档自己的，只带一个 state 对象，URL 也不掺进路由这件事——而 `popstate` 是位置唯一的回放路径，所以浏览器按钮和座位自己的后退控件不会各走各的。
 
   这个栈存的是位置，不是渲染出来的视图：界面标志、引用，以及带变体的问题槽。只有「读者在哪」变了才产生条目——筛选、选择器、折叠和行内编辑都不是位置——栈上限 32 条，超出丢最旧的一条，刷新后仍在。
 
   关闭问题会消费掉它打开时压入的那一条，所以浏览器后退是合上浮层而不是从它底下走开。浮层本身是瞬态的：刷新只恢复界面，不恢复浮层。
+
+  URL 的 query 是插件自己的状态，它带着 issue：`issue` 指出 Task，`variant` 指出呈现方式，所以复制出去的链接能打开那个 issue。query 每次导航都从当前位置写出，它只是 query 的相对 URL，路径永远不变。
+
+  冷启动读 query，用 `page` 变体打开 issue——浮层是瞬态的，冷启动也没有可以归还焦点的开合动作。挂载路径和 base 都不会被碰到，URL 上别的参数也不归 Team 管。
 
   Agent Inbox 仍由 Host 持有，并通过 `team_inbox` 提供。
 - Sidebar row order（Channels/Agents）是每个 browser 的 Human presentation preference，保存在 `localStorage`。加载时折叠到 Remote default order 上。保留的 refs 保持顺序，移除的 refs 丢弃，新的 refs 追加。它从不成为 ledger fact。Whole-row native drag 复用 Harness list interaction model。它是 Team-owned rows 唯一的重排控件。

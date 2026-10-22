@@ -53,6 +53,13 @@ const STATE_KEY = 'agentTeam'
 /** The stack's own storage: the tab's path, so a reload does not lose it. */
 const HISTORY_STORAGE_KEY = 'dsh.agent-team.history'
 /**
+ * The URL query the Team owns: the issue the reader is on, and how it is
+ * presented. The plugin manages these two parameters and leaves every other
+ * parameter on the URL alone.
+ */
+const ISSUE_QUERY_KEY = 'issue'
+const VARIANT_QUERY_KEY = 'variant'
+/**
  * The cap. A few dozen positions is plenty for a seat, and a tab that never
  * closes must not grow its history without limit. The browser's own entries
  * are the browser's business — this bounds the model.
@@ -83,11 +90,20 @@ export class TeamHistory {
   constructor(private readonly navigation: TeamNavigation) {
     this.session = this.readSession()
     this.rehydrate()
+    // The restored position, before the boot's own rules touch it: the
+    // snapshot is the tab's durable position, and the query is the link the
+    // reader arrived with.
+    const restored = this.position
     // The slice is a dialog over a live face: a cold start has no opener to
     // return the focus to, so the boot restores the face and drops the slice.
     // The snapshot itself stays honest — `readSnapshot` reads the slot back as
     // it was written, in either variant.
-    if (this.position.issueVariant === 'slice') this.navigation.actions().closeIssue()
+    if (restored.issueVariant === 'slice') this.navigation.actions().closeIssue()
+    // The shared link: the URL's query names the issue, so a cold load opens
+    // it. The boot is not a navigation — the position seam is not installed
+    // yet, so the open creates no entry and the stack seeds with the issue
+    // already open.
+    this.openQueriedIssue(restored.issueRef)
     this.navigation.onPositionChange = (next, previous) => { this.onPositionChange(next, previous) }
     if (typeof window !== 'undefined') window.addEventListener('popstate', this.onPopState)
     this.seed()
@@ -197,13 +213,52 @@ export class TeamHistory {
     }
   }
 
-  /** The browser's own entry for a position: the same URL, a state object only. */
+  /** The browser's own entry for a position: the query names the issue, and the state object carries the position. */
   private writeState(seq: number, position: TeamPosition, replace: boolean): void {
     const browser = this.browser()
     if (browser === undefined) return
     const state = { [STATE_KEY]: { v: 1, session: this.session, seq, position } }
-    if (replace) browser.replaceState(state, '', location.href)
-    else browser.pushState(state, '', location.href)
+    const url = this.urlFor(position)
+    if (replace) browser.replaceState(state, '', url)
+    else browser.pushState(state, '', url)
+  }
+
+  /**
+   * The URL for a position: the plugin's query, and nothing else.
+   *
+   * The URL is a **query-only relative URL**, so it resolves against the
+   * current document: the path and the mount never move, and the harness's
+   * base (`<base href="./">`) is never contradicted. The plugin sets its two
+   * parameters and leaves every other parameter on the URL alone.
+   */
+  private urlFor(position: TeamPosition): string {
+    const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
+    if (position.issueRef === undefined) {
+      params.delete(ISSUE_QUERY_KEY)
+      params.delete(VARIANT_QUERY_KEY)
+    } else {
+      params.set(ISSUE_QUERY_KEY, position.issueRef)
+      params.set(VARIANT_QUERY_KEY, position.issueVariant ?? 'page')
+    }
+    const query = params.toString()
+    return query === '' ? '?' : `?${query}`
+  }
+
+  /**
+   * Open the issue the URL names. A shared link is a position, so a cold
+   * load of it opens that issue — in the `page` variant, because a slice is
+   * transient and a cold start has no opener to return the focus to. The
+   * query's variant is dropped; the URL is rewritten to the position's truth
+   * by the seed below.
+   *
+   * The snapshot's own issue stands: the tab's durable position is not
+   * replaced by the link, and the slice the snapshot carried is still the
+   * slice the boot drops.
+   */
+  private openQueriedIssue(restoredIssue: AgentTeamTaskRef | undefined): void {
+    const issueRef = issueFromQuery()
+    if (issueRef === undefined || issueRef === restoredIssue) return
+    this.navigation.actions().openIssue(issueRef, 'page')
   }
 
   /** Add a position to the stack and to the browser's history. */
@@ -286,9 +341,18 @@ export class TeamHistory {
    * written into the browser's current entry — not pushed — so the browser's
    * back lands on it instead of leaving the page, and so the tab's session
    * survives a reload.
+   *
+   * A rehydrated stack keeps its entries, and the browser's current entry is
+   * already the reader's: it is rewritten to the position as it is now, so
+   * the URL and the position agree after a reload.
    */
   private seed(): void {
-    if (this.entries.length > 0) return
+    if (this.entries.length > 0) {
+      const current = this.entries[this.index]
+      this.writeState(current?.seq ?? this.seq, this.position, true)
+      this.persist()
+      return
+    }
     this.seq += 1
     const entry: TeamHistoryEntry = { seq: this.seq, position: this.position }
     this.entries = [entry]
@@ -347,6 +411,17 @@ export class TeamHistory {
       // Local persistence is a convenience; private mode and quota failures do not block navigation.
     }
   }
+}
+
+/**
+ * The issue the URL's query names, if it names one. The query is the
+ * plugin's own state: a shared link carries the issue, and the boot opens it.
+ */
+function issueFromQuery(): AgentTeamTaskRef | undefined {
+  if (typeof location === 'undefined') return undefined
+  const value = new URLSearchParams(location.search).get(ISSUE_QUERY_KEY)
+  if (value === null || value === '') return undefined
+  return value as AgentTeamTaskRef
 }
 
 /** The durable facts of a snapshot: where the reader is, and nothing else. */

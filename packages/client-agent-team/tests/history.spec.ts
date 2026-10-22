@@ -233,4 +233,82 @@ describe('TeamHistory', () => {
 
     expect(history.length).toBe(entries)
   })
+
+  it('carries the issue and its variant in the URL query', async () => {
+    // A parameter the plugin does not own is the URL's, not the Team's.
+    window.history.replaceState(null, '', '/?theme=dark')
+    const { navigation } = seat()
+    navigation.actions().selectBoard()
+    navigation.actions().openIssue('task:1' as never, 'slice')
+
+    const query = new URLSearchParams(window.location.search)
+    expect(query.get('issue')).toBe('task:1')
+    expect(query.get('variant')).toBe('slice')
+    expect(query.get('theme')).toBe('dark')
+
+    // The variant travels with the slot: the same place, presented
+    // differently, and the query follows it.
+    navigation.actions().setIssueVariant('page')
+    expect(new URLSearchParams(window.location.search).get('variant')).toBe('page')
+
+    // The position has no issue any more, so the query names none: the link
+    // must not name an issue the reader is not on.
+    const popped = traversed()
+    navigation.actions().closeIssue()
+    await popped
+    expect(new URLSearchParams(window.location.search).get('issue')).toBeNull()
+  })
+
+  it('never changes the path while the query follows the position', () => {
+    const { navigation } = seat()
+    const path = window.location.pathname
+
+    navigation.actions().selectBoard()
+    expect(window.location.pathname).toBe(path)
+    expect(new URLSearchParams(window.location.search).get('issue')).toBeNull()
+
+    navigation.actions().openIssue('task:1' as never, 'page')
+    expect(window.location.pathname).toBe(path)
+    expect(new URLSearchParams(window.location.search).get('issue')).toBe('task:1')
+  })
+
+  it('opens the issue a shared link names on a cold load', () => {
+    // The shared link: the URL names the issue, and the stored snapshot does
+    // not — so the query is what opens it.
+    window.history.replaceState(null, '', '/?issue=task%3A9')
+    const { navigation, history } = seat()
+
+    expect(navigation.getSnapshot().issueRef).toBe('task:9')
+    // A slice is transient and a cold start has no opener to return the
+    // focus to, so the boot opens the page.
+    expect(navigation.getSnapshot().issueVariant).toBe('page')
+    // The boot is not a navigation: the stack seeds with the issue open.
+    expect(history.length).toBe(1)
+  })
+
+  it('drops the slice a shared link names and opens the page', () => {
+    window.history.replaceState(null, '', '/?issue=task%3A9&variant=slice')
+    const { navigation } = seat()
+
+    expect(navigation.getSnapshot().issueRef).toBe('task:9')
+    expect(navigation.getSnapshot().issueVariant).toBe('page')
+  })
+
+  it('leaves the query and the path alone for a change that is not a place', () => {
+    const { navigation, history } = seat()
+    navigation.actions().selectBoard()
+    navigation.actions().openIssue('task:1' as never, 'page')
+    const entries = history.length
+    const query = window.location.search
+    const path = window.location.pathname
+
+    // A picker, a disclosure, a filter and an inline edit are not places:
+    // they reach neither the stack nor the URL.
+    navigation.actions().enterMemberSession('session:1' as never)
+    navigation.actions().exitMemberSession()
+
+    expect(history.length).toBe(entries)
+    expect(window.location.search).toBe(query)
+    expect(window.location.pathname).toBe(path)
+  })
 })

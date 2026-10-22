@@ -766,9 +766,11 @@ function applyUi(ctx: ClientContext): void {
     const unsubscribe = ctx.layout.panelInfo.subscribe(sync)
     // A reload keeps the mode it was left in, so it re-selects the panel that
     // mode is entered as. A restored Member Session view owns the column
-    // instead: the panel stays clear until that view closes.
+    // instead: the panel stays clear until that view closes. An open issue is
+    // the Team seat's own surface, so it takes the column too — that is what
+    // makes a shared link open the issue it names.
     const restored = navigation.getSnapshot()
-    if (restored.mode === 'team' && restored.memberSessionId === undefined
+    if ((restored.mode === 'team' || restored.issueRef !== undefined) && restored.memberSessionId === undefined
       && ctx.layout.panelInfo.getSnapshot().activePanelId === null) ctx.layout.selectPanel(TEAM_PANEL_ID)
     sync()
     return unsubscribe
