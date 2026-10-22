@@ -16,6 +16,8 @@ The trigger takes `aria-current="page"` while the Workspace overview is the page
 
 Persistent Channels/Agents sections use native button headers with `aria-expanded`, default expanded. Collapse state is a per-browser preference, not a Team fact: both panels are keyed per workspace, and `sidebar-sections.ts` persists them to one localStorage key (`dsh.agent-team.sidebar-sections`) with a read-through cache and an in-memory fallback when storage is unavailable — the Workspace selector is a field rather than a section, so it keeps no preference of its own. Rows remain quiet: Channels keep `#`; Agent rows use avatars and presence.
 
+The Agents list carries its own filter row: the search field takes a line of its own, and the line below holds the two filters — role and presence — as menus, with the visible/total count last in flow. The count is not a grid cell that can collapse under two long labels, so it can never be painted over a control; a rail too narrow for the row wraps it instead. Each trigger shows its value and names its dimension in the accessible name, and a long value truncates with an ellipsis. The reset appears only while a dimension narrows the list.
+
 Only the active leaf row has `aria-current="page"`. The embedded Member Session is the one overlay that can stand over a Team face the reader is still on — an Inbox page, or a Channel or Thread they opened the Agent from — and it takes the marker for its own Agent card: the face underneath keeps its place without the marker, and takes it back when the overlay closes (the Inbox entry included, which is otherwise the marked row while its page stands).
 
 Row ellipsis menus use public `Menu`, are visible on hover/focus/menu-open, and pin the row background while open.

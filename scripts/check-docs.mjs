@@ -101,6 +101,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'architecture/team-board-runtime.md': [490, 304],
   'development/README.md': [105, 64],
   'development/codex-ui-sidebar-patch.md': [612, 402],
+  'development/dsh-market-trusted-host-patch.md': [411, 196],
   'development/environments-and-install.md': [597, 569],
   'development/generated-and-seams.md': [515, 362],
   'development/start-and-checks.md': [595, 415],

@@ -32,10 +32,12 @@
  *   refused outright, as `sameOrigin` and the host's own fence do;
  * - a present `Origin` must still name the `Host`.
  *
- * This mirrors the upstream change (dsh-market PR #956). When that lands in
- * a release, this patch has nothing left to do: the applier recognises the
- * shipped implementation and leaves the package alone. Until then the lanes
- * get the behaviour now.
+ * This mirrors the upstream change (dsh-market PR #958, merged into `main` on
+ * 2026-10-20). PR #956 was the original change; it was closed without being
+ * merged, and #958 carries the same fence change and completes it. When that
+ * lands in a release, this patch has nothing left to do: the applier
+ * recognises the shipped implementation and leaves the package alone. Until
+ * then the lanes get the behaviour now.
  *
  * Every edit asserts its anchor. An anchor that is missing means the
  * published bundle changed shape: the applier stops and reports it instead

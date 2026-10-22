@@ -363,6 +363,38 @@ export interface AgentTeamTask {
   readonly assignee?: AgentTeamMemberId | null | undefined
   /** Fractional order within a status column; absent reads as 0. */
   readonly position?: number | undefined
+  /**
+   * The description's own fence — NOT the Thread revision.
+   *
+   * The description has two writers (the Human's inline edit and an approved
+   * plan's promotion) and neither is fenced by the Thread revision, so each
+   * description write checks this counter and bumps it. Optional and
+   * forward-only: a Task whose description was never written has no counter,
+   * and every ledger written before the description existed replays unchanged.
+   */
+  readonly descriptionRevision?: number | undefined
+}
+
+/**
+ * The durable description record of one Task: the body a reader sees, and the
+ * facts that say who wrote it and where it came from.
+ *
+ * One shape, declared once: the issue view's description region is this
+ * record plus the description's own fence (`AgentTeamIssueDescription`), so
+ * the client builds against the region and the ledger writes the record.
+ */
+export interface AgentTeamTaskDescription {
+  readonly body: string
+  /** Who wrote the body: the Human, or the Member whose plan was approved. */
+  readonly author: AgentTeamMemberId
+  /** Instant of the write that produced this body. */
+  readonly occurredAt: string
+  /** What the body was derived from: the Thread's opening Message, or an approved plan. */
+  readonly source: 'anchor' | 'approvedPlan'
+  /** The plan the body came from; present exactly when `source` is `approvedPlan`. */
+  readonly planRef?: AgentTeamDocRef
+  /** Set when the Human edited the body directly. Absent means never edited. */
+  readonly editedAt?: string
 }
 
 /** Board priority of one Task. */
@@ -541,6 +573,15 @@ export interface AgentTeamDoc {
   readonly channelRef: AgentTeamChannelRef
   /** The Thread the Doc belongs to; its submit and review notices are Messages there. */
   readonly threadRef: AgentTeamThreadRef
+  /**
+   * The Task the Doc is bound to, when it is a plan for one issue.
+   *
+   * The binding is explicit, never derived from the Thread: a taskless Thread
+   * can be promoted into a Task, so a derived binding would retroactively
+   * attach old Docs to a Task they were never written for. Optional and
+   * forward-only: a Doc written before the binding existed carries none.
+   */
+  readonly taskRef?: AgentTeamTaskRef | undefined
   /** The Member that created the Doc; the Human's verdict is delivered to it. */
   readonly author: AgentTeamMemberId
   readonly title: string
@@ -581,6 +622,17 @@ export type AgentTeamDocVerdict = 'approve' | 'review' | 'cancel'
 
 /** Stable identifier of one decision card. */
 export type AgentTeamDecisionRef = Branded<'AgentTeamDecisionRef'>
+
+/**
+ * Stable identifier of one recorded decision.
+ *
+ * A stored record is minted once, when the operation that carries it is
+ * written, and is durable with that operation. A record derived from an
+ * operation written before decision records existed takes the derived form
+ * `decisionRecord:<operationId>`, so the same ledger derives the same ref on
+ * every replay.
+ */
+export type AgentTeamDecisionRecordRef = Branded<'AgentTeamDecisionRecordRef'>
 
 /** One choice on a decision question. */
 export interface AgentTeamDecisionOption {

@@ -12,6 +12,7 @@ import type {
   AgentTeamClaimRef,
   AgentTeamContextCheckpointRef,
   AgentTeamDocCommentRef,
+  AgentTeamDecisionRecordRef,
   AgentTeamDecisionRef,
   AgentTeamDocRef,
   AgentTeamMemberId,
@@ -41,6 +42,9 @@ const docRefSchema = z.string().regex(/^doc:[^:]+$/).transform(value => value as
 const docCommentRefSchema = z.string().regex(/^comment:[^:]+$/).transform(value => value as AgentTeamDocCommentRef)
 const docSectionIdSchema = z.string().regex(/^s[1-9][0-9]*$/)
 const decisionRefSchema = z.string().regex(/^decision:[^:]+$/).transform(value => value as AgentTeamDecisionRef)
+// A stored record is `decisionRecord:<uuid>`; a record derived from an operation
+// is `decisionRecord:<operationId>`, and the operation id carries its own colon.
+const decisionRecordRefSchema = z.string().regex(/^decisionRecord:.+$/).transform(value => value as AgentTeamDecisionRecordRef)
 
 const actorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
@@ -166,6 +170,9 @@ const taskSchema = z.object({
   priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
   assignee: memberIdSchema.nullable().optional(),
   position: z.number().finite().optional(),
+  // The description's own fence, optional so every ledger written before the
+  // description existed replays unchanged.
+  descriptionRevision: z.number().int().nonnegative().optional(),
 }).strict()
 
 const taskPatchSchema = z.object({
@@ -173,6 +180,7 @@ const taskPatchSchema = z.object({
   priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
   assignee: memberIdSchema.nullable().optional(),
   position: z.number().finite().optional(),
+  descriptionRevision: z.number().int().nonnegative().optional(),
 }).strict()
 
 const threadSchema = z.object({
@@ -226,6 +234,9 @@ const docSchema = z.object({
   docRef: docRefSchema,
   channelRef: channelRefSchema,
   threadRef: threadRefSchema,
+  // The Doc→Task binding, optional so every Doc written before the binding
+  // existed replays unchanged.
+  taskRef: taskRefSchema.optional(),
   author: memberIdSchema,
   title: z.string().min(1),
   createdAtSequence: z.number().int().positive(),
@@ -264,6 +275,17 @@ const decisionNoticeSchema = z.discriminatedUnion('event', [
   }).strict(),
   z.object({ decisionRef: decisionRefSchema, event: z.literal('withdrawn') }).strict(),
 ])
+
+const decisionRecordPayloadSchema = z.object({
+  recordRef: decisionRecordRefSchema,
+  taskRef: taskRefSchema.optional(),
+  decided: z.string().min(1),
+  rationale: z.string(),
+  source: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('ask'), decisionRef: decisionRefSchema, messageRef: messageRefSchema }).strict(),
+    z.object({ kind: z.literal('plan'), docRef: docRefSchema, docRevision: z.number().int().positive() }).strict(),
+  ]),
+}).strict()
 
 const docNoticeSchema = z.discriminatedUnion('event', [
   z.object({ docRef: docRefSchema, event: z.literal('submitted'), docRevision: z.number().int().positive() }).strict(),
@@ -555,6 +577,8 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       doc: docNoticeSchema.optional(),
       // Optional and forward-only: every reply recorded before decision cards omits it.
       decision: decisionNoticeSchema.optional(),
+      // Optional and forward-only: every reply recorded before decision records omits it.
+      decisionRecord: decisionRecordPayloadSchema.optional(),
     }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
