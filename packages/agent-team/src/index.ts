@@ -3032,6 +3032,17 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /**
+   * Agent answer to one open decision card addressed to it. The seat may
+   * answer only its own card; the Host fills the actor from the Session.
+   */
+  async answerDecisionForAgent(agent: Agent, request: AgentTeamAnswerDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().answerDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)

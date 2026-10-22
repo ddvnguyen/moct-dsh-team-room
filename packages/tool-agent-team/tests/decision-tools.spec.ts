@@ -12,26 +12,37 @@ const questions = [
 ]
 
 /** A fake Host that records what team_ask hands it; the actor is the calling seat, never an argument. */
-function session(answered: boolean) {
+function session(answered: boolean, card: Record<string, unknown> = {}) {
   const calls: Array<{ readonly method: string; readonly request: Record<string, unknown> }> = []
-  const card = { decisionRef: DECISION, channelRef: 'channel:room', threadRef: THREAD, asker: ANN, messageRef: 'message:a', questions,
-    askedAt: '', status: 'open' as string, answers: undefined as unknown, closedBy: undefined as unknown }
+  const view = { decisionRef: DECISION, channelRef: 'channel:room', threadRef: THREAD, asker: ANN, messageRef: 'message:a', questions,
+    askedAt: '', status: 'open' as string, answers: undefined as unknown, closedBy: undefined as unknown, ...card }
   const host = {
     workspacesForAgent: () => [{ workspaceId: WORKSPACE }],
-    members: () => [{ member: { memberId: ANN, handle: 'ann' } }],
+    members: () => [
+      { member: { memberId: ANN, handle: 'ann' } },
+      { member: { memberId: 'member:agent-bob', handle: 'bob' } },
+    ],
+    membersForClient: () => [
+      { member: { memberId: ANN, handle: 'ann' } },
+      { member: { memberId: 'member:agent-bob', handle: 'bob' } },
+    ],
     humanHandle: () => 'Ddv',
     askDecisionForAgent: async (_agent: unknown, request: Record<string, unknown>) => {
       calls.push({ method: 'ask', request })
       return { receipt: {}, message: { messageRef: 'message:a' }, thread: { threadRef: THREAD }, notice: { decisionRef: DECISION, event: 'asked' } }
     },
+    answerDecisionForAgent: async (_agent: unknown, request: Record<string, unknown>) => {
+      calls.push({ method: 'answer', request })
+      return { receipt: {}, message: {}, thread: {}, notice: { decisionRef: DECISION, event: 'answered' } }
+    },
     withdrawDecisionForAgent: async (_agent: unknown, request: Record<string, unknown>) => {
       calls.push({ method: 'withdraw', request })
       return { receipt: {}, message: {}, thread: {}, notice: { decisionRef: DECISION, event: 'withdrawn' } }
     },
-    decisionForAgent: () => card,
+    decisionForAgent: () => view,
     waitInThreadForAgent: async (_agent: unknown, request: Record<string, unknown>, settled: () => unknown, timeoutMs: number) => {
       calls.push({ method: 'wait', request: { ...request, timeoutMs } })
-      if (answered) Object.assign(card, { status: 'answered', closedBy: 'member:human', answers: [{ selected: [0] }, { selected: [0, 1], text: 'and lint' }] })
+      if (answered) Object.assign(view, { status: 'answered', closedBy: 'member:human', answers: [{ selected: [0] }, { selected: [0, 1], text: 'and lint' }] })
       return settled()
     },
   }
@@ -71,5 +82,33 @@ describe('team_ask', () => {
     expect(await run({ action: 'withdraw', decisionRef: DECISION }, exec)).toContain(`Committed — withdrew ${DECISION}.`)
     expect(calls.at(-1)).toEqual({ method: 'withdraw', request: { requestId: 'agent-team:tool:agent-1:call-1', workspaceId: WORKSPACE, decisionRef: DECISION } })
     await expect(run({ action: 'ask', questions }, exec)).rejects.toThrow(/threadRef or taskRef/)
+  })
+
+  it('addresses a named seat, by handle or by member id', async () => {
+    const { calls, exec } = session(false)
+    await run({ action: 'ask', threadRef: THREAD, target: '@bob', questions }, exec)
+    expect(calls[0]!.request).toMatchObject({ target: 'member:agent-bob' })
+    const byId = session(false)
+    await run({ action: 'ask', threadRef: THREAD, target: 'member:agent-bob', questions }, byId.exec)
+    expect(byId.calls[0]!.request).toMatchObject({ target: 'member:agent-bob' })
+    await expect(run({ action: 'ask', threadRef: THREAD, target: '@nobody', questions }, exec)).rejects.toThrow(/unknown seat/)
+  })
+
+  it('answers a card addressed to the calling seat', async () => {
+    const { calls, exec } = session(false)
+    const text = await run({ action: 'answer', decisionRef: DECISION, answers: [{ selected: [1] }, { selected: [0, 1], text: 'and lint' }] }, exec)
+    expect(calls[0]).toEqual({ method: 'answer', request: { requestId: 'agent-team:tool:agent-1:call-1', workspaceId: WORKSPACE,
+      decisionRef: DECISION, answers: [{ selected: [1] }, { selected: [0, 1], text: 'and lint' }] } })
+    expect(text).toContain(`Committed — answered ${DECISION}.`)
+    await expect(run({ action: 'answer', answers: [{ selected: [0] }] }, exec)).rejects.toThrow(/answer requires decisionRef/)
+  })
+
+  it('shows a card addressed to a seat with the questions it must answer', async () => {
+    const { exec } = session(false, { target: 'member:agent-bob' })
+    const text = await run({ action: 'read', decisionRef: DECISION }, exec)
+    expect(text).toContain(`is open — it asks @bob. Answer it with action 'answer'.`)
+    expect(text).toContain('1. Which release day?')
+    expect(text).toContain('   0) Thursday')
+    expect(text).toContain('   1) Friday')
   })
 })

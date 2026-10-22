@@ -1738,13 +1738,19 @@ export type AgentTeamDocNoticeResult =
   }
   | AgentTeamStaleDocRevision
 
-/** A Member asks the Human one to six questions on one card in a Thread. */
+/** A Member asks one to six questions on one card in a Thread. */
 export interface AgentTeamAskDecisionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly threadRef?: AgentTeamThreadRef
   readonly taskRef?: AgentTeamTaskRef
   readonly context?: string
+  /**
+   * The seat the card is addressed to. Absent addresses the Human, which is
+   * every card recorded before targeted asks existed. A named target must be
+   * a live Member of the Workspace and of the card's Channel.
+   */
+  readonly target?: AgentTeamMemberId
   readonly questions: readonly AgentTeamDecisionQuestion[]
 }
 
@@ -1783,6 +1789,8 @@ export interface AgentTeamDecisionView {
   /** The Thread reply that asked; the card renders in its place in the timeline. */
   readonly messageRef: AgentTeamMessageRef
   readonly context?: string
+  /** The seat the card is addressed to; absent on a card that addresses the Human. */
+  readonly target?: AgentTeamMemberId
   readonly questions: readonly AgentTeamDecisionQuestion[]
   readonly status: AgentTeamDecisionStatus
   readonly askedAt: string
