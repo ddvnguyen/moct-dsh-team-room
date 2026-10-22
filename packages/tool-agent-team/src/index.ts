@@ -4,6 +4,7 @@ import { formatTeamTimestamp } from '@ddvnguyen/moct-dsh-team-room/time-format'
 import { registerContextTools } from './context-tools.ts'
 import { registerMemoryTools } from './memory-tools.ts'
 import { registerDocTools } from './doc-tools.ts'
+import { registerPlanTools } from './plan-tools.ts'
 import { registerDecisionTools } from './decision-tools.ts'
 import { registerActivityTools } from './activity-tools.ts'
 import { member, service, workspaceOf, workspaceParam } from './host-access.ts'
@@ -750,6 +751,7 @@ export function apply(ctx: Context): void {
   registerContextTools(ctx)
   registerMemoryTools(ctx)
   registerDocTools(ctx)
+  registerPlanTools(ctx)
   registerDecisionTools(ctx)
   registerActivityTools(ctx)
 }

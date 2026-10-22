@@ -42,7 +42,12 @@ async function shippedHarnessName(): Promise<string> {
 // another line added on purpose is not this change's to delete. The budget
 // moves to cover the merged text, and the next wording-only change has to
 // find its characters inside it.
-const PERSONA_CHARACTER_BUDGET = 15200
+// 2026-10-22: the team_plan line (one plan per Task, and the Human's approval
+// making that plan the Task's description) met the persona's reviewed budget.
+// The text is not trimmed: a tool the Member can call needs the line that says
+// when to call it and what it changes. The budget moves to cover the merged
+// text, and the next wording-only change has to find its characters inside it.
+const PERSONA_CHARACTER_BUDGET = 15300
 
 // The team-member preset rides the shipped patch as one declarative definition
 // row; these assertions scope to exactly that row, from its `- id:` marker to
@@ -241,7 +246,7 @@ describe('Agent Team shipping contract', () => {
     expect([...dshPeerRanges(bundleManifest)]).toEqual(['>=0.2.0-rc.2 <0.2.1'])
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
-    expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, team_view, team_doc, and team_ask')
+    expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, team_view, team_doc, team_ask, and team_plan')
     // The one token story has exactly two legal surfaces: a fully drained
     // read hands off the next-write token, and a committed public mutation's
     // returned token may serve as the basis for the next deliberate mutation.

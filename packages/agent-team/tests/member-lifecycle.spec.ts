@@ -1977,7 +1977,7 @@ describe('Agent Team Member lifecycle', () => {
   })
 
   it('validates the final Team tool marker during unpublished setup', async () => {
-    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'team_activity', 'context_rollover', 'context_checkpoint', 'context_status', 'context_compact', 'memory_note', 'memory_search', 'memory_get', 'team_doc', 'team_ask'])
+    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'team_activity', 'context_rollover', 'context_checkpoint', 'context_status', 'context_compact', 'memory_note', 'memory_search', 'memory_get', 'team_doc', 'team_ask', 'team_plan'])
     const definition = markAgentTeamPreset({ name: 'team_message' })
     expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
   })

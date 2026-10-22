@@ -146,9 +146,11 @@ import type {
   AgentTeamDmResult,
   AgentTeamCommentDocRequest,
   AgentTeamCreateDocRequest,
+  AgentTeamCreatePlanRequest,
   AgentTeamCreateDocResult,
   AgentTeamDocCommentResult,
   AgentTeamDocNoticeResult,
+  AgentTeamPlanStatus,
   AgentTeamAnswerDecisionRequest,
   AgentTeamAskDecisionRequest,
   AgentTeamDecisionNoticeResult,
@@ -3059,6 +3061,40 @@ export default class AgentTeam extends TypertRemoteService {
     const result = await this.requireLedger().createDoc({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
+  }
+
+  /**
+   * Agent-only start of one plan: a Doc bound to a Task, in that Task's
+   * Thread, while the Task is in its planning phase.
+   *
+   * The Host resolves the Task's Thread, so the model states the Task and not
+   * the Thread the plan lives in; the ledger holds the planning-phase gate.
+   */
+  async createPlanForAgent(agent: Agent, request: AgentTeamCreatePlanRequest): Promise<AgentTeamCreateDocResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const { task, thread } = this.requireLedger().listClaims(actor, { workspaceId: request.workspaceId, taskRef: request.taskRef })
+    const result = await this.requireLedger().createDoc({ requestId: request.requestId, workspaceId: request.workspaceId,
+      threadRef: thread.threadRef, taskRef: task.taskRef, title: request.title, outline: request.outline, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /**
+   * Agent-only read of one Task's plan and the description it produced.
+   *
+   * The read converges first: an approved plan whose promotion was dropped is
+   * completed here, so the model never reads a stale description.
+   */
+  async planStatusForAgent(agent: Agent, request: { workspaceId: WorkspaceId; taskRef: AgentTeamTaskRef }): Promise<AgentTeamPlanStatus> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const ledger = this.requireLedger()
+    ledger.listClaims(actor, { workspaceId: request.workspaceId, taskRef: request.taskRef })
+    try {
+      await ledger.promoteApprovedPlanDescription(request.workspaceId, request.taskRef)
+    } catch {
+      // Best-effort by design: the read answers with the description as it is.
+    }
+    return ledger.planStatus(actor, { workspaceId: request.workspaceId, taskRef: request.taskRef })
   }
 
   /** Agent-only Doc section write; a stale Doc revision is a business outcome. */

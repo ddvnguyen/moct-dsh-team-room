@@ -373,6 +373,15 @@ export interface AgentTeamTask {
    * and every ledger written before the description existed replays unchanged.
    */
   readonly descriptionRevision?: number | undefined
+  /**
+   * The description itself, once it is a fact of its own: the body a reader
+   * sees, and where it came from.
+   *
+   * Absent on a Task whose description was never written — the issue view
+   * then reads the Thread's opening Message. Optional and forward-only: a
+   * ledger written before the description existed replays unchanged.
+   */
+  readonly description?: AgentTeamTaskDescription | undefined
 }
 
 /**
@@ -385,7 +394,11 @@ export interface AgentTeamTask {
  */
 export interface AgentTeamTaskDescription {
   readonly body: string
-  /** Who wrote the body: the Human, or the Member whose plan was approved. */
+  /**
+   * Who wrote the body: the Human — its own edit, or the approval that
+   * promoted a plan. The Member who wrote the plan is named by the plan
+   * itself (`planRef`), not by this field.
+   */
   readonly author: AgentTeamMemberId
   /** Instant of the write that produced this body. */
   readonly occurredAt: string
