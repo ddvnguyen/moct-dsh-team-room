@@ -177,15 +177,25 @@ export function IssuePage(props: IssuePageProps) {
     if (loadingOlder || view === undefined) return
     setLoadingOlder(true)
     void (async () => {
-      const result = await loadThreadHistory({ workspaceId, taskRef, beforeSequence: view.comments.cursor })
+      // The cursor is the merged one: the oldest comment the page carries, the
+      // newest page's cursor until an older page lands. The Host's newest page
+      // never moves, so reading from it again would fetch the same page twice.
+      const result = await loadThreadHistory({ workspaceId, taskRef, beforeSequence: older[0]?.sequence ?? view.comments.cursor })
       if (!mounted.current) return
       setLoadingOlder(false)
       if (!result.ok) { setError(result.error.message); return }
-      const olderComments = result.value.facts.filter((fact): fact is AgentTeamIssueComment => fact.kind === 'message')
+      // The history read returns the raw facts: the Thread's anchor and the ask
+      // of every decision card are in it, and the Host's own issue read leaves
+      // both out. The same rule is applied here, so paging back never shows the
+      // description a second time or repeats an ask the decisions own.
+      const askRefs = new Set(view.decisions.flatMap(row => row.kind === 'card' ? [row.card.messageRef] : row.card === undefined ? [] : [row.card.messageRef]))
+      const olderComments = result.value.facts.filter((fact): fact is AgentTeamIssueComment => fact.kind === 'message'
+        && fact.message.messageRef !== result.value.anchor.messageRef
+        && !askRefs.has(fact.message.messageRef))
       setOlder(current => [...olderComments, ...current])
       setOlderHasMore(result.value.hasMore)
     })()
-  }, [loadingOlder, view, loadThreadHistory, workspaceId, taskRef])
+  }, [loadingOlder, older, view, loadThreadHistory, workspaceId, taskRef])
 
   const answer = useCallback(async (decision: AgentTeamDecisionView, answers: readonly AgentTeamDecisionAnswer[]): Promise<string | undefined> => {
     const result = await answerDecision({ requestId: mintRequestId(), workspaceId, decisionRef: decision.decisionRef, answers })

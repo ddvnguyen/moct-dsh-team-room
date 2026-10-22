@@ -277,7 +277,7 @@ describe('TeamNavigation', () => {
     expect(new TeamNavigation().getSnapshot()).toMatchObject({ issueRef: 'task:one', issueVariant: 'page' })
   })
 
-  it('keeps the face flags when the issue opens, and drops the issue when a face is picked', () => {
+  it('keeps the face flags when the issue opens, and keeps the issue when a face is picked', () => {
     const navigation = new TeamNavigation()
     const actions = navigation.actions()
     actions.selectWorkspace('workspace:one' as never)
