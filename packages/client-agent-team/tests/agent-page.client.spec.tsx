@@ -21,6 +21,13 @@ afterEach(cleanup)
 const t = ((key: string, args?: Record<string, string>) => `${key}${args === undefined ? '' : JSON.stringify(args)}`) as never
 const ok = <T,>(value: T) => ({ ok: true as const, value })
 
+/** The menu row a filter menu prints, by the text it carries. */
+function menuRow(label: string): HTMLButtonElement {
+  const row = [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].find(entry => entry.textContent?.includes(label))
+  expect(row, `menu row ${label}`).toBeDefined()
+  return row!
+}
+
 const member = (id: string, handle: string, extra: Record<string, unknown> = {}): AgentTeamClientMemberStatus => ({
   member: {
     memberId: id,
@@ -159,7 +166,8 @@ describe('the Agents list row', () => {
       members: [member('member:a', '@alpha'), { ...member('member:b', '@beta'), presence: 'unavailable', availability: 'unavailable' } as never],
     })
     await waitFor(() => expect(document.querySelectorAll('[data-agent-handle]')).toHaveLength(2))
-    fireEvent.change(screen.getByLabelText('agentFilterPresence'), { target: { value: 'offline' } })
+    fireEvent.click(screen.getByRole('button', { name: 'agentFilterPresence: agentFilterAllPresence' }))
+    fireEvent.click(menuRow('presenceOffline'))
     await waitFor(() => expect(document.querySelectorAll('[data-agent-handle]')).toHaveLength(1))
     expect(document.querySelector('[data-agent-handle]')?.textContent).toBe('beta')
     expect(document.querySelector('[data-agent-list-count]')?.textContent).toContain('"visible":"1"')
