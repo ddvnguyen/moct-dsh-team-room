@@ -87,5 +87,6 @@ UI work 的边界如下：
 - Message、Activity、Claim 和 Task 的 presentation 要保持区分且用户可读。不要暴露 opaque refs 或 internal enums。
 - Durable mutations 不做 optimistic update。失败时保留 input，并渲染下一份 Host projection。
 - 保持 Team mode enter/leave、refresh recovery、slot restoration 和 narrow layout behavior。
+- issue 的评论区域读契约的 `comments` 区域，用同一条 history 读分页 Thread 页读的同一批事实：一个 store，两个视图。分页只有一处调用——issue page 的那次——并且写明了自己的 limit（`limit: 20`，在 Host 的 1–100 边界内）。决策区域拥有那条 ask 消息，评论区域跳过它；回复挂在其父级下一层，因为 ledger 每条消息只记一个父级。编辑评论、resolve 与 reactions 不在本批：ledger 是 append-only。
 
 UI redesign 已完成。需要理解当时的取舍时，查 [`.scratch/archive/2026-08/ui-redesign/`](../../.scratch/archive/2026-08/ui-redesign/)。它是历史设计背景，不是当前实现权威。UI 改动的当前验收规则见 [`development/README.zh.md`](../development/README.zh.md)。

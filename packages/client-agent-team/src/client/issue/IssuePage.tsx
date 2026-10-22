@@ -17,6 +17,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
 import { normalizePriority } from '../multica/priority.ts'
 import type { TeamConversationProps } from '../slots.ts'
+import type { TeamDraftStore } from '../drafts.ts'
 import { mintRequestId } from '../requests.ts'
 import look from '../multica-look.module.css'
 import { IssueView } from './IssueView.tsx'
@@ -34,6 +35,17 @@ export interface IssuePageProps {
   readonly humanName: string
   /** The Thread's older facts, for the comment region's next page. */
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
+  /** The Human's answer on the issue: one comment on the Task. */
+  readonly reply: TeamConversationProps['reply']
+  /** The attachment write the composer's file pick uploads through. */
+  readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
+  readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
+  /** Resolves the parent of a reply whose parent is not on screen. */
+  readonly resolveMessageRefs?: TeamConversationProps['resolveMessageRefs'] | undefined
+  /** The composer's draft cache; the issue's draft is its own key. */
+  readonly drafts: TeamDraftStore
+  /** The composer's slash-trigger catalog. */
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   /** The board's field write: title, priority, assignee; fenced by the Thread revision. */
   readonly updateTask: TeamConversationProps['updateTask']
   /** The Task's resolution write: accept, close, reopen; fenced by the Thread revision. */
@@ -57,7 +69,7 @@ export interface IssuePageProps {
  * dialog is the other, and both read the same value.
  */
 export function IssuePage(props: IssuePageProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, updateTask, changeTask, answerDecision, subscribeChanges, closeIssue, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, closeIssue, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
@@ -180,7 +192,9 @@ export function IssuePage(props: IssuePageProps) {
       // The cursor is the merged one: the oldest comment the page carries, the
       // newest page's cursor until an older page lands. The Host's newest page
       // never moves, so reading from it again would fetch the same page twice.
-      const result = await loadThreadHistory({ workspaceId, taskRef, beforeSequence: older[0]?.sequence ?? view.comments.cursor })
+      // The limit is the Thread page's own page size, inside the Host's bound
+      // (the ledger refuses anything outside 1–100).
+      const result = await loadThreadHistory({ workspaceId, taskRef, beforeSequence: older[0]?.sequence ?? view.comments.cursor, limit: 20 })
       if (!mounted.current) return
       setLoadingOlder(false)
       if (!result.ok) { setError(result.error.message); return }
@@ -242,6 +256,18 @@ export function IssuePage(props: IssuePageProps) {
         onAssignee={memberId => { void patchTask({ assignee: memberId }) }}
         onLoadOlderComments={loadOlder}
         loadingOlderComments={loadingOlder}
+        commentWrite={{
+          workspaceId,
+          taskRef,
+          baseRevision: view.thread.revision,
+          reply,
+          putAttachment,
+          getAttachment,
+          resolveMessageRefs,
+          drafts,
+          loadTriggerCatalog,
+          draftKey: `issue:${taskRef}`,
+        }}
         onAnswerDecision={answer}
         execution={{
           workspaceId,

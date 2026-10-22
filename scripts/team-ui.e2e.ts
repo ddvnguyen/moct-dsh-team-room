@@ -3762,6 +3762,84 @@ it('opens the issue view, renames the issue, and keeps the edit across a reload 
 }, 300_000)
 
 /**
+ * The issue's comment region (M-36): the Human answers on the issue itself.
+ *
+ * The journey opens the issue over the board, writes a comment in the issue's
+ * own composer, and reloads: the comment is the Host's fact, so it is still
+ * there afterwards. It then answers that comment, and the answer is drawn
+ * under the message it answers — one level, the way the ledger records it.
+ */
+it('posts a comment on the issue, keeps it across a reload, and nests the reply under its parent in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-comment-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Comment Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+    createTask(request: Record<string, unknown>): Promise<{ readonly task: { readonly taskRef: string } }>
+  }
+  const channel = await team.createChannel({ requestId: 'issue-comment-journey-channel', workspaceId, name: 'delivery', description: 'Issue comment journey' })
+  // The Task carries the Thread the issue's comments live on. Its opening
+  // Message is the Thread's anchor, which the Host's issue read leaves out —
+  // so the region starts empty and the journey's own comment is the first row.
+  const created = await team.createTask({
+    requestId: 'issue-comment-journey-task', workspaceId, channelRef: channel.channel.channelRef,
+    title: 'Issue comment task', body: 'The body the comment journey reads',
+  })
+  const taskRef = created.task.taskRef
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The issue slot: the Task whose issue surface is open, and how it is
+  // presented. The face flags stay, so the board is still behind the issue.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      mode: 'team', workspaceId: id, board: true, issueRef: ref, issueVariant: 'page',
+    }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  const issue = page.locator('[data-team-issue-page]')
+  await issue.waitFor({ timeout: 30_000 })
+  const comments = issue.locator('[data-issue-comments]')
+  await comments.waitFor({ timeout: 30_000 })
+
+  // The Human writes in the issue's own composer. The write is not optimistic:
+  // the row appears when the Host commits it, and the change-wake refetches.
+  const composer = issue.locator('[data-team-composer]')
+  await composer.getByPlaceholder('写下评论…').fill('A comment on the issue')
+  await composer.getByRole('button', { name: '发送' }).click()
+  await expect.poll(async () => comments.locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => comments.locator('[data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+
+  // A reload does not lose the comment: it is the Host's fact, read back.
+  await page.reload()
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  const reopened = page.locator('[data-team-issue-page]')
+  await reopened.waitFor({ timeout: 30_000 })
+  const reopenedComments = reopened.locator('[data-issue-comments]')
+  await expect.poll(async () => reopenedComments.locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => reopenedComments.locator('[data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+
+  // The answer is drawn under the message it answers: the reply row lives
+  // inside the parent's card, one level deep.
+  await reopenedComments.locator('[data-comment-reply]').first().click()
+  const reopenedComposer = reopened.locator('[data-team-composer]')
+  await reopenedComposer.getByPlaceholder('写下评论…').fill('A reply on the issue')
+  await reopenedComposer.getByRole('button', { name: '发送' }).click()
+  await expect.poll(async () => reopenedComments.locator('[data-comment-reply-row]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => reopenedComments.locator('[data-comment-reply-row] [data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A reply on the issue')
+  // The parent still carries its own body, and the answer quotes it.
+  await expect.poll(async () => reopenedComments.locator('[data-comment-card] [data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-comments.png'), fullPage: true })
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
  * The Orchestrator digest (Team Board 9/10): the Host's own timer wakes the
  * Orchestrator, the Orchestrator posts one digest into its Channel, and the
  * Human reads it where every other Team message is read.

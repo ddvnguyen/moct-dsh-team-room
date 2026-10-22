@@ -15,7 +15,7 @@ import look from '../multica-look.module.css'
 import { IssueHeader } from './IssueHeader.tsx'
 import { IssueDescription } from './IssueDescription.tsx'
 import { IssueProperties } from './IssueProperties.tsx'
-import { IssueComments } from './IssueComments.tsx'
+import { IssueComments, type IssueCommentWrite } from './IssueComments.tsx'
 import { IssueActivity } from './IssueActivity.tsx'
 import { IssueDecisions } from './IssueDecisions.tsx'
 import { IssueExecutionLog, type IssueExecutionLogProps } from './IssueExecutionLog.tsx'
@@ -45,6 +45,8 @@ export interface IssueViewProps {
   /** Reads the page of older comments. */
   readonly onLoadOlderComments: () => void
   readonly loadingOlderComments: boolean
+  /** The comment region's write seams: the reply, the attachments, the draft. */
+  readonly commentWrite: IssueCommentWrite
   /** Answers an open ask card. */
   readonly onAnswerDecision: (decision: AgentTeamDecisionView, answers: readonly AgentTeamDecisionAnswer[]) => Promise<string | undefined>
   /** The remotes the execution log reads: the Thread's runs, the live row, Stop. */
@@ -59,7 +61,7 @@ export interface IssueViewProps {
  * comment thread, the activity, the decisions and the execution log. The
  * regions are laid out in that order, and every value in them is the Host's.
  */
-export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, onAnswerDecision, execution, pending, t }: IssueViewProps) {
+export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
   // way the Thread page folds its sidebar. The column is hidden by the
   // stylesheet there and the opener appears; the Modal carries the same
@@ -99,12 +101,15 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
           <IssueDescription description={view.description} authorName={nameOf(view.description.author)} t={t} />
           <IssueComments
             comments={view.comments}
+            decisions={view.decisions}
             nameOf={nameOf}
             humanMemberId={humanMemberId}
             humanName={humanName}
             mentionHandles={mentionHandles}
             onLoadOlder={onLoadOlderComments}
             loadingOlder={loadingOlderComments}
+            members={members}
+            {...commentWrite}
             t={t}
           />
           <IssueActivity activity={view.activity} nameOf={nameOf} t={t} />
