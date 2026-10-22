@@ -24,7 +24,7 @@ The edits are anchored, not a diff: a market release that keeps the anchors need
 
 The upstream change is **dsh-market PR #958**, merged into `main` on 2026-10-20 from `fix/956-serving-port`. It carries the same fence change and completes PR #956, which was closed without being merged (its base was `nightly1014`).
 
-Upstream named the same two symbols this patch introduces — `declaredTrustedHosts` in the fence's own module, `servedAuthority` in the restart fence — so the applier recognises a release that shipped the fix and leaves it alone. No release carries the fix yet: `1.66.37` and `1.66.45` both lack them.
+Upstream named the same two symbols this patch introduces — `declaredTrustedHosts` in the fence's own module, `servedAuthority` in the restart fence — so the applier recognises a release that shipped the fix and leaves it alone. `1.66.37` and `1.66.45` lack them, but `1.66.46` (published 2026-10-21) and every later release carry both: the check detects that shape and treats the patch as a no-op.
 
 ## The two shapes of a published package
 
@@ -61,7 +61,7 @@ The check exercises **both** shapes whichever one it downloaded. A pre-fix packa
 
 **Why:** they are the pristine copy the applier compares against, and the only rollback that does not need the registry.
 
-**Consequence:** the lane's copy of `dshmarket` carries `lib/http.js.orig` and `lib/restart.js.orig`, two files the published package does not have. Nothing imports them, and the deploy's rollback — which removes the patched target and reinstalls it — clears them. The deploy runbook in the train repository states this in one line.
+**Consequence:** the lane's copy of `dshmarket` carries `lib/http.js.orig` and `lib/restart.js.orig`, two files the published package does not have. Nothing imports them, and the deploy's rollback — which removes the patched target and reinstalls it — clears them. The deploy runbook in the train repository states this in one line; that line is still owed to the train repository (M-43) and is not written yet.
 
 ## What to check when dshmarket releases
 
