@@ -3303,14 +3303,36 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   await expect.poll(async () => await row.locator('[data-member-role]').count()).toBe(1)
   await expect.poll(async () => await row.locator('[data-agent-instances]').textContent()).toContain('/')
   await expect.poll(async () => await row.locator('[data-agent-tokens]').textContent()).toBe('0')
-  // The toolbar filters the roster: the presence filter drops a seat that is
-  // not online.
-  const presenceFilter = page.getByLabel('按在线状态筛选')
-  await presenceFilter.selectOption('offline')
+  // The toolbar filters the roster: the presence filter narrows it, and the
+  // reset brings the seat back. Which presence the seat itself carries is the
+  // environment's business, so the spec picks a presence the roster does not
+  // have and watches the list empty. The filter is a menu, so the trigger
+  // names the dimension and the value it currently holds.
+  await page.getByRole('button', { name: '按在线状态筛选: 全部状态' }).click()
+  await page.getByRole('menuitem', { name: '不稳定' }).click()
   await expect.poll(async () => await page.locator('[data-agent-row]').count()).toBe(0)
-  await presenceFilter.selectOption('all')
+  // The reset stands in the toolbar while a dimension narrows the list, and
+  // it clears every dimension at once.
+  const reset = page.getByRole('button', { name: '清除筛选' })
+  await reset.waitFor({ timeout: 30_000 })
+  await reset.click()
   await expect.poll(async () => await page.locator('[data-agent-row]').count()).toBe(1)
   await page.screenshot({ path: join(AGENT_SHOTS, 'agent-roster.png'), fullPage: true })
+
+  // The filter row survives the narrow rail: the count stands beside the
+  // filters, never over one of them, and the whole row stays inside the
+  // viewport.
+  await page.setViewportSize({ width: 390, height: 844 })
+  const countBox = await page.locator('[data-agent-list-count]').boundingBox()
+  const presenceBox = await page.getByRole('button', { name: '按在线状态筛选: 全部状态' }).boundingBox()
+  expect(countBox).not.toBeNull()
+  expect(presenceBox).not.toBeNull()
+  // The count is to the right of the presence trigger, not on top of it.
+  expect(countBox!.x).toBeGreaterThanOrEqual(presenceBox!.x + presenceBox!.width - 1)
+  expect(countBox!.x + countBox!.width).toBeLessThanOrEqual(390)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-roster-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
 
   // The row opens the Agent's own Session; the Runs tab is registered beside
   // the Session's own views and reads the Host's run ledger.

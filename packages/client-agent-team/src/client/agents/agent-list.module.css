@@ -9,64 +9,78 @@
    from one column width to the next. */
 .toolbar {
   align-items: center;
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  grid-template-columns: auto auto minmax(0, 1fr);
   padding: 6px 8px 8px;
 }
 
 .search {
-  grid-column: 1 / -1;
+  flex: 1 1 100%;
   min-width: 0;
   width: 100%;
 }
 
-.field {
-  display: inline-flex;
+/* The filters share the row with the count. Their basis is zero, so the row
+   never breaks between them: the row is handed what is left after the count
+   and the triggers shrink inside it, truncating their label rather than
+   clipping it. */
+.filters {
+  align-items: center;
+  display: flex;
+  flex: 1 1 0%;
+  gap: 6px;
   min-width: 0;
 }
 
-.srOnly {
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  height: 1px;
-  overflow: hidden;
-  position: absolute;
-  white-space: nowrap;
-  width: 1px;
+.filter {
+  display: flex;
+  flex: 0 1 auto;
+  max-width: 160px;
+  min-width: 0;
 }
 
-.select {
-  appearance: none;
-  background: var(--ml-surface, transparent);
-  border: 1px solid var(--ml-border, currentColor);
-  border-radius: 999px;
-  color: var(--ml-text-secondary, inherit);
-  corner-shape: round;
+/* One menu row: the value's name, and room for the check the menu draws. */
+.filterRow {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The reset for the whole toolbar. It is a quiet mark, not a button in its
+   own right: the name it carries is on its accessible name. */
+.clearButton {
+  background: none;
+  border: 0;
+  color: var(--ml-text-tertiary, inherit);
   cursor: pointer;
+  flex: none;
   font: inherit;
   font-size: var(--ml-text-caption, 12px);
-  height: 26px;
-  max-width: 132px;
-  padding: 0 10px;
-  text-overflow: ellipsis;
+  line-height: 1;
+  padding: 2px 4px;
 }
 
-.select:hover {
-  background: var(--ml-surface-hover, transparent);
+.clearButton:hover {
   color: var(--ml-text, inherit);
 }
 
-.select:focus-visible {
+.clearButton:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 1px;
 }
 
+/* The count is the last item in flow, so it stands beside the filters rather
+   than over one of them. */
 .count {
   color: var(--ml-text-tertiary, inherit);
+  flex: none;
   font-size: var(--ml-text-micro, 11px);
   font-variant-numeric: tabular-nums;
-  justify-self: end;
   white-space: nowrap;
 }
 
