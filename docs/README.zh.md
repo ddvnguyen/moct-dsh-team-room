@@ -11,6 +11,7 @@
 | [`development/README.zh.md`](development/README.zh.md) | 安装、命令、生成物、live/UI preview、browser replay 和发布检查 | 开始开发、运行验证、修改 package 或发布布局 |
 | [`development/start-and-checks.zh.md`](development/start-and-checks.zh.md) | 上手与检查梯度 | 开始开发，或判断一次改动该跑哪道门 |
 | [`development/codex-ui-sidebar-patch.zh.md`](development/codex-ui-sidebar-patch.zh.md) | codex-ui 侧栏补丁：原生页签、顶层面板，以及补丁如何持续生效 | 修改侧栏布局，或升级 codex-ui |
+| [`development/dsh-market-trusted-host-patch.zh.md`](development/dsh-market-trusted-host-patch.zh.md) | dsh-market 受信任权威补丁：已发布包的两种形态、补丁所依赖的决定，以及它镜像的上游改动 | 修改 market 补丁、它的检查脚本或背后的决定时 |
 | [`development/generated-and-seams.zh.md`](development/generated-and-seams.zh.md) | 浏览器证据、生成文件、package 接缝与新增 Host operation | 修改生成物、package 接缝或 Host operation |
 | [`development/environments-and-install.zh.md`](development/environments-and-install.zh.md) | 沙箱/CI 环境与外部安装验证 | 在 CI 里跑，或验证已安装的 bundle |
 | [`development/storage-and-delivery.zh.md`](development/storage-and-delivery.zh.md) | Ledger 存储路由、通知回归与交付前核对 | 修改存储路由、通知，或准备交付 |
@@ -54,4 +55,5 @@
 - **改 Client 或 UI：** UI 体系查 [`frontend-design/README.zh.md`](frontend-design/README.zh.md)，跨仓库路线查 [`harness-navigation.zh.md`](harness-navigation.zh.md)。
 - **改安装、构建、测试或 Remote 生成：** 查 [`development/README.zh.md`](development/README.zh.md)，再看对应 `package.json` / script 的实际实现。
 - **发布一个版本：** 流程与各道门查 [`release-runbook.zh.md`](release-runbook.zh.md)；放宽 peer 范围之前必须先做的认证查 [`dsh-release-compatibility.zh.md`](dsh-release-compatibility.zh.md)。
+- **dsh-market 补丁、它的检查脚本或背后的决定：** 已发布包的两种形态与已记录的决定查 [`development/dsh-market-trusted-host-patch.zh.md`](development/dsh-market-trusted-host-patch.zh.md)。
 - **组建或讲解一个团队：** 运维者路线查 [`user/team-board.zh.md`](user/team-board.zh.md)：看板、Task 详情、总览与收件箱。

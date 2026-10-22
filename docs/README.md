@@ -11,6 +11,7 @@ This directory contains the maintained engineering documentation for this reposi
 | [`development/README.md`](development/README.md) | Setup, commands, generated artifacts, live/UI preview, browser replay, and release checks | Starting development, running verification, changing a package, or changing release layout |
 | [`development/start-and-checks.md`](development/start-and-checks.md) | Setup and the verification gradient | Starting work, or deciding which check a change needs |
 | [`development/codex-ui-sidebar-patch.md`](development/codex-ui-sidebar-patch.md) | The codex-ui sidebar patch: native tabs, top-level panels, and how the patch stays applied | Changing the sidebar layout, or updating codex-ui |
+| [`development/dsh-market-trusted-host-patch.md`](development/dsh-market-trusted-host-patch.md) | The dsh-market trusted-authority patch: the two shapes of a published package, the decisions the patch rests on, and the upstream change it mirrors | Changing the market patch, its check, or the decisions behind it |
 | [`development/generated-and-seams.md`](development/generated-and-seams.md) | Browser evidence, generated files, package seams, and adding a Host operation | Touching generated files, package seams, or a Host operation |
 | [`development/environments-and-install.md`](development/environments-and-install.md) | Sandbox/CI environments and external installation verification | Running in CI, or verifying an installed bundle |
 | [`development/storage-and-delivery.md`](development/storage-and-delivery.md) | Ledger storage routing, notification regression, and the delivery checklist | Changing storage routing, notifications, or preparing a delivery |
@@ -54,4 +55,5 @@ Editing or adding a document under `docs/`? Routing branches and the maintenance
 - **Client or UI changes:** [`frontend-design/README.md`](frontend-design/README.md) for the UI system, [`harness-navigation.md`](harness-navigation.md) for the cross-repository route.
 - **Installation, build, tests, or Remote generation:** [`development/README.md`](development/README.md), then the actual `package.json` or script implementation.
 - **Publishing a release:** [`release-runbook.md`](release-runbook.md) for the procedure and its gates, then [`dsh-release-compatibility.md`](dsh-release-compatibility.md) for the certification that must precede any peer-range change.
+- **The dsh-market patch, its check, or the decisions behind it:** [`development/dsh-market-trusted-host-patch.md`](development/dsh-market-trusted-host-patch.md) for the two shapes of a published package and the recorded decisions.
 - **Setting up or explaining a team:** [`user/team-board.md`](user/team-board.md) for the operator's route through the Board, the Task detail, the Overview and the Inbox.
