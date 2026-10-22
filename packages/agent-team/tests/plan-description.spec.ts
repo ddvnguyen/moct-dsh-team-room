@@ -63,7 +63,7 @@ function refusingTable(
   }
 }
 
-async function openLedger(pool: MemoryMediaPool, refusedPromotions = 0): Promise<AgentTeamLedger> {
+async function openLedger(pool: MemoryMediaPool, refusedPromotions = 0): Promise<{ readonly ledger: AgentTeamLedger; readonly table: KvTable<AgentTeamOperationId, AgentTeamOperation> }> {
   const ctx = new Context()
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend(pool))
@@ -79,7 +79,7 @@ async function openLedger(pool: MemoryMediaPool, refusedPromotions = 0): Promise
     { occurredAt: clock },
   )
   await ledger.initialize()
-  return ledger
+  return { ledger, table }
 }
 
 function storedOperations(pool: MemoryMediaPool): AgentTeamOperation[] {
@@ -105,7 +105,7 @@ async function addMember(ledger: AgentTeamLedger, channelRef: AgentTeamChannelRe
 /** One Channel, an author Agent, and a Task the Human opened. */
 async function room(refusedPromotions = 0) {
   const pool = new MemoryMediaPool()
-  const ledger = await openLedger(pool, refusedPromotions)
+  const { ledger, table } = await openLedger(pool, refusedPromotions)
   const channel = (await ledger.createChannel({ requestId: requestId('channel'), workspaceId: alpha,
     name: 'room', description: '', memberIds: [], actor: human })).value.channel
   const ann = await addMember(ledger, channel.channelRef, 'ann')
@@ -113,7 +113,7 @@ async function room(refusedPromotions = 0) {
     body: 'Ship the board', title: 'Ship the board', actor: human })).value
   const taskRef = task.task.taskRef
   const threadRef = task.thread.threadRef
-  return { pool, ledger, channel, ann, task, taskRef, threadRef }
+  return { pool, ledger, table, channel, ann, task, taskRef, threadRef }
 }
 
 /** A plan proposed on the Task: a Doc bound to it, filled in, and submitted. */
@@ -289,6 +289,67 @@ describe('the plan becomes the description', () => {
     const again = await ledger.createDoc({ requestId: requestId('fourth'), workspaceId: alpha, threadRef, taskRef, actor: ann,
       title: 'Fourth plan', outline: ['Goal'] })
     expect(again.value.doc.taskRef).toBe(taskRef)
+  })
+
+  it('10. a cold ledger replays the description, the convergence index, and the forward-only shape', async () => {
+    // A promoted plan, then the Human's own edit on top of it: the record
+    // keeps the plan it came from and carries the edit.
+    const first = await room()
+    const plan = await proposedPlan(first.ledger, first.ann, first.taskRef, first.threadRef)
+    await first.ledger.reviewDoc({ requestId: requestId('approve'), workspaceId: alpha, docRef: plan.docRef, actor: human,
+      docRevision: plan.revision, verdict: 'approve' })
+    const edit = await first.ledger.updateTask({ requestId: requestId('edit'), workspaceId: alpha, taskRef: first.taskRef,
+      baseRevision: first.ledger.threadHistory(human, { workspaceId: alpha, taskRef: first.taskRef, limit: 1 }).thread.revision,
+      patch: { description: 'The Human wrote this.', baseDescriptionRevision: 1 }, actor: human })
+    const edited = committed(edit.value)
+
+    // The edit survives a reload: a cold ledger over the same operations
+    // carries the same record and the same fence.
+    const cold = new AgentTeamLedger(first.table)
+    await cold.initialize()
+    const coldTask = cold.getTask(first.taskRef)
+    expect(coldTask?.description).toEqual(edited.task.description)
+    expect(coldTask?.description).toMatchObject({ body: 'The Human wrote this.', source: 'approvedPlan',
+      author: human.memberId, planRef: plan.docRef })
+    expect(coldTask?.description?.editedAt).toBeDefined()
+    expect(coldTask?.descriptionRevision).toBe(2)
+    const coldView = await cold.issueView(human, { workspaceId: alpha, taskRef: first.taskRef })
+    expect(coldView.description).toMatchObject({ body: 'The Human wrote this.', source: 'approvedPlan', planRef: plan.docRef, revision: 2 })
+
+    // A promotion that landed is not written twice: the read adds no
+    // operation to a ledger that already carries one.
+    const landed = storedOperations(first.pool).length
+    await cold.issueView(human, { workspaceId: alpha, taskRef: first.taskRef })
+    expect(storedOperations(first.pool).length).toBe(landed)
+
+    // The convergence's index survives the restart: a cold ledger over a
+    // ledger whose approval landed and whose promotion was dropped still
+    // repairs on the next read.
+    const half = await room(1)
+    const dropped = await proposedPlan(half.ledger, half.ann, half.taskRef, half.threadRef)
+    await expect(half.ledger.reviewDoc({ requestId: requestId('approve'), workspaceId: alpha, docRef: dropped.docRef, actor: human,
+      docRevision: dropped.revision, verdict: 'approve' })).rejects.toThrow(/the write failed/)
+    const restarted = new AgentTeamLedger(half.table)
+    await restarted.initialize()
+    expect(restarted.getTask(half.taskRef)?.description).toBeUndefined()
+    const repairedView = await restarted.issueView(human, { workspaceId: alpha, taskRef: half.taskRef })
+    expect(repairedView.description).toMatchObject({ body: PLAN_BODY, source: 'approvedPlan', planRef: dropped.docRef, revision: 1 })
+
+    // A promotion that landed is not written twice: the read adds no
+    // operation to a ledger that already carries one.
+    const before = storedOperations(half.pool).length
+    await restarted.issueView(human, { workspaceId: alpha, taskRef: half.taskRef })
+    expect(storedOperations(half.pool).length).toBe(before)
+
+    // The forward-only property: a ledger with no description operation
+    // replays to a Task with no description, and the view reads the anchor.
+    const plain = await room()
+    const plainCold = new AgentTeamLedger(plain.table)
+    await plainCold.initialize()
+    expect(plainCold.getTask(plain.taskRef)?.description).toBeUndefined()
+    expect(plainCold.getTask(plain.taskRef)?.descriptionRevision).toBeUndefined()
+    const plainView = await plainCold.issueView(human, { workspaceId: alpha, taskRef: plain.taskRef })
+    expect(plainView.description).toMatchObject({ body: 'Ship the board', source: 'anchor', revision: 0 })
   })
 
   it('9. a failed repair never fails the read', async () => {
