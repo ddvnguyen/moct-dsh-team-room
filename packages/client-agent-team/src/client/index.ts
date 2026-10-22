@@ -81,6 +81,7 @@ import { TeamSettingsPanelIcon } from './TeamSettingsPanelIcon.tsx'
 import { TeamDetailPage } from './TeamDetailPage.tsx'
 import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
+import { IssueSliceHost } from './issue/IssueSliceHost.tsx'
 import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
 import { TeamSlotBoundary, withSlotBoundary } from './TeamSlotBoundary.tsx'
 import { useShellSidebarCollapsed } from './shell-sidebar.ts'
@@ -96,6 +97,7 @@ const GuardedSettingsPage = withSlotBoundary('main:team-detail', TeamDetailPage 
 const GuardedSettingsSection = withSlotBoundary('settings.section:team-settings', TeamSettingsSection as never)
 const GuardedConversation = withSlotBoundary('main:team', TeamConversation as never)
 const GuardedBoardPanel = withSlotBoundary('main:team-board', TeamBoardPanel as never)
+const GuardedIssueSlice = withSlotBoundary('shell.overlay:agent-team.issue-slice', IssueSliceHost as never)
 import { insertTeamTab, type NativeTabRenderProps } from './team-tab.ts'
 import { AGENT_VIEW_IDS, AGENT_VIEW_ORDER, AgentViewBody, noteAgentSession } from './agent-detail-views.tsx'
 import { TeamBoardPanel } from './board-panel-body.tsx'
@@ -182,12 +184,9 @@ function leaveTeamFromUi(ctx: ClientContext, navigation: TeamNavigation): void {
 function registerTeamPanel(
   ctx: ClientContext,
   navigation: TeamNavigation,
-  queries: TeamQueries,
+  sharedRemotes: Record<string, unknown>,
   reads: TeamReadStream,
-  drafts: TeamDraftStore,
-  humanIdentity: TeamHumanIdentity,
 ): () => void {
-  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
   const dropTeamRow = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',
     id: TEAM_PANEL_ID,
@@ -725,7 +724,20 @@ function applyUi(ctx: ClientContext): void {
   ctx.on('connection/reset', () => { changes.recover(); queries.newGeneration() })
   const reads = new TeamReadStream()
 
-  const dropTeamRow = registerTeamPanel(ctx, navigation, queries, reads, drafts, humanIdentity)
+  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
+  const dropTeamRow = registerTeamPanel(ctx, navigation, sharedRemotes, reads)
+
+  // The issue slice: one dialog in the shell's floating layer, above every
+  // column, so the issue opens over whatever screen the reader is on and the
+  // screen behind it stays live. The slot it reads (M-35's `issueRef` /
+  // `issueVariant`) is the client's own - this card adds no flag.
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'agent-team.issue-slice',
+    order: 100,
+    locale: NS,
+    inject: () => teamSeatInject(ctx, navigation, reads, sharedRemotes, 'main'),
+  }, GuardedIssueSlice as never))
 
   registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
 

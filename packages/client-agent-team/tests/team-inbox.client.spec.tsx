@@ -377,7 +377,7 @@ describe('Team Inbox surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('opens the row Thread through selectWorkspace + selectThread, drops the unread dot, and lands Back on its Channel', async () => {
+  it('opens the row issue as a slice over the Inbox, and lands Back on its Channel', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', seededMessages: [{ body: 'Thread opener', occurredAt: '2026-09-13T03:00:00.000Z' }], remainingUnreadCounts: [0], initialChannels: true, seedThreadRef: 'thread:w2' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     b.seedInbox([inboxRow('w2', 'thread:w2')])
@@ -386,18 +386,14 @@ describe('Team Inbox surfaces', () => {
     fireEvent.click(card)
     const row = await b.view.findByRole('button', { name: /#engineering/ })
     fireEvent.click(row)
-    // The row's own Workspace is selected first, then the Thread: the durable
-    // read consumes the mention, and the persisted location is Thread + its
-    // Channel — never the Inbox.
-    await waitFor(() => expect(b.readThread).toHaveBeenCalled())
-    // The dot drops from the completed read itself — reads never ride a
-    // changes wake.
-    await waitForEntryUnread(card, 0)
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toMatchObject({ mode: 'team', workspaceId: 'w2', channelRef: 'channel:engineering', threadRef: 'thread:w2' })
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).not.toHaveProperty('inbox')
-    // Back goes to the Thread's Channel, not the Inbox.
-    fireEvent.click(await b.view.findByRole('button', { name: '返回频道' }))
-    await waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).not.toHaveProperty('threadRef'))
+    // The row's own Workspace is selected first, then the issue: the issue
+    // opens as a slice over the Inbox — the same seam the board and the Agent
+    // page use. The mention is consumed by the Thread's own read, which the
+    // issue view is not, so the dot stays until the Thread is read.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toMatchObject({ mode: 'team', workspaceId: 'w2', issueRef: 'task:1', issueVariant: 'slice' })
+    // The row's own Workspace is not the seat's, so the seat leaves the Inbox
+    // for it: the issue opens over the face that Workspace is in, and the
+    // Inbox face is gone with the workspace switch.
     expect(b.view.container.querySelector('[data-team-inbox]')).toBeNull()
     await b.runtime.dispose()
   })

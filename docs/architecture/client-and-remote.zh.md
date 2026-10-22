@@ -75,6 +75,8 @@ UI work 的边界如下：
 
   Thread reads 使用 Host projections（`readThread`、`threadHistory`）和 Host mutations（replies、promotion、Task actions）。 当前 Thread UI 不提供 Attention controls 或 observations。这些 controls 的 Host Remote methods 留给后续自有 UI。 Browser 会持久化五样东西。Team navigation mode、Workspace selection、最近选中的 Channel 或 Thread、Inbox 页位置，还有 Overview 页。回到 Team 时恢复位置。unread 或 Attention 不持久化。Overview 页与 Channel 页一样以 Workspace 为范围：选中 Workspace 或 Channel 即离开它，页面数据始终实时读取。
 
+  issue 界面有**同一棵树上的两种呈现**：占满整列的页面，以及浮在当前界面之上的 slice 浮层。slice 只有一个宿主——挂在 shell 的浮层层里——所以底下的界面仍然活着、仍然可交互；它读的是和页面同一个 `issueView` 值，**最大化**在不改变位置的情况下在两者之间切换。窄视口下 slice 退化为页面。打开它只有一个入口——`openIssue(taskRef)`——看板、收件箱、Thread 里被引用的 Task、seat 的 Task 都走它；slice 不新增任何导航标志：`issueRef` / `issueVariant` 那个槽是位置的，slice 是浮层而不是位置。
+
   Issue 界面是与这些 face 正交的一个 slot，不是新的 face：snapshot 里记着当前打开的 issue 所属的 Task 以及它的呈现方式（整列的页面，或浮在当前 face 之上的对话框），底下的 face 原地不动，关闭 issue 就回到原处。issue 的内容是 Host 的 `issueView` 快照——每个 issue 一次读取，不带 variant——client 渲染它携带的七个 region；呈现方式是 client 的事，永远不是读模型上的字段。
 
   Agent Inbox 仍由 Host 持有，并通过 `team_inbox` 提供。

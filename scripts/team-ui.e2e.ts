@@ -3840,6 +3840,79 @@ it('posts a comment on the issue, keeps it across a reload, and nests the reply 
 }, 300_000)
 
 /**
+ * The issue slice (M-38): the issue opens as a dialog over the board, the
+ * board stays live behind it, Maximize turns it into the page, and the narrow
+ * viewport degrades back to the page.
+ *
+ * The journey drives the board the way a reader does — the card click — and
+ * reads the two presentations the slot names: the dialog over the board, and
+ * the whole-column page.
+ */
+it('opens the issue as a slice over the board, maximizes it to the page, and degrades to the page when narrow', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-slice-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Slice Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+  }
+  await team.createChannel({ requestId: 'issue-slice-journey-channel', workspaceId, name: 'delivery', description: 'Issue slice journey' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // One Task on the board, so the card pick has somewhere to go.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Issue slice task')
+  await dialog.getByLabel('描述').fill('The task the slice opens')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Issue slice task' })
+  await card.waitFor({ timeout: 20_000 })
+
+  // The card opens the issue as a slice: a dialog over the board, and the
+  // board behind it is still there.
+  await card.click()
+  const slice = page.locator('[data-team-issue-slice]')
+  await slice.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => page.locator('[role="dialog"]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => slice.getByText('Issue slice task').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-over-the-board.png'), fullPage: true })
+
+  // Maximize is the variant switch: the same issue, the whole-column page.
+  await slice.getByRole('button', { name: '最大化' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page-from-the-slice.png'), fullPage: true })
+
+  // The page closes back to the face it was opened over.
+  await page.getByRole('button', { name: '关闭 Issue' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+
+  // The narrow viewport degrades the slice to the page: the wide overlay
+  // stops working there, and the issue stays open.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await card.click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-narrow.png'), fullPage: true })
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
  * The Orchestrator digest (Team Board 9/10): the Host's own timer wakes the
  * Orchestrator, the Orchestrator posts one digest into its Channel, and the
  * Human reads it where every other Team message is read.

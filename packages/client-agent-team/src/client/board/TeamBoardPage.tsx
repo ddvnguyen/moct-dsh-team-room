@@ -98,6 +98,8 @@ export interface TeamBoardPageProps {
   readonly changeTask: TeamConversationProps['changeTask']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly selectThread: TeamConversationProps['selectThread']
+  /** The global opener: the issue opens as a slice over the board. */
+  readonly openIssue: TeamConversationProps['openIssue']
   readonly t: TeamSidebarProps['t']
 }
 
@@ -138,7 +140,7 @@ function useRequestIds() {
   }), [])
 }
 
-export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, selectThread, t }: TeamBoardPageProps) {
+export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, selectThread, openIssue, t }: TeamBoardPageProps) {
   const [rows, setRows] = useState<readonly BoardCardTask[]>()
   const [channels, setChannels] = useState<readonly { readonly channelRef: AgentTeamChannelRef; readonly name: string }[]>([])
   const [members, setMembers] = useState<readonly AssigneeOption[]>([])
@@ -474,8 +476,11 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   }, [beginCardSettle, conclude, requestIds, updateTask, workspaceId])
 
   const handleCardClick = useCallback((task: BoardCardTask) => {
-    selectThread(task.threadRef, task.channelRef, task.taskRef, task.taskNumber)
-  }, [selectThread])
+    // The card opens the issue as a slice over the board (D1, re-scoped on
+    // 2026-10-21): the board stays visible behind the dialog, and Maximize
+    // turns it into the page.
+    openIssue(task.taskRef, 'slice')
+  }, [openIssue])
 
   const handleCreate = useCallback(async (request: { readonly channelRef: AgentTeamChannelRef; readonly title: string; readonly body: string; readonly priority?: AgentTeamTaskPriority; readonly assignee?: AgentTeamMemberId | null }) => {
     const payload = {

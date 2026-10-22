@@ -46,7 +46,7 @@ import { makeTimeAgo } from './multica/time-ago.ts'
 import { normalizePriority } from './multica/priority.ts'
 import look from './multica-look.module.css'
 import detailCss from './thread-detail.module.css'
-import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
+import { hostTaskRefLookup } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
@@ -87,6 +87,8 @@ interface TeamThreadPageProps {
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly selectThread: TeamConversationProps['selectThread']
+  /** The global opener: a cited Task opens as an issue slice over the Thread. */
+  readonly openIssue: TeamConversationProps['openIssue']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
@@ -152,7 +154,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
+    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, openIssue, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, updateTask, stopSession,
     changeAttention, loadDocs, reviewDoc, loadDecisions, answerDecision, selectDoc,
     subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, inLane = false, t,
@@ -668,8 +670,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       return
     }
     if (ref.startsWith('task:') && ref !== taskRef) {
-      // Another Task cited here: resolve its home Channel and jump.
-      jumpToTaskThread(resolveTaskRefs, workspaceId, ref as AgentTeamTaskRef, selectThread)
+      // Another Task cited here: open it as an issue slice over this Thread,
+      // the same seam the board and the Inbox use.
+      openIssue(ref as AgentTeamTaskRef, 'slice')
     }
   }, [channelRef, threadRef, taskRef, workspaceId, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs])
 

@@ -349,7 +349,10 @@ describe('Team board page', () => {
     expect(card.hasAttribute('tabindex')).toBe(false)
     expect(card.getAttribute('role')).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: 'Alpha task' }))
-    await waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').threadRef).toBe('thread:a'))
+    // The card opens the issue as a slice over the board: the board stays
+    // behind the dialog, and Maximize turns it into the page.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').issueRef).toBe('task:a'))
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').issueVariant).toBe('slice')
     await b.runtime.dispose()
   })
 

@@ -54,6 +54,10 @@ The Human Client consumes the Host's Inbox projection (the 「收件箱 / Inbox�
 
 Team navigation mode, Workspace selection, the last Channel/Thread, the Inbox page position and the Board page position are browser-persisted; unread and Attention are Host-owned. The workspace Overview is not a navigation face: it lives in the Team Detail page, keeps its own Workspace scope, and always reads its data live.
 
+The issue surface has **two presentations over one tree**: the page, which takes the whole column, and the slice, a dialog over whatever screen the reader is on. The slice is one host in the shell's floating layer, so the face behind it stays live and interactive; it reads the same `issueView` value the page reads, and **Maximize** moves between the two without changing the position. The narrow viewport degrades the slice to the page.
+
+One seam opens it — `openIssue(taskRef)` — from the board, the Inbox, a Task cited in a Thread and a seat's Task, and the slice adds no navigation flag of its own: the `issueRef` / `issueVariant` slot is the position's, and the slice is an overlay rather than a place.
+
 The issue surface is an orthogonal slot over those faces, not a face of its own: the snapshot carries the Task whose issue is open and how it is presented (the whole-column page, or the dialog over the live face), the face behind it stays where it was, and closing the issue returns the reader to it. The issue's content is the Host's `issueView` snapshot — one read per issue, variant-agnostic — and the client renders the seven regions it carries; the presentation is the client's, never a field on the read model.
 
 The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage` preference, merged over Remote defaults.
