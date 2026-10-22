@@ -3671,6 +3671,97 @@ it('walks the Team Board journey in real Web', async () => {
 }, 300_000)
 
 /**
+ * The issue view (M-35): the Host's read model for one issue, shown as the
+ * whole column over the face the reader is on.
+ *
+ * The journey opens the board, takes a Task from the card the board renders —
+ * the card's own `data-task-ref` — and opens the issue through the navigation
+ * slot the page reads. It then renames the issue and reloads: the title is the
+ * Host's fact, so the edit is still there after the reload.
+ */
+it('opens the issue view, renames the issue, and keeps the edit across a reload in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+  }
+  const channel = await team.createChannel({ requestId: 'issue-journey-channel', workspaceId, name: 'delivery', description: 'Issue journey' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The board is a navigation face: the persisted snapshot is how the reader
+  // reaches it, and a reload reopens it.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // One Task on the board: the issue reads it, so the journey creates it the
+  // way a Human does.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Issue journey task')
+  await dialog.getByLabel('描述').fill('The body the issue view reads')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Issue journey task' })
+  await card.waitFor({ timeout: 20_000 })
+  const taskRef = await card.getAttribute('data-task-ref')
+  expect(taskRef).toBeTruthy()
+
+  // The issue slot: the Task whose issue surface is open, and how it is
+  // presented. The face flags stay, so the board is still behind the issue.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      mode: 'team', workspaceId: id, board: true, issueRef: ref, issueVariant: 'page',
+    }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  const issue = page.locator('[data-team-issue-page]')
+  await issue.waitFor({ timeout: 30_000 })
+  // The seven regions are all there, populated from the Host's one snapshot.
+  // The region headings are the assertion: the empty states name their region
+  // too, so a bare text match would count two.
+  await expect.poll(async () => issue.getByRole('button', { name: '编辑标题' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByText('The body the issue view reads').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByText('状态', { exact: true }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '描述' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '评论' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '动态' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '决策' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '执行记录' }).count(), { timeout: 30_000 }).toBe(1)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page.png'), fullPage: true })
+
+  // The title is the Human's to change, and the write is not optimistic: the
+  // Host commits it and the change-wake refetches.
+  await issue.getByRole('button', { name: '编辑标题' }).click()
+  const title = issue.getByRole('textbox', { name: '编辑标题' })
+  await title.fill('Issue journey task, renamed')
+  await title.press('Enter')
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { taskRef: string }) => task.taskRef === taskRef)?.title, { timeout: 20_000 }).toBe('Issue journey task, renamed')
+  await expect.poll(async () => issue.getByRole('button', { name: '编辑标题' }).textContent(), { timeout: 20_000 }).toBe('Issue journey task, renamed')
+
+  // A reload does not lose the issue: the slot is durable, and the title is
+  // the Host's fact, so the rename is still there. The Team page is entered
+  // the way a reader enters it — the shell owns the mode, the slot is ours.
+  await page.reload()
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  const reopened = page.locator('[data-team-issue-page]')
+  await reopened.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => reopened.getByRole('button', { name: '编辑标题' }).textContent(), { timeout: 30_000 }).toBe('Issue journey task, renamed')
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
  * The Orchestrator digest (Team Board 9/10): the Host's own timer wakes the
  * Orchestrator, the Orchestrator posts one digest into its Channel, and the
  * Human reads it where every other Team message is read.

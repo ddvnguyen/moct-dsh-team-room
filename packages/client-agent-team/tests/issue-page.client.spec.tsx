@@ -1,0 +1,169 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import type {
+  AgentTeamClientMemberStatus,
+  AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRef,
+  AgentTeamIssueComment,
+  AgentTeamIssueView,
+  AgentTeamMemberId,
+  AgentTeamMessageRef,
+  AgentTeamTaskRef,
+  AgentTeamTaskResult,
+  AgentTeamThreadHistory,
+  AgentTeamThreadRef,
+  AgentTeamUpdateTaskResult,
+  AgentTeamView,
+} from '@ddvnguyen/moct-dsh-team-room/types'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import { zh } from '../src/client/locales.ts'
+import type { TeamConversationProps } from '../src/client/slots.ts'
+import { IssuePage } from '../src/client/issue/IssuePage.tsx'
+
+const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
+  let value: string = zh[key]
+  for (const [name, replacement] of Object.entries(params ?? {})) value = value.replace(`{${name}}`, String(replacement))
+  return value
+}) as TeamConversationProps['t']
+
+afterEach(cleanup)
+
+const workspaceId = 'workspace:alpha' as WorkspaceId
+const channelRef = 'channel:room' as never
+const threadRef = 'thread:one' as AgentTeamThreadRef
+const taskRef = 'task:one' as AgentTeamTaskRef
+const human = 'member:human' as AgentTeamMemberId
+const ann = 'member:agent-ann' as AgentTeamMemberId
+
+const anchorRef = 'message:1' as AgentTeamMessageRef
+const askRef = 'message:50' as AgentTeamMessageRef
+
+function message(ref: string, body: string, sequence: number): AgentTeamIssueComment {
+  return {
+    kind: 'message',
+    sequence,
+    message: {
+      messageRef: ref as AgentTeamMessageRef,
+      channelRef,
+      threadRef,
+      sender: ann,
+      body,
+      topLevel: true,
+      sequence,
+      occurredAt: '2026-10-22T01:00:00.000Z',
+    },
+    mentions: [],
+    occurredAt: '2026-10-22T01:00:00.000Z',
+  }
+}
+
+function issueView(overrides: Partial<AgentTeamIssueView> = {}): AgentTeamIssueView {
+  return {
+    task: { taskRef, channelRef, threadRef, status: 'todo', resolution: 'open', position: 0 },
+    thread: { threadRef, taskRef, revision: 7 },
+    taskNumber: 12,
+    title: 'Ship the issue view',
+    description: { body: 'The anchor body.', author: human, occurredAt: '2026-10-22T01:00:00.000Z', source: 'anchor', revision: 0 },
+    properties: {
+      status: 'todo',
+      resolution: 'open',
+      priority: 'none',
+      position: 0,
+      channelRef,
+      channelName: 'Room',
+      taskNumber: 12,
+      claimOwners: [],
+      planningPhase: true,
+      createdAt: '2026-10-22T01:00:00.000Z',
+      updatedAt: '2026-10-22T02:00:00.000Z',
+    },
+    // The newest page: two comments, the oldest of them at sequence 100.
+    comments: { items: [message('message:100', 'Newest comment.', 100), message('message:101', 'Newest reply.', 101)], hasMore: true, cursor: 100 },
+    activity: { items: [], hasMore: false },
+    // The ask card owns its message: the comment region must not repeat it.
+    decisions: [{ kind: 'card', card: { decisionRef: 'decision:1' as AgentTeamDecisionRef, channelRef, threadRef, asker: ann, messageRef: askRef, askedAt: '2026-10-22T01:00:00.000Z', status: 'open', questions: [] } }],
+    executionLog: { sessions: [], failures: [] },
+    docs: [],
+    ...overrides,
+  }
+}
+
+function history(facts: readonly AgentTeamIssueComment[], hasMore: boolean): AgentTeamThreadHistory {
+  return {
+    thread: { threadRef, taskRef, revision: 7 },
+    anchor: { messageRef: anchorRef, channelRef, threadRef, sender: human, body: 'The anchor body.', topLevel: true, sequence: 1, occurredAt: '2026-10-22T00:00:00.000Z' },
+    anchorMentions: [],
+    claims: [],
+    facts,
+    cursor: facts[0]?.sequence ?? 0,
+    hasMore,
+  } as unknown as AgentTeamThreadHistory
+}
+
+interface Harness {
+  readonly loadThreadHistory: ReturnType<typeof vi.fn>
+  readonly view: ReturnType<typeof render>
+}
+
+function renderPage(options: {
+  readonly pages: readonly AgentTeamThreadHistory[]
+}): Harness {
+  const loadThreadHistory = vi.fn(async () => ({ ok: true as const, value: options.pages[loadThreadHistory.mock.calls.length - 1] ?? options.pages[0]! }))
+  const view = render(
+    <IssuePage
+      workspaceId={workspaceId}
+      taskRef={taskRef}
+      loadIssueView={vi.fn(async () => ({ ok: true as const, value: issueView() }))}
+      loadMembers={vi.fn(async () => ({ ok: true as const, value: [] as readonly AgentTeamClientMemberStatus[] }))}
+      loadChannels={vi.fn(async () => ({ ok: true as const, value: { humanMemberId: human } as unknown as AgentTeamView }))}
+      humanName="ddvnguyen"
+      loadThreadHistory={loadThreadHistory}
+      updateTask={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } as unknown as AgentTeamUpdateTaskResult }))}
+      changeTask={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } as unknown as AgentTeamTaskResult }))}
+      answerDecision={vi.fn(async () => ({ ok: true as const, value: {} as unknown as AgentTeamDecisionNoticeResult }))}
+      loadThreadSessions={vi.fn(async () => ({ ok: true as const, value: [] }))}
+      loadMemberActivity={vi.fn(async () => ({ ok: true as const, value: { revision: 0, activities: [] } }))}
+      threadTurnFailures={vi.fn(async () => ({ ok: true as const, value: [] }))}
+      openMemberSession={vi.fn()}
+      stopSession={vi.fn(async () => ({ ok: true as const, value: { accepted: true as const } }))}
+      subscribeChanges={vi.fn(() => () => {})}
+      closeIssue={vi.fn()}
+      t={t}
+    />,
+  )
+  return { loadThreadHistory, view }
+}
+
+describe('IssuePage', () => {
+  it('pages the older comments with the merged cursor, and never repeats a page', async () => {
+    // The first older page carries the Thread's anchor, the ask of a decision
+    // card, and one real comment.
+    const first = history([message(anchorRef, 'The anchor body.', 1), message(askRef, 'The ask body.', 50), message('message:51', 'Older comment.', 51)], true)
+    const second = history([message('message:10', 'Oldest comment.', 10)], false)
+    const harness = renderPage({ pages: [first, second] })
+    await waitFor(() => { expect(harness.view.getByText('Newest comment.')).toBeTruthy() })
+
+    const more = harness.view.getByRole('button', { name: zh.issueCommentsMore })
+    fireEvent.click(more)
+    await waitFor(() => { expect(harness.loadThreadHistory).toHaveBeenCalledTimes(1) })
+    // The first page is read from the newest page's cursor.
+    expect(harness.loadThreadHistory.mock.calls[0]![0]).toMatchObject({ beforeSequence: 100 })
+    // The anchor and the ask never enter the comment list: the description and
+    // the decisions own them. The anchor's body is the description's body, so
+    // it appears once — as the description — and never as a comment.
+    await waitFor(() => { expect(harness.view.getByText('Older comment.')).toBeTruthy() })
+    expect(harness.view.getAllByText('The anchor body.')).toHaveLength(1)
+    expect(harness.view.queryByText('The ask body.')).toBeNull()
+
+    // The second page is read from the first older page's oldest comment, not
+    // from the newest page's cursor — the newest page never moves.
+    fireEvent.click(harness.view.getByRole('button', { name: zh.issueCommentsMore }))
+    await waitFor(() => { expect(harness.loadThreadHistory).toHaveBeenCalledTimes(2) })
+    expect(harness.loadThreadHistory.mock.calls[1]![0]).toMatchObject({ beforeSequence: 51 })
+    await waitFor(() => { expect(harness.view.getByText('Oldest comment.')).toBeTruthy() })
+    // No comment is listed twice.
+    expect(harness.view.getAllByText('Older comment.')).toHaveLength(1)
+    expect(harness.view.getAllByText('Newest comment.')).toHaveLength(1)
+  })
+})
