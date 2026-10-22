@@ -152,6 +152,8 @@ import type {
   AgentTeamAnswerDecisionRequest,
   AgentTeamAskDecisionRequest,
   AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRecordsRequest,
+  AgentTeamDecisionRecordsResult,
   AgentTeamDecisionRequest,
   AgentTeamDecisionView,
   AgentTeamDecisionsRequest,
@@ -221,6 +223,8 @@ import type {
   AgentTeamColdFallback,
   AgentTeamResumeMemberSessionResult,
   AgentTeamForkMemberSessionResult,
+  AgentTeamIssueView,
+  AgentTeamIssueViewRequest,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -236,6 +240,7 @@ export { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTI
 export { humanAvatarsRoot } from './human-avatar.ts'
 export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
 export { decisionAnswersText } from './team-decisions.ts'
+export { isPlanningPhase } from './issue-view.ts'
 export { TEAM_MEMORY_HOMES, TEAM_MEMORY_STATUSES, TEAM_MEMORY_TYPES, TeamMemoryClient, TeamMemoryError } from './team-memory.ts'
 export { TeamMemoryHuman, memoryOutcome } from './team-memory-human.ts'
 export type { TeamMemoryHumanContext } from './team-memory-human.ts'
@@ -3007,6 +3012,13 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().decisions(agentTeamHumanActor(), request)
   }
 
+  /** Human read of the decision records of one Task, oldest first. */
+  @Remote('decisionRecords')
+  decisionRecords(request: AgentTeamDecisionRecordsRequest): AgentTeamDecisionRecordsResult {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().decisionRecords(agentTeamHumanActor(), request)
+  }
+
   /** Human answer to one open decision card; its Thread notice wakes the asker. */
   @Remote('answerDecision')
   async answerDecision(request: AgentTeamAnswerDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
@@ -3020,6 +3032,13 @@ export default class AgentTeam extends TypertRemoteService {
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().view(request)
+  }
+
+  /** Human's read model for one issue: the seven regions in one snapshot. */
+  @Remote('issueView')
+  async issueView(request: AgentTeamIssueViewRequest): Promise<AgentTeamIssueView> {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().issueView(agentTeamHumanActor(), request)
   }
 
   /** Agent-only top-level Thread start. Workspace identity is verified against the live binding. */

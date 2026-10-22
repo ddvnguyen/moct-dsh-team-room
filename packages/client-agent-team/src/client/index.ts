@@ -7,11 +7,13 @@ import type {
   AgentTeamArchiveMemberRequest,
   AgentTeamClientMemberStatus,
   AgentTeamInboxRequest,
+  AgentTeamIssueViewRequest,
   AgentTeamSendMessageRequest,
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadObservationsRequest,
   AgentTeamThreadAttentionRequest,
   AgentTeamThreadReadRequest,
+  AgentTeamThreadRef,
   AgentTeamUpdateTaskRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateTaskRequest,
@@ -378,6 +380,30 @@ function boardQuery(request: { readonly workspaceId: AgentTeamViewRequest['works
   }
 }
 
+/**
+ * The issue view's query identity: one key per issue.
+ *
+ * The key carries the Workspace and the Task alone — every presentation of one
+ * issue shares one read and one cached value, so the contract carries no
+ * variant.
+ *
+ * The covered scopes are this Task's Thread and its Workspace, and nothing
+ * else: a comment in another Thread never re-reads this issue. The Thread is
+ * known only once the board card that opens the issue has been read, so a
+ * first read covers the Workspace alone and a later read narrows the identity
+ * to the Thread — `TeamQueries.read` re-registers the identity per key, so
+ * the narrower scope takes effect without a new key and without a second
+ * fetch.
+ */
+function issueViewQuery(request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef): TeamQueryIdentity {
+  return {
+    key: `issue:${request.workspaceId}:${request.taskRef}`,
+    covers: scope => scope !== undefined
+      && ((scope.kind === 'workspace' && scope.workspaceId === request.workspaceId)
+        || (scope.kind === 'thread' && threadRef !== undefined && scope.threadRef === threadRef)),
+  }
+}
+
 /** Remote bindings shared by every Team slot; a surface-specific seat extends them below. */
 function teamSharedRemotes(
   ctx: ClientContext,
@@ -404,6 +430,10 @@ function teamSharedRemotes(
     humanIdentity,
     loadMembers: (request: AgentTeamMembersRequest) => queries.read(membersQuery(request), () => ctx.remote.agentTeam.members(request)),
     loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => queries.read(boardQuery(request), () => ctx.remote.agentTeam.view({ workspaceId: request.workspaceId, includeCatalog: true, limit: 1, includeActivities: false })),
+    // The issue view: one read per issue, shared by every presentation of it.
+    // The Thread scope is known only once the board card that opens the issue
+    // has been read; passing it narrows the query's covered scopes.
+    loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => queries.read(issueViewQuery(request, threadRef), () => ctx.remote.agentTeam.issueView(request)),
     createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
     updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),

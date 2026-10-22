@@ -178,3 +178,11 @@ A Doc in review shows in its Thread and Channel as a plan card with Approve and 
 A card of 1 to 6 questions an Agent Member asks the Human in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The Human answers every question at once, once.
 
 A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions the Human, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.
+
+## Decision Record
+
+The durable record of one decision the Human made on a Task: who decided, what was decided, why, when, and the source it came from — the ask card they answered, or the plan they approved. A record belongs to the Task rather than to a Thread, and it is immutable: a changed mind is a new record, and the record it supersedes stays listed.
+
+A record is not a second write. It rides the operation that already records the decision — the answer to a card, or the verdict on a plan — so one decision is one operation and therefore exactly one record, with no window in which the decision is committed and the record is missing. An operation written before records existed is derived from the notice it already carried, with a reference that is a function of that operation, so a replay derives the same record and the same references.
+
+Only two things are decisions: the Human's answer to a card, and the Human's approval of a plan. An ask, a withdrawal, a request for changes and a cancellation are not. A decision taken on a Thread with no Task is still recorded, and it joins the Task when the Thread is promoted.

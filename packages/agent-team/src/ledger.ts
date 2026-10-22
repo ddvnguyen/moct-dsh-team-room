@@ -55,8 +55,14 @@ import type {
   AgentTeamDocCreatedOperation,
   AgentTeamAnswerDecisionRequest,
   AgentTeamAskDecisionRequest,
+  AgentTeamDecisionAnswer,
   AgentTeamDecisionNotice,
   AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRecord,
+  AgentTeamDecisionRecordPayload,
+  AgentTeamDecisionRecordRef,
+  AgentTeamDecisionRecordsRequest,
+  AgentTeamDecisionRecordsResult,
   AgentTeamDecisionRef,
   AgentTeamDecisionRequest,
   AgentTeamDecisionView,
@@ -86,6 +92,9 @@ import type {
   AgentTeamInboxDelta,
   AgentTeamInboxItem,
   AgentTeamInitializedOperation,
+  AgentTeamIssueDecision,
+  AgentTeamIssueView,
+  AgentTeamIssueViewRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
   AgentTeamMemberActor,
@@ -209,17 +218,21 @@ import type { AgentTeamRepliedThread } from './turn-threads.ts'
 import { AGENT_TEAM_MAX_INSTANCES, assertInstances, memberInstances } from './member-instances.ts'
 import { assertMemberRole } from './member-roles.ts'
 import type { AgentTeamDocState } from './team-docs.ts'
-import type { AgentTeamDecisionState } from './team-decisions.ts'
+import type { AgentTeamDecisionRecordState, AgentTeamDecisionState } from './team-decisions.ts'
 import {
   askedDecisionState,
   closedDecisionState,
   decisionAnswerBody,
   decisionAskBody,
+  decisionRationale,
+  decisionRecordView,
+  decisionSummary,
   decisionView,
   decisionWithdrawBody,
   normalizeDecisionAnswers,
   normalizeDecisionContext,
   normalizeDecisionQuestions,
+  planApprovalSummary,
 } from './team-decisions.ts'
 import {
   createdDocState,
@@ -540,7 +553,7 @@ export interface AgentTeamAuthorizedReviewDocRequest extends AgentTeamReviewDocR
 export interface AgentTeamLedgerOptions {
   readonly operationId?: () => AgentTeamOperationId
   readonly occurredAt?: () => string
-  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') => string
+  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision' | 'decisionRecord') => string
 }
 
 /** Internal append result indicating whether this call committed a new record. */
@@ -670,6 +683,12 @@ interface Projection {
   readonly decisions: Map<AgentTeamDecisionRef, AgentTeamDecisionState>
   /** Decision cards per Thread, in ask order. */
   readonly decisionsByThread: Map<AgentTeamThreadRef, AgentTeamDecisionRef[]>
+  /** Recorded decisions, folded from the decision record an operation carries, or derived from the notice it already carried. */
+  readonly decisionRecords: Map<AgentTeamDecisionRecordRef, AgentTeamDecisionRecordState>
+  /** Recorded decisions per Thread, in the order they were recorded. */
+  readonly decisionRecordsByThread: Map<AgentTeamThreadRef, AgentTeamDecisionRecordRef[]>
+  /** Recorded decisions per Task, in the order they were recorded. */
+  readonly decisionRecordsByTask: Map<AgentTeamTaskRef, AgentTeamDecisionRecordRef[]>
 }
 
 /** Minimal replay-time Attention observation; the read projection adds the current Task ref. */
@@ -677,6 +696,15 @@ interface AgentTeamAttentionObservation {
   readonly sequence: number
   readonly memberId: AgentTeamMemberId
   readonly action: 'follow' | 'unfollow'
+}
+
+/**
+ * The recordRef of a record derived from an operation: a function of the
+ * operation, never minted, so a replay of the same ledger derives the same
+ * ref and the indexes keep the same keys.
+ */
+function derivedDecisionRecordRef(operationId: AgentTeamOperationId): AgentTeamDecisionRecordRef {
+  return `decisionRecord:${operationId}` as AgentTeamDecisionRecordRef
 }
 
 function sessionTurnKey(sessionId: SessionId, turn: number): string {
@@ -723,7 +751,8 @@ function emptyProjection(): Projection {
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map(),
-    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map() }
+    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map(),
+    decisionRecords: new Map(), decisionRecordsByThread: new Map(), decisionRecordsByTask: new Map() }
 }
 
 /**
@@ -984,7 +1013,7 @@ export class AgentTeamLedger {
   private readonly confirmations = new Map<AgentTeamConfirmationToken, Confirmation>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
-  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') => string
+  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision' | 'decisionRecord') => string
   private operationTail: Promise<void> = Promise.resolve()
   /**
    * Runtime human display name. Durable identity stays `member:human`; only
@@ -2122,6 +2151,7 @@ export class AgentTeamLedger {
       if (existing !== undefined) {
         if (existing.kind !== 'team/doc-created' || !this.sameActor(existing.actor, request.actor) || existing.data.workspaceId !== request.workspaceId
           || existing.data.doc.threadRef !== request.threadRef || existing.data.doc.title !== title
+          || existing.data.doc.taskRef !== request.taskRef
           || !this.sameList(existing.data.sections.map(section => section.heading), outline)) this.throwRequestCollision(request.requestId)
         return this.resolved(this.createDocResult(existing))
       }
@@ -2129,9 +2159,19 @@ export class AgentTeamLedger {
       const { thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, { threadRef: request.threadRef })
       if (title === '') throw new Error('Doc title must not be empty')
       if (outline.some(heading => heading === '')) throw new Error('Doc outline headings must not be empty')
+      // A Doc bound to an issue lives in that Task's Thread: the plan's submit
+      // and review notices are read with the issue, and a plan of another
+      // Task's Thread would be read with the wrong issue.
+      const taskRef = request.taskRef
+      if (taskRef !== undefined) {
+        const task = this.state.tasks.get(taskRef)
+        if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
+        if (task.threadRef !== thread.threadRef) throw new Error(`Task '${taskRef}' does not belong to Thread '${thread.threadRef}'`)
+      }
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
-      const doc: AgentTeamDoc = Object.freeze({ docRef: this.ref('doc'), channelRef, threadRef: thread.threadRef, author: actor.memberId, title, createdAtSequence: sequence })
+      const doc: AgentTeamDoc = Object.freeze({ docRef: this.ref('doc'), channelRef, threadRef: thread.threadRef,
+        ...(taskRef === undefined ? {} : { taskRef }), author: actor.memberId, title, createdAtSequence: sequence })
       const operation: AgentTeamDocCreatedOperation = Object.freeze({
         ...base, kind: 'team/doc-created',
         data: Object.freeze({ workspaceId: request.workspaceId, doc, sections: outlineSections(outline) }),
@@ -2319,7 +2359,8 @@ export class AgentTeamLedger {
       const notice: AgentTeamDocNotice = Object.freeze({ docRef: state.doc.docRef, event: 'reviewed', docRevision: state.revision,
         verdict: request.verdict, commentRefs: Object.freeze([...commentRefs]) })
       const body = docReviewNoticeBody(state.doc, author.handle, notice, request.note, humanEditedDocHeadings(state, humanMemberId))
-      const operation = this.docNoticeOperation(request, state, body, [author.memberId], notice)
+      const record = request.verdict === 'approve' ? this.planApprovalRecord(state, request.note) : undefined
+      const operation = this.docNoticeOperation(request, state, body, [author.memberId], notice, record)
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.docNoticeResult(operation))
@@ -2377,7 +2418,8 @@ export class AgentTeamLedger {
       }
       const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'answered' as const, answers })
       const body = decisionAnswerBody(asker.handle, state.decisionRef, state.questions, answers)
-      const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId], { decision: notice })
+      const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId],
+        { decision: notice, decisionRecord: this.answerDecisionRecord(state, answers) })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2405,10 +2447,43 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * The decision fact the Human's answer records, attached to the very
+   * operation that answers the card: one decision, one operation, one record.
+   */
+  private answerDecisionRecord(state: AgentTeamDecisionState, answers: readonly AgentTeamDecisionAnswer[]): AgentTeamDecisionRecordPayload {
+    const taskRef = this.state.threads.get(state.threadRef)?.taskRef
+    return Object.freeze({
+      recordRef: this.ref('decisionRecord'),
+      ...(taskRef === undefined ? {} : { taskRef }),
+      decided: decisionSummary(state.questions, answers),
+      rationale: decisionRationale(answers),
+      source: Object.freeze({ kind: 'ask' as const, decisionRef: state.decisionRef, messageRef: state.messageRef }),
+    })
+  }
+
+  /**
+   * The decision fact the Human's approval records, attached to the very
+   * operation that carries the verdict. The plan's Task is the Task its Thread
+   * is bound to; M-39's durable `AgentTeamDoc.taskRef` takes precedence once
+   * that card lands.
+   */
+  private planApprovalRecord(state: AgentTeamDocState, note: string | undefined): AgentTeamDecisionRecordPayload {
+    const taskRef = this.state.threads.get(state.doc.threadRef)?.taskRef
+    return Object.freeze({
+      recordRef: this.ref('decisionRecord'),
+      ...(taskRef === undefined ? {} : { taskRef }),
+      decided: planApprovalSummary(state.doc.title),
+      rationale: note?.trim() ?? '',
+      source: Object.freeze({ kind: 'plan' as const, docRef: state.doc.docRef, docRevision: state.revision }),
+    })
+  }
+
   /** One decision card, for a reader allowed in its Channel. */
   decision(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDecisionRequest): AgentTeamDecisionView {
     const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
-    return decisionView(this.decisionForActor(authorized, request.workspaceId, request.decisionRef))
+    const state = this.decisionForActor(authorized, request.workspaceId, request.decisionRef)
+    return decisionView(state, this.state.threads.get(state.threadRef)?.taskRef)
   }
 
   /** The decision cards of one Thread, oldest first. */
@@ -2417,9 +2492,40 @@ export class AgentTeamLedger {
     const { thread } = this.threadContextForActor(authorized, request.workspaceId, { threadRef: request.threadRef })
     const decisions = (this.state.decisionsByThread.get(thread.threadRef) ?? []).flatMap(decisionRef => {
       const state = this.state.decisions.get(decisionRef)
-      return state === undefined ? [] : [decisionView(state)]
+      return state === undefined ? [] : [decisionView(state, thread.taskRef)]
     })
     return Object.freeze({ decisions: Object.freeze(decisions) })
+  }
+
+  /**
+   * The decision records of one Task, oldest first. The records are the
+   * owner's decisions on that Task: who decided, what was decided, why, when,
+   * and the source it came from.
+   */
+  decisionRecords(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamDecisionRecordsRequest): AgentTeamDecisionRecordsResult {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    const records = (this.state.decisionRecordsByTask.get(request.taskRef) ?? []).flatMap(recordRef => {
+      const state = this.state.decisionRecords.get(recordRef)
+      return state === undefined ? [] : [state]
+    })
+    return Object.freeze({ records: Object.freeze(this.decisionRecordViews(records)) })
+  }
+
+  /**
+   * The records of one Task as readers see them. `supersedes` is derived here,
+   * never stored: the newest plan record on the Task supersedes the plan
+   * record before it, and an ask card is never superseded — a card answers
+   * once, and a second card is a new question rather than a reversal.
+   */
+  private decisionRecordViews(records: readonly AgentTeamDecisionRecordState[]): readonly AgentTeamDecisionRecord[] {
+    let previousPlan: AgentTeamDecisionRecordRef | undefined
+    return records.map(state => {
+      if (state.source.kind !== 'plan') return decisionRecordView(state)
+      const view = decisionRecordView(state, previousPlan)
+      previousPlan = state.recordRef
+      return view
+    })
   }
 
   /**
@@ -2432,7 +2538,7 @@ export class AgentTeamLedger {
     const views = [...this.state.decisions.values()]
       .filter(state => state.status === 'open')
       .filter(state => this.state.channels.get(state.channelRef)?.workspaceId === workspaceId && this.state.channels.get(state.channelRef)?.state === 'active')
-      .map(state => decisionView(state))
+      .map(state => decisionView(state, this.state.threads.get(state.threadRef)?.taskRef))
     return Object.freeze(views.sort((left, right) => left.askedAt.localeCompare(right.askedAt)))
   }
 
@@ -2525,8 +2631,10 @@ export class AgentTeamLedger {
     body: string,
     mentions: readonly AgentTeamMemberId[],
     notice: AgentTeamDocNotice,
+    record?: AgentTeamDecisionRecordPayload,
   ): AgentTeamThreadRepliedOperation {
-    return this.noticeReplyOperation(request, state.doc.threadRef, state.doc.channelRef, body, mentions, { doc: notice })
+    return this.noticeReplyOperation(request, state.doc.threadRef, state.doc.channelRef, body, mentions,
+      { doc: notice, ...(record === undefined ? {} : { decisionRecord: record }) })
   }
 
   /**
@@ -2541,7 +2649,7 @@ export class AgentTeamLedger {
     channelRef: AgentTeamChannelRef,
     body: string,
     mentions: readonly AgentTeamMemberId[],
-    notice: { readonly doc: AgentTeamDocNotice } | { readonly decision: AgentTeamDecisionNotice },
+    notice: { readonly doc?: AgentTeamDocNotice; readonly decision?: AgentTeamDecisionNotice; readonly decisionRecord?: AgentTeamDecisionRecordPayload },
   ): AgentTeamThreadRepliedOperation {
     const thread = this.requireThread(threadRef)
     const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
@@ -3808,6 +3916,120 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * The Human's read model for one issue: the seven regions in one snapshot.
+   *
+   * The read converges before it answers — the writes already queued in this
+   * ledger settle first, so the view is one consistent snapshot instead of a
+   * torn one. The convergence is best-effort: a failed write never fails the
+   * read, the view answers with the state as it is, and the next read
+   * retries. The pending description promotion (M-39's repair) is attempted
+   * in the same seam.
+   *
+   * The contract carries no variant: `commentLimit` is a read size, and every
+   * presentation of one issue reads this same value.
+   */
+  async issueView(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamIssueViewRequest): Promise<AgentTeamIssueView> {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    const limit = request.commentLimit ?? 50
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('comment limit must be an integer between 1 and 100')
+    const { task, thread } = this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    await this.settled()
+    const anchor = this.threadAnchor(thread.threadRef)
+    const facts = this.threadFacts(thread.threadRef)
+    const cards = this.decisions(authorized, { workspaceId: request.workspaceId, threadRef: thread.threadRef }).decisions
+    const records = this.decisionRecords(authorized, { workspaceId: request.workspaceId, taskRef: task.taskRef }).records
+    // The ask message of a card is not a comment: the card renders in its
+    // place in the timeline, so the comment region skips it.
+    const askMessageRefs = new Set(cards.map(card => card.messageRef))
+    const messageFacts = facts.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'message' }> => fact.kind === 'message')
+    const commentFacts = messageFacts.filter(fact => fact.message.messageRef !== anchor.messageRef && !askMessageRefs.has(fact.message.messageRef))
+    const carried = commentFacts.slice(-limit)
+    const activityFacts = facts.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'activity' }> => fact.kind === 'activity')
+    const activities = activityFacts.slice(-50).map(fact => fact.activity).reverse()
+    const channel = this.requireChannel(request.workspaceId, task.channelRef)
+    const taskNumber = this.taskNumbers(request.workspaceId).get(task.taskRef) ?? 0
+    // The Task was created with its Thread, or by the promotion that attached
+    // it to one — the promote activity is that instant.
+    const promoted = activityFacts.find(fact => fact.activity.kind === 'promote')
+    const createdAt = promoted?.occurredAt ?? anchor.occurredAt
+    const updatedAt = facts.at(-1)?.occurredAt ?? createdAt
+    return Object.freeze({
+      task,
+      thread,
+      taskNumber,
+      title: task.title ?? boundedInboxPreview(anchor.body),
+      description: Object.freeze({
+        body: anchor.body,
+        author: anchor.sender,
+        occurredAt: anchor.occurredAt,
+        source: 'anchor' as const,
+        revision: task.descriptionRevision ?? 0,
+      }),
+      properties: Object.freeze({
+        status: task.status,
+        resolution: task.resolution,
+        priority: task.priority ?? 'none',
+        position: task.position ?? 0,
+        ...(task.assignee === undefined || task.assignee === null ? {} : { assignee: task.assignee }),
+        channelRef: task.channelRef,
+        channelName: channel.name,
+        taskNumber,
+        claimOwners: Object.freeze(this.liveClaimOwners(task).map(owner => owner.memberId)),
+        planningPhase: task.status === 'todo' && !this.claimsForTask(task.taskRef).some(claim => claim.state === 'active'),
+        createdAt,
+        updatedAt,
+      }),
+      comments: Object.freeze({
+        items: Object.freeze(carried),
+        hasMore: commentFacts.length > carried.length,
+        cursor: carried.at(0)?.sequence ?? 0,
+      }),
+      activity: Object.freeze({ items: Object.freeze(activities), hasMore: activityFacts.length > activities.length }),
+      decisions: Object.freeze(this.issueDecisionRows(cards, records)),
+      executionLog: Object.freeze({
+        sessions: Object.freeze(this.threadSessionRuns(thread.threadRef)),
+        failures: Object.freeze(this.threadTurnFailures(thread.threadRef)),
+      }),
+      docs: Object.freeze(this.docs(authorized, { workspaceId: request.workspaceId, threadRef: thread.threadRef }).docs),
+    })
+  }
+
+  /**
+   * The decisions region of one issue: every card exactly once and every
+   * record exactly once, oldest first.
+   *
+   * A card with no record is a `card` row — open, or withdrawn. A record is a
+   * `decision` row, and it carries the card it came from when the source is
+   * an ask: the card then renders in the record's row instead of a row of its
+   * own. A plan approval is a record with no card.
+   */
+  private issueDecisionRows(cards: readonly AgentTeamDecisionView[], records: readonly AgentTeamDecisionRecord[]): readonly AgentTeamIssueDecision[] {
+    const cardsByDecisionRef = new Map(cards.map(card => [card.decisionRef, card]))
+    const recordedRefs = new Set(records.flatMap(record => record.source.kind === 'ask' ? [record.source.decisionRef] : []))
+    const rows: { readonly row: AgentTeamIssueDecision; readonly at: number }[] = []
+    for (const card of cards) {
+      if (recordedRefs.has(card.decisionRef)) continue
+      rows.push({ row: Object.freeze({ kind: 'card' as const, card }), at: Date.parse(card.askedAt) })
+    }
+    for (const record of records) {
+      const card = record.source.kind === 'ask' ? cardsByDecisionRef.get(record.source.decisionRef) : undefined
+      rows.push({ row: Object.freeze({ kind: 'decision' as const, record, ...(card === undefined ? {} : { card }) }), at: Date.parse(record.decidedAt) })
+    }
+    rows.sort((left, right) => left.at - right.at)
+    return Object.freeze(rows.map(entry => entry.row))
+  }
+
+  /**
+   * The writes already queued in this ledger, settled.
+   *
+   * A read that waits for them never sees a torn snapshot: every write
+   * committed before the read began is in the state the read assembles.
+   */
+  private async settled(): Promise<void> {
+    await this.operationTail
+  }
+
   status(): AgentTeamStatus {
     const initialization = this.initialization()
     return Object.freeze({ initialized: true, sequence: this.state.ordered.length, operationCount: this.state.ordered.length,
@@ -4063,6 +4285,89 @@ export class AgentTeamLedger {
         return []
       default:
         return assertUnhandledKind(operation)
+    }
+  }
+
+  /**
+   * Fold the decision fact one operation carries.
+   *
+   * The payload wins: an operation that stores its record yields exactly that
+   * record, so one decision is one operation and therefore exactly one record.
+   * An operation written before decision records existed is derived from the
+   * notice it already carried, with a recordRef that is a function of the
+   * operation — never minted — so a replay derives the same ref and the same
+   * indexes.
+   */
+  private foldDecisionRecord(target: Projection, operation: AgentTeamOperation): void {
+    if (operation.kind !== 'team/thread-replied') return
+    const { message, thread } = operation.data
+    const decidedAt = message.occurredAt ?? operation.occurredAt
+    const payload = operation.data.decisionRecord
+    if (payload !== undefined) {
+      this.recordDecision(target, Object.freeze({
+        recordRef: payload.recordRef,
+        ...(payload.taskRef === undefined ? {} : { taskRef: payload.taskRef }),
+        decidedBy: operation.actor.memberId,
+        decided: payload.decided,
+        rationale: payload.rationale,
+        decidedAt,
+        source: payload.source,
+      }), thread.threadRef)
+      return
+    }
+    const decision = operation.data.decision
+    if (decision?.event === 'answered') {
+      const card = target.decisions.get(decision.decisionRef)
+      this.recordDecision(target, Object.freeze({
+        recordRef: derivedDecisionRecordRef(operation.operationId),
+        ...(thread.taskRef === undefined ? {} : { taskRef: thread.taskRef }),
+        decidedBy: operation.actor.memberId,
+        decided: decisionSummary(card?.questions ?? [], decision.answers),
+        rationale: decisionRationale(decision.answers),
+        decidedAt,
+        source: Object.freeze({ kind: 'ask' as const, decisionRef: decision.decisionRef, messageRef: card?.messageRef ?? message.messageRef }),
+      }), thread.threadRef)
+      return
+    }
+    const doc = operation.data.doc
+    if (doc?.event === 'reviewed' && doc.verdict === 'approve') {
+      const title = target.docs.get(doc.docRef)?.doc.title ?? ''
+      this.recordDecision(target, Object.freeze({
+        recordRef: derivedDecisionRecordRef(operation.operationId),
+        ...(thread.taskRef === undefined ? {} : { taskRef: thread.taskRef }),
+        decidedBy: operation.actor.memberId,
+        decided: planApprovalSummary(title),
+        // The review note of an approval written before decision records existed was
+        // never structured: it lived in the notice body as prose, and a projection
+        // cannot invent it.
+        rationale: '',
+        decidedAt,
+        source: Object.freeze({ kind: 'plan' as const, docRef: doc.docRef, docRevision: doc.docRevision }),
+      }), thread.threadRef)
+    }
+  }
+
+  /** Index one recorded decision: by ref, by its Thread, and by its Task when it has one. */
+  private recordDecision(target: Projection, state: AgentTeamDecisionRecordState, threadRef: AgentTeamThreadRef): void {
+    target.decisionRecords.set(state.recordRef, state)
+    target.decisionRecordsByThread.set(threadRef, [...(target.decisionRecordsByThread.get(threadRef) ?? []), state.recordRef])
+    if (state.taskRef !== undefined) {
+      target.decisionRecordsByTask.set(state.taskRef, [...(target.decisionRecordsByTask.get(state.taskRef) ?? []), state.recordRef])
+    }
+  }
+
+  /**
+   * Give a Thread's recorded decisions the Task the Thread was promoted to. A
+   * decision made before the Thread had a Task is still a decision: it joins
+   * the Task's list when the Thread is promoted.
+   */
+  private attachThreadRecordsToTask(target: Projection, threadRef: AgentTeamThreadRef, taskRef: AgentTeamTaskRef): void {
+    for (const recordRef of target.decisionRecordsByThread.get(threadRef) ?? []) {
+      const state = target.decisionRecords.get(recordRef)
+      if (state === undefined || state.taskRef !== undefined) continue
+      const attached = Object.freeze({ ...state, taskRef })
+      target.decisionRecords.set(recordRef, attached)
+      target.decisionRecordsByTask.set(taskRef, [...(target.decisionRecordsByTask.get(taskRef) ?? []), recordRef])
     }
   }
 
@@ -5054,6 +5359,7 @@ export class AgentTeamLedger {
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.recordTaskNumber(target, operation.data.task)
+      this.attachThreadRecordsToTask(target, operation.data.thread.threadRef, operation.data.task.taskRef)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
@@ -5087,6 +5393,7 @@ export class AgentTeamLedger {
         const decisionState = target.decisions.get(decision.decisionRef)
         if (decisionState !== undefined) target.decisions.set(decision.decisionRef, closedDecisionState(decisionState, decision, operation.actor.memberId, message.occurredAt ?? operation.occurredAt))
       }
+      this.foldDecisionRecord(target, operation)
       return
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
@@ -6868,7 +7175,8 @@ export class AgentTeamLedger {
   private ref(kind: 'doc'): AgentTeamDocRef
   private ref(kind: 'comment'): AgentTeamDocCommentRef
   private ref(kind: 'decision'): AgentTeamDecisionRef
-  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision') {
+  private ref(kind: 'decisionRecord'): AgentTeamDecisionRecordRef
+  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'claim' | 'activity' | 'doc' | 'comment' | 'decision' | 'decisionRecord') {
     return this.createRef(kind)
   }
 

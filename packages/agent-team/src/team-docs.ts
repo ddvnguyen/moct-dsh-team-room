@@ -147,7 +147,8 @@ export function docView(state: AgentTeamDocState, humanMemberId: AgentTeamMember
 }
 
 export function docSummary(state: AgentTeamDocState, humanMemberId: AgentTeamMemberId): AgentTeamDocSummary {
-  return Object.freeze({ docRef: state.doc.docRef, channelRef: state.doc.channelRef, threadRef: state.doc.threadRef, title: state.doc.title,
+  return Object.freeze({ docRef: state.doc.docRef, channelRef: state.doc.channelRef, threadRef: state.doc.threadRef,
+    ...(state.doc.taskRef === undefined ? {} : { taskRef: state.doc.taskRef }), title: state.doc.title,
     author: state.doc.author, status: state.status, revision: state.revision, sectionCount: state.sections.length,
     pendingCommentCount: pendingDocCommentRefs(state, humanMemberId).length, updatedAt: state.updatedAt })
 }
