@@ -676,9 +676,9 @@ export interface AgentTeamDecisionAnswer {
 
 /**
  * The decision event one Thread reply announces. A Member asks (the reply
- * mentions the Human), the Human answers (the reply mentions the asker, so the
- * existing mention wake carries the answer), or the asker withdraws a card it
- * no longer needs.
+ * mentions the Human, or the addressed seat when the card names one), the
+ * addressee answers (the reply mentions the asker, so the existing mention
+ * wake carries the answer), or the asker withdraws a card it no longer needs.
  */
 export type AgentTeamDecisionNotice =
   | {
@@ -686,6 +686,11 @@ export type AgentTeamDecisionNotice =
     readonly event: 'asked'
     /** Background the Human needs to answer, shown above the questions. */
     readonly context?: string
+    /**
+     * The seat the card is addressed to, when it names one. Absent on every
+     * card recorded before targeted asks existed: those address the Human.
+     */
+    readonly target?: AgentTeamMemberId
     readonly questions: readonly AgentTeamDecisionQuestion[]
   }
   | {

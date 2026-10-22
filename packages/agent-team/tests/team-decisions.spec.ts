@@ -17,6 +17,9 @@ import type {
 const cleanups: Array<() => Promise<void>> = []
 const alpha = WorkspaceId('workspace:alpha')
 const human = agentTeamHumanActor()
+const HUMAN_MEMBER_ID = human.memberId
+const NOBODY_MEMBER_ID = 'member:nobody' as AgentTeamAgentMember['memberId']
+const ANOTHER_MEMBER_ID = 'member:another' as AgentTeamAgentMember['memberId']
 const requestId = (value: string): AgentTeamRequestId => value as AgentTeamRequestId
 
 afterEach(async () => {
@@ -157,5 +160,158 @@ describe('decision cards', () => {
     const replay = await copyLedger(pool)
     replay.validate()
     expect(replay.decision(human, { workspaceId: alpha, decisionRef: notice.decisionRef }).status).toBe('withdrawn')
+  })
+})
+
+describe('cards addressed to a seat', () => {
+  /** A Channel, an asker, a target seat, and a Task the asker owns. */
+  async function planningRoom() {
+    const pool = new MemoryMediaPool()
+    const ledger = await openLedger(pool)
+    const channel = (await ledger.createChannel({ requestId: requestId('channel'), workspaceId: alpha,
+      name: 'room', description: '', memberIds: [], actor: human })).value.channel
+    const ann = await addMember(ledger, channel.channelRef, 'ann')
+    const bob = await addMember(ledger, channel.channelRef, 'bob')
+    const started = (await ledger.createTask({ requestId: requestId('task'), workspaceId: alpha,
+      channelRef: channel.channelRef, body: 'Ship the release', actor: human })).value
+    return { pool, ledger, channel, ann, bob, task: started.task, thread: started.thread }
+  }
+
+  it('asks the named seat, puts the card in its Inbox, and wakes it', async () => {
+    const { ledger, ann, bob, task } = await planningRoom()
+    const bobDirect = ledger.inbox(bob, { workspaceId: alpha }).totalDirectCount
+    const asked = (await ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: bob.memberId, context: 'Which day ships?', questions })).value
+    expect(asked.notice).toMatchObject({ event: 'asked', target: bob.memberId })
+    expect(asked.message.body).toContain('@bob I need your call on 2 questions')
+    expect(asked.message.body).not.toContain('@human')
+    expect(ledger.inbox(bob, { workspaceId: alpha }).totalDirectCount).toBe(bobDirect + 1)
+    expect(ledger.decision(bob, { workspaceId: alpha, decisionRef: asked.notice.decisionRef })).toMatchObject({
+      status: 'open', asker: ann.memberId, target: bob.memberId,
+    })
+    // The seat is woken by the mention: the ask is the operation that names it.
+    const operation = ledger.getOperation(asked.receipt.operationId)!
+    expect(ledger.affectedMembersOf(operation)).toContain(bob.memberId)
+  })
+
+  it('lets the named seat answer, which wakes the asker', async () => {
+    const { ledger, ann, bob, task } = await planningRoom()
+    const asked = (await ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: bob.memberId, questions })).value
+    const decisionRef = asked.notice.decisionRef
+    const annDirect = ledger.inbox(ann, { workspaceId: alpha }).totalDirectCount
+    const answered = (await ledger.answerDecision({ requestId: requestId('answer'), workspaceId: alpha, decisionRef,
+      actor: bob, answers: [{ selected: [1] }, { selected: [0] }] })).value
+    expect(answered.message.body).toContain('1. Which release day? → Friday')
+    expect(ledger.inbox(ann, { workspaceId: alpha }).totalDirectCount).toBe(annDirect + 1)
+    expect(ledger.decision(ann, { workspaceId: alpha, decisionRef })).toMatchObject({
+      status: 'answered', closedBy: bob.memberId, target: bob.memberId,
+    })
+  })
+
+  it('refuses a seat that has left the card Channel', async () => {
+    const { ledger, ann, bob, task, channel } = await planningRoom()
+    const { notice } = (await ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: bob.memberId, questions })).value
+    await ledger.removeChannelMember({ requestId: requestId('remove'), workspaceId: alpha, channelRef: channel.channelRef,
+      memberId: bob.memberId, actor: human })
+    await expect(ledger.answerDecision({ requestId: requestId('answer'), workspaceId: alpha, decisionRef: notice.decisionRef,
+      actor: bob, answers: [{ selected: [0] }, { selected: [0] }] })).rejects.toThrow(/not authorized for Channel/)
+  })
+
+  it('lets the Human take over a card addressed to a seat, and keeps every other Member out', async () => {
+    const { ledger, ann, bob, task } = await planningRoom()
+    const { notice } = (await ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: bob.memberId, questions })).value
+    await expect(ledger.answerDecision({ requestId: requestId('ann'), workspaceId: alpha, decisionRef: notice.decisionRef,
+      actor: ann, answers: [{ selected: [0] }, { selected: [0] }] })).rejects.toThrow(/only '.*bob.*' can answer/)
+    const taken = (await ledger.answerDecision({ requestId: requestId('human'), workspaceId: alpha, decisionRef: notice.decisionRef,
+      actor: human, answers: [{ selected: [0] }, { selected: [0] }] })).value
+    expect(taken.notice).toMatchObject({ event: 'answered' })
+    expect(ledger.decision(human, { workspaceId: alpha, decisionRef: notice.decisionRef })).toMatchObject({ closedBy: human.memberId })
+  })
+
+  it('refuses a card addressed to a seat once the Task has left its planning phase', async () => {
+    const { ledger, ann, bob, task, thread } = await planningRoom()
+    const askSeat = (id: string) => ledger.askDecision({ requestId: requestId(id), workspaceId: alpha,
+      taskRef: task.taskRef, actor: ann, target: bob.memberId, questions })
+    // A Claim puts the Task in execution, so the planning-phase question is refused.
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha, taskRef: task.taskRef,
+      action: 'claim', direction: 'ship it', baseRevision: thread.revision, actor: ann })).value)
+    expect(claimed.task.status).toBe('in_progress')
+    await expect(askSeat('ask-claimed')).rejects.toThrow(/planning-phase question: Task .* is claimed/)
+    // A released Claim leaves nobody holding the Task, so it is back in design.
+    const released = committed((await ledger.changeClaim({ requestId: requestId('release'), workspaceId: alpha, taskRef: task.taskRef,
+      action: 'release', claimRef: claimed.claim.claimRef, baseRevision: claimed.thread.revision, actor: ann })).value)
+    expect(released.task.status).toBe('todo')
+    const asked = await askSeat('ask-released-claim')
+    expect(asked.value.notice).toMatchObject({ target: bob.memberId })
+  })
+
+  it('keeps a card with no target the Human\'s alone, as every card before this change was', async () => {
+    const { ledger, ann, bob, task } = await planningRoom()
+    const { notice } = (await ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, questions })).value
+    expect(notice).not.toHaveProperty('target')
+    await expect(ledger.answerDecision({ requestId: requestId('answer'), workspaceId: alpha, decisionRef: notice.decisionRef,
+      actor: bob, answers: [{ selected: [0] }, { selected: [0] }] })).rejects.toThrow(/addressed to the Human/)
+    const answered = (await ledger.answerDecision({ requestId: requestId('human'), workspaceId: alpha, decisionRef: notice.decisionRef,
+      actor: human, answers: [{ selected: [0] }, { selected: [0] }] })).value
+    expect(answered.notice).toMatchObject({ event: 'answered' })
+  })
+
+  it('refuses a target that is not a reachable Member of the card Channel', async () => {
+    const { ledger, ann, task } = await planningRoom()
+    const other = (await ledger.createChannel({ requestId: requestId('other-channel'), workspaceId: alpha,
+      name: 'other', description: '', memberIds: [], actor: human })).value.channel
+    const outsider = await addMember(ledger, other.channelRef, 'outsider')
+    await expect(ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: outsider.memberId, questions })).rejects.toThrow(/cannot be reached in Channel/)
+    await expect(ledger.askDecision({ requestId: requestId('ask-human'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: HUMAN_MEMBER_ID, questions })).rejects.toThrow(/already addresses the Human/)
+    await expect(ledger.askDecision({ requestId: requestId('ask-self'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: ann.memberId, questions })).rejects.toThrow(/cannot be addressed to the seat that asked/)
+    await expect(ledger.askDecision({ requestId: requestId('ask-unknown'), workspaceId: alpha, taskRef: task.taskRef,
+      actor: ann, target: NOBODY_MEMBER_ID, questions })).rejects.toThrow(/unknown Agent Member/)
+  })
+
+  it('reads a card recorded before targeted asks existed, unchanged', () => {
+    // The shape every card had before this change: an asked notice with no
+    // target, addressed to the Human.
+    const legacy = {
+      operationId: 'operation:1', requestId: 'req:1', sequence: 1, previousOperationId: null,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      actor: { kind: 'human', memberId: 'member:human', handle: 'human' },
+      kind: 'team/thread-replied',
+      data: {
+        workspaceId: alpha, baseRevision: 1,
+        mentions: ['member:human'],
+        message: { messageRef: 'message:1', channelRef: 'channel:a', threadRef: 'thread:a', sender: 'member:human',
+          body: '@human I need your call on 1 question — decision:1.', topLevel: false, sequence: 1, occurredAt: '2026-01-01T00:00:00.000Z' },
+        thread: { threadRef: 'thread:a', revision: 1 },
+        inbox: { attention: { set: [], removed: [] }, directMarkers: { added: [], removed: [] }, activityMarkers: { added: [], removed: [] } },
+        decision: { decisionRef: 'decision:1', event: 'asked', questions: [{ prompt: 'Which day?', multiple: false, options: [{ label: 'A' }, { label: 'B' }], recommended: [0] }] },
+      },
+    }
+    expect(agentTeamOperationSchema.safeParse(legacy).success).toBe(true)
+  })
+
+  it('collides when the same request asks a different seat, and replays a card addressed to a seat', async () => {
+    const { pool, ledger, ann, bob, task } = await planningRoom()
+    const askSeat = (id: string, target: AgentTeamAgentMember['memberId']) => ledger.askDecision({ requestId: requestId(id), workspaceId: alpha,
+      taskRef: task.taskRef, actor: ann, target, questions })
+    const asked = await askSeat('ask', bob.memberId)
+    expect(asked.value.notice).toMatchObject({ target: bob.memberId })
+    const retry = await askSeat('ask', bob.memberId)
+    expect(retry.committed).toBe(false)
+    expect(retry.value.message.messageRef).toBe(asked.value.message.messageRef)
+    await expect(askSeat('ask', ANOTHER_MEMBER_ID)).rejects.toThrow(/reused with a different operation or payload/)
+
+    for (const record of storedOperations(pool)) expect(agentTeamOperationSchema.safeParse(record).success).toBe(true)
+    const replay = await copyLedger(pool)
+    replay.validate()
+    expect(replay.decision(bob, { workspaceId: alpha, decisionRef: asked.value.notice.decisionRef })).toMatchObject({
+      status: 'open', target: bob.memberId,
+    })
   })
 })

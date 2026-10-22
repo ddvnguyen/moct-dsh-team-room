@@ -37,6 +37,8 @@ export interface AgentTeamDecisionState {
   readonly asker: AgentTeamMemberId
   readonly messageRef: AgentTeamMessageRef
   readonly context?: string
+  /** The seat the card addresses; absent on a card that addresses the Human. */
+  readonly target?: AgentTeamMemberId
   readonly questions: readonly AgentTeamDecisionQuestion[]
   readonly askedAt: string
   readonly status: AgentTeamDecisionStatus
@@ -122,7 +124,7 @@ export function askedDecisionState(
   occurredAt: string,
 ): AgentTeamDecisionState {
   return Object.freeze({ decisionRef: notice.decisionRef, ...where, asker, ...(notice.context === undefined ? {} : { context: notice.context }),
-    questions: notice.questions, askedAt: occurredAt, status: 'open' as const })
+    ...(notice.target === undefined ? {} : { target: notice.target }), questions: notice.questions, askedAt: occurredAt, status: 'open' as const })
 }
 
 /** Close an open card with an answer or a withdrawal. */
@@ -194,11 +196,11 @@ export function decisionAnswersText(questions: readonly AgentTeamDecisionQuestio
   })
 }
 
-/** The Thread notice an ask posts: it mentions the Human, which puts the card in their Inbox. */
-export function decisionAskBody(humanHandle: string, decisionRef: AgentTeamDecisionRef, context: string | undefined, questions: readonly AgentTeamDecisionQuestion[]): string {
+/** The Thread notice an ask posts: it mentions the addressee, which puts the card in their Inbox. */
+export function decisionAskBody(addresseeHandle: string, decisionRef: AgentTeamDecisionRef, context: string | undefined, questions: readonly AgentTeamDecisionQuestion[]): string {
   const count = questions.length
   return [
-    `@${humanHandle} I need your call on ${count === 1 ? 'one question' : `${count} questions`} — ${decisionRef}.`,
+    `@${addresseeHandle} I need your call on ${count === 1 ? 'one question' : `${count} questions`} — ${decisionRef}.`,
     ...(context === undefined ? [] : [context]),
     ...decisionQuestionsText(questions),
   ].join('\n')

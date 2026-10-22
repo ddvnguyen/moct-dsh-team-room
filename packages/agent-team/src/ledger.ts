@@ -538,7 +538,7 @@ export interface AgentTeamAuthorizedAskDecisionRequest extends AgentTeamAskDecis
 }
 
 export interface AgentTeamAuthorizedAnswerDecisionRequest extends AgentTeamAnswerDecisionRequest {
-  readonly actor: AgentTeamHumanActor
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
 
 export interface AgentTeamAuthorizedWithdrawDecisionRequest extends AgentTeamWithdrawDecisionRequest {
@@ -2573,9 +2573,13 @@ export class AgentTeamLedger {
   }
 
   /**
-   * A Member asks the Human one to six questions on one card. The notice is a
-   * Thread reply that mentions the Human, so the open card reaches their Inbox.
-   * The asker keeps working on the recommended options while the card is open.
+   * A Member asks one to six questions on one card. The notice is a Thread
+   * reply that mentions the addressee — the Human, or the seat the card names —
+   * so the open card reaches their Inbox. The asker keeps working on the
+   * recommended options while the card is open.
+   *
+   * A card that names a seat is a planning-phase question, so it is refused
+   * once the Task it sits on has left the planning phase.
    */
   askDecision(request: AgentTeamAuthorizedAskDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
     return this.enqueue(async () => {
@@ -2585,16 +2589,20 @@ export class AgentTeamLedger {
       if (existing !== undefined) {
         if (existing.kind !== 'team/thread-replied' || existing.data.decision?.event !== 'asked' || !this.sameActor(existing.actor, request.actor)
           || existing.data.workspaceId !== request.workspaceId || !isDeepStrictEqual(existing.data.decision.questions, questions)
-          || existing.data.decision.context !== context) this.throwRequestCollision(request.requestId)
+          || existing.data.decision.context !== context || existing.data.decision.target !== request.target) this.throwRequestCollision(request.requestId)
         return this.resolved(this.decisionNoticeResult(existing))
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId) as AgentTeamMemberActor
-      const { thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
+      const { task, thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
       this.assertThreadChannelActive(channelRef)
+      const target = request.target === undefined ? undefined : this.decisionTarget(request.target, channelRef, actor.memberId)
+      if (target !== undefined) this.assertPlanningPhase(task, thread.threadRef)
       const decisionRef = this.ref('decision')
-      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef, event: 'asked' as const, ...(context === undefined ? {} : { context }), questions })
-      const body = decisionAskBody(this.humanHandle, decisionRef, context, questions)
-      const operation = this.noticeReplyOperation(request, thread.threadRef, channelRef, body, [this.initialization().data.humanMemberId], { decision: notice })
+      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef, event: 'asked' as const, ...(context === undefined ? {} : { context }),
+        ...(target === undefined ? {} : { target }), questions })
+      const body = decisionAskBody(target === undefined ? this.humanHandle : this.memberHandle(target), decisionRef, context, questions)
+      const addressee = target === undefined ? this.initialization().data.humanMemberId : target
+      const operation = this.noticeReplyOperation(request, thread.threadRef, channelRef, body, [addressee], { decision: notice })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2602,8 +2610,50 @@ export class AgentTeamLedger {
   }
 
   /**
-   * The Human answers an open card. The notice mentions the asker, so the
-   * existing direct-mention wake carries the answer to it. A card answers once.
+   * The seat a card names: a live Member of the Workspace who can be reached
+   * in the card's Channel. The Human is never a target — a card with no target
+   * already addresses them — and a seat cannot ask itself.
+   */
+  private decisionTarget(target: AgentTeamMemberId, channelRef: AgentTeamChannelRef, asker: AgentTeamMemberId): AgentTeamMemberId {
+    if (target === this.initialization().data.humanMemberId) {
+      throw new Error('a card with no target already addresses the Human')
+    }
+    if (target === asker) throw new Error('a card cannot be addressed to the seat that asked')
+    const member = this.state.members.get(target)
+    if (member === undefined) throw new Error(`unknown Agent Member '${target}'`)
+    if (!this.validMentionTarget(this.state, channelRef, target)) {
+      throw new Error(`Agent Member '${target}' cannot be reached in Channel '${channelRef}'`)
+    }
+    return target
+  }
+
+  /**
+   * A card that names a seat asks a planning-phase question, so it is
+   * permitted only while the Task is `todo` and holds no active Claim — the
+   * same rule the issue view carries as `properties.planningPhase`, read from
+   * one definition so the two cannot drift. A card with no target asks the
+   * Human and is never gated.
+   */
+  private assertPlanningPhase(task: AgentTeamTask | undefined, threadRef: AgentTeamThreadRef): void {
+    if (task === undefined) {
+      throw new Error(`a card addressed to a seat needs a Task: Thread '${threadRef}' has none`)
+    }
+    if (this.inPlanningPhase(task)) return
+    const claimed = this.claimsForTask(task.taskRef).some(claim => claim.state === 'active')
+    throw new Error(claimed
+      ? `a card addressed to a seat is a planning-phase question: Task '${task.taskRef}' is claimed`
+      : `a card addressed to a seat is a planning-phase question: Task '${task.taskRef}' is '${task.status}'`)
+  }
+
+  /** The handle a Member is addressed by. */
+  private memberHandle(memberId: AgentTeamMemberId): string {
+    return this.state.members.get(memberId)?.handle ?? memberId
+  }
+
+  /**
+   * The Human, or the seat the card names, answers an open card. The notice
+   * mentions the asker, so the existing direct-mention wake carries the answer
+   * to it. A card answers once.
    */
   answerDecision(request: AgentTeamAuthorizedAnswerDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
     return this.enqueue(async () => {
@@ -2613,8 +2663,8 @@ export class AgentTeamLedger {
           || existing.data.workspaceId !== request.workspaceId || existing.data.decision.decisionRef !== request.decisionRef) this.throwRequestCollision(request.requestId)
         return this.resolved(this.decisionNoticeResult(existing))
       }
-      this.assertHumanActor(request.actor)
       const state = this.decisionForActor(request.actor, request.workspaceId, request.decisionRef)
+      this.assertDecisionAnswerer(request.actor, state)
       this.assertDecisionOpen(state)
       const answers = normalizeDecisionAnswers(state.questions, request.answers)
       const asker = this.state.members.get(state.asker)
@@ -2758,6 +2808,25 @@ export class AgentTeamLedger {
 
   private assertDecisionOpen(state: AgentTeamDecisionState): void {
     if (state.status !== 'open') throw new Error(`decision card '${state.decisionRef}' is already ${state.status}`)
+  }
+
+  /**
+   * Who may answer a card: the Human, who may always take over, or the seat
+   * the card names — never any other Member. A card with no target is the
+   * Human's alone.
+   */
+  private assertDecisionAnswerer(actor: AgentTeamHumanActor | AgentTeamMemberActor, state: AgentTeamDecisionState): void {
+    if (actor.kind === 'human') {
+      this.assertHumanActor(actor)
+      return
+    }
+    if (state.target === undefined) {
+      throw new Error(`decision card '${state.decisionRef}' is addressed to the Human`)
+    }
+    if (actor.memberId !== state.target) {
+      throw new Error(`only '${state.target}' can answer decision card '${state.decisionRef}'`)
+    }
+    this.assertMemberActor(actor)
   }
 
   private decisionNoticeResult(operation: AgentTeamThreadRepliedOperation): AgentTeamDecisionNoticeResult {
@@ -5374,7 +5443,11 @@ export class AgentTeamLedger {
     const { message, mentions } = operation.data
     if (operation.data.doc !== undefined || message.replyToMessageRef !== undefined || message.attachments !== undefined) throw new Error('invalid decision notice')
     if (notice.event === 'asked') {
-      if (operation.actor.kind !== 'member' || projection.decisions.has(notice.decisionRef) || !this.sameList(mentions, [humanMemberId])
+      // A card with no target addresses the Human; a card with one addresses
+      // that seat, and the notice mentions exactly its addressee.
+      const addressee = notice.target ?? humanMemberId
+      if (operation.actor.kind !== 'member' || projection.decisions.has(notice.decisionRef) || !this.sameList(mentions, [addressee])
+        || (notice.target !== undefined && !this.validMentionTarget(projection, message.channelRef, notice.target))
         || normalizeDecisionContext(notice.context) !== notice.context || !isDeepStrictEqual(normalizeDecisionQuestions(notice.questions), notice.questions)) {
         throw new Error('invalid decision ask notice')
       }
@@ -5384,7 +5457,11 @@ export class AgentTeamLedger {
     const state = projection.decisions.get(notice.decisionRef)
     if (state === undefined || state.status !== 'open' || state.threadRef !== message.threadRef) throw new Error('invalid decision notice')
     if (notice.event === 'answered') {
-      if (operation.actor.kind !== 'human' || !this.sameList(mentions, [state.asker])
+      // The Human may always answer, and so may the seat the card names.
+      const answerer = operation.actor.memberId
+      const mayAnswer = operation.actor.kind === 'human' || (state.target !== undefined && state.target === answerer)
+      if (!mayAnswer || !this.sameList(mentions, [state.asker])
+        || (operation.actor.kind === 'member' && !projection.memberships.get(state.channelRef)?.has(answerer))
         || !isDeepStrictEqual(normalizeDecisionAnswers(state.questions, notice.answers), notice.answers)) throw new Error('invalid decision answer notice')
       return
     }
@@ -5394,10 +5471,17 @@ export class AgentTeamLedger {
   private validateMessageInbox(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation, projection: Projection): void {
     const { message, mentions } = operation.data
     const mentionedAgents = mentions.filter(memberId => projection.members.has(memberId))
+    // A decision card addressed to a seat is an invitation the Host already
+    // validated against the Workspace and the card's Channel, so that seat may
+    // be pulled into the Thread. Every other Member reply may not pull an
+    // unfollowed Member into an existing Thread.
+    const invited = operation.kind === 'team/thread-replied' && operation.data.decision?.event === 'asked'
+      ? operation.data.decision.target
+      : undefined
     // Top-level mentions are open to every actor; only a Member reply may not
     // pull an unfollowed Member into an existing Thread.
     if (operation.actor.kind === 'member' && operation.kind === 'team/thread-replied'
-      && mentionedAgents.some(memberId => !this.everParticipatedFrom(projection, message.threadRef, memberId))) {
+      && mentionedAgents.some(memberId => memberId !== invited && !this.everParticipatedFrom(projection, message.threadRef, memberId))) {
       throw new Error('invalid Agent mention projection')
     }
     const started = operation.kind === 'team/message-sent'

@@ -136,9 +136,11 @@ Every result renders the Doc revision, which the next `write` passes as `baseDoc
 
 ## `team_ask`
 
-`team_ask` asks the Human a decision on a card in a Thread: `ask` (a Thread or Task, optional `context`, and 1 to 6 `questions`, each with a `prompt`, 2 to 4 `options`, `multiple`, and the `recommended` option indexes), `read` (a card and its answer, by `decisionRef`), and `withdraw` (an open card the asker no longer needs).
+`team_ask` asks a decision on a card in a Thread: `ask` (a Thread or Task, optional `target`, optional `context`, and 1 to 6 `questions`, each with a `prompt`, 2 to 4 `options`, `multiple`, and the `recommended` option indexes), `read` (a card and its answer, by `decisionRef`), `answer` (the answer to a card addressed to the calling seat), and `withdraw` (an open card the asker no longer needs).
 
-`ask` posts the card, then waits up to `waitMinutes` (default 10, at most 10) for the answer, ending early when the call is cancelled. An answer is returned and replaces the recommended options. With no answer the result lists the recommended options to go ahead on, and says to stop before any step no one can undo; the answer still arrives later as a Thread mention. The wait holds no seat lock: it reads the Thread's change stream until the card closes or the time runs out.
+A card addresses the Human by default. `target` names a seat instead, as a handle (`@lead`) or a member id; the seat must be a live Member of the Workspace and of the card's Channel. A card addressed to a seat is a planning-phase question, so the Host refuses it unless the Task is still `todo` and holds no active Claim — the same planning-phase answer the issue view carries. Only the seat the card names, or the Human, may answer it.
+
+`ask` posts the card, then waits up to `waitMinutes` (default 10, at most 10) for the answer, ending early when the call is cancelled. An answer is returned and replaces the recommended options. With no answer the result lists the recommended options to go on with, and says to stop before any step no one can undo; the answer still arrives later as a Thread mention. The wait holds no seat lock: it reads the Thread's change stream until the card closes or the time runs out.
 
 ## `team_plan`
 

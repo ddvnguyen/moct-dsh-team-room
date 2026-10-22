@@ -280,7 +280,7 @@ const decisionQuestionSchema = z.object({
 }).strict()
 
 const decisionNoticeSchema = z.discriminatedUnion('event', [
-  z.object({ decisionRef: decisionRefSchema, event: z.literal('asked'), context: z.string().min(1).optional(), questions: z.array(decisionQuestionSchema) }).strict(),
+  z.object({ decisionRef: decisionRefSchema, event: z.literal('asked'), context: z.string().min(1).optional(), target: memberIdSchema.optional(), questions: z.array(decisionQuestionSchema) }).strict(),
   z.object({
     decisionRef: decisionRefSchema,
     event: z.literal('answered'),

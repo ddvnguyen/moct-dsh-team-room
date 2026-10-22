@@ -175,9 +175,11 @@ A Doc in review shows in its Thread and Channel as a plan card with Approve and 
 
 ## Decision
 
-A card of 1 to 6 questions an Agent Member asks the Human in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The Human answers every question at once, once.
+A card of 1 to 6 questions an Agent Member asks in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The addressee is the Human by default, or a named seat when the card names one. The answerer answers every question at once, once.
 
-A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions the Human, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.
+A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions its addressee, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.
+
+A card addressed to a seat is a planning-phase question: the Host refuses it once the Task it sits on has left the planning phase, because a seat is asked for a decision while the work is still being designed. The Human may always answer such a card, whether or not the card names a seat.
 
 ## Decision Record
 
