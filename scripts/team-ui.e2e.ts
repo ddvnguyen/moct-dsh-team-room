@@ -3851,6 +3851,89 @@ it('posts a comment on the issue, keeps it across a reload, and nests the reply 
  * is named by the Host's own prompt, so the scripted arguments read that ref
  * out of the request instead of guessing it.
  */
+/**
+ * The Team's history (M-40): the browser's own back and forward buttons walk
+ * the seat's positions, the path never changes, and a reload keeps the stack.
+ *
+ * The journey drives the browser's history the way a reader does — the button,
+ * not a call into the client — and reads the browser's own entry count to see
+ * whether a navigation created one.
+ */
+it('walks the Team history with the browser back and forward buttons in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-history-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team History Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+  }
+  // The Channel the journey's Workspace carries; the board reads the whole
+  // catalog, so the journey needs the Workspace, not a Channel of its own.
+  await team.createChannel({ requestId: 'history-journey-channel', workspaceId, name: 'delivery', description: 'History journey' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The board is a navigation face: the persisted snapshot is how the reader
+  // reaches it, and a reload reopens it.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // The path never changes: the position lives in the history state object,
+  // never in the URL.
+  const path = await page.evaluate(() => location.pathname)
+  expect(await page.evaluate(() => history.length)).toBeGreaterThan(0)
+
+  // One Task on the board, so the card pick has somewhere to go.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('History journey task')
+  await dialog.getByLabel('描述').fill('The card the history walks')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'History journey task' })
+  await card.waitFor({ timeout: 20_000 })
+
+  // A filter is not a place: it changes what the board shows, not where the
+  // reader is, so it creates no history entry.
+  const entriesBeforeFilter = await page.evaluate(() => history.length)
+  await board.getByTestId('board-filter-bar').getByRole('searchbox').fill('History')
+  await expect.poll(async () => board.locator('[data-testid="board-card"]', { hasText: 'History journey task' }).count()).toBe(1)
+  expect(await page.evaluate(() => history.length)).toBe(entriesBeforeFilter)
+  await board.getByTestId('board-filter-bar').getByRole('searchbox').fill('')
+
+  // A card pick is a place: one history entry, and the path does not move.
+  const entriesBeforePick = await page.evaluate(() => history.length)
+  await card.click()
+  await page.locator('[data-team-thread]').waitFor({ timeout: 30_000 })
+  expect(await page.evaluate(() => history.length)).toBe(entriesBeforePick + 1)
+  expect(await page.evaluate(() => location.pathname)).toBe(path)
+
+  // The browser's back returns to the board, and its forward returns to the
+  // Thread: the same stack the in-app affordance walks.
+  await page.evaluate(() => { history.back() })
+  await expect.poll(async () => page.getByTestId('team-board-page').count(), { timeout: 30_000 }).toBe(1)
+  await page.evaluate(() => { history.forward() })
+  await expect.poll(async () => page.locator('[data-team-thread]').count(), { timeout: 30_000 }).toBe(1)
+
+  // A reload keeps the stack: the position is restored and the browser's back
+  // still walks the path it walked before the reload.
+  await page.reload()
+  await expect.poll(async () => page.locator('[data-team-thread]').count(), { timeout: 30_000 }).toBe(1)
+  await page.evaluate(() => { history.back() })
+  await expect.poll(async () => page.getByTestId('team-board-page').count(), { timeout: 30_000 }).toBe(1)
+  expect(await page.evaluate(() => location.pathname)).toBe(path)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'history-back-on-the-board.png'), fullPage: true })
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
 it('delivers the scheduled Orchestrator digest in real Web', async () => {
   await installLocalBundle(false)
   const replayDirectory = join(HOME, 'replay')
