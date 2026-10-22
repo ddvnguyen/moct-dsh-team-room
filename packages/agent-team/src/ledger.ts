@@ -92,6 +92,9 @@ import type {
   AgentTeamInboxDelta,
   AgentTeamInboxItem,
   AgentTeamInitializedOperation,
+  AgentTeamIssueDecision,
+  AgentTeamIssueView,
+  AgentTeamIssueViewRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
   AgentTeamMemberActor,
@@ -2148,6 +2151,7 @@ export class AgentTeamLedger {
       if (existing !== undefined) {
         if (existing.kind !== 'team/doc-created' || !this.sameActor(existing.actor, request.actor) || existing.data.workspaceId !== request.workspaceId
           || existing.data.doc.threadRef !== request.threadRef || existing.data.doc.title !== title
+          || existing.data.doc.taskRef !== request.taskRef
           || !this.sameList(existing.data.sections.map(section => section.heading), outline)) this.throwRequestCollision(request.requestId)
         return this.resolved(this.createDocResult(existing))
       }
@@ -2155,9 +2159,19 @@ export class AgentTeamLedger {
       const { thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, { threadRef: request.threadRef })
       if (title === '') throw new Error('Doc title must not be empty')
       if (outline.some(heading => heading === '')) throw new Error('Doc outline headings must not be empty')
+      // A Doc bound to an issue lives in that Task's Thread: the plan's submit
+      // and review notices are read with the issue, and a plan of another
+      // Task's Thread would be read with the wrong issue.
+      const taskRef = request.taskRef
+      if (taskRef !== undefined) {
+        const task = this.state.tasks.get(taskRef)
+        if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
+        if (task.threadRef !== thread.threadRef) throw new Error(`Task '${taskRef}' does not belong to Thread '${thread.threadRef}'`)
+      }
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
-      const doc: AgentTeamDoc = Object.freeze({ docRef: this.ref('doc'), channelRef, threadRef: thread.threadRef, author: actor.memberId, title, createdAtSequence: sequence })
+      const doc: AgentTeamDoc = Object.freeze({ docRef: this.ref('doc'), channelRef, threadRef: thread.threadRef,
+        ...(taskRef === undefined ? {} : { taskRef }), author: actor.memberId, title, createdAtSequence: sequence })
       const operation: AgentTeamDocCreatedOperation = Object.freeze({
         ...base, kind: 'team/doc-created',
         data: Object.freeze({ workspaceId: request.workspaceId, doc, sections: outlineSections(outline) }),
@@ -3900,6 +3914,120 @@ export class AgentTeamLedger {
       cursor: nextCursor,
       hasMore,
     })
+  }
+
+  /**
+   * The Human's read model for one issue: the seven regions in one snapshot.
+   *
+   * The read converges before it answers — the writes already queued in this
+   * ledger settle first, so the view is one consistent snapshot instead of a
+   * torn one. The convergence is best-effort: a failed write never fails the
+   * read, the view answers with the state as it is, and the next read
+   * retries. The pending description promotion (M-39's repair) is attempted
+   * in the same seam.
+   *
+   * The contract carries no variant: `commentLimit` is a read size, and every
+   * presentation of one issue reads this same value.
+   */
+  async issueView(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamIssueViewRequest): Promise<AgentTeamIssueView> {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    const limit = request.commentLimit ?? 50
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('comment limit must be an integer between 1 and 100')
+    const { task, thread } = this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    await this.settled()
+    const anchor = this.threadAnchor(thread.threadRef)
+    const facts = this.threadFacts(thread.threadRef)
+    const cards = this.decisions(authorized, { workspaceId: request.workspaceId, threadRef: thread.threadRef }).decisions
+    const records = this.decisionRecords(authorized, { workspaceId: request.workspaceId, taskRef: task.taskRef }).records
+    // The ask message of a card is not a comment: the card renders in its
+    // place in the timeline, so the comment region skips it.
+    const askMessageRefs = new Set(cards.map(card => card.messageRef))
+    const messageFacts = facts.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'message' }> => fact.kind === 'message')
+    const commentFacts = messageFacts.filter(fact => fact.message.messageRef !== anchor.messageRef && !askMessageRefs.has(fact.message.messageRef))
+    const carried = commentFacts.slice(-limit)
+    const activityFacts = facts.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'activity' }> => fact.kind === 'activity')
+    const activities = activityFacts.slice(-50).map(fact => fact.activity).reverse()
+    const channel = this.requireChannel(request.workspaceId, task.channelRef)
+    const taskNumber = this.taskNumbers(request.workspaceId).get(task.taskRef) ?? 0
+    // The Task was created with its Thread, or by the promotion that attached
+    // it to one — the promote activity is that instant.
+    const promoted = activityFacts.find(fact => fact.activity.kind === 'promote')
+    const createdAt = promoted?.occurredAt ?? anchor.occurredAt
+    const updatedAt = facts.at(-1)?.occurredAt ?? createdAt
+    return Object.freeze({
+      task,
+      thread,
+      taskNumber,
+      title: task.title ?? boundedInboxPreview(anchor.body),
+      description: Object.freeze({
+        body: anchor.body,
+        author: anchor.sender,
+        occurredAt: anchor.occurredAt,
+        source: 'anchor' as const,
+        revision: task.descriptionRevision ?? 0,
+      }),
+      properties: Object.freeze({
+        status: task.status,
+        resolution: task.resolution,
+        priority: task.priority ?? 'none',
+        position: task.position ?? 0,
+        ...(task.assignee === undefined || task.assignee === null ? {} : { assignee: task.assignee }),
+        channelRef: task.channelRef,
+        channelName: channel.name,
+        taskNumber,
+        claimOwners: Object.freeze(this.liveClaimOwners(task).map(owner => owner.memberId)),
+        planningPhase: task.status === 'todo' && !this.claimsForTask(task.taskRef).some(claim => claim.state === 'active'),
+        createdAt,
+        updatedAt,
+      }),
+      comments: Object.freeze({
+        items: Object.freeze(carried),
+        hasMore: commentFacts.length > carried.length,
+        cursor: carried.at(0)?.sequence ?? 0,
+      }),
+      activity: Object.freeze({ items: Object.freeze(activities), hasMore: activityFacts.length > activities.length }),
+      decisions: Object.freeze(this.issueDecisionRows(cards, records)),
+      executionLog: Object.freeze({
+        sessions: Object.freeze(this.threadSessionRuns(thread.threadRef)),
+        failures: Object.freeze(this.threadTurnFailures(thread.threadRef)),
+      }),
+      docs: Object.freeze(this.docs(authorized, { workspaceId: request.workspaceId, threadRef: thread.threadRef }).docs),
+    })
+  }
+
+  /**
+   * The decisions region of one issue: every card exactly once and every
+   * record exactly once, oldest first.
+   *
+   * A card with no record is a `card` row — open, or withdrawn. A record is a
+   * `decision` row, and it carries the card it came from when the source is
+   * an ask: the card then renders in the record's row instead of a row of its
+   * own. A plan approval is a record with no card.
+   */
+  private issueDecisionRows(cards: readonly AgentTeamDecisionView[], records: readonly AgentTeamDecisionRecord[]): readonly AgentTeamIssueDecision[] {
+    const cardsByDecisionRef = new Map(cards.map(card => [card.decisionRef, card]))
+    const recordedRefs = new Set(records.flatMap(record => record.source.kind === 'ask' ? [record.source.decisionRef] : []))
+    const rows: { readonly row: AgentTeamIssueDecision; readonly at: number }[] = []
+    for (const card of cards) {
+      if (recordedRefs.has(card.decisionRef)) continue
+      rows.push({ row: Object.freeze({ kind: 'card' as const, card }), at: Date.parse(card.askedAt) })
+    }
+    for (const record of records) {
+      const card = record.source.kind === 'ask' ? cardsByDecisionRef.get(record.source.decisionRef) : undefined
+      rows.push({ row: Object.freeze({ kind: 'decision' as const, record, ...(card === undefined ? {} : { card }) }), at: Date.parse(record.decidedAt) })
+    }
+    rows.sort((left, right) => left.at - right.at)
+    return Object.freeze(rows.map(entry => entry.row))
+  }
+
+  /**
+   * The writes already queued in this ledger, settled.
+   *
+   * A read that waits for them never sees a torn snapshot: every write
+   * committed before the read began is in the state the read assembles.
+   */
+  private async settled(): Promise<void> {
+    await this.operationTail
   }
 
   status(): AgentTeamStatus {

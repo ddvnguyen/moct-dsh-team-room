@@ -43,6 +43,7 @@ describe('Agent Team generated Typert boundary', () => {
       'getHumanAvatar',
       'humanProfile',
       'inbox',
+      'issueView',
       'joinChannel',
       'joinWorkspace',
       'leaveWorkspace',

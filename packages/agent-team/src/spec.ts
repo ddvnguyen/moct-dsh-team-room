@@ -170,6 +170,9 @@ const taskSchema = z.object({
   priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
   assignee: memberIdSchema.nullable().optional(),
   position: z.number().finite().optional(),
+  // The description's own fence, optional so every ledger written before the
+  // description existed replays unchanged.
+  descriptionRevision: z.number().int().nonnegative().optional(),
 }).strict()
 
 const taskPatchSchema = z.object({
@@ -177,6 +180,7 @@ const taskPatchSchema = z.object({
   priority: z.union([z.literal('urgent'), z.literal('high'), z.literal('medium'), z.literal('low'), z.literal('none')]).optional(),
   assignee: memberIdSchema.nullable().optional(),
   position: z.number().finite().optional(),
+  descriptionRevision: z.number().int().nonnegative().optional(),
 }).strict()
 
 const threadSchema = z.object({
@@ -230,6 +234,9 @@ const docSchema = z.object({
   docRef: docRefSchema,
   channelRef: channelRefSchema,
   threadRef: threadRefSchema,
+  // The Doc→Task binding, optional so every Doc written before the binding
+  // existed replays unchanged.
+  taskRef: taskRefSchema.optional(),
   author: memberIdSchema,
   title: z.string().min(1),
   createdAtSequence: z.number().int().positive(),

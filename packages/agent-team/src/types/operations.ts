@@ -745,6 +745,8 @@ export interface AgentTeamTaskPatch {
   readonly priority?: AgentTeamTaskPriority
   readonly assignee?: AgentTeamMemberId | null
   readonly position?: number
+  /** The description's own fence, bumped by every description write. */
+  readonly descriptionRevision?: number
 }
 
 /** Durable Human Task field update; it does not revise the Thread's Messages. */

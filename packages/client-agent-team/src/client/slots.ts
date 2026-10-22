@@ -15,6 +15,8 @@ import type {
   AgentTeamCreateTaskResult,
   AgentTeamInbox,
   AgentTeamInboxRequest,
+  AgentTeamIssueView,
+  AgentTeamIssueViewRequest,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamJoinWorkspaceResult,
   AgentTeamLeaveWorkspaceRequest,
@@ -246,6 +248,12 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
   /** The board's catalog read: one whole-Workspace `view` per query key. */
   loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
+  /**
+   * The issue view: one read per issue, shared by every presentation of it.
+   * The Thread scope is known only once the board card that opens the issue
+   * has been read; passing it narrows the query's covered scopes.
+   */
+  loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => Promise<RemoteResult<AgentTeamIssueView>>
   /** Board create: one unassigned Task with its opening Message. */
   createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
   /** Board field write: title/priority/assignee/position, fenced by the Thread revision. */

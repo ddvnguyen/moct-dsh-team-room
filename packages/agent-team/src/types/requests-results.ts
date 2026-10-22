@@ -38,6 +38,7 @@ import type {
   AgentTeamOperationId,
   AgentTeamRequestId,
   AgentTeamTask,
+  AgentTeamTaskDescription,
   AgentTeamTaskPriority,
   AgentTeamTaskActivity,
   AgentTeamTaskRef,
@@ -1115,6 +1116,113 @@ export interface AgentTeamView {
   readonly hasMore: boolean
 }
 
+/** Read request for one issue's read model. */
+export interface AgentTeamIssueViewRequest {
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  /** Newest comments to carry; integer 1–100, default 50 (validated like threadHistory's limit). */
+  readonly commentLimit?: number
+}
+
+/**
+ * The Human's read model for one issue: the seven regions in one snapshot.
+ *
+ * The contract carries no variant. The page face, the slice dialog and the
+ * peek panel read this same value and render different subsets of it —
+ * `commentLimit` is the only variant-sensitive input, and it is a read size.
+ */
+export interface AgentTeamIssueView {
+  /** Identity only — the client renders `properties`, never these fields directly. */
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly taskNumber: number
+
+  /** `task.title ?? boundedInboxPreview(anchor.body)`, resolved once in the Host. */
+  readonly title: string
+  /**
+   * The description is a record, not a string. The durable record is declared
+   * once (`AgentTeamTaskDescription`); the region's type extends it with the
+   * description's own fence, so there is one shape and not two.
+   */
+  readonly description: AgentTeamIssueDescription
+
+  readonly properties: AgentTeamIssueProperties
+  readonly comments: AgentTeamIssueComments
+  readonly activity: AgentTeamIssueActivity
+  readonly decisions: readonly AgentTeamIssueDecision[]
+  readonly executionLog: AgentTeamIssueExecutionLog
+  /** Carried in the value, not rendered in this cut. */
+  readonly docs: readonly AgentTeamDocSummary[]
+
+  /**
+   * The fence is `thread.revision`; there is no second copy of it on this
+   * value. A description write fences on `description.revision` instead.
+   */
+}
+
+/** One row of the issue view's decisions region: an ask card, a decision record, or both. */
+export type AgentTeamIssueDecision =
+  | { readonly kind: 'card'; readonly card: AgentTeamDecisionView }
+  | { readonly kind: 'decision'; readonly record: AgentTeamDecisionRecord; readonly card?: AgentTeamDecisionView }
+
+/**
+ * The issue's description: the durable record plus the description's own fence.
+ *
+ * The fence is NOT `thread.revision`: a description write neither advances nor
+ * is fenced by the Thread revision, so an Agent mid-reply is not made stale by
+ * a Human's description edit.
+ */
+export interface AgentTeamIssueDescription extends AgentTeamTaskDescription {
+  /** The description's own fence; every description write checks and bumps it. */
+  readonly revision: number
+}
+
+/** The issue's board facts, resolved by the Host so the client never re-derives them. */
+export interface AgentTeamIssueProperties {
+  readonly status: AgentTeamTask['status']
+  readonly resolution: AgentTeamTask['resolution']
+  readonly priority: AgentTeamTaskPriority          // absent reads as 'none'
+  readonly position: number                          // absent reads as 0
+  readonly assignee?: AgentTeamMemberId
+  readonly channelRef: AgentTeamChannelRef
+  readonly channelName: string
+  readonly taskNumber: number
+  /** Owners of live Claims — board presentation only. NOT the planning gate. */
+  readonly claimOwners: readonly AgentTeamMemberId[]
+  /**
+   * The Host's answer to the planning gate: `true` iff the Task is `todo` and
+   * holds no claim with `state === 'active'`. The client reads the answer; it
+   * never re-derives the rule.
+   */
+  readonly planningPhase: boolean
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+/** The issue's comments: the newest page of the Thread's Messages, the anchor excluded. */
+export interface AgentTeamIssueComments {
+  /** The `message` arm of `AgentTeamThreadFact`. No second message shape. The anchor is never here. */
+  readonly items: readonly AgentTeamIssueComment[]
+  readonly hasMore: boolean
+  /** The oldest sequence carried; `beforeSequence: cursor` returns strictly older facts. */
+  readonly cursor: number
+}
+
+/** One comment of the issue: the `message` arm of a Thread fact. */
+export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }>
+
+/** The issue's activity: the newest public Thread activities, newest first. */
+export interface AgentTeamIssueActivity {
+  readonly items: readonly AgentTeamActivity[]
+  readonly hasMore: boolean
+}
+
+/** The issue's execution log: a snapshot of the Thread's Session runs and failed Turns. */
+export interface AgentTeamIssueExecutionLog {
+  readonly sessions: readonly AgentTeamThreadSessionRuns[]
+  readonly failures: readonly AgentTeamThreadTurnFailure[]
+}
+
 /** One Workspace a Member participates in, as exposed to the Member-facing view. */
 export interface AgentTeamWorkspaceParticipation {
   readonly workspaceId: WorkspaceId
@@ -1354,6 +1462,11 @@ export interface AgentTeamCreateDocRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly threadRef: AgentTeamThreadRef
+  /**
+   * The Task the Doc is bound to, when it is a plan for one issue. The Doc
+   * must live in that Task's Thread: a plan bound to an issue is read with it.
+   */
+  readonly taskRef?: AgentTeamTaskRef | undefined
   readonly title: string
   /** Section headings in order; each becomes an empty section to fill later. May be empty. */
   readonly outline: readonly string[]
@@ -1497,6 +1610,8 @@ export interface AgentTeamDocSummary {
   readonly docRef: AgentTeamDocRef
   readonly channelRef: AgentTeamChannelRef
   readonly threadRef: AgentTeamThreadRef
+  /** The Task the Doc is bound to, when it is a plan for one issue; absent on a Doc written for the Thread alone. */
+  readonly taskRef?: AgentTeamTaskRef | undefined
   readonly title: string
   readonly author: AgentTeamMemberId
   readonly status: AgentTeamDocStatus
