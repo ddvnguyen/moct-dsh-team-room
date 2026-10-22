@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
   AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamIssueComment, AgentTeamIssueComments, AgentTeamIssueDecision,
-  AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTask, AgentTeamThread, AgentTeamThreadFact,
+  AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskRef, AgentTeamThreadFact,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { zh } from '../src/client/locales.ts'
@@ -22,6 +22,7 @@ const translate = ((key: keyof typeof zh, params?: Record<string, string | numbe
 }) as unknown as TeamConversationProps['t']
 
 const workspaceId = 'workspace:alpha' as WorkspaceId
+const taskRef = 'task:1' as AgentTeamTaskRef
 const human = 'member:human' as AgentTeamMemberId
 const ann = 'member:ann' as AgentTeamMemberId
 
@@ -30,9 +31,8 @@ const member = (id: string, handle: string): AgentTeamClientMemberStatus => ({
 } as unknown as AgentTeamClientMemberStatus)
 
 const members = [member(human, '@dvnguyen'), member(ann, '@ann'), member('member:bob' as AgentTeamMemberId, '@bob')]
-
-const task = { taskRef: 'task:1', channelRef: 'channel:room', threadRef: 'thread:plan', status: 'in_progress', resolution: 'open' } as unknown as AgentTeamTask
-const thread = { threadRef: 'thread:plan', taskRef: 'task:1', revision: 7 } as unknown as AgentTeamThread
+const mentionHandles = new Map(members.map(status => [status.member.memberId, status.member.handle]))
+const nameOf = (id: AgentTeamMemberId): string => (id === human ? 'Ddv' : `@${mentionHandles.get(id) ?? 'member'}`)
 
 function messageFact(sequence: number, ref: string, body: string, sender: AgentTeamMemberId = ann, extra?: { readonly replyToMessageRef?: AgentTeamMessageRef; readonly attachments?: readonly { readonly attachmentId: AgentTeamAttachmentId; readonly name: string; readonly byteSize: number; readonly mediaType: string }[] }): AgentTeamIssueComment {
   return {
@@ -57,15 +57,18 @@ function region(items: readonly AgentTeamIssueComment[], hasMore = false): Agent
 function renderComments(overrides: Partial<IssueCommentsProps> = {}) {
   const drafts = new TeamDraftStore()
   const props: IssueCommentsProps = {
-    workspaceId,
-    task,
-    thread,
     comments: region([]),
     decisions: [],
-    members,
+    nameOf,
     humanMemberId: human,
     humanName: 'Ddv',
-    loadThreadHistory: vi.fn(async () => ({ ok: true, value: { task, thread, anchor: messageFact(0, 'message:anchor', 'anchor').message, anchorMentions: [], claims: [], facts: [], cursor: 0, hasMore: false } })) as unknown as IssueCommentsProps['loadThreadHistory'],
+    mentionHandles,
+    workspaceId,
+    taskRef,
+    baseRevision: 7,
+    onLoadOlder: vi.fn(),
+    loadingOlder: false,
+    members,
     reply: vi.fn(async () => ({ ok: true, value: { kind: 'committed' } })) as unknown as IssueCommentsProps['reply'],
     drafts,
     loadTriggerCatalog: vi.fn(async () => []) as unknown as IssueCommentsProps['loadTriggerCatalog'],
@@ -131,24 +134,15 @@ describe('IssueComments', () => {
     expect(card.querySelectorAll('[data-comment-replies] [data-comment-replies]')).toHaveLength(0)
   })
 
-  it('pages older comments through the history seam, with the region cursor and a bounded limit', async () => {
-    const loadThreadHistory = vi.fn(async () => ({
-      ok: true,
-      value: {
-        task, thread,
-        anchor: messageFact(1, 'message:anchor', 'the anchor').message,
-        anchorMentions: [], claims: [],
-        facts: [messageFact(2, 'message:older', 'the older comment')] as readonly AgentTeamThreadFact[],
-        cursor: 2, hasMore: false,
-      },
-    })) as unknown as IssueCommentsProps['loadThreadHistory']
+  it('pages older comments through the page that owns the history read', async () => {
+    const onLoadOlder = vi.fn()
     const { view } = renderComments({
       comments: region([messageFact(9, 'message:b', 'a newer comment')], true),
-      loadThreadHistory,
+      onLoadOlder,
     })
-    fireEvent.click(screen.getByRole('button', { name: zh.issueCommentsLoadOlder }))
-    await waitFor(() => { expect(loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ beforeSequence: 9, limit: 20 })) })
-    await waitFor(() => { expect(cardBodies(view.container)).toEqual(['the older comment', 'a newer comment']) })
+    fireEvent.click(screen.getByRole('button', { name: zh.issueCommentsMore }))
+    expect(onLoadOlder).toHaveBeenCalled()
+    expect(cardBodies(view.container)).toEqual(['a newer comment'])
   })
 
   it('renders an empty state for a Task with no comments', () => {
@@ -157,7 +151,7 @@ describe('IssueComments', () => {
   })
 
   it('posts the comment when the write commits, and shows nothing before it does', async () => {
-    const reply = vi.fn(async () => ({ ok: true, value: { kind: 'committed', receipt: { sequence: 11 }, message: messageFact(11, 'message:new', 'a new comment').message, task, thread } })) as unknown as IssueCommentsProps['reply']
+    const reply = vi.fn(async () => ({ ok: true, value: { kind: 'committed', receipt: { sequence: 11 }, message: messageFact(11, 'message:new', 'a new comment').message } })) as unknown as IssueCommentsProps['reply']
     const { view, drafts } = renderComments({ comments: region([messageFact(4, 'message:a', 'first comment')]), reply })
     fireEvent.change(screen.getByLabelText(zh.messageDraft), { target: { value: 'a new comment' } })
     fireEvent.click(screen.getByRole('button', { name: zh.sendMessage }))

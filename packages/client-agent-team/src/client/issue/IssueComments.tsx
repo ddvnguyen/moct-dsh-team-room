@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamIssueComment, AgentTeamIssueComments, AgentTeamIssueDecision,
-  AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTask, AgentTeamThread,
+  AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskRef,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { TeamComposer } from '../TeamComposer.tsx'
@@ -14,25 +14,30 @@ import type { TeamDraftKey, TeamDraftStore } from '../drafts.ts'
 import type { TeamConversationProps } from '../slots.ts'
 import css from './issue-comments.module.css'
 
-/** The page size of one older-comments page. The Host accepts 1–100. */
-const PAGE_SIZE = 20
-
 export interface IssueCommentsProps {
-  readonly workspaceId: WorkspaceId
-  /** The Task and the Thread it hangs on; the Thread's revision fences the write. */
-  readonly task: AgentTeamTask
-  readonly thread: AgentTeamThread
-  /** The contract's comments region: the newest window, oldest-first. */
+  /** The Host's comment region: the Messages, oldest first, the anchor excluded. */
   readonly comments: AgentTeamIssueComments
-  /** The contract's decisions region: the rows that own the ask messages. */
+  /** The decision region: the rows that own the ask messages, so the list skips them. */
   readonly decisions: readonly AgentTeamIssueDecision[]
-  /** The roster: names, handles and descriptions for the cards. */
-  readonly members: readonly AgentTeamClientMemberStatus[]
+  /** The display name of one Member. */
+  readonly nameOf: (memberId: AgentTeamMemberId) => string
+  /** The reading Human's Member id, when the Host named one; their rows read as literal text. */
   readonly humanMemberId?: AgentTeamMemberId | undefined
-  readonly humanName?: string | undefined
-  readonly humanAvatarUrl?: string | undefined
-  /** One paging path: the same history seam the Thread page pages with. */
-  readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
+  /** The Human's display name, for a mention that names the Human. */
+  readonly humanName: string
+  /** Every seat's handle, so a mention names the person it names. */
+  readonly mentionHandles: ReadonlyMap<AgentTeamMemberId, string>
+  /** The Workspace the issue belongs to: the write and the reads address it. */
+  readonly workspaceId: WorkspaceId
+  /** The Task the comments belong to: the write addresses it. */
+  readonly taskRef: AgentTeamTaskRef
+  /** The Host's fence for the comment write: the Thread revision the snapshot carried. */
+  readonly baseRevision: number
+  /** Reads the page of older comments; the Host pages by `comments.cursor`. */
+  readonly onLoadOlder: () => void
+  readonly loadingOlder: boolean
+  /** The seats the composer names. */
+  readonly members: readonly AgentTeamClientMemberStatus[]
   /** The write: one comment on the issue. */
   readonly reply: TeamConversationProps['reply']
   readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
@@ -49,19 +54,15 @@ export interface IssueCommentsProps {
  * The issue's comment region: the Task's messages as comment cards, the
  * replies under their parent, and the composer the Human answers in.
  *
- * The region reads the contract's comments region and pages the same facts the
- * Thread page pages — one store, two views. It never keeps a second copy of
- * the Task's comments, and it never re-derives what the Host recorded.
+ * The region reads the contract's comments region and shows the same facts the
+ * Thread page shows: one store, two views. It never keeps a second copy of the
+ * Task's comments, and it never re-derives what the Host recorded.
  */
 export function IssueComments({
-  workspaceId, task, thread, comments, decisions, members, humanMemberId, humanName = '', humanAvatarUrl,
-  loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, draftKey, t,
+  comments, decisions, nameOf, humanMemberId, humanName, mentionHandles, workspaceId, taskRef, baseRevision, onLoadOlder, loadingOlder,
+  members, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, draftKey, t,
 }: IssueCommentsProps) {
-  const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
-  const [olderCursor, setOlderCursor] = useState<number | undefined>(undefined)
-  const [olderHasMore, setOlderHasMore] = useState(false)
   const [posted, setPosted] = useState<readonly AgentTeamIssueComment[]>([])
-  const [loadingOlder, setLoadingOlder] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [confirmation, setConfirmation] = useState<string | undefined>(undefined)
@@ -69,19 +70,10 @@ export function IssueComments({
   const [files, setFiles] = useState<readonly File[]>([])
 
   const askRefs = useMemo(() => decisionAskMessageRefs(decisions), [decisions])
-  // One list: the window the contract carries, the older pages, and the rows
-  // this surface committed since. A message present in two of them is one row.
-  const facts = useMemo(() => mergeComments([...comments.items, ...older, ...posted]), [comments.items, older, posted])
+  // One list: the region the Host carried and the rows this surface committed
+  // since. A message present in both is one row.
+  const facts = useMemo(() => mergeComments([...comments.items, ...posted]), [comments.items, posted])
   const tree = useMemo(() => buildCommentThread(facts, askRefs), [facts, askRefs])
-
-  const handles = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')])), [members])
-  const nameOf = useCallback((memberId: AgentTeamMemberId): string => {
-    if (memberId === humanMemberId) return humanName
-    const status = members.find(candidate => candidate.member.memberId === memberId)
-    return status === undefined ? t('memberUnknown') : `@${status.member.handle}`
-  }, [members, humanMemberId, humanName, t])
-  const titleOf = useCallback((memberId: AgentTeamMemberId): string | undefined =>
-    members.find(candidate => candidate.member.memberId === memberId)?.member.description, [members])
 
   // The quote of the message a reply answers: the loaded fact when it is on
   // screen, the Host's resolution when it is not.
@@ -104,42 +96,14 @@ export function IssueComments({
     void resolveUnknownMessageRefs(missing, hostMessageRefLookup(resolveMessageRefs, workspaceId))
   }, [facts, factByRef, resolveMessageRefs, workspaceId, messageRefVersion])
 
-  const hasMore = olderCursor === undefined ? comments.hasMore : olderHasMore
-  const pagingCursor = olderCursor ?? comments.cursor
-
-  const loadOlder = useCallback(async (): Promise<void> => {
-    if (loadingOlder || !hasMore) return
-    setLoadingOlder(true)
-    setError(undefined)
-    try {
-      const result = await loadThreadHistory({ workspaceId, taskRef: task.taskRef, beforeSequence: pagingCursor, limit: PAGE_SIZE })
-      if (!result.ok) { setError(result.error.message); return }
-      const anchorRef = result.value.anchor.messageRef
-      const page = result.value.facts.filter((fact): fact is AgentTeamIssueComment =>
-        fact.kind === 'message' && fact.message.messageRef !== anchorRef && !askRefs.has(fact.message.messageRef))
-      setOlder(current => mergeComments([...current, ...page]))
-      setOlderCursor(result.value.cursor)
-      setOlderHasMore(result.value.hasMore)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setLoadingOlder(false)
-    }
-  }, [loadingOlder, hasMore, pagingCursor, loadThreadHistory, workspaceId, task.taskRef, askRefs])
-
   const mentionNamesOfFact = useCallback((fact: AgentTeamIssueComment): readonly MentionHandle[] =>
-    mentionNamesOf(fact.mentions, handles, humanName), [handles, humanName])
+    mentionNamesOf(fact.mentions, mentionHandles, humanName), [mentionHandles, humanName])
 
   const repliesOf = useCallback((root: AgentTeamIssueComment): readonly CommentCardReply[] => {
     const node = tree.roots.find(candidate => candidate.fact.message.messageRef === root.message.messageRef)
     if (node === undefined) return []
     return node.replies.map(reply => ({
-      author: {
-        name: nameOf(reply.fact.message.sender),
-        kind: reply.fact.message.sender === humanMemberId ? 'human' : 'agent',
-        ...(reply.fact.message.sender === humanMemberId && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {}),
-        ...(titleOf(reply.fact.message.sender) === undefined ? {} : { title: titleOf(reply.fact.message.sender) }),
-      },
+      author: { name: nameOf(reply.fact.message.sender), kind: reply.fact.message.sender === humanMemberId ? 'human' : 'agent' },
       body: reply.fact.message.body,
       human: reply.fact.message.sender === humanMemberId,
       occurredAt: reply.fact.message.occurredAt,
@@ -147,7 +111,7 @@ export function IssueComments({
       attachments: reply.fact.message.attachments,
       ...(reply.fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(reply.fact.message.replyToMessageRef) }),
     }))
-  }, [tree, nameOf, humanMemberId, humanAvatarUrl, titleOf, mentionNamesOfFact, quoteOf])
+  }, [tree, nameOf, humanMemberId, mentionNamesOfFact, quoteOf])
 
   const send = useCallback(async (): Promise<void> => {
     const { draft, recipients } = drafts.getSnapshot(draftKey)
@@ -165,9 +129,9 @@ export function IssueComments({
       const result = await reply({
         requestId: mintRequestId(),
         workspaceId,
-        taskRef: task.taskRef,
+        taskRef,
         body: draft.trim(),
-        baseRevision: thread.revision,
+        baseRevision,
         recipients: [...recipients].sort(),
         ...(replyTarget === undefined ? {} : { replyToMessageRef: replyTarget }),
         ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }),
@@ -197,30 +161,24 @@ export function IssueComments({
     } finally {
       setPending(false)
     }
-  }, [drafts, draftKey, pending, files, putAttachment, workspaceId, reply, task.taskRef, thread.revision, replyTarget, members, t])
+  }, [drafts, draftKey, pending, files, putAttachment, workspaceId, reply, taskRef, baseRevision, replyTarget, members, t])
 
   const replyParent = replyTarget === undefined ? undefined : quoteOf(replyTarget)
   const replyParentMember = replyTarget === undefined ? undefined : factByRef.get(replyTarget)?.message.sender
 
   return (
-    <section className={css.region} data-issue-comments="">
-      <h2 className={css.heading}>{t('issueCommentsTitle')}</h2>
+    <section className={css.region} aria-label={t('issueCommentsLabel')} data-issue-comments="">
+      <h2 className={css.heading}>{t('issueCommentsLabel')}</h2>
       {tree.roots.length === 0
         ? <p className={css.empty} data-issue-comments-empty="">{t('issueCommentsEmpty')}</p>
         : (
           <div className={css.list} data-issue-comment-list="">
             {tree.roots.map(root => {
               const fact = root.fact
-              const author = {
-                name: nameOf(fact.message.sender),
-                kind: fact.message.sender === humanMemberId ? 'human' as const : 'agent' as const,
-                ...(fact.message.sender === humanMemberId && humanAvatarUrl !== undefined ? { avatarUrl: humanAvatarUrl } : {}),
-                ...(titleOf(fact.message.sender) === undefined ? {} : { title: titleOf(fact.message.sender) }),
-              }
               return (
                 <CommentCard
                   key={fact.message.messageRef}
-                  author={author}
+                  author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
                   body={fact.message.body}
                   human={fact.message.sender === humanMemberId}
                   occurredAt={fact.message.occurredAt}
@@ -236,9 +194,9 @@ export function IssueComments({
             })}
           </div>
         )}
-      {hasMore && (
-        <button type="button" className={css.loadOlder} data-issue-comments-load-older="" disabled={loadingOlder} onClick={() => { void loadOlder() }}>
-          {loadingOlder ? t('issueCommentsLoading') : t('issueCommentsLoadOlder')}
+      {comments.hasMore && (
+        <button type="button" className={css.loadOlder} data-issue-comments-load-older="" disabled={loadingOlder} onClick={onLoadOlder}>
+          {loadingOlder ? t('issueCommentsLoading') : t('issueCommentsMore')}
         </button>
       )}
       <TeamComposer
