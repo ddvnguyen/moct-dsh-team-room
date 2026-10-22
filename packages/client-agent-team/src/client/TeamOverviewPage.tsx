@@ -33,6 +33,17 @@ const DECISION_THREAD_PROBES = 8
 /** Day buckets the 14-day chart may draw. */
 const SPEND_DAYS = 14
 
+/**
+ * The size of an "unrecorded" spend mark, in pixels. A bucket whose input usage
+ * was never proven draws at this fixed height, so the mark never carries a
+ * magnitude: the row's title and the "unrecorded" label carry the meaning, and
+ * the height stays the same whatever the data says.
+ */
+const UNKNOWN_SPEND_MARK_PX = 6
+
+/** The width of the per-agent "unrecorded" mark: a sliver, never a volume. */
+const UNKNOWN_SPEND_SLIVER_PX = 2
+
 interface TeamOverviewPageProps {
   readonly workspaceId: WorkspaceId
   readonly loadWorkspaceActivity: (request: AgentTeamWorkspaceActivityRequest) => Promise<RemoteResult<AgentTeamWorkspaceActivity>>
@@ -333,7 +344,9 @@ export function TeamOverviewPage({ workspaceId, loadWorkspaceActivity, loadMembe
                     <div className={page.bars} role="img" aria-label={t('overviewSpendPerAgent', { day: latestBucket.day })}>
                       {latestRows.map(row => <div key={row.memberId} className={page.barRow} data-team-overview-spend-agent={row.memberId} data-unknown={row.tokens === null || undefined}>
                         <span className={page.barName}>{handleByMember.get(row.memberId) ?? row.memberId.replace(/^member:/, '')}</span>
-                        <span className={page.barTrack}><span className={row.tokens === null ? `${page.barFill} ${page.barFillUnknown}` : page.barFill} style={{ width: `${row.tokens === null ? 0 : Math.round(row.tokens / latestMax * 100)}%` }} /></span>
+                        <span className={page.barTrack}>{row.tokens === null
+                          ? <span className={page.unknownSpendMark} style={{ width: `${UNKNOWN_SPEND_SLIVER_PX}px`, height: `${UNKNOWN_SPEND_MARK_PX}px` }} />
+                          : <span className={page.barFill} style={{ width: `${Math.round(row.tokens / latestMax * 100)}%` }} />}</span>
                         <span className={page.barValue}>{row.tokens === null ? t('overviewSpendUnknown') : t('overviewTokens', { count: compactCount(row.tokens) })}</span>
                       </div>)}
                     </div>
@@ -343,8 +356,10 @@ export function TeamOverviewPage({ workspaceId, loadWorkspaceActivity, loadMembe
                     <div className={page.dayBars} role="img" aria-label={t('overviewSpendPerDay', { count: String(SPEND_DAYS) })} data-team-overview-spend-days>
                       {spendDays.map(day => <div key={day.day} className={page.dayBar} data-unknown={day.tokens === null || undefined}
                         title={day.tokens === null ? `${day.day}: ${t('overviewSpendUnknown')}` : `${day.day}: ${compactCount(day.tokens)} tokens`}>
-                        <span className={day.tokens === null ? `${page.dayBarFill} ${page.dayBarFillUnknown}` : page.dayBarFill}
-                          style={{ height: day.tokens === null ? '100%' : day.tokens === 0 ? '0' : `${Math.max(2, Math.round(day.tokens / spendMax * 100))}%` }} />
+                        <span className={day.tokens === null ? page.unknownSpendMark : page.dayBarFill}
+                          style={day.tokens === null
+                            ? { width: '100%', height: `${UNKNOWN_SPEND_MARK_PX}px` }
+                            : { height: day.tokens === 0 ? '0' : `${Math.max(2, Math.round(day.tokens / spendMax * 100))}%` }} />
                       </div>)}
                     </div>
                   </div>
