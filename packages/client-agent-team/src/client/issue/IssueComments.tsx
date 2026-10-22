@@ -14,7 +14,30 @@ import type { TeamDraftKey, TeamDraftStore } from '../drafts.ts'
 import type { TeamConversationProps } from '../slots.ts'
 import css from './issue-comments.module.css'
 
-export interface IssueCommentsProps {
+/**
+ * The seams the comment region writes through: the reply, the attachments, the
+ * quote resolution and the composer. They are one bundle because the page owns
+ * them and the region borrows them — the region never reads a context.
+ */
+export interface IssueCommentWrite {
+  /** The Workspace the issue belongs to: the write and the reads address it. */
+  readonly workspaceId: WorkspaceId
+  /** The Task the comments belong to: the write addresses it. */
+  readonly taskRef: AgentTeamTaskRef
+  /** The Host's fence for the comment write: the Thread revision the snapshot carried. */
+  readonly baseRevision: number
+  /** The write: one comment on the issue. */
+  readonly reply: TeamConversationProps['reply']
+  readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
+  readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
+  /** Quote context for the replies whose parent is not on screen. */
+  readonly resolveMessageRefs?: TeamConversationProps['resolveMessageRefs'] | undefined
+  readonly drafts: TeamDraftStore
+  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
+  readonly draftKey: TeamDraftKey
+}
+
+export interface IssueCommentsProps extends IssueCommentWrite {
   /** The Host's comment region: the Messages, oldest first, the anchor excluded. */
   readonly comments: AgentTeamIssueComments
   /** The decision region: the rows that own the ask messages, so the list skips them. */
@@ -27,26 +50,11 @@ export interface IssueCommentsProps {
   readonly humanName: string
   /** Every seat's handle, so a mention names the person it names. */
   readonly mentionHandles: ReadonlyMap<AgentTeamMemberId, string>
-  /** The Workspace the issue belongs to: the write and the reads address it. */
-  readonly workspaceId: WorkspaceId
-  /** The Task the comments belong to: the write addresses it. */
-  readonly taskRef: AgentTeamTaskRef
-  /** The Host's fence for the comment write: the Thread revision the snapshot carried. */
-  readonly baseRevision: number
   /** Reads the page of older comments; the Host pages by `comments.cursor`. */
   readonly onLoadOlder: () => void
   readonly loadingOlder: boolean
   /** The seats the composer names. */
   readonly members: readonly AgentTeamClientMemberStatus[]
-  /** The write: one comment on the issue. */
-  readonly reply: TeamConversationProps['reply']
-  readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
-  readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
-  /** Quote context for the replies whose parent is not on screen. */
-  readonly resolveMessageRefs?: TeamConversationProps['resolveMessageRefs'] | undefined
-  readonly drafts: TeamDraftStore
-  readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
-  readonly draftKey: TeamDraftKey
   readonly t: TeamConversationProps['t']
 }
 

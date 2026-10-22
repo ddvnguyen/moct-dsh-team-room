@@ -8,7 +8,7 @@
 export { IssueHeader, type IssueHeaderProps } from './IssueHeader.tsx'
 export { IssueDescription, type IssueDescriptionProps } from './IssueDescription.tsx'
 export { IssueProperties, type IssuePropertiesProps } from './IssueProperties.tsx'
-export { IssueComments, type IssueCommentsProps } from './IssueComments.tsx'
+export { IssueComments, type IssueCommentsProps, type IssueCommentWrite } from './IssueComments.tsx'
 export { IssueActivity, type IssueActivityProps } from './IssueActivity.tsx'
 export { IssueDecisions, type IssueDecisionsProps } from './IssueDecisions.tsx'
 export { IssueExecutionLog, type IssueExecutionLogProps } from './IssueExecutionLog.tsx'

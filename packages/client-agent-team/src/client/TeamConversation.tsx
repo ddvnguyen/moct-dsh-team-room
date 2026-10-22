@@ -28,7 +28,9 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // the slot that carries the issue is this client's.
     return <IssuePage key={`issue:${navigationState.issueRef}`} workspaceId={current.workspaceId} taskRef={navigationState.issueRef}
       loadIssueView={loadIssueView} loadMembers={loadMembers} loadChannels={loadChannels} humanName={humanName}
-      loadThreadHistory={loadThreadHistory} updateTask={updateTask} changeTask={changeTask} answerDecision={answerDecision}
+      loadThreadHistory={loadThreadHistory} reply={reply} putAttachment={putAttachment} getAttachment={getAttachment}
+      resolveMessageRefs={resolveMessageRefs} drafts={drafts} loadTriggerCatalog={loadTriggerCatalog}
+      updateTask={updateTask} changeTask={changeTask} answerDecision={answerDecision}
       loadThreadSessions={loadThreadSessions} loadMemberActivity={loadMemberActivity} threadTurnFailures={threadTurnFailures}
       openMemberSession={openMemberSession} stopSession={stopSession} subscribeChanges={subscribeChanges}
       closeIssue={closeIssue} t={t} />
