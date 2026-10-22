@@ -10,8 +10,12 @@ import { TeamLanes } from './TeamLanes.tsx'
 import { IssuePage } from './issue/IssuePage.tsx'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, closeIssue, openIssue, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, closeIssue, openIssue, issueContext, setIssueVariant, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
+  // The open issue's context: the Workspace it is read in, and the control the
+  // focus returns to. An Inbox row may name a Workspace the reader has not
+  // selected, so the issue carries its own.
+  const issueState = useSyncExternalStore(issueContext.subscribe, issueContext.get, issueContext.get)
   // Every seat names and draws the Human from this one projection: the
   // localized fallback stands only until the first profile read lands.
   const identity = useHumanIdentity(humanIdentity)
@@ -21,26 +25,32 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
   const humanName = identity.name ?? t('human')
   const workspaces = useWorkspaces(state => state.items)
   const current = workspaces.find(workspace => workspace.workspaceId === navigationState.workspaceId)
-  if (current !== undefined && navigationState.issueRef !== undefined && navigationState.issueVariant === 'page') {
+  if (navigationState.issueRef !== undefined && navigationState.issueVariant === 'page') {
     // The issue page is the whole column, over the face the reader is on: the
     // face flags are untouched, so closing the issue returns to the face the
     // reader came from. The slice dialog over the live face is M-38's chrome;
     // the slot that carries the issue is this client's.
-    return <IssuePage key={`issue:${navigationState.issueRef}`} workspaceId={current.workspaceId} taskRef={navigationState.issueRef}
+    //
+    // The Workspace is the one the issue was opened in — an Inbox row may name
+    // a Workspace the reader has not selected, and the page must read the
+    // issue there all the same.
+    const issueWorkspaceId = issueState?.taskRef === navigationState.issueRef ? issueState.workspaceId : current?.workspaceId
+    if (issueWorkspaceId === undefined) return null
+    return <IssuePage key={`issue:${navigationState.issueRef}`} workspaceId={issueWorkspaceId} taskRef={navigationState.issueRef}
       loadIssueView={loadIssueView} loadMembers={loadMembers} loadChannels={loadChannels} humanName={humanName}
       loadThreadHistory={loadThreadHistory} reply={reply} putAttachment={putAttachment} getAttachment={getAttachment}
       resolveMessageRefs={resolveMessageRefs} drafts={drafts} loadTriggerCatalog={loadTriggerCatalog}
       updateTask={updateTask} changeTask={changeTask} answerDecision={answerDecision}
       loadThreadSessions={loadThreadSessions} loadMemberActivity={loadMemberActivity} threadTurnFailures={threadTurnFailures}
       openMemberSession={openMemberSession} stopSession={stopSession} subscribeChanges={subscribeChanges}
-      closeIssue={closeIssue} t={t} />
+      closeIssue={closeIssue} showSlice={() => { setIssueVariant('slice') }} t={t} />
   }
   if (current !== undefined && navigationState.board === true) {
     // The Board page is a Workspace face: the columns read the Workspace's
     // whole catalog, so it needs the selected Workspace. Selecting the Board
     // clears the Channel/Thread faces, and a card pick hands the seat to the
     // Thread setters like every other face change.
-    return <TeamBoardPage key="board" workspaceId={current.workspaceId} loadBoard={loadBoard} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} createTask={createTask} updateTask={updateTask} changeTask={changeTask} subscribeChanges={subscribeChanges} selectThread={selectThread} openIssue={openIssue} t={t} />
+    return <TeamBoardPage key="board" workspaceId={current.workspaceId} loadBoard={loadBoard} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} createTask={createTask} updateTask={updateTask} changeTask={changeTask} subscribeChanges={subscribeChanges} openIssue={openIssue} navigation={navigation} t={t} />
   }
   if (navigationState.inbox === true) {
     // The Inbox page is global: it merges every visible Workspace and needs no

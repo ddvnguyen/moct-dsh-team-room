@@ -300,17 +300,19 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
   }, [selectWorkspace, selectThread])
 
   // Open the row's issue: the same seam the board and the Agent page use, so
-  // the issue opens as a slice over the Inbox. A row without a Task has no
-  // issue to open, so it falls back to the Thread.
-  const openIssueOf = useCallback((row: { readonly workspaceId: WorkspaceId; readonly item: AgentTeamInboxItem }): void => {
-    selectWorkspace(row.workspaceId)
+  // the issue opens as a slice over the Inbox. The row's Workspace rides the
+  // seam instead of a Workspace selection: selecting one would leave the
+  // Inbox — the very face the slice is over — and the issue slot is
+  // orthogonal to the face flags. A row without a Task has no issue to open,
+  // so it falls back to the Thread.
+  const openIssueOf = useCallback((row: { readonly workspaceId: WorkspaceId; readonly item: AgentTeamInboxItem }, focusOpener?: () => void): void => {
     const taskRef = row.item.task?.taskRef
     if (taskRef === undefined) {
       openThread(row)
       return
     }
-    openIssue(taskRef, 'slice')
-  }, [selectWorkspace, openThread, openIssue])
+    openIssue(taskRef, { workspaceId: row.workspaceId, focusOpener })
+  }, [openThread, openIssue])
 
   // Row activation: on a wide seat a plain click selects the row into the
   // detail pane and a modifier click opens the Thread (Multica's own grammar);
@@ -322,7 +324,8 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
       setSelectedKey(current => current === key ? '' : key)
       return
     }
-    openIssueOf(row)
+    const target = event?.currentTarget
+    openIssueOf(row, target === undefined ? undefined : () => { target.focus({ preventScroll: true }) })
   }, [wide, openIssueOf])
 
   // The keyboard walk moves the selection and nothing else: the arrow keys

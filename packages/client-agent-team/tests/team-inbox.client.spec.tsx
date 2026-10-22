@@ -377,7 +377,7 @@ describe('Team Inbox surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('opens the row issue as a slice over the Inbox, and lands Back on its Channel', async () => {
+  it('opens the row issue as a slice over the Inbox, and leaves the Inbox behind it', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', seededMessages: [{ body: 'Thread opener', occurredAt: '2026-09-13T03:00:00.000Z' }], remainingUnreadCounts: [0], initialChannels: true, seedThreadRef: 'thread:w2' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
     b.seedInbox([inboxRow('w2', 'thread:w2')])
@@ -386,15 +386,22 @@ describe('Team Inbox surfaces', () => {
     fireEvent.click(card)
     const row = await b.view.findByRole('button', { name: /#engineering/ })
     fireEvent.click(row)
-    // The row's own Workspace is selected first, then the issue: the issue
-    // opens as a slice over the Inbox — the same seam the board and the Agent
-    // page use. The mention is consumed by the Thread's own read, which the
-    // issue view is not, so the dot stays until the Thread is read.
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toMatchObject({ mode: 'team', workspaceId: 'w2', issueRef: 'task:1', issueVariant: 'slice' })
-    // The row's own Workspace is not the seat's, so the seat leaves the Inbox
-    // for it: the issue opens over the face that Workspace is in, and the
-    // Inbox face is gone with the workspace switch.
-    expect(b.view.container.querySelector('[data-team-inbox]')).toBeNull()
+    // The issue opens in the row's own Workspace, as a slice over the Inbox —
+    // the same seam the board and the Agent page use. The mention is consumed
+    // by the Thread's own read, which the issue view is not, so the dot stays
+    // until the Thread is read.
+    const navigation = b.runtime.ctx.get('teamNavigation')
+    expect(navigation?.getSnapshot().issueRef).toBe('task:1')
+    expect(navigation?.getSnapshot().issueVariant).toBe('slice')
+    // The issue slot is orthogonal to the face flags: the row's Workspace is
+    // not selected, so the Inbox is still the face behind the slice.
+    expect(navigation?.getSnapshot().workspaceId).toBe('w1')
+    expect(navigation?.getSnapshot().inbox).toBe(true)
+    expect(b.view.container.querySelector('[data-team-inbox]')).not.toBeNull()
+    // The slice is an overlay, not a place: the persisted snapshot does not
+    // carry it, so a reload never re-opens a dialog nobody asked for.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toMatchObject({ mode: 'team', workspaceId: 'w1' })
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '').issueRef).toBeUndefined()
     await b.runtime.dispose()
   })
 

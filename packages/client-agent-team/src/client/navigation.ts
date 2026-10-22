@@ -70,6 +70,9 @@ export interface TeamNavigationSnapshot {
    * How the issue surface is presented. Absent means the issue is not open.
    * `page` is the whole-column presentation; `slice` is the dialog over the
    * live face (the slice chrome is M-38's; the slot is this client's).
+   *
+   * The page is a position and is persisted; the slice is an overlay and is
+   * not, so a reload never re-opens a dialog nobody asked for.
    */
   issueVariant?: 'slice' | 'page'
 }
@@ -92,8 +95,11 @@ function readSnapshot(): TeamNavigationSnapshot {
       // the Thread face, so a position that carries a Task and no Thread — the
       // issue position — would lose its Task on reload.
       ...(typeof parsed.taskRef === 'string' ? { taskRef: parsed.taskRef as AgentTeamTaskRef } : {}),
-      ...(typeof parsed.issueRef === 'string' ? { issueRef: parsed.issueRef as AgentTeamTaskRef } : {}),
-      ...(parsed.issueVariant === 'slice' || parsed.issueVariant === 'page' ? { issueVariant: parsed.issueVariant } : {}),
+      // The issue's **page** is a durable position and survives a reload; its
+      // **slice** is an overlay and does not. A slice restored over a
+      // reloaded face would be a dialog nobody opened, so a persisted slice
+      // is ignored — the reader lands on the face, not in a dialog.
+      ...(parsed.issueVariant === 'page' && typeof parsed.issueRef === 'string' ? { issueRef: parsed.issueRef as AgentTeamTaskRef, issueVariant: 'page' as const } : {}),
       ...(hasThread ? {
         threadRef: parsed.threadRef as AgentTeamThreadRef,
         ...(typeof parsed.taskNumber === 'number' && Number.isInteger(parsed.taskNumber) && parsed.taskNumber > 0 ? { taskNumber: parsed.taskNumber } : {}),
@@ -119,8 +125,10 @@ function persistSnapshot(snapshot: TeamNavigationSnapshot): void {
       ...(threadRef === undefined ? {} : { threadRef }),
       ...(taskNumber === undefined ? {} : { taskNumber }),
       ...(docRef === undefined ? {} : { docRef }),
-      ...(issueRef === undefined ? {} : { issueRef }),
-      ...(issueVariant === undefined ? {} : { issueVariant }),
+      // The issue's **page** is a position, and a reload restores it. Its
+      // **slice** is an overlay, not a place: it is not persisted, so a
+      // reload never re-opens a dialog nobody asked for.
+      ...(issueVariant === 'page' && issueRef !== undefined ? { issueRef, issueVariant } : {}),
     }))
   } catch {
     // Local persistence is a convenience; private mode and quota failures do not block navigation.

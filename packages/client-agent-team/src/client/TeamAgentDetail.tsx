@@ -106,8 +106,11 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   /** Opens a Thread in the Team conversation (the row's Thread link). */
   readonly openThread?: (threadRef: AgentTeamSessionRun['threadRefs'][number]) => void
-  /** The global opener: the issue opens as a slice over the Agent page. */
-  readonly openIssue?: (taskRef: AgentTeamTaskRef) => void
+  /**
+   * The global opener: the issue opens as a slice over the Agent page. The
+   * opener is the control the reader invoked, so the focus returns to it.
+   */
+  readonly openIssue?: (taskRef: AgentTeamTaskRef, focusOpener?: (() => void) | undefined) => void
   /** The Member Session now open in the main view: pressing its own row cannot remount, so it selects Chat directly. */
   readonly currentSessionId?: string
   /** The host's own view selector on the open session's conversation. */
@@ -342,8 +345,8 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
 
   // The issue opens as a slice over the Agent page: the same seam the board
   // and the Inbox use, so "open the issue" means one thing everywhere.
-  const openIssueOf = (taskRef: AgentTeamTaskRef): void => {
-    openIssue?.(taskRef)
+  const openIssueOf = (taskRef: AgentTeamTaskRef, focusOpener?: () => void): void => {
+    openIssue?.(taskRef, focusOpener)
   }
 
   return (
@@ -365,7 +368,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             <span className={css.detailDot} aria-hidden="true">·</span>
             {currentTask === undefined
               ? <span className={css.muted} data-agent-current-task>{t('agentRowIdle')}</span>
-              : <button type="button" className={css.detailTask} data-agent-current-task onClick={() => { openIssueOf(currentTask.taskRef) }}>
+              : <button type="button" className={css.detailTask} data-agent-current-task onClick={event => { const target = event.currentTarget; openIssueOf(currentTask.taskRef, () => { target.focus({ preventScroll: true }) }) }}>
                 <span className={css.taskNumber}>#{currentTask.taskNumber}</span>
                 <span className={css.taskTitle}>{currentTask.title}</span>
               </button>}
@@ -418,7 +421,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             groups={groupTasksByStatus(taskRows)}
             members={[{ memberId, handle: status.member.handle }]}
             activities={activities}
-            onOpen={row => { openIssueOf(row.taskRef) }}
+            onOpen={(row, focusOpener) => { openIssueOf(row.taskRef, focusOpener) }}
             t={t}
           />
         </div>

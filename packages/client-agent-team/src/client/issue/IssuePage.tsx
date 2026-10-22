@@ -12,7 +12,6 @@
 // it was and says why; a stale revision is a business outcome, not an error.
 
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { TeamConversationProps } from '../slots.ts'
 import look from '../multica-look.module.css'
 import { IssueSurface, type IssueSurfaceProps } from './IssueSurface.tsx'
 import css from './issue-view.module.css'
@@ -20,6 +19,12 @@ import css from './issue-view.module.css'
 export interface IssuePageProps extends IssueSurfaceProps {
   /** Closes the issue surface; the face behind it stays where it was. */
   readonly closeIssue: () => void
+  /**
+   * Puts the issue back into its slice presentation: the same slot, the same
+   * Task, the dialog over the face the reader came from. The variant switch
+   * runs both ways, so a reader who maximized the slice can go back to it.
+   */
+  readonly showSlice: () => void
 }
 
 /**
@@ -32,6 +37,7 @@ export function IssuePage(props: IssuePageProps) {
     <main className={`${look.multicaLook} ${css.pageSurface}`} data-team-issue-page>
       <IssueSurface {...props} />
       <div className={css.pageFoot}>
+        <Button size="sm" variant="outline" onClick={props.showSlice}>{props.t('issueBackToSlice')}</Button>
         <Button size="sm" variant="outline" onClick={props.closeIssue}>{props.t('issueClose')}</Button>
       </div>
     </main>

@@ -105,12 +105,14 @@ function history(facts: readonly AgentTeamIssueComment[], hasMore: boolean): Age
 interface Harness {
   readonly loadThreadHistory: ReturnType<typeof vi.fn>
   readonly view: ReturnType<typeof render>
+  readonly showSlice: ReturnType<typeof vi.fn>
 }
 
 function renderPage(options: {
   readonly pages: readonly AgentTeamThreadHistory[]
 }): Harness {
   const loadThreadHistory = vi.fn(async () => ({ ok: true as const, value: options.pages[loadThreadHistory.mock.calls.length - 1] ?? options.pages[0]! }))
+  const showSlice = vi.fn()
   const view = render(
     <IssuePage
       workspaceId={workspaceId}
@@ -133,13 +135,23 @@ function renderPage(options: {
       stopSession={vi.fn(async () => ({ ok: true as const, value: { accepted: true as const } }))}
       subscribeChanges={vi.fn(() => () => {})}
       closeIssue={vi.fn()}
+      showSlice={showSlice}
       t={t}
     />,
   )
-  return { loadThreadHistory, view }
+  return { loadThreadHistory, view, showSlice }
 }
 
 describe('IssuePage', () => {
+  it('offers the way back to the slice, so the variant switch runs both ways', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    // The page is the slice's Maximize target; the reader goes back the same
+    // way they came, over the same slot.
+    fireEvent.click(harness.view.getByRole('button', { name: zh.issueBackToSlice }))
+    expect(harness.showSlice).toHaveBeenCalled()
+  })
+
   it('pages the older comments with the merged cursor, and never repeats a page', async () => {
     // The first older page carries the Thread's anchor, the ask of a decision
     // card, and one real comment.

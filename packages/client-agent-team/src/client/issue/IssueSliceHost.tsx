@@ -9,14 +9,17 @@
 // and renders the slice only while the slot says the slice is open: one host,
 // one dialog, and no flag of this card's own.
 
-import { useSyncExternalStore } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { TeamNavigation } from '../navigation.ts'
 import { useHumanIdentity, type TeamHumanIdentitySource } from '../human-identity.ts'
+import type { IssueContextStore } from './issue-client.ts'
 import { IssueSlice, type IssueSliceProps } from './IssueSlice.tsx'
 
 export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId' | 'taskRef' | 'humanName' | 'closeIssue' | 'maximize'> {
   /** The navigation slot: the issue that is open, and how it is presented. */
   readonly navigation: TeamNavigation
+  /** The open issue's context: the Workspace it is read in, and its opener. */
+  readonly issueContext: IssueContextStore
   /** The Human the rows name: their own messages read as literal text. */
   readonly humanIdentity: TeamHumanIdentitySource
 }
@@ -27,12 +30,29 @@ export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId'
  * slot, so the two never stand at once.
  */
 export function IssueSliceHost(props: IssueSliceHostProps) {
-  const { navigation, humanIdentity, ...surface } = props
+  const { navigation, humanIdentity, issueContext, ...surface } = props
   const snapshot = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
+  const context = useSyncExternalStore(issueContext.subscribe, issueContext.get, issueContext.get)
   const identity = useHumanIdentity(humanIdentity)
-  const workspaceId = snapshot.workspaceId
   const taskRef = snapshot.issueRef
-  if (workspaceId === undefined || taskRef === undefined || snapshot.issueVariant !== 'slice') return null
+  // The issue is read in the Workspace it was opened from: an Inbox row may
+  // name a Workspace the reader has not selected, and selecting it would
+  // leave the very face the slice is over.
+  const workspaceId = context !== undefined && context.taskRef === taskRef ? context.workspaceId : snapshot.workspaceId
+  const open = taskRef !== undefined && snapshot.issueVariant === 'slice'
+  // Escape closes the slice, and the focus goes back to the control the
+  // reader came from. The dialog's own layer gives the focus back to
+  // whatever held it when it opened — and a card's face holds none — so the
+  // seam moves the focus to the opener before the dialog opens, and this
+  // gives it back when the issue closes. The issue closing is the moment,
+  // not the presentation changing: Maximize hands the focus to the page.
+  const issueOpen = taskRef !== undefined
+  const wasOpen = useRef(issueOpen)
+  useEffect(() => {
+    if (wasOpen.current && !issueOpen) issueContext.restoreFocus()
+    wasOpen.current = issueOpen
+  }, [issueOpen, issueContext])
+  if (workspaceId === undefined || taskRef === undefined || !open) return null
   return (
     <IssueSlice
       {...surface}

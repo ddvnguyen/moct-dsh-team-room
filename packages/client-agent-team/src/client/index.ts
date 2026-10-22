@@ -82,6 +82,7 @@ import { TeamDetailPage } from './TeamDetailPage.tsx'
 import type { TeamMemoryRemotes } from './TeamMemoryPanel.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { IssueSliceHost } from './issue/IssueSliceHost.tsx'
+import { createIssueClient, type IssueClient } from './issue/issue-client.ts'
 import type { TeamConversationProps, TeamSidebarProps } from './slots.ts'
 import { TeamSlotBoundary, withSlotBoundary } from './TeamSlotBoundary.tsx'
 import { useShellSidebarCollapsed } from './shell-sidebar.ts'
@@ -411,6 +412,7 @@ function teamSharedRemotes(
   reads: TeamReadStream,
   drafts: TeamDraftStore,
   humanIdentity: TeamHumanIdentity,
+  issueClient: IssueClient,
 ): Record<string, unknown> {
   const loadTriggerCatalog = createTeamTriggerCatalogLoader({
     getSessionId: () => currentMainSessionId(ctx),
@@ -419,6 +421,12 @@ function teamSharedRemotes(
   })
   return {
     loadTriggerCatalog,
+    // The one seam every surface opens an issue with, and the context it
+    // fills: the Workspace the issue is read in, and the control the focus
+    // returns to. It rides the shared remotes, so every seat holds the same
+    // instance — one implementation, four callers.
+    openIssue: issueClient.openIssue,
+    issueContext: issueClient.context,
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
     loadInbox: (request: AgentTeamInboxRequest) => queries.read(inboxQuery(request), () => ctx.remote.agentTeam.inbox(request)),
     subscribeReads: (listener: () => void) => reads.subscribe(listener),
@@ -582,6 +590,7 @@ function registerModeShadow<T extends object>(
   reads: TeamReadStream,
   drafts: TeamDraftStore,
   humanIdentity: TeamHumanIdentity,
+  issueClient: IssueClient,
   name: 'sidebar.workspaces' | 'main',
   component: T,
   extraInject?: () => Record<string, unknown>,
@@ -590,7 +599,7 @@ function registerModeShadow<T extends object>(
   // that same panel instead of adding a second one.
   entryKey?: string,
 ): void {
-  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
+  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity, issueClient)
   ctx.slots.inject(name as never, () => {
     let dispose: (() => void) | undefined
     const reconcile = (): void => {
@@ -627,6 +636,10 @@ function applyUi(ctx: ClientContext): void {
 
   const navigation = new TeamNavigation()
   const disposeNavigation = ctx.reflect.provide('teamNavigation', navigation)
+  // The issue's client-side seam and context: one instance for the whole
+  // client, so every surface opens an issue through the same function and
+  // reads the same context.
+  const issueClient = createIssueClient(navigation)
   const drafts = new TeamDraftStore()
   const disposeDrafts = ctx.reflect.provide('teamDrafts', drafts)
   // The Human's own identity: one projection every seat reads, refreshed once
@@ -724,7 +737,7 @@ function applyUi(ctx: ClientContext): void {
   ctx.on('connection/reset', () => { changes.recover(); queries.newGeneration() })
   const reads = new TeamReadStream()
 
-  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity)
+  const sharedRemotes = teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity, issueClient)
   const dropTeamRow = registerTeamPanel(ctx, navigation, sharedRemotes, reads)
 
   // The issue slice: one dialog in the shell's floating layer, above every
@@ -739,7 +752,7 @@ function applyUi(ctx: ClientContext): void {
     inject: () => teamSeatInject(ctx, navigation, reads, sharedRemotes, 'main'),
   }, GuardedIssueSlice as never))
 
-  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, 'main', GuardedConversation as never, undefined, 'conversation')
+  registerModeShadow(ctx, navigation, queries, reads, drafts, humanIdentity, issueClient, 'main', GuardedConversation as never, undefined, 'conversation')
 
   // The Team page is a global panel beside the shipped Plugins and
   // scheduled-task entries, so the panel selection and Team mode are one fact:
@@ -826,7 +839,7 @@ function applyUi(ctx: ClientContext): void {
   // across is `t` — the strip is not a locale-scoped slot — so it is bound per
   // render from the dictionary rather than captured, and a language switch
   // reaches the tab body too.
-  const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity), 'sidebar.workspaces')
+  const teamTabSeat = teamSeatInject(ctx, navigation, reads, teamSharedRemotes(ctx, navigation, queries, reads, drafts, humanIdentity, issueClient), 'sidebar.workspaces')
   const teamTabRender = (props: NativeTabRenderProps): unknown => {
     const bound = ctx.locale.bind(NS) as TeamSidebarProps['t']
     // The strip calls `render` raw inside its own tree, so a throw here would

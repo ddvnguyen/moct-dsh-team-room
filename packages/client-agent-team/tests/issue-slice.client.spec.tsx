@@ -17,6 +17,7 @@ import { TeamDraftStore } from '../src/client/drafts.ts'
 import { TeamNavigation } from '../src/client/navigation.ts'
 import { TeamHumanIdentity } from '../src/client/human-identity.ts'
 import { IssueSliceHost, type IssueSliceHostProps } from '../src/client/issue/IssueSliceHost.tsx'
+import { createIssueClient } from '../src/client/issue/issue-client.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -63,7 +64,7 @@ function issueView(overrides: Partial<AgentTeamIssueView> = {}): AgentTeamIssueV
 }
 
 /** The host's seams: the issue read is the only one that matters here. */
-function seams(loadIssueView: TeamConversationProps['loadIssueView']): Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 't'> {
+function seams(loadIssueView: TeamConversationProps['loadIssueView']): Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 'issueContext' | 't'> {
   return {
     loadIssueView,
     loadMembers: vi.fn(async () => ({ ok: true as const, value: [] as readonly AgentTeamClientMemberStatus[] })),
@@ -84,7 +85,7 @@ function seams(loadIssueView: TeamConversationProps['loadIssueView']): Omit<Issu
     openMemberSession: vi.fn(),
     stopSession: vi.fn(),
     subscribeChanges: vi.fn(() => () => {}),
-  } as unknown as Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 't'>
+  } as unknown as Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 'issueContext' | 't'>
 }
 
 function humanIdentity(): TeamHumanIdentity {
@@ -97,10 +98,11 @@ function humanIdentity(): TeamHumanIdentity {
 describe('the issue slice', () => {
   it('renders the issue as a dialog over whatever the reader is on', async () => {
     const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
-    navigation.actions().openIssue(taskRef, 'slice')
+    issueClient.openIssue(taskRef)
     const loadIssueView = vi.fn(async () => ({ ok: true as const, value: issueView() }))
-    const view = render(<IssueSliceHost navigation={navigation} humanIdentity={humanIdentity()} {...seams(loadIssueView)} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(loadIssueView)} t={t} />)
 
     // The dialog is the slice's own surface, over the face behind it.
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
@@ -112,19 +114,36 @@ describe('the issue slice', () => {
     expect(loadIssueView).toHaveBeenCalledTimes(1)
   })
 
+  it('reads the issue in the Workspace it was opened from', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace('workspace:beta' as WorkspaceId)
+    // The Inbox row names another Workspace: the issue is read there, and the
+    // face behind it never moves.
+    issueClient.openIssue(taskRef, { workspaceId })
+    const loadIssueView = vi.fn(async () => ({ ok: true as const, value: issueView() }))
+    render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(loadIssueView)} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+    expect(loadIssueView).toHaveBeenCalledWith({ workspaceId, taskRef }, undefined)
+    // The navigation's own Workspace did not move.
+    expect(navigation.getSnapshot().workspaceId).toBe('workspace:beta')
+  })
+
   it('is not on screen while the slot names the page', () => {
     const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     navigation.actions().openIssue(taskRef, 'page')
-    const view = render(<IssueSliceHost navigation={navigation} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
     expect(document.querySelector('[data-team-issue-slice]')).toBeNull()
   })
 
   it('Maximize turns the slice into the page, and Esc closes it', async () => {
     const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
-    navigation.actions().openIssue(taskRef, 'slice')
-    const view = render(<IssueSliceHost navigation={navigation} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    issueClient.openIssue(taskRef)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
 
     // Maximize is the variant switch: the same slot, the page's presentation.
@@ -138,5 +157,26 @@ describe('the issue slice', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
     expect(navigation.getSnapshot().workspaceId).toBe(workspaceId)
+  })
+
+  it('Escape returns the focus to the control the issue was opened from', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    // The opener is a button on the face behind the slice — a card's title.
+    const opener = document.createElement('button')
+    opener.textContent = 'Alpha task'
+    document.body.append(opener)
+    issueClient.openIssue(taskRef, { workspaceId, focusOpener: () => { opener.focus({ preventScroll: true }) } })
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+    // The focus moved into the dialog, and the opener holds the focus the
+    // modal layer will give back.
+    expect(document.activeElement).not.toBe(opener)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
+    await waitFor(() => expect(document.activeElement).toBe(opener))
+    opener.remove()
   })
 })

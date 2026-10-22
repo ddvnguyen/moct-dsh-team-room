@@ -671,8 +671,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     }
     if (ref.startsWith('task:') && ref !== taskRef) {
       // Another Task cited here: open it as an issue slice over this Thread,
-      // the same seam the board and the Inbox use.
-      openIssue(ref as AgentTeamTaskRef, 'slice')
+      // the same seam the board and the Inbox use. The Thread's own Workspace
+      // is the one the issue is read in.
+      openIssue(ref as AgentTeamTaskRef, { workspaceId })
     }
   }, [channelRef, threadRef, taskRef, workspaceId, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs])
 

@@ -350,9 +350,39 @@ describe('Team board page', () => {
     expect(card.getAttribute('role')).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: 'Alpha task' }))
     // The card opens the issue as a slice over the board: the board stays
-    // behind the dialog, and Maximize turns it into the page.
-    await waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').issueRef).toBe('task:a'))
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').issueVariant).toBe('slice')
+    // behind the dialog, and Maximize turns it into the page. The slot is
+    // the navigation's own — the slice is an overlay, not a place, so it is
+    // not written to the persisted snapshot.
+    const navigation = b.runtime.ctx.get('teamNavigation')
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
+    expect(navigation?.getSnapshot().issueVariant).toBe('slice')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}').issueRef).toBeUndefined()
+    await b.runtime.dispose()
+  })
+
+  it('walks between the issues with the keyboard while the slice is open', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    const navigation = b.runtime.ctx.get('teamNavigation')
+    const cardOf = (taskRef: string): HTMLElement =>
+      [...b.view.container.querySelectorAll<HTMLElement>('[data-testid="board-card"]')].find(entry => entry.getAttribute('data-task-ref') === taskRef)!
+
+    // The card opens the slice over the board; the walk belongs to the board.
+    fireEvent.click(within(cardOf('task:a')).getByRole('button', { name: 'Alpha task' }))
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
+
+    // J steps to the next issue of the column, K steps back.
+    fireEvent.keyDown(document, { key: 'j' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:b'))
+    fireEvent.keyDown(document, { key: 'k' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
+
+    // L moves to the next column, H back to this one.
+    fireEvent.keyDown(document, { key: 'l' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:d'))
+    fireEvent.keyDown(document, { key: 'h' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
     await b.runtime.dispose()
   })
 

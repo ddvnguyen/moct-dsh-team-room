@@ -3848,7 +3848,7 @@ it('posts a comment on the issue, keeps it across a reload, and nests the reply 
  * reads the two presentations the slot names: the dialog over the board, and
  * the whole-column page.
  */
-it('opens the issue as a slice over the board, maximizes it to the page, and degrades to the page when narrow', async () => {
+it('opens the issue as a slice over the board and over the Inbox, maximizes it to the page, and degrades to the page when narrow', async () => {
   await installLocalBundle(false)
   scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
   const workspacePath = join(scaffold.workspaceCwd, 'team-issue-slice-journey')
@@ -3857,8 +3857,18 @@ it('opens the issue as a slice over the board, maximizes it to the page, and deg
   const workspaceId = workspace.id
   const team = scaffold.ctx.agentTeam as unknown as {
     createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+    createTask(request: Record<string, unknown>): Promise<{ readonly task: { readonly taskRef: string }; readonly thread: { readonly threadRef: string } }>
+    addMember(request: Record<string, unknown>): Promise<{ readonly status: { readonly member: { readonly memberId: string; readonly handle: string; readonly sessionId: string } } }>
   }
   await team.createChannel({ requestId: 'issue-slice-journey-channel', workspaceId, name: 'delivery', description: 'Issue slice journey' })
+  // A Member who asks a decision on a Task's Thread: the open card is a
+  // mention in the Human's Inbox, so the queue holds a row that names a Task
+  // — the row the Inbox opens the issue from.
+  const inboxChannel = (await team.createChannel({ requestId: 'issue-slice-journey-inbox-channel', workspaceId, name: 'inbox', description: 'Inbox journey' })).channel.channelRef
+  const planner = (await team.addMember({
+    requestId: 'issue-slice-journey-member', workspaceId, handle: 'planner', description: 'Plans the work',
+    presetId: 'team-member', role: 'worker', channelRefs: [inboxChannel],
+  })).status.member
 
   browser = await chromium.launch({ headless: true, executablePath: CHROME })
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
@@ -3879,6 +3889,16 @@ it('opens the issue as a slice over the board, maximizes it to the page, and deg
   await page.getByTestId('board-create-submit').click()
   const card = board.locator('[data-testid="board-card"]', { hasText: 'Issue slice task' })
   await card.waitFor({ timeout: 20_000 })
+  // A Task of its own, with a decision card on its Thread: that is what puts
+  // a row naming a Task into the Human's Inbox.
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const created = await team.createTask({
+    requestId: 'issue-slice-journey-inbox-task', workspaceId, channelRef: inboxChannel,
+    title: 'Inbox journey task', body: 'The task the Inbox opens',
+  })
+  await ledger.askDecision({ requestId: 'issue-slice-journey-ask', actor: { kind: 'member', memberId: planner.memberId, handle: 'planner' }, workspaceId, threadRef: created.thread.threadRef,
+    context: 'The slice opens over the Inbox, and the Inbox stays behind it.',
+    questions: [{ prompt: 'Ship it?', multiple: false, options: [{ label: 'Yes' }, { label: 'No' }], recommended: [0] }] })
 
   // The card opens the issue as a slice: a dialog over the board, and the
   // board behind it is still there.
@@ -3890,15 +3910,32 @@ it('opens the issue as a slice over the board, maximizes it to the page, and deg
   await expect.poll(async () => slice.getByText('Issue slice task').count(), { timeout: 30_000 }).toBeGreaterThan(0)
   await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-over-the-board.png'), fullPage: true })
 
+  // Escape closes the slice, and the focus goes back to the card the reader
+  // came from: the card's own title, not the body of the page.
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.evaluate(() => {
+    const active = document.activeElement
+    return active instanceof HTMLElement && active.hasAttribute('data-board-card-title') ? active.textContent ?? '' : ''
+  }), { timeout: 30_000 }).toContain('Issue slice task')
+
   // Maximize is the variant switch: the same issue, the whole-column page.
+  await card.click()
+  await slice.waitFor({ timeout: 30_000 })
   await slice.getByRole('button', { name: '最大化' }).click()
   await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
   await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page-from-the-slice.png'), fullPage: true })
 
-  // The page closes back to the face it was opened over.
-  await page.getByRole('button', { name: '关闭 Issue' }).click()
+  // The switch runs both ways: the page puts the issue back into the slice.
+  await page.getByRole('button', { name: '回到浮层' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(0)
+
+  // The slice closes back onto the face it was opened over.
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
   await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
 
   // The narrow viewport degrades the slice to the page: the wide overlay
@@ -3908,6 +3945,31 @@ it('opens the issue as a slice over the board, maximizes it to the page, and deg
   await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
   await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-narrow.png'), fullPage: true })
+  await page.getByRole('button', { name: '关闭 Issue' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(0)
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // The Inbox opens the issue the same way, and the Inbox is still the face
+  // behind the slice: the issue slot is orthogonal to the face flags, so the
+  // row's own Workspace is not selected and the queue does not leave.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, inbox: true }))
+  }, workspaceId)
+  await page.reload()
+  const inbox = page.locator('[data-team-inbox]')
+  await inbox.waitFor({ timeout: 30_000 })
+  const row = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
+  await row.waitFor({ timeout: 30_000 })
+  // A modifier click is the Inbox's own grammar for opening a row's issue: a
+  // plain click selects the row into the detail pane.
+  await row.click({ modifiers: ['Control'] })
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(1)
+  // The Inbox is still on screen, behind the dialog.
+  await expect.poll(async () => inbox.count(), { timeout: 30_000 }).toBe(1)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'issue-slice-over-the-inbox.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => inbox.count(), { timeout: 30_000 }).toBe(1)
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 300_000)

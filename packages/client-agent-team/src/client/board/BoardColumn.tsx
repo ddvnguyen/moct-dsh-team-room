@@ -29,7 +29,11 @@ export interface BoardColumnProps {
   readonly status: TaskStatus
   readonly tasks: readonly BoardCardTask[]
   readonly locked: boolean
-  readonly onCardClick: (task: BoardCardTask) => void
+  /**
+   * Opens one card. The focus opener is a way to focus the card's title: the
+   * focus returns to it when the issue closes.
+   */
+  readonly onCardClick: (task: BoardCardTask, focusOpener?: (() => void) | undefined) => void
   readonly onCardUpdate: (taskRef: string, update: BoardCardUpdate) => void
   readonly onHide: (status: TaskStatus) => void
   readonly onCreate: () => void

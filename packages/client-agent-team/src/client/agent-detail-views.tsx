@@ -42,7 +42,7 @@ export function markChatLanding(sessionId: string, now: number = Date.now()): vo
 export function dropChatLanding(sessionId: string): void { chatLanding.delete(sessionId) }
 export function resetAgentSessions(): void { agentOfSession.clear(); chatLanding.clear() }
 
-type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 'updateMember' | 'loadModels' | 'loadBoard' | 'loadMemberActivity' | 'subscribeChanges' | 'threadTurnFailures' | 'stopSession'>
+type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 'updateMember' | 'loadModels' | 'loadBoard' | 'loadMemberActivity' | 'subscribeChanges' | 'threadTurnFailures' | 'stopSession' | 'openIssue'>
 
 type Loaded =
   | { readonly state: 'loading' }
@@ -105,7 +105,7 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
       const hit = cachedResolvedThreadRef(threadRef as never)
       if (hit !== undefined) navigation.actions().selectThread(hit.threadRef, hit.channelRef, hit.taskRef, hit.taskNumber)
     }
-    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} openIssue={taskRef => { navigation.actions().openIssue(taskRef, 'slice') }} currentSessionId={sessionId} updateMember={remotes.updateMember} loadModels={remotes.loadModels} onCommitted={reload} loadBoard={remotes.loadBoard} loadMemberActivity={remotes.loadMemberActivity} subscribeChanges={remotes.subscribeChanges} threadTurnFailures={remotes.threadTurnFailures} stopSession={remotes.stopSession} {...(openView === undefined ? {} : { openView })} t={t} />
+    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} openIssue={(taskRef, focusOpener) => { remotes.openIssue(taskRef, { workspaceId, focusOpener }) }} currentSessionId={sessionId} updateMember={remotes.updateMember} loadModels={remotes.loadModels} onCommitted={reload} loadBoard={remotes.loadBoard} loadMemberActivity={remotes.loadMemberActivity} subscribeChanges={remotes.subscribeChanges} threadTurnFailures={remotes.threadTurnFailures} stopSession={remotes.stopSession} {...(openView === undefined ? {} : { openView })} t={t} />
   }
   return <div className={css.viewBody} data-team-agent-detail-body={tab}>
     {loaded.state === 'loading' && <p className={css.muted}>{t('agentDetailsLoading')}</p>}
