@@ -32,6 +32,7 @@ describe('Agent Team generated Typert boundary', () => {
       'contextJudge',
       'createChannel',
       'createTask',
+      'decisionRecords',
       'decisions',
       'doc',
       'docSectionHistory',

@@ -152,6 +152,8 @@ import type {
   AgentTeamAnswerDecisionRequest,
   AgentTeamAskDecisionRequest,
   AgentTeamDecisionNoticeResult,
+  AgentTeamDecisionRecordsRequest,
+  AgentTeamDecisionRecordsResult,
   AgentTeamDecisionRequest,
   AgentTeamDecisionView,
   AgentTeamDecisionsRequest,
@@ -3005,6 +3007,13 @@ export default class AgentTeam extends TypertRemoteService {
   decisions(request: AgentTeamDecisionsRequest): AgentTeamDecisionsResult {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().decisions(agentTeamHumanActor(), request)
+  }
+
+  /** Human read of the decision records of one Task, oldest first. */
+  @Remote('decisionRecords')
+  decisionRecords(request: AgentTeamDecisionRecordsRequest): AgentTeamDecisionRecordsResult {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().decisionRecords(agentTeamHumanActor(), request)
   }
 
   /** Human answer to one open decision card; its Thread notice wakes the asker. */
