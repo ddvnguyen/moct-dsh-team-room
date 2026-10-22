@@ -3565,9 +3565,13 @@ it('walks the Team Board journey in real Web', async () => {
     actor: { kind: 'member', memberId: worker.memberId, handle: worker.handle },
   })
   await card.getByRole('button', { name: 'Board journey task' }).click()
-  // The property column carries the execution log. The Thread opened in the
-  // lane beside its Channel, where the column is not rendered inline, so the
-  // journey reads the log the way a narrow seat does: the property sheet.
+  // The card opens the issue as a slice over the board; the slice's own "go
+  // to thread" control opens the Thread in the lane beside its Channel, where
+  // the property column is not rendered inline, so the journey reads the log
+  // the way a narrow seat does: the property sheet.
+  const slice = page.locator('[data-team-issue-slice]')
+  await slice.waitFor({ timeout: 30_000 })
+  await slice.getByRole('button', { name: '前往 Thread' }).click()
   await page.setViewportSize({ width: 820, height: 960 })
   await settleLayout(page)
   await page.getByRole('button', { name: '属性', exact: true }).click()

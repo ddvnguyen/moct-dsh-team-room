@@ -21,6 +21,12 @@ export interface IssueSliceProps extends IssueSurfaceProps {
   readonly closeIssue: () => void
   /** Maximize: the slice becomes the whole-column page, over the same face. */
   readonly maximize: () => void
+  /**
+   * Opens the Task's Thread. The board card opens the issue, so the Thread
+   * the card used to open is one control away — the affordance the board
+   * already had, kept.
+   */
+  readonly goToThread: () => void
 }
 
 /** The width below which the wide overlay stops working. */
@@ -74,6 +80,9 @@ export function IssueSlice(props: IssueSliceProps) {
         <div className={css.bar}>
           <Button size="sm" variant="outline" onClick={props.maximize} data-modal-autofocus="">
             {props.t('issueMaximize')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={props.goToThread}>
+            {props.t('issueGoToThread')}
           </Button>
           <Button size="sm" variant="outline" onClick={props.closeIssue}>
             {props.t('issueClose')}

@@ -12,12 +12,16 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { TeamNavigation } from '../navigation.ts'
 import { useHumanIdentity, type TeamHumanIdentitySource } from '../human-identity.ts'
+import type { TeamConversationProps } from '../slots.ts'
+import { jumpToTaskThread } from '../refs.ts'
 import type { IssueContextStore } from './issue-client.ts'
 import { IssueSlice, type IssueSliceProps } from './IssueSlice.tsx'
 
-export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId' | 'taskRef' | 'humanName' | 'closeIssue' | 'maximize'> {
+export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId' | 'taskRef' | 'humanName' | 'closeIssue' | 'maximize' | 'goToThread'> {
   /** The navigation slot: the issue that is open, and how it is presented. */
   readonly navigation: TeamNavigation
+  /** Resolves a Task's Thread: the slice's own "go to thread" control needs it. */
+  readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   /** The open issue's context: the Workspace it is read in, and its opener. */
   readonly issueContext: IssueContextStore
   /** The Human the rows name: their own messages read as literal text. */
@@ -30,7 +34,7 @@ export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId'
  * slot, so the two never stand at once.
  */
 export function IssueSliceHost(props: IssueSliceHostProps) {
-  const { navigation, humanIdentity, issueContext, ...surface } = props
+  const { navigation, humanIdentity, issueContext, resolveTaskRefs, ...surface } = props
   const snapshot = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const context = useSyncExternalStore(issueContext.subscribe, issueContext.get, issueContext.get)
   const identity = useHumanIdentity(humanIdentity)
@@ -61,6 +65,12 @@ export function IssueSliceHost(props: IssueSliceHostProps) {
       humanName={identity.name ?? props.t('human')}
       closeIssue={() => { navigation.actions().closeIssue() }}
       maximize={() => { navigation.actions().setIssueVariant('page') }}
+      goToThread={() => {
+        // The slice closes first: the Thread is a face of its own, and a
+        // dialog over it would be a dialog nobody asked for.
+        navigation.actions().closeIssue()
+        jumpToTaskThread(resolveTaskRefs, workspaceId, taskRef, navigation.actions().selectThread)
+      }}
     />
   )
 }
