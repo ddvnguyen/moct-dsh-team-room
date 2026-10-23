@@ -1055,12 +1055,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread })
         return undefined
       }
-      if (result.value.kind === 'unread_required') {
-        setError(t('unreadRequired', { count: result.value.unreadCount }))
-        mutationRequests.current.delete(key)
-        await refreshAfterFence()
-        return t('unreadRequired', { count: result.value.unreadCount })
-      }
+      // updateTask's only remaining business outcome is the stale revision:
+      // board fields are metadata, so no unread fence applies to them.
       setError(t('staleRevision'))
       mutationRequests.current.delete(key)
       await refreshPassiveFacts()

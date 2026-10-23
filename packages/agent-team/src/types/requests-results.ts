@@ -90,7 +90,7 @@ export interface AgentTeamAddMemberRequest {
   readonly capabilities?: AgentTeamMemberCapabilities
   /** Concurrent instances, an integer from 1 to 5; absent takes the default (2). */
   readonly instances?: number
-  /** Role label and prompt section; absent reads as `worker` for display. */
+  /** Role label and prompt section; absent means no role: no pill and no role section. */
   readonly role?: AgentTeamMemberRole
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
@@ -734,7 +734,6 @@ export interface AgentTeamUpdateTaskCommittedResult {
 
 export type AgentTeamUpdateTaskResult =
   | AgentTeamUpdateTaskCommittedResult
-  | AgentTeamUnreadRequired
   | AgentTeamStaleRevision
   | AgentTeamStaleDescriptionRevision
 

@@ -154,11 +154,8 @@ export function IssueSurface(props: IssueSurfaceProps) {
     try {
       const result = await updateTask({ requestId: mintRequestId(), workspaceId, taskRef, baseRevision, patch })
       if (!result.ok) { setError(result.error.message); return result.error.message }
-      if (result.value.kind === 'unread_required') {
-        const notice = t('unreadRequired', { count: result.value.unreadCount })
-        setError(notice)
-        return notice
-      }
+      // updateTask's only remaining business outcome is the stale revision:
+      // board fields are metadata, so no unread fence applies to them.
       if (result.value.kind === 'stale_revision') {
         setError(t('staleRevision'))
         return t('staleRevision')

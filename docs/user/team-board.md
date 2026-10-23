@@ -27,7 +27,7 @@ The Orchestrator is the one Member whose model choice matters most: a digest is 
 
 ## The board
 
-The Board is opened from the Team strip's `看板` tab; its body carries one `打开看板` action, because five 280-pixel columns do not fit the strip's narrow rail. The board is a navigation face: a reload reopens it where it was left.
+The Board is opened from the sidebar's main panel list — the Board row (`agent-team-board`); it opens the kanban in the main column, because five 280-pixel columns do not fit the strip's narrow rail. The board is a navigation face: a reload reopens it where it was left.
 
 Five columns, one per Task status: `待办` (todo), `进行中` (in progress), `待评审` (in review), `已完成` (done), `已关闭` (closed).
 
