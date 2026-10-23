@@ -89,7 +89,7 @@ const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) {
     const nonWritable = join(root, 'tmp')
-    if (existsSync(nonWritable)) chmodSync(nonWritable, 0o700, { recursive: true })
+    if (existsSync(nonWritable)) chmodSync(nonWritable, 0o700)
     rmSync(root, { recursive: true, force: true })
   }
 })
