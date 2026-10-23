@@ -7,7 +7,7 @@
 // renders this same tree, so a region exists once.
 
 import { useState } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
 import type { TeamConversationProps } from '../slots.ts'
@@ -38,6 +38,18 @@ export interface IssueViewProps {
   readonly onRename: (title: string) => Promise<string | undefined>
   /** Opens the Task's Thread, the legacy surface (D10); absent when there is no way out. */
   readonly onOpenLegacyThread?: (() => void) | undefined
+  /**
+   * Navigates back to the Channel the header's crumb names; absent renders
+   * the crumb's channel as plain text.
+   */
+  readonly onOpenChannel?: ((channelRef: AgentTeamChannelRef) => void) | undefined
+  /**
+   * Which presentation hosts this tree: the whole-column page, or the slice
+   * dialog over the reader's screen. The variant is presentation only — the
+   * page carries the sidebar (properties and the execution-log section), and
+   * the slice has no sidebar, so the log section renders only on the page.
+   */
+  readonly variant: 'page' | 'slice'
   /** Moves the Task's status. */
   readonly onStatus: (status: TaskStatus) => void
   /** Moves the Task's priority. */
@@ -63,7 +75,7 @@ export interface IssueViewProps {
  * comment thread, the activity, the decisions and the execution log. The
  * regions are laid out in that order, and every value in them is the Host's.
  */
-export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
+export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onOpenChannel, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
   // way the Thread page folds its sidebar. The column is hidden by the
   // stylesheet there and the opener appears; the Modal carries the same
@@ -84,6 +96,10 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
       t={t}
     />
   )
+  // The execution-log section is the page sidebar's own: it rides the column
+  // and the narrow-width drawer, and the slice — which has no sidebar —
+  // renders no log at all.
+  const log = variant === 'page' ? <IssueExecutionLog {...execution} /> : null
   return (
     <div className={css.page} data-team-issue-view>
       <IssueHeader
@@ -91,8 +107,22 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         taskNumber={view.properties.taskNumber}
         status={view.properties.status}
         channelName={view.properties.channelName}
+        channelRef={view.properties.channelRef}
+        onOpenChannel={onOpenChannel}
         onRename={onRename}
         onOpenLegacyThread={onOpenLegacyThread}
+        actions={{
+          taskRef: view.task.taskRef,
+          status: view.properties.status,
+          priority: view.properties.priority,
+          assignee: view.properties.assignee,
+          members: assigneeOptions,
+          onStatus,
+          onPriority,
+          onAssignee,
+          pending,
+          t,
+        }}
         pending={pending}
         t={t}
       />
@@ -117,10 +147,10 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
           />
           <IssueActivity activity={view.activity} nameOf={nameOf} t={t} />
           <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
-          <IssueExecutionLog {...execution} />
         </div>
         <aside className={css.side} data-team-issue-side>
           {properties}
+          {log}
         </aside>
       </div>
       <Modal
@@ -131,6 +161,7 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         contentClassName={`${css.modalBody} ${look.multicaLook}`}
       >
         {properties}
+        {log}
       </Modal>
     </div>
   )

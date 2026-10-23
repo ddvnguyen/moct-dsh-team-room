@@ -16,7 +16,7 @@ import { IssueSurface, type IssueSurfaceProps } from './IssueSurface.tsx'
 import look from '../multica-look.module.css'
 import css from './issue-slice.module.css'
 
-export interface IssueSliceProps extends IssueSurfaceProps {
+export interface IssueSliceProps extends Omit<IssueSurfaceProps, 'variant'> {
   /** Closes the slice: the face behind it stays exactly where it was. */
   readonly closeIssue: () => void
   /** Maximize: the slice becomes the whole-column page, over the same face. */
@@ -86,7 +86,7 @@ export function IssueSlice(props: IssueSliceProps) {
           </Button>
         </div>
         <div className={css.tree}>
-          <IssueSurface {...props} onOpenLegacyThread={props.goToThread} />
+          <IssueSurface {...props} variant="slice" onOpenLegacyThread={props.goToThread} />
         </div>
       </div>
     </Modal>

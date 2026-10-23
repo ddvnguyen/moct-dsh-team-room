@@ -9,6 +9,11 @@
 // through the dsh Session controller (`session.cancel`). No cost bars, no
 // retry, no transcript dialog: the seat's full context opens natively through
 // `openMemberSession`, which is the row's own transcript affordance.
+//
+// The read, the fold and the Stop write live in `useThreadLog`, which this
+// component and the issue sidebar's execution-log section (M-70) both
+// consume: one data source, so a section's totals cannot disagree with the
+// rows beside them.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -34,7 +39,7 @@ import css from './execution-log.module.css'
  * timer ticks the way Multica's do, and nothing re-renders when the log is
  * quiet. Mounts only when the caller has active rows.
  */
-function useTickingNow(active: boolean): number {
+export function useTickingNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!active) return
@@ -44,42 +49,70 @@ function useTickingNow(active: boolean): number {
   return now
 }
 
-interface ExecutionLogProps {
+/** The remotes one log's rows are read and stopped through. */
+export interface ThreadLogSource {
   readonly workspaceId: WorkspaceId
   readonly threadRef: AgentTeamThreadRef
   readonly loadThreadSessions: TeamConversationProps['loadThreadSessions']
   readonly loadMemberActivity: TeamConversationProps['loadMemberActivity']
   readonly threadTurnFailures: TeamConversationProps['threadTurnFailures']
-  readonly openMemberSession: TeamConversationProps['openMemberSession']
   readonly stopSession: TeamConversationProps['stopSession']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
-  readonly members: readonly AgentTeamClientMemberStatus[]
-  readonly t: TeamConversationProps['t']
 }
 
 /** One row the log renders: the folded Session run plus its derived state. */
-interface LogRow {
+export interface LogRow {
   readonly run: AgentTeamThreadSessionRuns['history'][number]
   readonly running: boolean
   readonly state: RunState
 }
 
+/** The token figures one run contributes to a total; either may be unrecorded. */
+export interface RunTokenFigures {
+  readonly tokensIn: number | null | undefined
+  readonly tokensOut: number | null | undefined
+}
+
 /**
- * The execution log: every seat's Session runs that touched this Thread, the
- * live one first, with tokens, duration, cache-hit share and model per row.
- * Reads are non-optimistic everywhere — Stop marks the row “stopping…” and the
- * row leaves the live bucket only when the Host's own activity wake refolds
- * `threadSessions` without it.
+ * The issue's token spend over a set of runs: the sum of the figures the runs
+ * recorded, and whether any run left a figure unrecorded. `null` means no run
+ * recorded anything at all — the caller shows no total rather than a zero
+ * that reads as "free". A partial sum is shown with its floor (`≥ …`), never
+ * as an exact figure: a null is a Turn that reported no usage, not a zero.
  */
-export function ExecutionLog(props: ExecutionLogProps) {
-  const { workspaceId, threadRef, loadThreadSessions, loadMemberActivity, threadTurnFailures, openMemberSession, stopSession, subscribeChanges, members, t } = props
+export function runTokenTotal(runs: readonly RunTokenFigures[]): { readonly tokens: number; readonly partial: boolean } | null {
+  let tokens = 0
+  let recorded = false
+  let partial = false
+  for (const run of runs) {
+    if (typeof run.tokensIn === 'number') { tokens += run.tokensIn; recorded = true } else partial = true
+    if (typeof run.tokensOut === 'number') { tokens += run.tokensOut; recorded = true } else partial = true
+  }
+  if (!recorded) return null
+  return { tokens, partial }
+}
+
+/**
+ * The log's data: every seat's Session runs on one Thread, the live one first,
+ * with the live rows' step/tool activity and the non-optimistic Stop write.
+ * A failed log read leaves the rows empty rather than surfacing an error: the
+ * log is an enhancement over the timeline, and its own read errors ride the
+ * returned `error`.
+ */
+export function useThreadLog({ workspaceId, threadRef, loadThreadSessions, loadMemberActivity, threadTurnFailures, stopSession, subscribeChanges }: ThreadLogSource): {
+  readonly activeRows: readonly LogRow[]
+  readonly pastRows: readonly LogRow[]
+  readonly activities: readonly ActivitySource[]
+  /** Sessions whose Stop was accepted but whose activity row has not cleared yet. */
+  readonly stopping: ReadonlySet<string>
+  readonly error: string | undefined
+  /** Accepts a Stop for one session: the row reads "stopping…" until the Host refolds. */
+  readonly stop: (sessionId: LogRow['run']['sessionId']) => void
+} {
   const [seatRuns, setSeatRuns] = useState<readonly AgentTeamThreadSessionRuns[]>([])
   const [activities, setActivities] = useState<readonly ActivitySource[]>([])
   const [failures, setFailures] = useState<readonly AgentTeamThreadTurnFailure[]>([])
-  // Sessions whose Stop was accepted but whose activity row has not cleared
-  // yet: their rows keep a “stopping…” state instead of a live tool.
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set())
-  const [confirmingStop, setConfirmingStop] = useState<LogRow>()
   const [error, setError] = useState<string>()
   const mountedRef = useRef(false)
 
@@ -150,19 +183,7 @@ export function ExecutionLog(props: ExecutionLogProps) {
     return { activeRows: active, pastRows: past }
   }, [seatRuns, failures])
 
-  // The live step and tool of each running row, keyed by seat.
-  const activityByMember = useMemo(() => new Map(activities.map(activity => [activity.memberId, activity])), [activities])
-  const handleByMember = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle])), [members])
-  const timeAgo = useMemo(() => makeTimeAgo({ justNow: t('timeJustNow'), minutesAgo: t('timeMinutesAgo'), hoursAgo: t('timeHoursAgo'), daysAgo: t('timeDaysAgo') }), [t])
-  const now = useTickingNow(activeRows.length > 0)
-
-  if (activeRows.length === 0 && pastRows.length === 0) {
-    return <p className={`${look.multicaLook} ${css.empty}`}>{t('executionLogEmpty')}</p>
-  }
-
-  const confirmStop = (row: LogRow): void => {
-    setConfirmingStop(undefined)
-    const sessionId = row.run.sessionId
+  const stop = (sessionId: LogRow['run']['sessionId']): void => {
     // Non-optimistic: the row reads “stopping…” from the click, and only the
     // Host's next activity wake (or a failed cancel) moves it off that state.
     setStopping(current => new Set([...current, sessionId]))
@@ -185,42 +206,15 @@ export function ExecutionLog(props: ExecutionLogProps) {
     })
   }
 
-  const renderRow = (row: LogRow): ReturnType<typeof Row> => <Row
-    key={row.run.sessionId}
-    row={row}
-    now={now}
-    handle={handleByMember.get(row.run.memberId) ?? row.run.memberId}
-    tool={row.running ? activityByMember.get(row.run.memberId)?.current?.label : undefined}
-    steps={row.running ? activityByMember.get(row.run.memberId)?.stepCount : undefined}
-    stopping={stopping.has(row.run.sessionId)}
-    onOpenSession={() => { openMemberSession(row.run.sessionId) }}
-    onStop={() => { setConfirmingStop(row) }}
-    timeAgo={timeAgo}
-    t={t}
-  />
-
-  return <div className={`${look.multicaLook} ${css.root}`} data-team-execution-log>
-    {activeRows.length > 0 && <p className={css.groupLabel}>{t('executionLogRunningCount', { count: String(activeRows.length) })}</p>}
-    {activeRows.map(renderRow)}
-    {pastRows.length > 0 && <p className={css.groupLabel}>{t('executionLogPast')}</p>}
-    {pastRows.map(renderRow)}
-    {error !== undefined && <p className={css.error} role="alert">{error}</p>}
-    {confirmingStop !== undefined && <Modal
-      open
-      onClose={() => { setConfirmingStop(undefined) }}
-      title={t('stopRunTitle')}
-      closeLabel={t('cancel')}
-      footer={<>
-        <Button variant="outline" onClick={() => { setConfirmingStop(undefined) }}>{t('cancel')}</Button>
-        <Button variant="primary" onClick={() => { confirmStop(confirmingStop) }}>{t('stopRun')}</Button>
-      </>}
-    >
-      <p className={css.confirmBody}>{t('stopRunBody', { handle: handleByMember.get(confirmingStop.run.memberId) ?? confirmingStop.run.memberId })}</p>
-    </Modal>}
-  </div>
+  return { activeRows, pastRows, activities, stopping, error, stop }
 }
 
-function Row({ row, now, handle, tool, steps, stopping, onOpenSession, onStop, timeAgo, t }: {
+/**
+ * One log row: the seat, its state, the live step/tool line or the recorded
+ * tokens, and the two affordances — the seat's own transcript, and Stop on a
+ * live row. Shared by the Thread page's log and the issue sidebar's section.
+ */
+export function ExecutionLogRow({ row, now, handle, tool, steps, stopping, onOpenSession, onStop, timeAgo, t }: {
   readonly row: LogRow
   readonly now: number
   readonly handle: string
@@ -264,4 +258,67 @@ function Row({ row, now, handle, tool, steps, stopping, onOpenSession, onStop, t
       {row.running && !stopping && <Button size="sm" variant="outline" onClick={onStop}>{t('stopRun')}</Button>}
     </span>
   </article>
+}
+
+interface ExecutionLogProps extends ThreadLogSource {
+  readonly openMemberSession: TeamConversationProps['openMemberSession']
+  readonly members: readonly AgentTeamClientMemberStatus[]
+  readonly t: TeamConversationProps['t']
+}
+
+/**
+ * The execution log: every seat's Session runs that touched this Thread, the
+ * live one first, with tokens, duration, cache-hit share and model per row.
+ * Reads are non-optimistic everywhere — Stop marks the row “stopping…” and the
+ * row leaves the live bucket only when the Host's own activity wake refolds
+ * `threadSessions` without it.
+ */
+export function ExecutionLog(props: ExecutionLogProps) {
+  const { workspaceId, threadRef, openMemberSession, members, t, ...source } = props
+  const { activeRows, pastRows, activities, stopping, error, stop } = useThreadLog({ workspaceId, threadRef, ...source })
+  const [confirmingStop, setConfirmingStop] = useState<LogRow>()
+
+  // The live step and tool of each running row, keyed by seat.
+  const activityByMember = useMemo(() => new Map(activities.map(activity => [activity.memberId, activity])), [activities])
+  const handleByMember = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle])), [members])
+  const timeAgo = useMemo(() => makeTimeAgo({ justNow: t('timeJustNow'), minutesAgo: t('timeMinutesAgo'), hoursAgo: t('timeHoursAgo'), daysAgo: t('timeDaysAgo') }), [t])
+  const now = useTickingNow(activeRows.length > 0)
+
+  if (activeRows.length === 0 && pastRows.length === 0) {
+    return <p className={`${look.multicaLook} ${css.empty}`}>{t('executionLogEmpty')}</p>
+  }
+
+  const renderRow = (row: LogRow) => <ExecutionLogRow
+    key={row.run.sessionId}
+    row={row}
+    now={now}
+    handle={handleByMember.get(row.run.memberId) ?? row.run.memberId}
+    tool={row.running ? activityByMember.get(row.run.memberId)?.current?.label : undefined}
+    steps={row.running ? activityByMember.get(row.run.memberId)?.stepCount : undefined}
+    stopping={stopping.has(row.run.sessionId)}
+    onOpenSession={() => { openMemberSession(row.run.sessionId) }}
+    onStop={() => { setConfirmingStop(row) }}
+    timeAgo={timeAgo}
+    t={t}
+  />
+
+  return <div className={`${look.multicaLook} ${css.root}`} data-team-execution-log>
+    {activeRows.length > 0 && <p className={css.groupLabel}>{t('executionLogRunningCount', { count: String(activeRows.length) })}</p>}
+    {activeRows.map(renderRow)}
+    {pastRows.length > 0 && <p className={css.groupLabel}>{t('executionLogPast')}</p>}
+    {pastRows.map(renderRow)}
+    {error !== undefined && <p className={css.error} role="alert">{error}</p>}
+    {confirmingStop !== undefined && <Modal
+      open
+      onClose={() => { setConfirmingStop(undefined) }}
+      title={t('stopRunTitle')}
+      closeLabel={t('cancel')}
+      footer={<>
+        <Button variant="outline" onClick={() => { setConfirmingStop(undefined) }}>{t('cancel')}</Button>
+        <Button variant="primary" onClick={() => { setConfirmingStop(undefined); stop(confirmingStop.run.sessionId) }}>{t('stopRun')}</Button>
+      </>}
+    >
+      <p className={css.confirmBody}>{t('stopRunBody', { handle: handleByMember.get(confirmingStop.run.memberId) ?? confirmingStop.run.memberId })}</p>
+    </Modal>}
+  </div>
 }
