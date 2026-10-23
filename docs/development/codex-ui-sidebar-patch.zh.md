@@ -28,7 +28,9 @@
 
 ## 如何应用与保持应用
 
-`scripts/codex-ui-sidebar-patch/apply.mjs` 就地修补已安装的 codex-ui，幂等，把原件留在补丁文件旁边，并在写入前做语法检查；语法检查的临时文件放在被写 bundle 旁边，绝不放在 `tmpdir()`，因此共享 `/tmp` 已满的主机不会让安装失败（M-66）。`deploy-dsh-x-sidebar.sh` 跑完整的 dsh-x 流程：profile 版本、安装、补丁、重启。
+`scripts/codex-ui-sidebar-patch/apply.mjs` 就地修补已安装的 codex-ui，幂等，把原件留在补丁文件旁边，并在写入前做语法检查；语法检查的临时文件放在被写 bundle 旁边，绝不放在 `tmpdir()`，因此共享 `/tmp` 已满的主机不会让安装失败（M-66）。
+
+`deploy-dsh-x-sidebar.sh` 刷新补丁器副本，并把 lane 的重启交回它的 systemd 单元——端口、命令行参数与团队环境都归单元所有；它拒绝触碰不属于该单元的监听进程，`verify-team-room.mjs` 则在 lane 回答的房间与 MOCT 后端回放的房间不一致时让部署失败。
 
 dsh-x profile 带有一个 `postinstall` 钩子，每次 profile 安装后都会运行应用器，因此 `dsh plugin update @michengai/dsh-codex-ui` 会重新打上补丁，而不是悄悄丢掉 `Teams` 页签。
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=DSH Fleet rehearsal lane (fixture for verify-team-room's self-test)
+
+[Service]
+Environment=DSH_HOME=/mnt/workspace/clouds/dsh-x-rehearsal/data/home
+Environment=MOCT_TEAM_URL=http://127.0.0.1:8210
+Environment=MOCT_TEAM_WORKSPACE=f61e8134-4367-40c0-afff-b4b9a9b8d90e
+ExecStartPre=-/usr/bin/fuser -k 3191/tcp
+ExecStart=/home/ddv/.nvm/versions/node/v24.15.0/bin/node /mnt/workspace/clouds/dsh-x/current/apps/cli/lib/bin.js --profile web --patch /mnt/workspace/clouds/dsh-x-rehearsal/data/overlay.yml --host 0.0.0.0 --port 3191 --no-open --trusted-host dsh-x.ddvnguyen.com --trusted-host localhost --trusted-host 127.0.0.1 --trusted-host 10.88.0.1
+Restart=always
+RestartSec=2
