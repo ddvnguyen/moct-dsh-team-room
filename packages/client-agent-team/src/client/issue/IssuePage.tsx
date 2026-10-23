@@ -40,11 +40,11 @@ export interface IssuePageProps extends IssueSurfaceProps {
  */
 export function IssuePage(props: IssuePageProps) {
   return (
-    <main className={`${look.multicaLook} ${css.pageSurface}`} data-team-issue-page>
+    <main className={`${look.multicaLook} ${css.pageSurface}`} data-team-issue-page data-testid="issue-page">
       <IssueSurface {...props} onOpenLegacyThread={props.goToThread} />
       <div className={css.pageFoot}>
-        <Button size="sm" variant="outline" onClick={props.showSlice}>{props.t('issueBackToSlice')}</Button>
-        <Button size="sm" variant="outline" onClick={props.closeIssue}>{props.t('issueClose')}</Button>
+        <Button size="sm" variant="outline" onClick={props.showSlice} data-testid="issue-back-to-slice">{props.t('issueBackToSlice')}</Button>
+        <Button size="sm" variant="outline" onClick={props.closeIssue} data-testid="issue-close">{props.t('issueClose')}</Button>
       </div>
     </main>
   )

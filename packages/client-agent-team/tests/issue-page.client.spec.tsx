@@ -164,6 +164,32 @@ describe('IssuePage', () => {
     expect(harness.goToThread).toHaveBeenCalledTimes(1)
   })
 
+  /**
+   * The browser journey (M-42) drives this surface by hook, not by copy: a
+   * heading is a translated string and a region's name changes with the
+   * language, so a test that matches on it breaks on a wording change that is
+   * not a behaviour change. Every region and every control the journey names
+   * carries a `data-testid` here, and this spec is what keeps the names honest
+   * — a hook that disappears fails the unit suite, not the browser run.
+   */
+  it('names each region and the header controls with a stable hook', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.getByTestId('issue-page')).toBeTruthy() })
+    for (const id of [
+      'issue-header', 'issue-title', 'issue-status', 'issue-open-legacy-thread',
+      'issue-description', 'issue-description-body',
+      'issue-properties', 'issue-prop-status', 'issue-prop-priority', 'issue-prop-assignee',
+      'issue-comments', 'issue-activity', 'issue-decisions', 'issue-execution-log',
+      'issue-back-to-slice', 'issue-close',
+    ]) {
+      expect(harness.view.getByTestId(id), id).toBeTruthy()
+    }
+    // The title editor is the second half of the title hook: the button opens
+    // it and the input is what the journey types into.
+    fireEvent.click(harness.view.getByTestId('issue-title'))
+    await waitFor(() => { expect(harness.view.getByTestId('issue-title-input')).toBeTruthy() })
+  })
+
   it('pages the older comments with the merged cursor, and never repeats a page', async () => {
     // The first older page carries the Thread's anchor, the ask of a decision
     // card, and one real comment.

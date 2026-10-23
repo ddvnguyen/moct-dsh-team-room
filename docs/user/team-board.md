@@ -48,13 +48,31 @@ Nothing moves optimistically. A dropped card waits for the Host to commit and fo
 
 The filter bar narrows the columns by Channel, assignee, priority and free text.
 
-## Task detail and the execution log
+## The issue
 
-A card's title opens the Task's Thread. Its side column holds the Task's properties (status, priority, assignee), its Claims, its followers, and the `执行记录` — the execution log.
+A card's title opens the Task's **issue**, not its Thread. The issue opens as a dialog over whatever the reader is on — the board, the Inbox, or a Thread a Task was cited in — and `最大化` turns it into the whole column; `回到浮层` puts it back.
+
+Esc closes it and returns the focus to the card the reader came from, and a reload reopens it where it was. The URL's `issue` query names the Task, so a copied link opens the same issue.
+
+The issue is one read of the Host's own snapshot, drawn in seven regions: the header (the Channel breadcrumb, `#n`, the status and the inline title editor), the description, the properties column (status, priority, assignee, created and last activity), the comment thread and its composer, the activity, the decisions, and the execution log.
+
+Nothing moves before the Host commits it: a rename, a comment or a picker waits for the commit and for the change to arrive, and a rejected write snaps back and says why.
+
+The decisions region is where a question waits for the Human: an ask from a seat is a card with its questions and a recommended answer, and a decision already taken is a row naming who decided, what was decided, why and when.
+
+The plan a seat proposes becomes the issue's description once the Human approves it, and that approval is one of those rows. Both tools are documented in [`../team-collaboration/tools.md`](../team-collaboration/tools.md).
+
+## The legacy Thread
+
+The Thread view is **legacy** (D10). It is not deleted: the issue's header carries `打开旧版 Thread 视图`, and the Channel feed still opens Threads.
+
+Both surfaces read the same Host facts — a comment written on the issue is a comment on the Thread, and a Thread opened from the issue is the same Thread. It takes fixes only from here on: no new region and no new write.
+
+## The execution log
 
 The execution log lists the Sessions that ran this Thread. The active run comes first with a live clock, the tool it is running and its step count; past runs carry their duration, the token flow `in → out`, the cache share, the tool and turn counts and the model. A failed Turn is flagged, and `打开会话` opens that seat's own Session.
 
-The status, priority and assignee pickers sit in the same column, next to the log, so a Task can be re-pointed without leaving the page.
+The status, priority and assignee pickers sit in the issue's properties column, so a Task can be re-pointed without leaving the issue.
 
 ## Stop and Chat
 

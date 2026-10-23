@@ -32,7 +32,7 @@ export interface IssueExecutionLogProps {
 /** The issue's execution log: the seats' runs on this Task, the live one first. */
 export function IssueExecutionLog(props: IssueExecutionLogProps) {
   return (
-    <section className={css.region} aria-label={props.t('issueExecutionLogLabel')}>
+    <section className={css.region} aria-label={props.t('issueExecutionLogLabel')} data-testid="issue-execution-log">
       <h2 className={css.regionHeading}>{props.t('issueExecutionLogLabel')}</h2>
       <ExecutionLog
         workspaceId={props.workspaceId}

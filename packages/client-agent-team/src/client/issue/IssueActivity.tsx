@@ -25,13 +25,13 @@ export interface IssueActivityProps {
  */
 export function IssueActivity({ activity, nameOf, t }: IssueActivityProps) {
   return (
-    <section className={css.region} aria-label={t('issueActivityLabel')}>
+    <section className={css.region} aria-label={t('issueActivityLabel')} data-testid="issue-activity">
       <h2 className={css.regionHeading}>{t('issueActivityLabel')}</h2>
       {activity.items.length === 0
         ? <p className={css.empty}>{t('issueActivityEmpty')}</p>
         : <div className={css.activityList}>
             {activity.items.map((item, index) => (
-              <p className={css.activityRow} key={`${item.kind}:${index}`}>
+              <p className={css.activityRow} data-testid="issue-activity-row" key={`${item.kind}:${index}`}>
                 <span className={css.activityMark} aria-hidden="true" />
                 <span className={css.activityText}>{formatActivity(item, { t, actorName: nameOf, claims: [] })}</span>
               </p>
