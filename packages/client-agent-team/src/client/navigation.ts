@@ -135,6 +135,20 @@ function persistSnapshot(snapshot: TeamNavigationSnapshot): void {
   }
 }
 
+/**
+ * What the navigation needs from the Team's history: the in-app back and
+ * forward, so the control on the page and the browser's own buttons walk the
+ * same stack.
+ */
+export interface TeamHistoryPort {
+  readonly canGoBack: boolean
+  readonly canGoForward: boolean
+  /** Go back one position; false when the stack has nowhere to go. */
+  back: () => boolean
+  /** Go forward one position; false when the stack has nowhere to go. */
+  forward: () => boolean
+}
+
 export interface TeamNavigationActions {
   enterTeam: () => void
   leaveTeam: () => void
@@ -171,18 +185,81 @@ export interface TeamNavigationActions {
   enterMemberSession: (sessionId: SessionId, returnToSessionId?: SessionId) => void
   /** Close the embedded Member Session view and return to the Team views. */
   exitMemberSession: () => void
+  /**
+   * Go back one position in the Team's history — the same stack the browser's
+   * back button walks. False when the stack has nowhere to go, and the caller
+   * keeps its own destination.
+   */
+  back: () => boolean
+  /** Go forward one position in the Team's history. */
+  forward: () => boolean
 }
 
 /** Root-scoped Team mode state. Slot lifetimes subscribe to this source. */
 export class TeamNavigation {
   private snapshot = readSnapshot()
+  /** The snapshot as it was before the current change; the position seam's "previous". */
+  private previous = this.snapshot
   private readonly listeners = new Set<() => void>()
+  /** True while a position from the history stack is being applied. */
+  private restoring = false
+
+  /**
+   * The position seam: the history stack hears every navigation that changed
+   * the durable position and decides what that change means — a new place, a
+   * closed issue, or nothing at all. The navigation does not know how a
+   * position is stored.
+   */
+  onPositionChange: ((next: TeamNavigationSnapshot, previous: TeamNavigationSnapshot) => void) | undefined
+
+  /** The history stack, once it exists: the in-app back and forward ride it. */
+  private history: TeamHistoryPort | undefined
 
   readonly getSnapshot = (): TeamNavigationSnapshot => this.snapshot
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /**
+   * Hand the navigation the Team's history, so the in-app back and forward
+   * walk the same stack the browser's buttons do.
+   */
+  attachHistory(history: TeamHistoryPort): void {
+    this.history = history
+  }
+
+  /** True when the Team's history has a position to go back to. */
+  canGoBack(): boolean {
+    return this.history?.canGoBack ?? false
+  }
+
+  /** True when the Team's history has a position to go forward to. */
+  canGoForward(): boolean {
+    return this.history?.canGoForward ?? false
+  }
+
+  /**
+   * Apply a position the history stack owns. It is a restore, not a
+   * navigation: it never pushes, and it leaves the runtime-only Member
+   * Session overlay alone — that overlay is not a place.
+   */
+  applyPosition(position: TeamNavigationSnapshot): void {
+    this.restoring = true
+    try {
+      // The position replaces the durable facts — the face it was captured
+      // with, and nothing of the face the reader was at before it.
+      const { memberSessionId, returnToSessionId } = this.snapshot
+      this.snapshot = {
+        ...position,
+        ...(memberSessionId === undefined ? {} : { memberSessionId }),
+        ...(returnToSessionId === undefined ? {} : { returnToSessionId }),
+      }
+      this.commit()
+    } finally {
+      this.restoring = false
+    }
   }
 
   actions(): TeamNavigationActions {
@@ -207,6 +284,8 @@ export class TeamNavigation {
       backToChannels: () => { this.clearMemberSession(); this.clearChannel() },
       enterMemberSession: (sessionId, returnToSessionId) => { this.setMemberSession(sessionId, returnToSessionId) },
       exitMemberSession: () => { this.clearMemberSession() },
+      back: () => this.history?.back() ?? false,
+      forward: () => this.history?.forward() ?? false,
     }
   }
 
@@ -335,7 +414,12 @@ export class TeamNavigation {
   }
 
   private commit(): void {
+    const previous = this.previous
+    this.previous = this.snapshot
     persistSnapshot(this.snapshot)
+    // A restore is not a navigation: the position came *from* the stack, so
+    // the stack must not be told about it as a new place.
+    if (!this.restoring) this.onPositionChange?.(this.snapshot, previous)
     for (const listener of this.listeners) listener()
   }
 

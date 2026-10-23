@@ -71,6 +71,7 @@ import { TeamHumanIdentity } from './human-identity.ts'
 import { TeamEnvironmentCheck } from './environment-check.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
 import { BOARD_PANEL_ID, TEAM_PANEL_ID, TEAM_DETAIL_PANEL_ID, TeamNavigation, type TeamNavigationActions } from './navigation.ts'
+import { TeamHistory } from './history.ts'
 import { TeamChangeStream, TeamReadStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
 import { TeamQueries, type TeamQueryIdentity } from './team-queries.ts'
 import { TeamDraftStore } from './drafts.ts'
@@ -516,6 +517,11 @@ function teamSeatInject(
     navigation,
     ...extraInject?.(),
     ...navigation.actions(),
+    // The in-app back rides the Team's own history, so the control on the page
+    // and the browser's back button walk the same stack and cannot disagree.
+    // With no history to walk, the affordance keeps its own destination.
+    backToWorkspace: () => { if (!navigation.actions().back()) navigation.actions().backToWorkspace() },
+    backToChannels: () => { if (!navigation.actions().back()) navigation.actions().backToChannels() },
     ...(name === 'sidebar.workspaces' ? teamPageActions(ctx, navigation) : {}),
     // Leaving Team mode is also leaving its panel: the rail row is a
     // destination, and the mode's own exit row hands the column back to the
@@ -635,6 +641,12 @@ function applyUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agent-team: dictionaries')
 
   const navigation = new TeamNavigation()
+  // The Team's history: the browser's own back and forward buttons walk the
+  // seat's positions. The stack is plugin-local — one `pushState` per
+  // navigation, the same URL and a state object only — so the harness keeps
+  // its mount path and no URL contract is introduced.
+  const history = new TeamHistory(navigation)
+  navigation.attachHistory(history)
   const disposeNavigation = ctx.reflect.provide('teamNavigation', navigation)
   // The issue's client-side seam and context: one instance for the whole
   // client, so every surface opens an issue through the same function and
@@ -677,6 +689,7 @@ function applyUi(ctx: ClientContext): void {
   const judgeForm = new TeamJudgeFormSeat()
   ctx.effect(() => () => {
     navigation.dispose()
+    history.dispose()
     drafts.dispose()
     humanIdentity.dispose()
     environment.dispose()
@@ -778,9 +791,11 @@ function applyUi(ctx: ClientContext): void {
     const unsubscribe = ctx.layout.panelInfo.subscribe(sync)
     // A reload keeps the mode it was left in, so it re-selects the panel that
     // mode is entered as. A restored Member Session view owns the column
-    // instead: the panel stays clear until that view closes.
+    // instead: the panel stays clear until that view closes. An open issue is
+    // the Team seat's own surface, so it takes the column too — that is what
+    // makes a shared link open the issue it names.
     const restored = navigation.getSnapshot()
-    if (restored.mode === 'team' && restored.memberSessionId === undefined
+    if ((restored.mode === 'team' || restored.issueRef !== undefined) && restored.memberSessionId === undefined
       && ctx.layout.panelInfo.getSnapshot().activePanelId === null) ctx.layout.selectPanel(TEAM_PANEL_ID)
     sync()
     return unsubscribe

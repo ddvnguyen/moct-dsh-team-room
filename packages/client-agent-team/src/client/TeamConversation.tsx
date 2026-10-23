@@ -11,7 +11,7 @@ import { IssuePage } from './issue/IssuePage.tsx'
 import { jumpToTaskThread } from './refs.ts'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, closeIssue, openIssue, issueContext, setIssueVariant, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, back, closeIssue, openIssue, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   // The open issue's context: the Workspace it is read in, and the control the
   // focus returns to. An Inbox row may name a Workspace the reader has not
@@ -77,7 +77,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     const { threadRef, channelRef, taskRef, taskNumber } = navigationState
     return <TeamDocPage key={navigationState.docRef} workspaceId={current.workspaceId} docRef={navigationState.docRef} threadRef={threadRef} humanName={humanName}
       loadDoc={loadDoc} commentDoc={commentDoc} reviewDoc={reviewDoc} writeDocSection={writeDocSection} resolveDocComment={resolveDocComment} loadDocSectionHistory={loadDocSectionHistory} loadMembers={loadMembers} subscribeChanges={subscribeChanges}
-      backToThread={() => { selectThread(threadRef, channelRef, taskRef, taskNumber) }} sidebarCollapsed={sidebarCollapsed} openSidebar={openSidebar} t={t} />
+      backToThread={() => { if (!back()) selectThread(threadRef, channelRef, taskRef, taskNumber) }} sidebarCollapsed={sidebarCollapsed} openSidebar={openSidebar} t={t} />
   }
   if (current !== undefined && (navigationState.threadRef !== undefined || navigationState.channelRef !== undefined)) {
     // The Channel and its open Thread share one seat: side by side when it is
