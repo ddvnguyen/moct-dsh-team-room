@@ -714,6 +714,60 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, anchorMentions: [], claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
   })
+  /**
+   * The issue's read model (M-38). Every entry point that opens an issue — a
+   * board card, the Channel feed's entry, an Inbox row — reads this Remote, so
+   * the bench answers it from the same rows `view` projects: the message-borne
+   * Task or a Board row, and the Thread that row names. The description is the
+   * anchor Message's body, the way the Host derives it; the comments are the
+   * other Messages on the Thread, the anchor excluded.
+   */
+  const issueView = vi.fn(async (request: { workspaceId: string; taskRef: string }) => {
+    const item = viewItems.find(row => (row.task as { taskRef?: string } | undefined)?.taskRef === request.taskRef)
+    const boardRow = boardTasks.find(row => (row as { taskRef: string }).taskRef === request.taskRef)
+    const task = (item?.task ?? boardRow) as Record<string, unknown> | undefined
+    if (task === undefined) return { ok: false as const, error: { message: `no such task: ${request.taskRef}` } }
+    const threadRef = task.threadRef as string
+    const channelRef = task.channelRef as string
+    const taskNumber = (item?.taskNumber as number | undefined) ?? boardTaskNumbers.get(request.taskRef) ?? 1
+    const revision = item === undefined
+      ? boardThreadRevisions.get(threadRef) ?? 2
+      : (item.thread as { revision: number }).revision
+    const anchor = item?.message as { messageRef?: string; body?: string; sender?: string; occurredAt?: string } | undefined
+    const comments = viewItems
+      .filter(row => (row.message as { threadRef: string }).threadRef === threadRef)
+      .filter(row => (row.message as { messageRef: string }).messageRef !== anchor?.messageRef)
+      .map(row => ({
+        kind: 'message' as const,
+        sequence: (row.message as { sequence: number }).sequence,
+        message: row.message,
+        mentions: (row.mentions ?? []) as readonly string[],
+        occurredAt: (row.message as { occurredAt: string }).occurredAt,
+      }))
+    return { ok: true as const, value: {
+      task, thread: { threadRef, taskRef: request.taskRef, revision }, taskNumber,
+      title: (task.title as string | undefined) ?? anchor?.body?.slice(0, 80) ?? 'Untitled task',
+      description: {
+        body: anchor?.body ?? '', author: anchor?.sender ?? 'member:human',
+        occurredAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z', source: 'anchor' as const, revision: 0,
+      },
+      properties: {
+        status: task.status as string, resolution: task.resolution as string,
+        priority: (task.priority as string | undefined) ?? 'none', position: (task.position as number | undefined) ?? 0,
+        channelRef, channelName: (channels.find(channel => channel.channelRef === channelRef)?.name as string | undefined) ?? 'engineering',
+        taskNumber, claimOwners: [] as readonly string[],
+        // The Host answers the planning gate; a Task in `todo` holds no live Claim here.
+        planningPhase: (task.status as string) === 'todo',
+        createdAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z',
+        updatedAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z',
+      },
+      comments: { items: comments, hasMore: false, cursor: comments[0]?.sequence ?? 0 },
+      activity: { items: [], hasMore: false },
+      decisions: [],
+      executionLog: { sessions: [], failures: [] },
+      docs: [],
+    } }
+  })
   /** One-shot history-read failure; cleared by the next successful read. */
   let threadHistoryFailure: string | undefined
   // The Human author follows every seeded Thread; tests override the set to
@@ -1001,7 +1055,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
     session: { modelCatalog, cancel: sessionCancel },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, workspaceActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, issueView, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, workspaceActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
