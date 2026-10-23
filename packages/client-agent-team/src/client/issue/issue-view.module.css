@@ -394,3 +394,152 @@
   }
 }
 
+/* The channel crumb as a control: it navigates back to the Channel the Task
+   lives in, so it reads as a link, not as chrome. */
+.crumbChannelLink {
+  background: none;
+  border: 0;
+  color: var(--ml-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.crumbChannelLink:hover {
+  color: var(--ml-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.crumbChannelLink:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+/* The header's actions menu: the quiet ellipsis trigger at the row's right
+   end, and its Copy-link feedback line. */
+.menuRoot {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.menuTrigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 4px;
+}
+
+.menuTrigger:hover {
+  background: var(--ml-surface-hover);
+  color: var(--ml-text);
+}
+
+.menuTrigger:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.menuNotice {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+
+.menuAnchor {
+  display: inline-flex;
+}
+
+.menuList {
+  min-width: 224px;
+}
+
+.menuFieldLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuFieldValue {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuChevron {
+  color: var(--ml-text-faint);
+  flex: none;
+}
+
+.menuHint {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  padding: 0 8px 6px;
+}
+
+.menuUnassigned {
+  color: var(--ml-text-faint);
+  display: inline-flex;
+  justify-content: center;
+  width: 20px;
+}
+
+.menuConfirmBody {
+  color: var(--ml-text);
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+}
+
+/* The execution-log section's head: the label and the issue's token total. */
+.logHead {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.logTotal {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  white-space: nowrap;
+}
+
+.logPast {
+  display: grid;
+  gap: 6px;
+}
+
+.logToggle {
+  background: none;
+  border: 0;
+  color: var(--ml-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  width: fit-content;
+}
+
+.logToggle:hover {
+  color: var(--ml-text);
+}
+

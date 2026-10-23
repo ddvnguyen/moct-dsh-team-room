@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { TeamHistory } from '../src/client/history.ts'
+import { TeamHistory, issueShareHref } from '../src/client/history.ts'
 import { TeamNavigation } from '../src/client/navigation.ts'
 
 /**
@@ -260,6 +260,25 @@ describe('TeamHistory', () => {
     navigation.actions().closeIssue()
     await popped
     expect(new URLSearchParams(window.location.search).get('issue')).toBeNull()
+  })
+
+  it('builds the shareable link from the same string the stack writes', () => {
+    // A parameter the plugin does not own is the URL's, not the Team's.
+    window.history.replaceState(null, '', '/?theme=dark')
+    const { navigation } = seat()
+    navigation.actions().selectBoard()
+    navigation.actions().openIssue('task:42' as never, 'slice')
+
+    // The header's Copy link copies this builder's output, and the stack
+    // wrote that very string: the copied link and the address bar agree,
+    // foreign parameter included.
+    expect(issueShareHref('task:42' as never, 'slice')).toBe(window.location.search)
+
+    // The default form is the page variant — the one a cold load opens.
+    const query = new URLSearchParams(issueShareHref('task:42' as never))
+    expect(query.get('issue')).toBe('task:42')
+    expect(query.get('variant')).toBe('page')
+    expect(query.get('theme')).toBe('dark')
   })
 
   it('never changes the path while the query follows the position', () => {
