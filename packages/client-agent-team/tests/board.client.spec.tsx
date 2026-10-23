@@ -7,7 +7,14 @@ import { STORAGE_KEY } from '../src/client/navigation.ts'
 
 usePinnedBrowserLanguages('zh-CN')
 afterEach(cleanup)
-beforeEach(() => { localStorage.clear() })
+beforeEach(() => {
+  localStorage.clear()
+  // A cold load reads the issue the URL names, so the query is part of the
+  // starting state a test must own: a case that opens an issue leaves the
+  // link behind, and the next case would boot onto that issue instead of the
+  // board face it asked for.
+  window.history.replaceState(null, '', '/')
+})
 
 // The board's drag contract is driven through a controllable DndContext
 // double, the way Multica's own board tests do: jsdom has no layout, so the

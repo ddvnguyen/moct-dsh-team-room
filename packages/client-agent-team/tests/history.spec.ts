@@ -123,11 +123,14 @@ describe('TeamHistory', () => {
     expect(reloaded.navigation.getSnapshot().issueVariant).toBe('page')
     expect(reloaded.history.length).toBeGreaterThan(1)
 
-    // The slice is an overlay over a live face: a cold start has no opener to
-    // return the focus to, so the boot restores the face and drops the slice.
+    // The slice is an overlay over a live face: it is not persisted, and the
+    // URL's `variant` is dropped on a cold load. The issue the link names is
+    // still a position, so the reload lands on its **page** — never on a
+    // dialog nobody opened. The face behind it is the one the reader left.
     first.navigation.actions().setIssueVariant('slice')
     const afterSlice = seat()
-    expect(afterSlice.navigation.getSnapshot().issueRef).toBeUndefined()
+    expect(afterSlice.navigation.getSnapshot().issueRef).toBe('task:1')
+    expect(afterSlice.navigation.getSnapshot().issueVariant).toBe('page')
     expect(afterSlice.navigation.getSnapshot().board).toBe(true)
   })
 
