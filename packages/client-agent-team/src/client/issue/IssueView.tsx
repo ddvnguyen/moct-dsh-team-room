@@ -36,6 +36,8 @@ export interface IssueViewProps {
   readonly mentionHandles: ReadonlyMap<AgentTeamMemberId, string>
   /** Commits a new title; resolves with the failure message, or undefined. */
   readonly onRename: (title: string) => Promise<string | undefined>
+  /** Opens the Task's Thread, the legacy surface (D10); absent when there is no way out. */
+  readonly onOpenLegacyThread?: (() => void) | undefined
   /** Moves the Task's status. */
   readonly onStatus: (status: TaskStatus) => void
   /** Moves the Task's priority. */
@@ -61,7 +63,7 @@ export interface IssueViewProps {
  * comment thread, the activity, the decisions and the execution log. The
  * regions are laid out in that order, and every value in them is the Host's.
  */
-export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
+export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
   // way the Thread page folds its sidebar. The column is hidden by the
   // stylesheet there and the opener appears; the Modal carries the same
@@ -90,6 +92,7 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         status={view.properties.status}
         channelName={view.properties.channelName}
         onRename={onRename}
+        onOpenLegacyThread={onOpenLegacyThread}
         pending={pending}
         t={t}
       />

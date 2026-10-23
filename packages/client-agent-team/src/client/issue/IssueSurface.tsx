@@ -58,6 +58,12 @@ export interface IssueSurfaceProps {
   readonly openMemberSession: TeamConversationProps['openMemberSession']
   readonly stopSession: TeamConversationProps['stopSession']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
+  /**
+   * Opens the Task's Thread — the legacy surface D10 froze — from the issue's
+   * own header. The page and the slice both pass it, so the reader never has
+   * to leave the issue to find the Thread it replaced.
+   */
+  readonly onOpenLegacyThread?: (() => void) | undefined
   readonly t: TeamConversationProps['t']
 }
 
@@ -68,7 +74,7 @@ export interface IssueSurfaceProps {
  * changes what the reader sees.
  */
 export function IssueSurface(props: IssueSurfaceProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
@@ -250,6 +256,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
         humanName={humanName}
         mentionHandles={mentionHandles}
         onRename={title => patchTask({ title })}
+        onOpenLegacyThread={onOpenLegacyThread}
         onStatus={moveStatus}
         onPriority={priority => { void patchTask({ priority: normalizePriority(priority) }) }}
         onAssignee={memberId => { void patchTask({ assignee: memberId }) }}

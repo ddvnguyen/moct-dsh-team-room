@@ -1,3 +1,15 @@
+/**
+ * @deprecated The legacy Thread view (D10, 2026-10-22). The issue surface
+ * (`./issue/`) is what every entry point opens now; this page is a **peer
+ * surface**, not a component the issue view borrows from. It is frozen —
+ * fixes only, no new region, no new write, no new op kind — and it stays
+ * reachable from the Channel face and from the issue header's
+ * "Open the legacy thread view" control. See `docs/frontend-design/board.md`.
+ *
+ * One store, two views: both surfaces read the same Thread facts from the
+ * Host, so a comment posted in one must appear in the other. A disagreement
+ * is a bug in the issue view, never a second comment store.
+ */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   AgentTeamClientMemberStatus,
@@ -152,6 +164,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
   return new Map(facts.map(fact => [factKey(fact.fact), fact]))
 }
 
+/** @deprecated The legacy Thread view (D10). The issue surface is current; this page is frozen and stays reachable. */
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, openIssue, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,

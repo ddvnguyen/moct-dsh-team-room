@@ -8,6 +8,7 @@ import { TeamThreadPage } from './TeamThreadPage.tsx'
 import { TeamDocPage } from './TeamDocPage.tsx'
 import { TeamLanes } from './TeamLanes.tsx'
 import { IssuePage } from './issue/IssuePage.tsx'
+import { jumpToTaskThread } from './refs.ts'
 import css from './conversation.module.css'
 
 export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, closeIssue, openIssue, issueContext, setIssueVariant, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
@@ -36,14 +37,22 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // issue there all the same.
     const issueWorkspaceId = issueState?.taskRef === navigationState.issueRef ? issueState.workspaceId : current?.workspaceId
     if (issueWorkspaceId === undefined) return null
-    return <IssuePage key={`issue:${navigationState.issueRef}`} workspaceId={issueWorkspaceId} taskRef={navigationState.issueRef}
+    const issueRef = navigationState.issueRef
+    return <IssuePage key={`issue:${issueRef}`} workspaceId={issueWorkspaceId} taskRef={issueRef}
       loadIssueView={loadIssueView} loadMembers={loadMembers} loadChannels={loadChannels} humanName={humanName}
       loadThreadHistory={loadThreadHistory} reply={reply} putAttachment={putAttachment} getAttachment={getAttachment}
       resolveMessageRefs={resolveMessageRefs} drafts={drafts} loadTriggerCatalog={loadTriggerCatalog}
       updateTask={updateTask} changeTask={changeTask} answerDecision={answerDecision}
       loadThreadSessions={loadThreadSessions} loadMemberActivity={loadMemberActivity} threadTurnFailures={threadTurnFailures}
       openMemberSession={openMemberSession} stopSession={stopSession} subscribeChanges={subscribeChanges}
-      closeIssue={closeIssue} showSlice={() => { setIssueVariant('slice') }} t={t} />
+      closeIssue={closeIssue} showSlice={() => { setIssueVariant('slice') }}
+      goToThread={() => {
+        // The issue closes first: the Thread is a face of its own, and the
+        // issue slot is an overlay over whatever face the reader was on.
+        closeIssue()
+        jumpToTaskThread(resolveTaskRefs, issueWorkspaceId, issueRef, selectThread)
+      }}
+      t={t} />
   }
   if (current !== undefined && navigationState.board === true) {
     // The Board page is a Workspace face: the columns read the Workspace's

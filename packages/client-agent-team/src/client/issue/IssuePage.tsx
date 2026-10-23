@@ -25,6 +25,12 @@ export interface IssuePageProps extends IssueSurfaceProps {
    * runs both ways, so a reader who maximized the slice can go back to it.
    */
   readonly showSlice: () => void
+  /**
+   * Opens the Task's Thread, the legacy surface D10 froze. The page carries
+   * the same control the slice does — one control, both presentations — so
+   * the Thread is never more than one step from the issue.
+   */
+  readonly goToThread: () => void
 }
 
 /**
@@ -35,7 +41,7 @@ export interface IssuePageProps extends IssueSurfaceProps {
 export function IssuePage(props: IssuePageProps) {
   return (
     <main className={`${look.multicaLook} ${css.pageSurface}`} data-team-issue-page>
-      <IssueSurface {...props} />
+      <IssueSurface {...props} onOpenLegacyThread={props.goToThread} />
       <div className={css.pageFoot}>
         <Button size="sm" variant="outline" onClick={props.showSlice}>{props.t('issueBackToSlice')}</Button>
         <Button size="sm" variant="outline" onClick={props.closeIssue}>{props.t('issueClose')}</Button>

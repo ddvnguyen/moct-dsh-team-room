@@ -81,15 +81,12 @@ export function IssueSlice(props: IssueSliceProps) {
           <Button size="sm" variant="outline" onClick={props.maximize} data-modal-autofocus="">
             {props.t('issueMaximize')}
           </Button>
-          <Button size="sm" variant="outline" onClick={props.goToThread}>
-            {props.t('issueGoToThread')}
-          </Button>
           <Button size="sm" variant="outline" onClick={props.closeIssue}>
             {props.t('issueClose')}
           </Button>
         </div>
         <div className={css.tree}>
-          <IssueSurface {...props} />
+          <IssueSurface {...props} onOpenLegacyThread={props.goToThread} />
         </div>
       </div>
     </Modal>

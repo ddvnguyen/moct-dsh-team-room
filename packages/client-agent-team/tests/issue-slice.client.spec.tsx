@@ -170,10 +170,10 @@ describe('the issue slice', () => {
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
     const resolveTaskRefs = host.resolveTaskRefs as unknown as ReturnType<typeof vi.fn>
 
-    // The Thread is the face the card used to open; the slice keeps the way
-    // into it, and closes on the way — a dialog over the Thread would be a
-    // dialog nobody asked for.
-    fireEvent.click(view.getByRole('button', { name: zh.issueGoToThread }))
+    // The Thread is the face the card used to open; the slice's header keeps
+    // the way into it, and closes the slice on the way — a dialog over the
+    // Thread would be a dialog nobody asked for.
+    fireEvent.click(view.getByRole('button', { name: zh.issueOpenLegacyThread }))
     await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
     await waitFor(() => expect(resolveTaskRefs).toHaveBeenCalled())
   })
