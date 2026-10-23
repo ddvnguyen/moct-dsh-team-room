@@ -39,8 +39,7 @@
  *   DSH_MARKET_PACKAGE   a package directory to use instead of downloading
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ACCESSOR_MARKER, PATCH_MARKER } from './dsh-market-trusted-host-patch/edits.mjs'
@@ -133,7 +132,14 @@ function snapshot(packageDir) {
   return entries.join('\n---\n')
 }
 
-const work = mkdtempSync(join(tmpdir(), 'dsh-market-check-'))
+// The scratch is a full workdir (`npm pack` + `npm install` of the published
+// package, its dependencies included): it goes under the repo's own
+// node_modules cache, never the host's shared tmpfs. `tmpdir()` on this
+// generation of hosts is a small full /tmp, and a check that dies there dies
+// as a misleading ENOSPC (moct#30's rule; M-66).
+const CACHE = join(SCRIPT_DIR, '..', 'node_modules', '.cache')
+mkdirSync(CACHE, { recursive: true })
+const work = mkdtempSync(join(CACHE, 'dsh-market-check-'))
 try {
   // --- the package under test -------------------------------------------------
   let packageDir = DOWNLOADED === undefined ? undefined : resolve(DOWNLOADED)
