@@ -22,8 +22,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { ACCESSOR_MARKER, EDITS, PATCH_MARKER, applyMarketPatch } from './edits.mjs'
 
 /**
@@ -33,9 +32,14 @@ import { ACCESSOR_MARKER, EDITS, PATCH_MARKER, applyMarketPatch } from './edits.
  * privileged routes, and the failure surfaces in the browser, not here. The
  * check is a parse, not a run: it catches a malformed edit and leaves the
  * installed package untouched.
+ *
+ * The scratch directory sits BESIDE the file being written — never in
+ * `tmpdir()` (moct#30's rule): it is on the same filesystem as the output, so
+ * a host whose `/tmp` is a small shared tmpfs (or full) cannot kill the
+ * install with ENOSPC, and the write stays single-device.
  */
-function parses(source, name) {
-  const work = mkdtempSync(join(tmpdir(), 'dsh-market-patch-'))
+function parses(source, name, directory) {
+  const work = mkdtempSync(join(directory, '.patch-check-'))
   try {
     const file = join(work, `${name}.mjs`)
     writeFileSync(file, source)
@@ -143,7 +147,7 @@ function main(argv) {
   // patched file has been parse-checked: a package is never left half
   // patched, and a missing anchor leaves it exactly as it was.
   for (const entry of pending) {
-    const parseError = parses(entry.source, basename(entry.file, '.js'))
+    const parseError = parses(entry.source, basename(entry.file, '.js'), dirname(join(packageDir, entry.file)))
     if (parseError !== undefined) {
       console.error(`the patched ${entry.file} does not parse; the installed package was left untouched:\n${parseError}`)
       return 4
