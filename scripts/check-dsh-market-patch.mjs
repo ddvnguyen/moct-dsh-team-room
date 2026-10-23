@@ -134,12 +134,18 @@ function snapshot(packageDir) {
 
 // The scratch is a full workdir (`npm pack` + `npm install` of the published
 // package, its dependencies included): it goes under the repo's own
-// node_modules cache, never the host's shared tmpfs. `tmpdir()` on this
+// gitignored local scratch, never the host's shared tmpfs. `tmpdir()` on this
 // generation of hosts is a small full /tmp, and a check that dies there dies
-// as a misleading ENOSPC (moct#30's rule; M-66).
-const CACHE = join(SCRIPT_DIR, '..', 'node_modules', '.cache')
-mkdirSync(CACHE, { recursive: true })
-const work = mkdtempSync(join(CACHE, 'dsh-market-check-'))
+// as a misleading ENOSPC (moct#30's rule; M-66). node_modules is deliberately
+// NOT the location: an `npm install` whose cwd sits inside node_modules
+// confuses npm's tree resolver.
+const SCRATCH = join(SCRIPT_DIR, '..', '.scratch', 'local')
+mkdirSync(SCRATCH, { recursive: true })
+const work = mkdtempSync(join(SCRATCH, 'dsh-market-check-'))
+// Pin npm's project root to the scratch itself: without a manifest npm climbs
+// to the enclosing repository, and the tarball would install into the wrong
+// dependency tree instead of beside the check that reads it.
+writeFileSync(join(work, 'package.json'), `${JSON.stringify({ name: 'dsh-market-patch-check', private: true, version: '0.0.0' }, null, 2)}\n`)
 try {
   // --- the package under test -------------------------------------------------
   let packageDir = DOWNLOADED === undefined ? undefined : resolve(DOWNLOADED)
