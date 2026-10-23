@@ -61,6 +61,8 @@ interface TeamInboxPageProps {
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly selectWorkspace: TeamConversationProps['selectWorkspace']
   readonly selectThread: TeamConversationProps['selectThread']
+  /** The global opener: the issue opens as a slice over the Inbox. */
+  readonly openIssue: TeamConversationProps['openIssue']
   /** The Human's display name, from the Client's one identity projection. */
   readonly humanName: string
   readonly humanAvatarUrl?: string | undefined
@@ -94,7 +96,7 @@ const RECENT_ROWS_LIMIT = 5
  * drop after the Thread is read through the same path the queue always
  * drained; archive is the reader's own unfollow.
  */
-export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecisions, answerDecision, threadTurnFailures, readThread, changeAttention, subscribeChanges, selectWorkspace, selectThread, humanName, humanAvatarUrl, t }: TeamInboxPageProps) {
+export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecisions, answerDecision, threadTurnFailures, readThread, changeAttention, subscribeChanges, selectWorkspace, selectThread, openIssue, humanName, humanAvatarUrl, t }: TeamInboxPageProps) {
   const workspaces = useWorkspaces(state => state.items)
   const [rows, setRows] = useState<readonly TeamInboxRow[]>()
   const [recentRows, setRecentRows] = useState<readonly TeamInboxRow[]>([])
@@ -297,6 +299,21 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
     selectThread(row.item.thread.threadRef, row.item.channelRef, row.item.task?.taskRef, row.item.taskNumber)
   }, [selectWorkspace, selectThread])
 
+  // Open the row's issue: the same seam the board and the Agent page use, so
+  // the issue opens as a slice over the Inbox. The row's Workspace rides the
+  // seam instead of a Workspace selection: selecting one would leave the
+  // Inbox — the very face the slice is over — and the issue slot is
+  // orthogonal to the face flags. A row without a Task has no issue to open,
+  // so it falls back to the Thread.
+  const openIssueOf = useCallback((row: { readonly workspaceId: WorkspaceId; readonly item: AgentTeamInboxItem }, focusOpener?: () => void): void => {
+    const taskRef = row.item.task?.taskRef
+    if (taskRef === undefined) {
+      openThread(row)
+      return
+    }
+    openIssue(taskRef, { workspaceId: row.workspaceId, focusOpener })
+  }, [openThread, openIssue])
+
   // Row activation: on a wide seat a plain click selects the row into the
   // detail pane and a modifier click opens the Thread (Multica's own grammar);
   // on a narrow one the click is the Thread — full-screen detail, the shape
@@ -307,8 +324,9 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
       setSelectedKey(current => current === key ? '' : key)
       return
     }
-    openThread(row)
-  }, [wide, openThread])
+    const target = event?.currentTarget
+    openIssueOf(row, target === undefined ? undefined : () => { target.focus({ preventScroll: true }) })
+  }, [wide, openIssueOf])
 
   // The keyboard walk moves the selection and nothing else: the arrow keys
   // never open a Thread. On a wide seat the selection is the detail pane's

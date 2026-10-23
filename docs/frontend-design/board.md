@@ -53,7 +53,9 @@ The house rule is **no optimistic mutations**: a drop never moves data locally. 
 
 A stale revision (the Task changed elsewhere) and an unread Thread (the Human must read new messages first) come back as ordinary `ok` answers, not errors, and each has its own notice; a stale answer also refetches so the retry carries the current revision.
 
-Each card is one tab stop (a named group); its title is the control that opens the Task's Thread (the existing Thread face), and the priority and assignee pickers are separate controls that never open it.
+Each card is one tab stop (a named group); its title is the control that opens the Task's issue, and the priority and assignee pickers are separate controls that never open it.
+
+The issue is the current surface for a Task (D10). The Thread view it replaced is **legacy**: frozen, still reachable from the Channel face and from the issue header's *Open the legacy thread view* control, and reading the same Host facts — one store, two views.
 
 ## Filters
 

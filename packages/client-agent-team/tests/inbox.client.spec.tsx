@@ -328,7 +328,7 @@ describe('Team Inbox in Multica style', () => {
     await b.runtime.dispose()
   })
 
-  it('opens the Thread full-screen on a narrow seat, where no split view exists', async () => {
+  it('opens the issue as a slice on a narrow seat, where no split view exists', async () => {
     wideSeat(0)
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: 'Inbox' })
@@ -338,9 +338,15 @@ describe('Team Inbox in Multica style', () => {
     await waitFor(() => expect(card.getAttribute('aria-label')).toBe('Inbox, 1 unread'))
     fireEvent.click(card)
     fireEvent.click(await b.view.findByRole('button', { name: /still waiting/ }))
-    // The narrow seat has no second column, so the row is the Thread itself.
+    // The narrow seat has no second column, so the row opens the issue over
+    // the Inbox — the same seam the wide seat's detail uses. The slot is the
+    // navigation's own; the slice is an overlay, so it is not persisted.
     expect(document.querySelector('[data-inbox-detail]')).toBeNull()
-    await waitFor(() => expect(JSON.parse(localStorage.getItem('dsh.agent-team.navigation') ?? '')).toMatchObject({ threadRef: 'thread:open' }))
+    const navigation = b.runtime.ctx.get('teamNavigation')
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:1'))
+    expect(navigation?.getSnapshot().issueVariant).toBe('slice')
+    expect(navigation?.getSnapshot().inbox).toBe(true)
+    expect(JSON.parse(localStorage.getItem('dsh.agent-team.navigation') ?? '').issueRef).toBeUndefined()
     await b.runtime.dispose()
   })
 })

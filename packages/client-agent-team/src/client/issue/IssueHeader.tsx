@@ -25,6 +25,12 @@ export interface IssueHeaderProps {
    * the Host committed it — the caller does not move the title itself.
    */
   readonly onRename: (title: string) => Promise<string | undefined>
+  /**
+   * Opens the Task's Thread — the legacy surface D10 froze. It is the one
+   * control that makes "legacy" visible in the product: the issue is what a
+   * reader lands on, and the Thread is what they ask for.
+   */
+  readonly onOpenLegacyThread?: (() => void) | undefined
   /** A write is in flight; the editor waits for it. */
   readonly pending: boolean
   readonly t: TeamConversationProps['t']
@@ -35,7 +41,7 @@ export interface IssueHeaderProps {
  * called, and where it stands. The title is the one editable field here; it
  * writes through the board's title field, which exists today.
  */
-export function IssueHeader({ title, taskNumber, status, channelName, onRename, pending, t }: IssueHeaderProps) {
+export function IssueHeader({ title, taskNumber, status, channelName, onRename, onOpenLegacyThread, pending, t }: IssueHeaderProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
@@ -73,6 +79,11 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
         <span className={css.crumbChannel}>{channelName}</span>
         <span aria-hidden="true">/</span>
         <span>{t('issueLabel')}</span>
+        {onOpenLegacyThread !== undefined && (
+          <button type="button" className={css.crumbAction} onClick={onOpenLegacyThread}>
+            {t('issueOpenLegacyThread')}
+          </button>
+        )}
       </div>
       <div className={css.titleRow}>
         <span className={css.number} aria-hidden="true">#{taskNumber}</span>

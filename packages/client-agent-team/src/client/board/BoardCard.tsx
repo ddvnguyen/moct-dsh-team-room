@@ -8,7 +8,7 @@
 // for a keyboard drag); the title is the real control that opens the Task, so
 // no button contains another.
 
-import { memo, useCallback, type CSSProperties } from 'react'
+import { memo, useCallback, useRef, type CSSProperties } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
@@ -33,7 +33,12 @@ interface CardBodyProps {
   readonly activities: readonly ActivitySource[]
   readonly settling: boolean
   readonly onUpdate: (taskRef: string, update: BoardCardUpdate) => void
-  readonly onOpen: (task: BoardCardTask) => void
+  /**
+   * Opens the Task. The focus opener is a way to focus the control the
+   * reader invoked: the card's title button, which the card's face — a
+   * `<div>`, holding no focus of its own — stands in for.
+   */
+  readonly onOpen: (task: BoardCardTask, focusOpener?: (() => void) | undefined) => void
   /**
    * Dense, read-only face for a list that is not the Board (the Agent page's
    * Tasks tab): the priority becomes a glyph and the assignee picker is
@@ -49,7 +54,11 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, compa
     onUpdate(task.taskRef, update)
   }, [onUpdate, task.taskRef])
 
-  const open = useCallback(() => { onOpen(task) }, [onOpen, task])
+  const open = useCallback((focusOpener?: () => void) => { onOpen(task, focusOpener) }, [onOpen, task])
+  // The card's title is the control that opens the Task, so it is also the
+  // control the focus returns to: the card's face is a `<div>`, and clicking
+  // it moves no focus of its own.
+  const titleRef = useRef<HTMLButtonElement>(null)
 
   return (
     // A pointer click anywhere on the face opens the Task; the pickers and the
@@ -60,7 +69,7 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, compa
       data-board-card-compact={compact || undefined}
       data-task-ref={task.taskRef}
       data-testid="board-card"
-      onClick={open}
+      onClick={() => { open(() => { titleRef.current?.focus({ preventScroll: true }) }) }}
     >
       {/* Row 1: priority + #number (left), live agent activity (right) */}
       <div className={css.cardTopRow}>
@@ -81,11 +90,14 @@ function CardBody({ task, members, activities, settling, onUpdate, onOpen, compa
 
       {/* Row 2: title, the control that opens the Task */}
       <button
+        ref={titleRef}
         type="button"
         className={css.cardTitle}
+        data-board-card-title=""
         onClick={(event) => {
           event.stopPropagation()
-          open()
+          const title = event.currentTarget
+          open(() => { title.focus({ preventScroll: true }) })
         }}
       >
         {task.title ?? `#${task.taskNumber}`}

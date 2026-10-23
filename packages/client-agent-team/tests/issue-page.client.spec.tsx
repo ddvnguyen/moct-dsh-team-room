@@ -105,12 +105,16 @@ function history(facts: readonly AgentTeamIssueComment[], hasMore: boolean): Age
 interface Harness {
   readonly loadThreadHistory: ReturnType<typeof vi.fn>
   readonly view: ReturnType<typeof render>
+  readonly showSlice: ReturnType<typeof vi.fn>
+  readonly goToThread: ReturnType<typeof vi.fn>
 }
 
 function renderPage(options: {
   readonly pages: readonly AgentTeamThreadHistory[]
 }): Harness {
   const loadThreadHistory = vi.fn(async () => ({ ok: true as const, value: options.pages[loadThreadHistory.mock.calls.length - 1] ?? options.pages[0]! }))
+  const showSlice = vi.fn()
+  const goToThread = vi.fn()
   const view = render(
     <IssuePage
       workspaceId={workspaceId}
@@ -133,13 +137,33 @@ function renderPage(options: {
       stopSession={vi.fn(async () => ({ ok: true as const, value: { accepted: true as const } }))}
       subscribeChanges={vi.fn(() => () => {})}
       closeIssue={vi.fn()}
+      showSlice={showSlice}
+      goToThread={goToThread}
       t={t}
     />,
   )
-  return { loadThreadHistory, view }
+  return { loadThreadHistory, view, showSlice, goToThread }
 }
 
 describe('IssuePage', () => {
+  it('offers the way back to the slice, so the variant switch runs both ways', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    // The page is the slice's Maximize target; the reader goes back the same
+    // way they came, over the same slot.
+    fireEvent.click(harness.view.getByRole('button', { name: zh.issueBackToSlice }))
+    expect(harness.showSlice).toHaveBeenCalled()
+  })
+
+  it('keeps the legacy Thread one control away, in the issue\'s own header', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    // D10: the issue is what the reader lands on, and the Thread is what they
+    // ask for — the same header control the slice carries.
+    fireEvent.click(harness.view.getByRole('button', { name: zh.issueOpenLegacyThread }))
+    expect(harness.goToThread).toHaveBeenCalledTimes(1)
+  })
+
   it('pages the older comments with the merged cursor, and never repeats a page', async () => {
     // The first older page carries the Thread's anchor, the ask of a decision
     // card, and one real comment.

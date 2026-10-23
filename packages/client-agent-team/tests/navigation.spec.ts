@@ -277,6 +277,27 @@ describe('TeamNavigation', () => {
     expect(new TeamNavigation().getSnapshot()).toMatchObject({ issueRef: 'task:one', issueVariant: 'page' })
   })
 
+  it('does not persist the slice: an overlay is not a place', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    actions.selectWorkspace('workspace:one' as never)
+    actions.openIssue('task:one' as never, 'slice')
+
+    // The slice is an overlay, not a position: the persisted snapshot does
+    // not carry it, so a reload never re-opens a dialog nobody asked for.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
+    expect(new TeamNavigation().getSnapshot().issueRef).toBeUndefined()
+  })
+
+  it('ignores a persisted slice left behind by an older build', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode: 'team', workspaceId: 'workspace:one', issueRef: 'task:one', issueVariant: 'slice',
+    }))
+    // The slice is not a place: a persisted one is not a place to come back
+    // to either, and the reader lands on the face.
+    expect(new TeamNavigation().getSnapshot().issueRef).toBeUndefined()
+  })
+
   it('keeps the face flags when the issue opens, and keeps the issue when a face is picked', () => {
     const navigation = new TeamNavigation()
     const actions = navigation.actions()

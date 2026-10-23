@@ -3,6 +3,7 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamMemberActivity,
   AgentTeamSessionRun,
+  AgentTeamTaskRef,
   AgentTeamThreadTurnFailure,
   AgentTeamView,
   TeamMemoryRecord,
@@ -95,7 +96,7 @@ type BoardState =
  * Chat opens the Agent's own Session, Stop cancels every Session it is
  * running right now — and both stay reachable from every tab.
  */
-export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, currentSessionId, openView, onClose, only, updateMember, loadModels, onCommitted, loadBoard, loadMemberActivity, subscribeChanges, threadTurnFailures, stopSession, t }: {
+export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, openIssue, currentSessionId, openView, onClose, only, updateMember, loadModels, onCommitted, loadBoard, loadMemberActivity, subscribeChanges, threadTurnFailures, stopSession, t }: {
   readonly workspaceId: WorkspaceId
   readonly status: AgentTeamClientMemberStatus
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
@@ -105,6 +106,11 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   /** Opens a Thread in the Team conversation (the row's Thread link). */
   readonly openThread?: (threadRef: AgentTeamSessionRun['threadRefs'][number]) => void
+  /**
+   * The global opener: the issue opens as a slice over the Agent page. The
+   * opener is the control the reader invoked, so the focus returns to it.
+   */
+  readonly openIssue?: (taskRef: AgentTeamTaskRef, focusOpener?: (() => void) | undefined) => void
   /** The Member Session now open in the main view: pressing its own row cannot remount, so it selects Chat directly. */
   readonly currentSessionId?: string
   /** The host's own view selector on the open session's conversation. */
@@ -337,6 +343,12 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
     if (openThread !== undefined) openThread(threadRef as AgentTeamSessionRun['threadRefs'][number])
   }
 
+  // The issue opens as a slice over the Agent page: the same seam the board
+  // and the Inbox use, so "open the issue" means one thing everywhere.
+  const openIssueOf = (taskRef: AgentTeamTaskRef, focusOpener?: () => void): void => {
+    openIssue?.(taskRef, focusOpener)
+  }
+
   return (
     <div className={only === undefined ? undefined : css.viewBody} data-team-agent-detail-body={only ?? 'all'}>
       <header className={css.detailHeader} data-team-agent-detail>
@@ -356,7 +368,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             <span className={css.detailDot} aria-hidden="true">·</span>
             {currentTask === undefined
               ? <span className={css.muted} data-agent-current-task>{t('agentRowIdle')}</span>
-              : <button type="button" className={css.detailTask} data-agent-current-task onClick={() => { openTask(currentTask.threadRef) }}>
+              : <button type="button" className={css.detailTask} data-agent-current-task onClick={event => { const target = event.currentTarget; openIssueOf(currentTask.taskRef, () => { target.focus({ preventScroll: true }) }) }}>
                 <span className={css.taskNumber}>#{currentTask.taskNumber}</span>
                 <span className={css.taskTitle}>{currentTask.title}</span>
               </button>}
@@ -409,7 +421,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
             groups={groupTasksByStatus(taskRows)}
             members={[{ memberId, handle: status.member.handle }]}
             activities={activities}
-            onOpen={row => { openTask(row.threadRef) }}
+            onOpen={(row, focusOpener) => { openIssueOf(row.taskRef, focusOpener) }}
             t={t}
           />
         </div>

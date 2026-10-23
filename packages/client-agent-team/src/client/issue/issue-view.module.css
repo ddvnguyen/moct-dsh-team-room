@@ -56,6 +56,25 @@
   color: var(--ml-text-secondary);
 }
 
+/* The one control that makes the legacy surface visible: the issue is what a
+ * reader lands on, and the Thread is what they ask for. It sits at the end of
+ * the breadcrumb so it never competes with the title. */
+.crumbAction {
+  background: none;
+  border: 0;
+  color: var(--ml-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  margin-left: auto;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.crumbAction:hover {
+  color: var(--ml-text-secondary);
+}
+
 .titleRow {
   align-items: center;
   display: flex;

@@ -6,7 +6,7 @@
 // locally — the Remote commits, the change wake refetches, and only then does
 // the card move; a rejected drop snaps the preview back with an inline hint.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -26,6 +26,7 @@ import type {
   AgentTeamChannelRef,
   AgentTeamMemberId,
   AgentTeamTaskPriority,
+  AgentTeamTaskRef,
   AgentTeamRequestId,
   AgentTeamClientMemberStatus,
   AgentTeamCreateTaskRequest,
@@ -97,7 +98,14 @@ export interface TeamBoardPageProps {
   readonly updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
   readonly changeTask: TeamConversationProps['changeTask']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
-  readonly selectThread: TeamConversationProps['selectThread']
+  /** The global opener: the issue opens as a slice over the board. */
+  readonly openIssue: TeamConversationProps['openIssue']
+  /**
+   * The navigation slot: the board reads the open issue's Task from it, to
+   * step between the issues with the keyboard and to scroll the card the
+   * reader is on into view.
+   */
+  readonly navigation: TeamConversationProps['navigation']
   readonly t: TeamSidebarProps['t']
 }
 
@@ -138,7 +146,7 @@ function useRequestIds() {
   }), [])
 }
 
-export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, selectThread, t }: TeamBoardPageProps) {
+export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, openIssue, navigation, t }: TeamBoardPageProps) {
   const [rows, setRows] = useState<readonly BoardCardTask[]>()
   const [channels, setChannels] = useState<readonly { readonly channelRef: AgentTeamChannelRef; readonly name: string }[]>([])
   const [members, setMembers] = useState<readonly AssigneeOption[]>([])
@@ -149,6 +157,9 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   const [hidden, setHidden] = useState<TaskStatus[]>(readHiddenColumns)
   const [createOpen, setCreateOpen] = useState(false)
   const [activeTask, setActiveTask] = useState<BoardCardTask | null>(null)
+  // The board's own root: the card the reader was on is found in it, and the
+  // focus goes back to it when the issue closes.
+  const pageRef = useRef<HTMLDivElement>(null)
   const [settlingRefs, setSettlingRefs] = useState<ReadonlySet<string>>(new Set())
   const requestIds = useRequestIds()
 
@@ -473,9 +484,26 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     })()
   }, [beginCardSettle, conclude, requestIds, updateTask, workspaceId])
 
+  // The card the focus goes back to when the issue closes. The card is
+  // found by its Task, not by a captured node: the board re-draws its cards
+  // whenever the catalog moves, and a captured node would be stale by the
+  // time the reader closes the issue.
+  const focusCardOf = useCallback((taskRef: AgentTeamTaskRef): (() => void) => () => {
+    const root = pageRef.current
+    if (root === null) return
+    const card = [...root.querySelectorAll<HTMLElement>('[data-task-ref]')]
+      .find(entry => entry.getAttribute('data-task-ref') === taskRef)
+    const title = card?.querySelector<HTMLElement>('[data-board-card-title]')
+    title?.focus({ preventScroll: true })
+  }, [])
+
   const handleCardClick = useCallback((task: BoardCardTask) => {
-    selectThread(task.threadRef, task.channelRef, task.taskRef, task.taskNumber)
-  }, [selectThread])
+    // The card opens the issue as a slice over the board (D1, re-scoped on
+    // 2026-10-21): the board stays visible behind the dialog, and Maximize
+    // turns it into the page. Escape returns the focus to the card the
+    // reader came from.
+    openIssue(task.taskRef, { workspaceId, focusOpener: focusCardOf(task.taskRef) })
+  }, [focusCardOf, openIssue, workspaceId])
 
   const handleCreate = useCallback(async (request: { readonly channelRef: AgentTeamChannelRef; readonly title: string; readonly body: string; readonly priority?: AgentTeamTaskPriority; readonly assignee?: AgentTeamMemberId | null }) => {
     const payload = {
@@ -530,11 +558,84 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     return [status, activities.filter(activity => activity.threadRef !== undefined && threads.has(activity.threadRef))] as const
   })), [activities, columnTasks])
 
+  // The open issue's Task: the slice the reader is in, if any. The board
+  // reads it to walk between the issues and to scroll the card into view.
+  const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
+  const openTaskRef = navigationState.issueVariant === 'slice' ? navigationState.issueRef : undefined
+
+  // The columns as they stand, with the Tasks in each: the walk moves
+  // between the issues of a column, and between the columns.
+  const walkableColumns = useMemo(() => visibleStatuses.map(status => ({
+    status,
+    taskRefs: (columnTasks.get(status) ?? []).map(task => task.taskRef),
+  })), [visibleStatuses, columnTasks])
+
+  // J/K step between the issues of the column, H/L between the columns. The
+  // walk is the board's: a slice opened over another face has no board to
+  // walk, and the keys do nothing there. A field or a menu keeps its own
+  // keys — the comment composer inside the slice is a field.
+  useEffect(() => {
+    if (openTaskRef === undefined) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('textarea, input, select, [role="menu"], [role="listbox"]') !== null)) return
+      const key = event.key.toLowerCase()
+      if (key !== 'j' && key !== 'k' && key !== 'h' && key !== 'l') return
+      const column = walkableColumns.findIndex(entry => entry.taskRefs.includes(openTaskRef))
+      if (column === -1) return
+      const current = walkableColumns[column]
+      if (current === undefined) return
+      const taskRefs = current.taskRefs
+      const index = taskRefs.indexOf(openTaskRef)
+      let nextColumn = column
+      let nextIndex = index
+      if (key === 'j') nextIndex = Math.min(index + 1, taskRefs.length - 1)
+      else if (key === 'k') nextIndex = Math.max(index - 1, 0)
+      else {
+        // H/L move between the columns, to the nearest one that holds a card:
+        // a walk that lands on an empty column is a walk that stops.
+        nextColumn = column
+        for (let step = 1; step < walkableColumns.length; step += 1) {
+          const candidate = key === 'l' ? column + step : column - step
+          const entry = walkableColumns[candidate]
+          if (entry === undefined || entry.taskRefs.length === 0) continue
+          nextColumn = candidate
+          break
+        }
+        if (nextColumn === column) return
+        const neighbour = walkableColumns[nextColumn]
+        if (neighbour === undefined) return
+        nextIndex = Math.min(index, Math.max(neighbour.taskRefs.length - 1, 0))
+      }
+      const nextRef = walkableColumns[nextColumn]?.taskRefs[nextIndex]
+      if (nextRef === undefined || nextRef === openTaskRef) return
+      event.preventDefault()
+      openIssue(nextRef, { workspaceId })
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
+  }, [openTaskRef, walkableColumns, openIssue, workspaceId])
+
+  // The card the reader is on is scrolled into view: the slice opens over
+  // the board, and the walk moves from card to card.
+  useEffect(() => {
+    if (openTaskRef === undefined) return
+    const root = pageRef.current
+    if (root === null) return
+    const card = [...root.querySelectorAll<HTMLElement>('[data-task-ref]')]
+      .find(entry => entry.getAttribute('data-task-ref') === openTaskRef)
+    // jsdom has no scrollIntoView, and the card is the only thing that moves.
+    if (card !== undefined && typeof card.scrollIntoView === 'function') {
+      card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+  }, [openTaskRef])
+
   const empty = (rows ?? []).length === 0
   const loading = rows === undefined && loadError === undefined
 
   return (
-    <div className={`${look.multicaLook} ${css.page}`} data-testid="team-board-page">
+    <div ref={pageRef} className={`${look.multicaLook} ${css.page}`} data-testid="team-board-page">
       {/* Test seam: exposes the settle lock so specs can observe the window
           between the drop and the refetch without depending on timing. */}
       <span data-testid="board-debug-state" data-settling={[...settlingRefs].join(',')} hidden aria-hidden="true" />
