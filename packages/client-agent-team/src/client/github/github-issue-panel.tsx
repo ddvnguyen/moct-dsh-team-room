@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, Modal, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   AgentTeamGitHubColumn, AgentTeamGitHubCommentRequest, AgentTeamGitHubCommentRow, AgentTeamGitHubIssue,
   AgentTeamGitHubIssueRequest, AgentTeamGitHubIssueSummary, AgentTeamGitHubUpdateIssueRequest,
@@ -16,6 +16,7 @@ import type {
 import type { TeamConversationProps } from '../slots.ts'
 import { makeTimeAgo } from '../multica/time-ago.ts'
 import look from '../multica-look.module.css'
+import conversationCss from '../conversation.module.css'
 import css from './github.module.css'
 
 export interface GitHubIssuePanelProps {
@@ -66,6 +67,13 @@ export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, upda
     void read()
   }, [read])
 
+  // The description and the comments are Markdown on GitHub, so they are read
+  // as Markdown here: the chat typography the Team's own bodies use.
+  const markdownLabels = useMemo<MarkdownLabels>(() => ({
+    code: { copyLabel: t('copyCode'), copiedLabel: t('copiedCode') },
+    footnotes: t('markdownFootnotes'),
+  }), [t])
+
   const timeAgo = useMemo(() => makeTimeAgo({
     justNow: t('timeAgoJustNow'),
     minutesAgo: t('timeAgoMinutes'),
@@ -102,13 +110,16 @@ export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, upda
 
   const statusOptions = columns.filter(column => column.kind === 'project-status' && column.droppable)
 
+  // A headless dialog renders its children in the card itself, so `className`
+  // is what carries the width and the height cap; `contentClassName` never
+  // reaches a card whose header and body chrome are absent.
   return (
     <Modal
       open
       onClose={onClose}
       title={t('githubIssueLabel')}
       headless
-      contentClassName={`${css.issueContent} ${look.multicaLook}`}
+      className={`${css.issueContent} ${look.multicaLook}`}
     >
       <div className={`${look.multicaLook} ${css.issuePanel}`} data-github-issue-panel={number}>
         {issue === undefined ? (
@@ -173,7 +184,15 @@ export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, upda
             </div>
             <section className={css.section}>
               <h3 className={css.sectionTitle}>{t('githubDescription')}</h3>
-              <div className={css.bodyText} data-github-issue-body>{issue.body === '' ? t('githubNoDescription') : issue.body}</div>
+              {issue.body === ''
+                ? <p className={css.muted} data-github-issue-body>{t('githubNoDescription')}</p>
+                : (
+                  <div className={`${css.bodyText} ${conversationCss.messageBody}`} data-github-issue-body>
+                    <div className={conversationCss.messageMarkdown}>
+                      <MarkdownText text={issue.body} labels={markdownLabels} />
+                    </div>
+                  </div>
+                )}
             </section>
             <section className={css.section}>
               <h3 className={css.sectionTitle}>{t('githubCommentsTitle', { count: issue.comments.length })}</h3>
@@ -187,7 +206,11 @@ export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, upda
                           <strong>{comment.author}</strong>
                           <span className={css.muted}>{timeAgo(comment.createdAt)}</span>
                         </div>
-                        <div className={css.commentBody}>{comment.body}</div>
+                        <div className={`${css.commentBody} ${conversationCss.messageBody}`}>
+                          <div className={conversationCss.messageMarkdown}>
+                            <MarkdownText text={comment.body} labels={markdownLabels} />
+                          </div>
+                        </div>
                       </li>
                     ))}
                   </ul>
