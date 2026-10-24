@@ -145,19 +145,6 @@
   min-width: 0;
 }
 
-.columnCount {
-  flex-shrink: 0;
-  border-radius: 999px;
-  corner-shape: round;
-  background: var(--ml-surface);
-  padding: 1px 6px;
-  font-size: var(--ml-text-micro);
-  line-height: var(--ml-text-micro-line);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--ml-text-tertiary);
-}
-
 .columnMenuButton {
   border: none;
   background: none;

@@ -9,7 +9,7 @@
  * This file stays the single public import path; every consumer keeps importing
  * from ./types.ts (or @ddvnguyen/moct-dsh-team-room/types) unchanged.
  */
-import type { AgentTeamAttachmentId, AgentTeamChannelRef, AgentTeamThreadRef } from './types/entities.ts'
+import type { AgentTeamAttachmentId, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamThreadRef } from './types/entities.ts'
 
 export type * from "./types/entities.ts"
 export type * from "./types/operations.ts"
@@ -25,5 +25,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'team/room-activity-not-found': { readonly channelRef: AgentTeamChannelRef; readonly threadRef?: AgentTeamThreadRef | undefined }
     /** GitHub mirror call on a deployment with no repo or no token: the surfaces answer with setup, not with a retry. */
     'team/github-not-configured': { readonly repo?: string | undefined }
+    /** Task assignment refused: the assignee is unknown, disabled, or not authorized for the Task's Channel. `reason` discriminates the three. */
+    'team/member-not-in-workspace': { readonly memberId: AgentTeamMemberId; readonly channelRef: AgentTeamChannelRef; readonly reason: 'unknown' | 'disabled' | 'not-in-channel' }
   }
 }

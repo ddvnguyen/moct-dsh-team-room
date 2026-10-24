@@ -21,8 +21,6 @@ export interface AgentActivityIndicatorProps {
   readonly members: readonly AvatarStackMember[]
   /** Opens the per-Turn card on dwell; off on dense triage surfaces. */
   readonly hoverCard?: boolean
-  /** Formats `turnStartedAt`; the caller owns the locale templates. */
-  readonly timeAgo?: (value: string) => string
   readonly t: TeamSidebarProps['t']
 }
 
@@ -32,7 +30,7 @@ export interface AgentActivityIndicatorProps {
  * the badge answers "on what?" without a click. With no running Turn it
  * renders nothing — no placeholder chrome on a quiet board.
  */
-export function AgentActivityIndicator({ activities, members, hoverCard = true, timeAgo, t }: AgentActivityIndicatorProps) {
+export function AgentActivityIndicator({ activities, members, hoverCard = true, t }: AgentActivityIndicatorProps) {
   if (activities.length === 0) return null
   const byId = new Map(members.map(member => [member.memberId, member]))
   const heads: AvatarStackMember[] = []
@@ -80,7 +78,6 @@ export function AgentActivityIndicator({ activities, members, hoverCard = true, 
                     <span className={css.rowTool}>{activity.current?.label ?? t('activityThinking')}</span>
                     <span className={css.rowMeta}>{t('activityStepCount', { count: String(activity.stepCount) })}</span>
                     <span className={css.rowMeta}>{t('activityToolCount', { count: String(activity.toolCount) })}</span>
-                    {timeAgo !== undefined && <span className={css.rowMeta}>{timeAgo(activity.turnStartedAt)}</span>}
                   </li>
                 )
               })}

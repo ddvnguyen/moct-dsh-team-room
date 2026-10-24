@@ -176,7 +176,7 @@ export function IssueComments({
   const replyParentMember = replyTarget === undefined ? undefined : factByRef.get(replyTarget)?.message.sender
 
   return (
-    <section className={css.region} aria-label={t('issueCommentsLabel')} data-issue-comments="">
+    <section className={css.region} aria-label={t('issueCommentsLabel')} data-issue-comments="" data-testid="issue-comments">
       <h2 className={css.heading}>{t('issueCommentsLabel')}</h2>
       {tree.roots.length === 0
         ? <p className={css.empty} data-issue-comments-empty="">{t('issueCommentsEmpty')}</p>

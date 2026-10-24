@@ -39,8 +39,7 @@
  *   DSH_MARKET_PACKAGE   a package directory to use instead of downloading
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ACCESSOR_MARKER, PATCH_MARKER } from './dsh-market-trusted-host-patch/edits.mjs'
@@ -133,7 +132,20 @@ function snapshot(packageDir) {
   return entries.join('\n---\n')
 }
 
-const work = mkdtempSync(join(tmpdir(), 'dsh-market-check-'))
+// The scratch is a full workdir (`npm pack` + `npm install` of the published
+// package, its dependencies included): it goes under the repo's own
+// gitignored local scratch, never the host's shared tmpfs. `tmpdir()` on this
+// generation of hosts is a small full /tmp, and a check that dies there dies
+// as a misleading ENOSPC (moct#30's rule; M-66). node_modules is deliberately
+// NOT the location: an `npm install` whose cwd sits inside node_modules
+// confuses npm's tree resolver.
+const SCRATCH = join(SCRIPT_DIR, '..', '.scratch', 'local')
+mkdirSync(SCRATCH, { recursive: true })
+const work = mkdtempSync(join(SCRATCH, 'dsh-market-check-'))
+// Pin npm's project root to the scratch itself: without a manifest npm climbs
+// to the enclosing repository, and the tarball would install into the wrong
+// dependency tree instead of beside the check that reads it.
+writeFileSync(join(work, 'package.json'), `${JSON.stringify({ name: 'dsh-market-patch-check', private: true, version: '0.0.0' }, null, 2)}\n`)
 try {
   // --- the package under test -------------------------------------------------
   let packageDir = DOWNLOADED === undefined ? undefined : resolve(DOWNLOADED)

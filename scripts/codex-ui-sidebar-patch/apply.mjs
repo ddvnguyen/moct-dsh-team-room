@@ -16,7 +16,6 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { applySidebarPatch, PATCH_MARKER } from './edits.mjs'
 
@@ -27,9 +26,14 @@ import { applySidebarPatch, PATCH_MARKER } from './edits.mjs'
  * sidebar, and the failure surfaces in the browser console, not here. The
  * check is a parse, not a run: it catches a malformed edit (a dropped
  * variable, a broken template) and leaves the installed bundle untouched.
+ *
+ * The scratch directory sits BESIDE the bundle being written — never in
+ * `tmpdir()` (moct#30's rule): it is on the same filesystem as the output, so
+ * a host whose `/tmp` is a small shared tmpfs (or full) cannot kill the
+ * install with ENOSPC, and the write stays single-device.
  */
-function parses(source) {
-  const work = mkdtempSync(join(tmpdir(), 'codex-ui-patch-'))
+function parses(source, directory) {
+  const work = mkdtempSync(join(directory, '.patch-check-'))
   try {
     const file = join(work, 'client.mjs')
     writeFileSync(file, source)
@@ -97,7 +101,7 @@ function main(argv) {
     console.error(String(error instanceof Error ? error.message : error))
     return 3
   }
-  const parseError = parses(patched.source)
+  const parseError = parses(patched.source, dirname(bundle))
   if (parseError !== undefined) {
     console.error(`the patched bundle does not parse; the installed bundle was left untouched:\n${parseError}`)
     return 4

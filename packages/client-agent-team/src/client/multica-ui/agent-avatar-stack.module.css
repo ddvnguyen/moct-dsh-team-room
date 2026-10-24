@@ -11,10 +11,6 @@
   display: inline-flex;
 }
 
-.half {
-  opacity: 0.5;
-}
-
 .head {
   border-radius: 999px;
   corner-shape: round;

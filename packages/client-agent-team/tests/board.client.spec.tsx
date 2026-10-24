@@ -209,8 +209,8 @@ describe('Team board page', () => {
     b.publishActivity({ memberId: 'member:builder', handle: 'builder', threadRef: 'thread:a' })
     await waitFor(() => expect(b.view.container.textContent).toContain('工作中'))
     const cards = b.view.container.querySelectorAll<HTMLElement>('[data-testid="board-card"]')
-    const badged = Array.from(cards).find(card => card.textContent?.includes('工作中'))
-    expect(badged?.getAttribute('data-task-ref')).toBe('task:a')
+    const badged = Array.from(cards).filter(card => card.textContent?.includes('工作中'))
+    expect(badged.map(card => card.getAttribute('data-task-ref'))).toEqual(['task:a'])
     await b.runtime.dispose()
   })
 
