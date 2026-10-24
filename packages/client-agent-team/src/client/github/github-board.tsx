@@ -21,6 +21,7 @@ import type {
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamConversationProps } from '../slots.ts'
 import { GitHubIssuePanel } from './github-issue-panel.tsx'
+import { githubFailureText } from './failure.ts'
 import look from '../multica-look.module.css'
 import css from './github.module.css'
 
@@ -33,12 +34,6 @@ export interface GitHubBoardProps {
   readonly updateIssue: (request: AgentTeamGitHubUpdateIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssueSummary>>
   readonly commentIssue: (request: AgentTeamGitHubCommentRequest) => Promise<RemoteResult<AgentTeamGitHubCommentRow>>
   readonly t: TeamConversationProps['t']
-}
-
-function failureText(error: unknown, t: TeamConversationProps['t']): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') return error.message
-  return t('githubWriteFailed')
 }
 
 /**
@@ -67,6 +62,34 @@ function writeQueriedIssue(number: number | undefined): void {
   // The harness mounts under a `<base href="./">`, so the query resolves
   // against the current document; the path never moves.
   window.history.replaceState(window.history.state, '', query === '' ? '?' : `?${query}`)
+}
+
+/**
+ * The issue open over the board. Its number lives in the URL rather than in
+ * the board's own state, so a shared link and a reload open the same issue;
+ * closing re-reads the board (the panel's writes changed it) and returns the
+ * keyboard to the card the reader came from — or, for a panel opened from a
+ * link, to that issue's card.
+ */
+function useOpenIssue(reload: () => Promise<void>) {
+  const [openNumber, setOpenNumber] = useState<number | undefined>(() => queriedIssueNumber())
+  const opener = useRef<HTMLElement | null>(null)
+  const open = useCallback((number: number): void => {
+    opener.current = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null
+    setOpenNumber(number)
+    writeQueriedIssue(number)
+  }, [])
+  const close = useCallback((): void => {
+    const closed = openNumber
+    setOpenNumber(undefined)
+    writeQueriedIssue(undefined)
+    void reload()
+    const target = opener.current
+      ?? (closed === undefined ? null : document.querySelector<HTMLElement>(`[data-github-card="${closed}"]`))
+    opener.current = null
+    target?.focus()
+  }, [reload, openNumber])
+  return { openNumber, open, close }
 }
 
 /**
@@ -106,10 +129,6 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
   const [board, setBoard] = useState<AgentTeamGitHubBoard>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
-  const [openNumber, setOpenNumber] = useState<number | undefined>(() => queriedIssueNumber())
-  // The card the reader came from: the panel is a dialog over the board, so
-  // closing it puts the keyboard back on that card rather than on the page.
-  const opener = useRef<HTMLElement | null>(null)
   const [creating, setCreating] = useState(false)
   const [activeIssue, setActiveIssue] = useState<AgentTeamGitHubIssueSummary | null>(null)
   const [busy, setBusy] = useState(false)
@@ -121,7 +140,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
     const result = await loadBoard({ workspaceId })
     if (ticket !== serial.current) return
     if (!result.ok) {
-      setError(failureText(result.error, t))
+      setError(githubFailureText(result.error, t))
       return
     }
     setBoard(result.value)
@@ -129,6 +148,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
   }, [loadBoard, workspaceId, t])
 
   useEffect(() => { void reload() }, [reload])
+  const { openNumber, open: openIssue, close: closeIssue } = useOpenIssue(reload)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -146,7 +166,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
       ? await updateIssue({ workspaceId, number: issue.number, state: column.id === 'closed' ? 'closed' : 'open' })
       : await updateIssue({ workspaceId, number: issue.number, status: column.id })
     setBusy(false)
-    if (!result.ok) { setError(failureText(result.error, t)); return }
+    if (!result.ok) { setError(githubFailureText(result.error, t)); return }
     await reload()
   }, [busy, updateIssue, workspaceId, t, reload])
 
@@ -165,25 +185,6 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
     void move(issue, column)
   }, [board, move])
 
-  const openIssue = useCallback((number: number): void => {
-    opener.current = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null
-    setOpenNumber(number)
-    writeQueriedIssue(number)
-  }, [])
-
-  const closeIssue = useCallback((): void => {
-    const closed = openNumber
-    setOpenNumber(undefined)
-    writeQueriedIssue(undefined)
-    void reload()
-    // A card the reader clicked is the opener. A panel opened from a link has
-    // none, so the keyboard lands on that issue's card instead of on the page.
-    const target = opener.current
-      ?? (closed === undefined ? null : document.querySelector<HTMLElement>(`[data-github-card="${closed}"]`))
-    opener.current = null
-    target?.focus()
-  }, [reload, openNumber])
-
   const byColumn = useMemo(() => {
     const map = new Map<string, AgentTeamGitHubIssueSummary[]>()
     for (const issue of board?.issues ?? []) {
@@ -200,7 +201,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
       workspaceId, title, body,
       ...(firstColumn === undefined ? {} : { columnId: firstColumn.id }),
     })
-    if (!result.ok) return failureText(result.error, t)
+    if (!result.ok) return githubFailureText(result.error, t)
     setCreating(false)
     await reload()
     return undefined

@@ -210,6 +210,18 @@ describe('the GitHub board source', () => {
     expect(columnText('opt_todo')).not.toContain('Issue 3')
   })
 
+  it('states an issue the project does not hold instead of showing its first column', async () => {
+    // GitHub has no status for this issue, so the picker must say the bucket. A
+    // select whose value matches no option would otherwise display `Todo`.
+    mount({ details: [detailFixture({ columnId: 'no-status' })] })
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(document.querySelector('[data-github-status]')).not.toBeNull())
+    const picker = document.querySelector<HTMLSelectElement>('[data-github-status]')!
+    expect(picker.value).toBe('no-status')
+    expect(picker.selectedOptions[0]?.textContent).toBe('No status')
+  })
+
   it('adds a label on GitHub and paints it only when the re-read brings it back', async () => {
     const after = detailFixture({ labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'enhancement', color: 'a2eeef' }] })
     const m = mount({ details: [detailFixture(), after] })

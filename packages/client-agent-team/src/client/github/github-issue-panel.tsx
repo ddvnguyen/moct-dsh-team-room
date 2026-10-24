@@ -14,6 +14,7 @@ import type {
   AgentTeamGitHubIssueRequest, AgentTeamGitHubIssueSummary, AgentTeamGitHubLabel, AgentTeamGitHubUpdateIssueRequest,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamConversationProps } from '../slots.ts'
+import { githubFailureText } from './failure.ts'
 import { makeTimeAgo } from '../multica/time-ago.ts'
 import look from '../multica-look.module.css'
 import conversationCss from '../conversation.module.css'
@@ -31,12 +32,6 @@ export interface GitHubIssuePanelProps {
   readonly commentIssue: (request: AgentTeamGitHubCommentRequest) => Promise<RemoteResult<AgentTeamGitHubCommentRow>>
   readonly onClose: () => void
   readonly t: TeamConversationProps['t']
-}
-
-function failureText(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') return error.message
-  return String(error)
 }
 
 /**
@@ -60,8 +55,8 @@ export function GitHubIssuePanel({ workspaceId, number, columns, catalog, loadIs
       setError(undefined)
       return
     }
-    setError(failureText(result.error))
-  }, [loadIssue, workspaceId, number])
+    setError(githubFailureText(result.error, t))
+  }, [loadIssue, workspaceId, number, t])
 
   useEffect(() => {
     setIssue(undefined)
@@ -91,9 +86,9 @@ export function GitHubIssuePanel({ workspaceId, number, columns, catalog, loadIs
     const result = await updateIssue({ ...request, workspaceId, number })
     if (!mounted.current) return
     setPendingField(false)
-    if (!result.ok) { setError(failureText(result.error)); return }
+    if (!result.ok) { setError(githubFailureText(result.error, t)); return }
     await read()
-  }, [pendingField, updateIssue, workspaceId, number, read])
+  }, [pendingField, updateIssue, workspaceId, number, t, read])
 
   const submitComment = useCallback(async (): Promise<void> => {
     const body = draft.trim()
@@ -103,14 +98,19 @@ export function GitHubIssuePanel({ workspaceId, number, columns, catalog, loadIs
     const result = await commentIssue({ workspaceId, number, body })
     if (!mounted.current) return
     setSending(false)
-    if (!result.ok) { setError(failureText(result.error)); return }
+    if (!result.ok) { setError(githubFailureText(result.error, t)); return }
     // The draft clears only once GitHub holds the comment: a refused write
     // keeps the text so the reader can retry without retyping it.
     setDraft('')
     await read()
-  }, [draft, sending, commentIssue, workspaceId, number, read])
+  }, [draft, sending, commentIssue, workspaceId, number, t, read])
 
   const statusOptions = columns.filter(column => column.kind === 'project-status' && column.droppable)
+  // An issue the project does not hold has no status, and no option matches
+  // that: the picker names the bucket instead of falling back to the project's
+  // first column and claiming a placement GitHub does not have.
+  const bucketColumn = columns.find(column => !column.droppable)
+  const bucketChoice = statusOptions.some(column => column.id === issue?.columnId) ? undefined : bucketColumn
   // Both fields are replaced wholesale on GitHub, so the pickers offer exactly
   // what is not attached yet and a removal sends the rest of the set.
   const attachedLabels = issue?.labels.map(label => label.name) ?? []
@@ -154,9 +154,12 @@ export function GitHubIssuePanel({ workspaceId, number, columns, catalog, loadIs
                   <select
                     className={css.statusSelect}
                     value={issue.columnId}
+                    aria-label={t('githubStatusLabel')}
+                    data-github-status=""
                     disabled={pendingField}
                     onChange={event => { void writeField({ status: event.target.value }) }}
                   >
+                    {bucketChoice !== undefined && <option value={issue.columnId}>{bucketChoice.name}</option>}
                     {statusOptions.map(column => <option key={column.id} value={column.id}>{column.name}</option>)}
                   </select>
                 </label>
