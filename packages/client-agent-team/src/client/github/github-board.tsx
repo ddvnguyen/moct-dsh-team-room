@@ -79,6 +79,9 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const [openNumber, setOpenNumber] = useState<number>()
+  // The card the reader came from: the panel is a dialog over the board, so
+  // closing it puts the keyboard back on that card rather than on the page.
+  const opener = useRef<HTMLElement | null>(null)
   const [creating, setCreating] = useState(false)
   const [activeIssue, setActiveIssue] = useState<AgentTeamGitHubIssueSummary | null>(null)
   const [busy, setBusy] = useState(false)
@@ -134,6 +137,19 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
     void move(issue, column)
   }, [board, move])
 
+  const openIssue = useCallback((number: number): void => {
+    opener.current = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null
+    setOpenNumber(number)
+  }, [])
+
+  const closeIssue = useCallback((): void => {
+    setOpenNumber(undefined)
+    void reload()
+    const target = opener.current
+    opener.current = null
+    target?.focus()
+  }, [reload])
+
   const byColumn = useMemo(() => {
     const map = new Map<string, AgentTeamGitHubIssueSummary[]>()
     for (const issue of board?.issues ?? []) {
@@ -182,7 +198,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
                   key={column.id}
                   column={column}
                   issues={byColumn.get(column.id) ?? []}
-                  onOpen={setOpenNumber}
+                  onOpen={openIssue}
                   busy={busy}
                 />
               ))}
@@ -206,7 +222,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
           loadIssue={loadIssue}
           updateIssue={updateIssue}
           commentIssue={commentIssue}
-          onClose={() => { setOpenNumber(undefined); void reload() }}
+          onClose={closeIssue}
           t={t}
         />
       )}
