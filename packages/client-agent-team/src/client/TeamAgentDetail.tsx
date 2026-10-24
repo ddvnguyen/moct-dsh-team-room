@@ -33,6 +33,7 @@ import {
   tokensOrUnknown,
 } from './agents/agent-page-model.ts'
 import { AgentRunsTab } from './agents/agent-runs-tab.tsx'
+import { AgentSkillsTab } from './agents/agent-skills-tab.tsx'
 import { AgentTasksTab } from './agents/agent-tasks-tab.tsx'
 import createCss from './create.module.css'
 import css from './agent-detail.module.css'
@@ -59,7 +60,7 @@ function slotPresence(status: AgentTeamClientMemberStatus, slot: number, presenc
 const idleSlot = (instance: { readonly sessionId?: unknown; readonly presence: AgentTeamClientMemberStatus['presence'] }): boolean =>
   instance.sessionId === undefined && instance.presence !== 'working' && instance.presence !== 'error'
 
-type DetailTab = 'sessions' | 'overview' | 'memory' | 'runs' | 'tasks'
+type DetailTab = 'sessions' | 'overview' | 'memory' | 'runs' | 'tasks' | 'skills'
 
 /**
  * Where a Session run happened, as one line: the first Thread's Channel and
@@ -96,7 +97,7 @@ type BoardState =
  * Chat opens the Agent's own Session, Stop cancels every Session it is
  * running right now — and both stay reachable from every tab.
  */
-export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, openIssue, currentSessionId, openView, onClose, only, updateMember, loadModels, onCommitted, loadBoard, loadMemberActivity, subscribeChanges, threadTurnFailures, stopSession, t }: {
+export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resolveThreadRefs, loadMemory, loadChannels, openMemberSession, openThread, openIssue, currentSessionId, openView, onClose, only, updateMember, loadModels, onCommitted, loadBoard, loadMemberActivity, loadMemberSkills, subscribeChanges, threadTurnFailures, stopSession, t }: {
   readonly workspaceId: WorkspaceId
   readonly status: AgentTeamClientMemberStatus
   readonly loadMemberSessions: TeamSidebarProps['loadMemberSessions']
@@ -128,6 +129,8 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly loadBoard?: TeamSidebarProps['loadBoard']
   /** Live running-Turn snapshot: the header's current tool and the presence workload. */
   readonly loadMemberActivity?: TeamSidebarProps['loadMemberActivity']
+  /** The Skills tab's read: the Member's catalog plus its stored selection. */
+  readonly loadMemberSkills?: TeamSidebarProps['loadMemberSkills']
   /** Wakes the activity read while a Turn runs, so the tool label follows the Agent. */
   readonly subscribeChanges?: TeamSidebarProps['subscribeChanges']
   /** Errored Turns of a Thread: the Runs tab's failure reasons. */
@@ -136,6 +139,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
   readonly stopSession?: TeamSidebarProps['stopSession']
   readonly t: TeamSidebarProps['t']
 }) {
+  const skillsProps = loadMemberSkills === undefined ? undefined : { loadMemberSkills }
   const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' })
   const [alert, setAlert] = useState<string>()
   const [tabState, setTab] = useState<DetailTab>('sessions')
@@ -395,6 +399,7 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
           { value: 'runs', label: t('agentDetailsTabRuns'), id: 'agent-detail-tab-runs', panelId: 'agent-detail-panel-runs' },
           { value: 'tasks', label: t('agentDetailsTabTasks'), id: 'agent-detail-tab-tasks', panelId: 'agent-detail-panel-tasks' },
           { value: 'overview', label: t('agentDetailsTabOverview'), id: 'agent-detail-tab-overview', panelId: 'agent-detail-panel-overview' },
+          { value: 'skills', label: t('agentDetailsTabSkills'), id: 'agent-detail-tab-skills', panelId: 'agent-detail-panel-skills' },
           { value: 'memory', label: t('agentDetailsTabMemory'), id: 'agent-detail-tab-memory', panelId: 'agent-detail-panel-memory' },
         ]}
       />}
@@ -444,6 +449,13 @@ export function TeamAgentDetail({ workspaceId, status, loadMemberSessions, resol
               <AgentConfigEditor key={`${status.member.memberId}:${status.member.instances ?? ''}:${status.member.model?.provider ?? ''}/${status.member.model?.model ?? ''}/${status.member.model?.reasoningEffort ?? ''}`} status={status} updateMember={updateMember} loadModels={loadModels} onCommitted={onCommitted ?? (() => {})} t={t} />
             </section>
           )}
+        </div>
+      )}
+      {tab === 'skills' && (
+        <div role="tabpanel" id="agent-detail-panel-skills" aria-labelledby="agent-detail-tab-skills" data-team-agent-skills>
+          {skillsProps === undefined
+            ? <p className={css.muted}>{t('agentSkillsUnavailable')}</p>
+            : <AgentSkillsTab workspaceId={workspaceId} status={status} loadMemberSkills={skillsProps.loadMemberSkills} {...(updateMember === undefined ? {} : { updateMember })} {...(onCommitted === undefined ? {} : { onCommitted })} t={t} />}
         </div>
       )}
       {tab === 'memory' && (

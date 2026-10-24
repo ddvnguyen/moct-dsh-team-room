@@ -17,9 +17,9 @@ import css from './agent-detail.module.css'
  * Session is the open main session and are disposed otherwise: an ordinary
  * conversation never shows them.
  */
-export const AGENT_VIEW_IDS = { sessions: 'agent-sessions', runs: 'agent-runs', tasks: 'agent-tasks', config: 'agent-config', memory: 'agent-memory' } as const
-/** Below the host Chat view's order (0), so the strip reads Sessions | Runs | Tasks | Config | Memory | Chat | Trajectory. */
-export const AGENT_VIEW_ORDER = { sessions: -30, runs: -25, tasks: -22, config: -20, memory: -10 } as const
+export const AGENT_VIEW_IDS = { sessions: 'agent-sessions', runs: 'agent-runs', tasks: 'agent-tasks', config: 'agent-config', skills: 'agent-skills', memory: 'agent-memory' } as const
+/** Below the host Chat view's order (0), so the strip reads Sessions | Runs | Tasks | Config | Skills | Memory | Chat | Trajectory. */
+export const AGENT_VIEW_ORDER = { sessions: -30, runs: -25, tasks: -22, config: -20, skills: -15, memory: -10 } as const
 
 interface AgentRef { readonly workspaceId: WorkspaceId; readonly memberId: string }
 
@@ -42,7 +42,7 @@ export function markChatLanding(sessionId: string, now: number = Date.now()): vo
 export function dropChatLanding(sessionId: string): void { chatLanding.delete(sessionId) }
 export function resetAgentSessions(): void { agentOfSession.clear(); chatLanding.clear() }
 
-type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 'updateMember' | 'loadModels' | 'loadBoard' | 'loadMemberActivity' | 'subscribeChanges' | 'threadTurnFailures' | 'stopSession' | 'openIssue'>
+type ViewRemotes = Pick<TeamSidebarProps, 'loadMembers' | 'loadMemberSessions' | 'resolveThreadRefs' | 'loadMemory' | 'loadChannels' | 'openMemberSession' | 'updateMember' | 'loadModels' | 'loadBoard' | 'loadMemberActivity' | 'loadMemberSkills' | 'subscribeChanges' | 'threadTurnFailures' | 'stopSession' | 'openIssue'>
 
 type Loaded =
   | { readonly state: 'loading' }
@@ -65,7 +65,7 @@ async function resolveAgent(remotes: ViewRemotes, navigation: TeamNavigation, se
 
 /** The body of one Agent tab, mounted by the host inside the conversation's view area. */
 export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t }: {
-  readonly tab: 'sessions' | 'runs' | 'tasks' | 'overview' | 'memory'
+  readonly tab: 'sessions' | 'runs' | 'tasks' | 'overview' | 'skills' | 'memory'
   readonly sessionId: string
   readonly remotes: ViewRemotes
   readonly navigation: TeamNavigation
@@ -105,7 +105,7 @@ export function AgentViewBody({ tab, sessionId, remotes, navigation, openView, t
       const hit = cachedResolvedThreadRef(threadRef as never)
       if (hit !== undefined) navigation.actions().selectThread(hit.threadRef, hit.channelRef, hit.taskRef, hit.taskNumber)
     }
-    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} openIssue={(taskRef, focusOpener) => { remotes.openIssue(taskRef, { workspaceId, focusOpener }) }} currentSessionId={sessionId} updateMember={remotes.updateMember} loadModels={remotes.loadModels} onCommitted={reload} loadBoard={remotes.loadBoard} loadMemberActivity={remotes.loadMemberActivity} subscribeChanges={remotes.subscribeChanges} threadTurnFailures={remotes.threadTurnFailures} stopSession={remotes.stopSession} {...(openView === undefined ? {} : { openView })} t={t} />
+    return <TeamAgentDetail only={tab} workspaceId={workspaceId} status={status} loadMemberSessions={remotes.loadMemberSessions} resolveThreadRefs={remotes.resolveThreadRefs} loadMemory={remotes.loadMemory} loadChannels={remotes.loadChannels} openMemberSession={open} openThread={openThread} openIssue={(taskRef, focusOpener) => { remotes.openIssue(taskRef, { workspaceId, focusOpener }) }} currentSessionId={sessionId} updateMember={remotes.updateMember} loadModels={remotes.loadModels} onCommitted={reload} loadBoard={remotes.loadBoard} loadMemberActivity={remotes.loadMemberActivity} loadMemberSkills={remotes.loadMemberSkills} subscribeChanges={remotes.subscribeChanges} threadTurnFailures={remotes.threadTurnFailures} stopSession={remotes.stopSession} {...(openView === undefined ? {} : { openView })} t={t} />
   }
   return <div className={css.viewBody} data-team-agent-detail-body={tab}>
     {loaded.state === 'loading' && <p className={css.muted}>{t('agentDetailsLoading')}</p>}

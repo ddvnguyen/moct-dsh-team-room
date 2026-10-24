@@ -25,6 +25,14 @@ Give each Member the Channel it works in. A Member only sees the Threads of the 
 
 The Orchestrator is the one Member whose model choice matters most: a digest is a summarization over a bounded snapshot, so a cheap model is the right one. Spend the expensive model on the Members that do the work.
 
+## Skills
+
+An Agent's Skills tab is where its loadable skills are managed. The list is the Agent's whole catalog — the plugin's read-only bundled skills and the skills the Agent installed into its own directory — and each row names the origin it came from.
+
+**Load every skill** is the default and stays honest: skills installed later load automatically. Un-ticking one row writes an explicit selection naming every other skill. The hint under the toggle says so, because a selection that never mentions future skills is the trap.
+
+Saving is never optimistic: the page re-reads the Agent's catalog after the Host commits, so the checkboxes show what is stored, not what was clicked. A selection takes effect at the Agent's next turn boundary, in the same Session.
+
 ## The board
 
 The Board is opened from the sidebar's main panel list — the Board row (`agent-team-board`); it opens the kanban in the main column, because five 280-pixel columns do not fit the strip's narrow rail. The board is a navigation face: a reload reopens it where it was left.
@@ -47,6 +55,35 @@ The two refused columns are the point of the board. In progress and in review ar
 Nothing moves optimistically. A dropped card waits for the Host to commit and for the board to refetch, and a refused drop snaps back with the reason on screen.
 
 The filter bar narrows the columns by Channel, assignee, priority and free text.
+
+### GitHub Issues as the board's store
+
+The source switch at the top of the board (`团队任务` | `GitHub`) draws the same board from GitHub instead of the Team ledger. GitHub is the store: the cards are issues, and a drop writes the bound project's `Status` field on GitHub.
+
+Without a project the columns are the two issue states. Nothing is mirrored into the ledger, and nothing moves optimistically: the card moves once the re-read returns it in its new column. The `No status` bucket holds the issues the project does not place, and refuses a drop rather than clearing a field.
+
+A card opens the issue panel, the place the work is talked about. It carries the description, the state, the labels and assignees, and the issue's whole conversation. A comment posted there goes to GitHub, and the panel re-reads before the comment appears.
+
+Labels and assignees are edited there too. The field offers the repository's own labels and assignable people, read with the board, so a choice is always a name GitHub knows: a `×` on a chip removes it and the add-picker offers what is not attached.
+
+GitHub replaces both fields wholesale, so each edit sends the complete new set. A refused write leaves the chips as GitHub holds them, with the reason on screen.
+
+The panel is addressable: an open issue is `?ghIssue=<number>`, so a reload reopens it and the URL is shareable. The parameter is the GitHub board's own and leaves the Team's query parameters alone.
+
+`新建 Issue` creates the issue in GitHub, placed in the project's first status when a project is bound.
+
+Configuration is the deployment's, read from the environment at every call:
+
+| Variable | Meaning |
+| --- | --- |
+| `DSH_AGENT_TEAM_GITHUB_REPO` | `owner/repo`; required |
+| `DSH_AGENT_TEAM_GITHUB_TOKEN` | a token with issue read/write; falls back to `GITHUB_TOKEN` |
+| `DSH_AGENT_TEAM_GITHUB_PROJECT` | optional Projects v2 number; its `Status` field becomes the columns |
+| `DSH_AGENT_TEAM_GITHUB_API` | optional API base of a GitHub Enterprise instance |
+
+The project may be linked to the repository, or held by the repository owner as a user project or an organization project; all three are found from the number. A number that resolves nowhere is named as an error rather than quietly falling back to the two issue states.
+
+One page is read — the newest 100 issues, the first 100 comments — and each cap says so when it is crossed. A deployment with no repo or no token shows its setup instead of an empty board.
 
 ## The issue
 

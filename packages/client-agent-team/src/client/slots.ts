@@ -17,6 +17,17 @@ import type {
   AgentTeamInboxRequest,
   AgentTeamIssueView,
   AgentTeamIssueViewRequest,
+  AgentTeamGitHubBoard,
+  AgentTeamGitHubBoardRequest,
+  AgentTeamGitHubCommentRequest,
+  AgentTeamGitHubCommentRow,
+  AgentTeamGitHubCreateIssueRequest,
+  AgentTeamGitHubIssue,
+  AgentTeamGitHubIssueRequest,
+  AgentTeamGitHubIssueSummary,
+  AgentTeamGitHubStatus,
+  AgentTeamGitHubStatusRequest,
+  AgentTeamGitHubUpdateIssueRequest,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamJoinWorkspaceResult,
   AgentTeamLeaveWorkspaceRequest,
@@ -33,6 +44,8 @@ import type {
   AgentTeamRecoverMemberResult,
   AgentTeamMemberActivityRequest,
   AgentTeamMemberActivityResult,
+  AgentTeamMemberSkillsRequest,
+  AgentTeamMemberSkillsResult,
   AgentTeamUpdateTaskRequest,
   AgentTeamUpdateTaskResult,
   AgentTeamWorkspaceActivityRequest,
@@ -191,6 +204,8 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
     /** Running Turns of the Workspace; the Agent page narrows it to one Member for the live tool label. */
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
+    /** Skill management: one Member's full skill catalog plus its stored selection. */
+    loadMemberSkills: (request: AgentTeamMemberSkillsRequest) => Promise<RemoteResult<AgentTeamMemberSkillsResult>>
     /** Errored Turns of one Thread: the Agent page's run failure reasons. */
     threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
     /** Cancel one Member Session's running Turn through the dsh Session controller (`session.cancel`); the Team Host is untouched. */
@@ -273,6 +288,16 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
    * has been read; passing it narrows the query's covered scopes.
    */
   loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => Promise<RemoteResult<AgentTeamIssueView>>
+  /**
+   * The GitHub mirror's reads and writes: GitHub Issues and Projects are that
+   * board's store, so nothing here touches the Team ledger.
+   */
+  loadGitHubStatus: (request: AgentTeamGitHubStatusRequest) => Promise<RemoteResult<AgentTeamGitHubStatus>>
+  loadGitHubBoard: (request: AgentTeamGitHubBoardRequest) => Promise<RemoteResult<AgentTeamGitHubBoard>>
+  loadGitHubIssue: (request: AgentTeamGitHubIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssue>>
+  createGitHubIssue: (request: AgentTeamGitHubCreateIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssueSummary>>
+  updateGitHubIssue: (request: AgentTeamGitHubUpdateIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssueSummary>>
+  commentGitHubIssue: (request: AgentTeamGitHubCommentRequest) => Promise<RemoteResult<AgentTeamGitHubCommentRow>>
   /** Board create: one unassigned Task with its opening Message. */
   createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
   /** Board field write: title/priority/assignee/position, fenced by the Thread revision. */
