@@ -74,13 +74,13 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
   }
 
   return (
-    <header className={css.head}>
+    <header className={css.head} data-testid="issue-header">
       <div className={css.crumb}>
         <span className={css.crumbChannel}>{channelName}</span>
         <span aria-hidden="true">/</span>
         <span>{t('issueLabel')}</span>
         {onOpenLegacyThread !== undefined && (
-          <button type="button" className={css.crumbAction} onClick={onOpenLegacyThread}>
+          <button type="button" className={css.crumbAction} data-testid="issue-open-legacy-thread" onClick={onOpenLegacyThread}>
             {t('issueOpenLegacyThread')}
           </button>
         )}
@@ -92,6 +92,7 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
               <input
                 autoFocus
                 className={css.titleInput}
+                data-testid="issue-title-input"
                 aria-label={t('editTitle')}
                 value={draft}
                 disabled={pending}
@@ -104,10 +105,10 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
               />
               {error !== undefined && <span className={css.titleError} role="alert">{error}</span>}
             </span>
-          : <button type="button" className={css.title} aria-label={t('editTitle')} title={title === '' ? undefined : title} onClick={startEdit}>
+          : <button type="button" className={css.title} data-testid="issue-title" aria-label={t('editTitle')} title={title === '' ? undefined : title} onClick={startEdit}>
               {title === '' ? <span className={css.titlePlaceholder}>{t('titlePlaceholder')}</span> : title}
             </button>}
-        <span className={css.statusChip}>
+        <span className={css.statusChip} data-testid="issue-status">
           <StatusIcon status={status} />
           {t(STATUS_LABEL_KEY[status])}
         </span>

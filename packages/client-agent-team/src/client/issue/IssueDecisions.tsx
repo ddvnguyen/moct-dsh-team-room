@@ -33,7 +33,7 @@ export interface IssueDecisionsProps {
  */
 export function IssueDecisions({ decisions, nameOf, onAnswer, t }: IssueDecisionsProps) {
   return (
-    <section className={css.region} aria-label={t('issueDecisionsLabel')}>
+    <section className={css.region} aria-label={t('issueDecisionsLabel')} data-testid="issue-decisions">
       <h2 className={css.regionHeading}>{t('issueDecisionsLabel')}</h2>
       {decisions.length === 0
         ? <p className={css.empty}>{t('issueDecisionsEmpty')}</p>
@@ -44,7 +44,7 @@ export function IssueDecisions({ decisions, nameOf, onAnswer, t }: IssueDecision
                   answer={answers => onAnswer(row.card, answers)} t={t} />
               }
               return (
-                <article className={css.decisionRow} key={row.record.recordRef}>
+                <article className={css.decisionRow} data-testid="issue-decision" key={row.record.recordRef}>
                   <p className={css.decisionHead}>{row.record.decided}</p>
                   {row.record.rationale !== '' && <p className={css.description}>{row.record.rationale}</p>}
                   <p className={css.decisionMeta}>

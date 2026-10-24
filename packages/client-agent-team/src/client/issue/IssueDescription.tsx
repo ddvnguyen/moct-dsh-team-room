@@ -27,11 +27,11 @@ export interface IssueDescriptionProps {
 export function IssueDescription({ description, authorName, t }: IssueDescriptionProps) {
   const body = description.body.trim()
   return (
-    <section className={css.region} aria-label={t('issueDescriptionLabel')}>
+    <section className={css.region} aria-label={t('issueDescriptionLabel')} data-testid="issue-description">
       <h2 className={css.regionHeading}>{t('issueDescriptionLabel')}</h2>
       {body === ''
         ? <p className={css.empty}>{t('issueDescriptionEmpty')}</p>
-        : <p className={css.description}>{body}</p>}
+        : <p className={css.description} data-testid="issue-description-body">{body}</p>}
       <p className={css.descriptionMeta}>
         {authorName}
         {description.editedAt !== undefined ? ` · ${t('issueDescriptionEdited')}` : ''}

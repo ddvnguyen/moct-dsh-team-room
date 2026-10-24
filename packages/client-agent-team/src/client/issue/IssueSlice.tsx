@@ -76,12 +76,12 @@ export function IssueSlice(props: IssueSliceProps) {
       className={`${css.dialog}`}
       contentClassName={`${css.content} ${look.multicaLook}`}
     >
-      <div className={`${css.sliceBody} ${look.multicaLook}`} data-team-issue-slice="">
+      <div className={`${css.sliceBody} ${look.multicaLook}`} data-team-issue-slice="" data-testid="issue-slice">
         <div className={css.bar}>
-          <Button size="sm" variant="outline" onClick={props.maximize} data-modal-autofocus="">
+          <Button size="sm" variant="outline" onClick={props.maximize} data-modal-autofocus="" data-testid="issue-maximize">
             {props.t('issueMaximize')}
           </Button>
-          <Button size="sm" variant="outline" onClick={props.closeIssue}>
+          <Button size="sm" variant="outline" onClick={props.closeIssue} data-testid="issue-close">
             {props.t('issueClose')}
           </Button>
         </div>

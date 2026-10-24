@@ -108,6 +108,14 @@ describe('the issue slice', () => {
     // The dialog is the slice's own surface, over the face behind it.
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    // The journey (M-42) finds the presentation by hook, not by the dialog's
+    // translated label: the same `issue-slice` name the page's `issue-page`
+    // pairs with.
+    expect(view.getByTestId('issue-slice')).toBeTruthy()
+    // The slice's two controls carry hooks too: the journey maximizes and
+    // closes by name, not by the translated label on the button.
+    expect(view.getByTestId('issue-maximize')).toBeTruthy()
+    expect(view.getByTestId('issue-close')).toBeTruthy()
     // The regions are M-35's shared tree, drawn in the dialog.
     await waitFor(() => expect(view.getByText('Ship the issue view')).toBeTruthy())
     expect(view.getByRole('heading', { name: zh.issueCommentsLabel })).toBeTruthy()

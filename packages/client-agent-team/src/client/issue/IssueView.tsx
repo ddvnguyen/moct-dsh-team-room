@@ -119,7 +119,7 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
           <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
           <IssueExecutionLog {...execution} />
         </div>
-        <aside className={css.side} data-team-issue-side>
+        <aside className={css.side} data-team-issue-side data-testid="issue-properties">
           {properties}
         </aside>
       </div>

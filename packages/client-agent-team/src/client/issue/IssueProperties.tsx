@@ -44,19 +44,19 @@ export function IssueProperties({ properties, members, onStatus, onPriority, onA
   const timeAgo = useMemo(() => makeTimeAgo({ justNow: t('timeJustNow'), minutesAgo: t('timeMinutesAgo'), hoursAgo: t('timeHoursAgo'), daysAgo: t('timeDaysAgo') }), [t])
   return (
     <section className={css.propSection} aria-label={t('propertiesLabel')}>
-      <div className={css.propRow}>
+      <div className={css.propRow} data-testid="issue-prop-status">
         <span className={css.propLabel}>{t('propStatus')}</span>
         <span className={css.propControl}>
           <StatusPicker status={properties.status} onChange={status => { if (!pending) onStatus(status) }} t={t} />
         </span>
       </div>
-      <div className={css.propRow}>
+      <div className={css.propRow} data-testid="issue-prop-priority">
         <span className={css.propLabel}>{t('propPriority')}</span>
         <span className={css.propControl}>
           <PriorityPicker priority={normalizePriority(properties.priority)} onChange={priority => { if (!pending) onPriority(priority) }} t={t} />
         </span>
       </div>
-      <div className={css.propRow}>
+      <div className={css.propRow} data-testid="issue-prop-assignee">
         <span className={css.propLabel}>{t('propAssignee')}</span>
         <span className={css.propControl}>
           <AssigneePicker assignee={properties.assignee} members={members} onChange={memberId => { if (!pending) onAssignee(memberId as AgentTeamMemberId | null) }} t={t} />
