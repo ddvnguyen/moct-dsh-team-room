@@ -17,6 +17,17 @@ import type {
   AgentTeamInboxRequest,
   AgentTeamIssueView,
   AgentTeamIssueViewRequest,
+  AgentTeamGitHubBoard,
+  AgentTeamGitHubBoardRequest,
+  AgentTeamGitHubCommentRequest,
+  AgentTeamGitHubCommentRow,
+  AgentTeamGitHubCreateIssueRequest,
+  AgentTeamGitHubIssue,
+  AgentTeamGitHubIssueRequest,
+  AgentTeamGitHubIssueSummary,
+  AgentTeamGitHubStatus,
+  AgentTeamGitHubStatusRequest,
+  AgentTeamGitHubUpdateIssueRequest,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamJoinWorkspaceResult,
   AgentTeamLeaveWorkspaceRequest,
@@ -277,6 +288,16 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
    * has been read; passing it narrows the query's covered scopes.
    */
   loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => Promise<RemoteResult<AgentTeamIssueView>>
+  /**
+   * The GitHub mirror's reads and writes: GitHub Issues and Projects are that
+   * board's store, so nothing here touches the Team ledger.
+   */
+  loadGitHubStatus: (request: AgentTeamGitHubStatusRequest) => Promise<RemoteResult<AgentTeamGitHubStatus>>
+  loadGitHubBoard: (request: AgentTeamGitHubBoardRequest) => Promise<RemoteResult<AgentTeamGitHubBoard>>
+  loadGitHubIssue: (request: AgentTeamGitHubIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssue>>
+  createGitHubIssue: (request: AgentTeamGitHubCreateIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssueSummary>>
+  updateGitHubIssue: (request: AgentTeamGitHubUpdateIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssueSummary>>
+  commentGitHubIssue: (request: AgentTeamGitHubCommentRequest) => Promise<RemoteResult<AgentTeamGitHubCommentRow>>
   /** Board create: one unassigned Task with its opening Message. */
   createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
   /** Board field write: title/priority/assignee/position, fenced by the Thread revision. */

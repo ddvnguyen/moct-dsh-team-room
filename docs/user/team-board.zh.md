@@ -56,6 +56,23 @@ Agent 的「技能」页管理它能加载的技能。列表是这个 Agent 的�
 
 筛选栏按频道、负责人、优先级与自由文本收窄各列。
 
+### 以 GitHub Issue 作为看板数据源
+
+看板顶部的来源切换（`团队任务` | `GitHub`）让同一块看板改为从 GitHub 而不是 Team 账本取数。GitHub 就是存储：卡片是 Issue，列是所绑定 Project 的 `Status` 字段选项（没有绑定 Project 时是两个 Issue 状态），拖拽直接写 GitHub 上的这个字段。任何东西都不会镜像进账本，也没有乐观变更：重新读取把卡片放回新列之后，它才移动。`无状态` 桶放没有进入 Project 的 Issue，并且拒绝拖入，而不是悄悄清空字段。
+
+卡片打开 Issue 面板——工作被讨论的地方。它带着描述、状态、标签与负责人，以及这个 Issue 的完整对话；在这里发表的评论直接写到 GitHub，面板重新读取之后评论才出现。`新建 Issue` 在 GitHub 上创建 Issue；绑定了 Project 时会放进第一个状态。
+
+配置属于部署，每次调用都从环境读取：
+
+| 变量 | 含义 |
+| --- | --- |
+| `DSH_AGENT_TEAM_GITHUB_REPO` | `owner/repo`；必填 |
+| `DSH_AGENT_TEAM_GITHUB_TOKEN` | 具有 Issue 读写权限的令牌；缺省时回退到 `GITHUB_TOKEN` |
+| `DSH_AGENT_TEAM_GITHUB_PROJECT` | 可选：Projects v2 编号；它的 `Status` 字段成为看板的列 |
+| `DSH_AGENT_TEAM_GITHUB_API` | 可选：GitHub Enterprise 实例的 API 地址 |
+
+只读一页——最近更新的 100 个 Issue、最早的 100 条评论——越过上限时会明确说明。没有配置仓库或令牌的部署显示配置说明，而不是一块空看板。
+
 ## Task 详情与执行记录
 
 卡片标题打开这个 Task 的 Thread。它的侧栏一列放着 Task 的属性（状态、优先级、负责人）、它的 Claim、关注者，以及 `执行记录`。

@@ -31,6 +31,7 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamCreateTaskRequest,
   AgentTeamCreateTaskResult,
+  AgentTeamGitHubStatus,
   AgentTeamMemberActivityResult,
   AgentTeamUpdateTaskRequest,
   AgentTeamUpdateTaskResult,
@@ -55,6 +56,7 @@ import { BoardCardContent } from './BoardCard.tsx'
 import { BoardColumn, BOARD_COL_WIDTH } from './BoardColumn.tsx'
 import { BoardFilterBar } from './BoardFilterBar.tsx'
 import { CreateTaskDialog } from './CreateTaskDialog.tsx'
+import { GitHubBoard } from '../github/github-board.tsx'
 import { HiddenColumnsPanel } from './HiddenColumnsPanel.tsx'
 import { dropAction, mayDrop } from './drop-rules.ts'
 import { planPositionWrites } from './reorder.ts'
@@ -65,6 +67,35 @@ import look from '../multica-look.module.css'
 import css from './board.module.css'
 
 const HIDDEN_KEY = 'dsh.agent-team.board.hiddenColumns'
+
+/**
+ * Which store the board draws: the Team's own Tasks, or the GitHub mirror.
+ * GitHub is the store for the mirror — its issues are the cards and its
+ * project's `Status` field is the columns — so the choice is a source, not a
+ * filter, and it is remembered like the hidden columns are.
+ */
+const SOURCE_KEY = 'dsh.agent-team.board.source'
+const BOARD_SOURCES = ['tasks', 'github'] as const
+type BoardSource = typeof BOARD_SOURCES[number]
+
+function readBoardSource(): BoardSource {
+  if (typeof localStorage === 'undefined') return 'tasks'
+  try {
+    const stored = localStorage.getItem(SOURCE_KEY)
+    return stored === 'github' ? 'github' : 'tasks'
+  } catch {
+    return 'tasks'
+  }
+}
+
+function writeBoardSource(source: BoardSource): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(SOURCE_KEY, source)
+  } catch (error) {
+    void error
+  }
+}
 
 function readHiddenColumns(): TaskStatus[] {
   if (typeof localStorage === 'undefined') return []
@@ -106,6 +137,17 @@ export interface TeamBoardPageProps {
    * reader is on into view.
    */
   readonly navigation: TeamConversationProps['navigation']
+  /**
+   * The GitHub mirror's seams. They are optional so a seat that does not carry
+   * the mirror still renders the Task board: the source switch appears only
+   * when every one of them is present.
+   */
+  readonly loadGitHubStatus?: TeamConversationProps['loadGitHubStatus'] | undefined
+  readonly loadGitHubBoard?: TeamConversationProps['loadGitHubBoard'] | undefined
+  readonly loadGitHubIssue?: TeamConversationProps['loadGitHubIssue'] | undefined
+  readonly createGitHubIssue?: TeamConversationProps['createGitHubIssue'] | undefined
+  readonly updateGitHubIssue?: TeamConversationProps['updateGitHubIssue'] | undefined
+  readonly commentGitHubIssue?: TeamConversationProps['commentGitHubIssue'] | undefined
   readonly t: TeamSidebarProps['t']
 }
 
@@ -146,7 +188,7 @@ function useRequestIds() {
   }), [])
 }
 
-export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, openIssue, navigation, t }: TeamBoardPageProps) {
+export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, loadGitHubStatus, loadGitHubBoard, loadGitHubIssue, createGitHubIssue, updateGitHubIssue, commentGitHubIssue, createTask, updateTask, changeTask, subscribeChanges, openIssue, navigation, t }: TeamBoardPageProps) {
   const [rows, setRows] = useState<readonly BoardCardTask[]>()
   const [channels, setChannels] = useState<readonly { readonly channelRef: AgentTeamChannelRef; readonly name: string }[]>([])
   const [members, setMembers] = useState<readonly AssigneeOption[]>([])
@@ -162,6 +204,28 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   const pageRef = useRef<HTMLDivElement>(null)
   const [settlingRefs, setSettlingRefs] = useState<ReadonlySet<string>>(new Set())
   const requestIds = useRequestIds()
+
+  // --- Board source: the Team's Tasks, or the GitHub mirror ---
+  const [source, setSource] = useState<BoardSource>(readBoardSource)
+  const [gitHubStatus, setGitHubStatus] = useState<AgentTeamGitHubStatus>()
+  // The switch exists only where the seat carries the mirror: a seat without
+  // those Remotes keeps the one board it can actually draw.
+  const gitHubSeams = loadGitHubStatus !== undefined && loadGitHubBoard !== undefined && loadGitHubIssue !== undefined
+    && createGitHubIssue !== undefined && updateGitHubIssue !== undefined && commentGitHubIssue !== undefined
+  useEffect(() => {
+    if (loadGitHubStatus === undefined) return undefined
+    let live = true
+    void (async () => {
+      const result = await loadGitHubStatus({ workspaceId })
+      if (live && result.ok) setGitHubStatus(result.value)
+    })()
+    return () => { live = false }
+  }, [loadGitHubStatus, workspaceId])
+
+  const chooseSource = useCallback((next: BoardSource) => {
+    setSource(next)
+    writeBoardSource(next)
+  }, [])
 
   // --- Data loads ---
   // Reads can overtake each other; only the newest one may write state.
@@ -639,6 +703,37 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       {/* Test seam: exposes the settle lock so specs can observe the window
           between the drop and the refetch without depending on timing. */}
       <span data-testid="board-debug-state" data-settling={[...settlingRefs].join(',')} hidden aria-hidden="true" />
+      {gitHubSeams && (
+        <div className={css.sourceBar} role="group" aria-label={t('boardSourceLabel')}>
+          {BOARD_SOURCES.map(option => (
+            <button
+              key={option}
+              type="button"
+              className={css.sourceOption}
+              aria-pressed={source === option}
+              data-testid={`board-source-${option}`}
+              onClick={() => { chooseSource(option) }}
+            >
+              {option === 'tasks' ? t('boardSourceTasks') : t('boardSourceGitHub')}
+            </button>
+          ))}
+        </div>
+      )}
+      {source === 'github' && gitHubSeams ? (
+        gitHubStatus === undefined
+          ? <p className={css.emptyBoard} role="status">{t('githubLoadingBoard')}</p>
+          : <GitHubBoard
+            workspaceId={workspaceId}
+            status={gitHubStatus}
+            loadBoard={loadGitHubBoard}
+            loadIssue={loadGitHubIssue}
+            createIssue={createGitHubIssue}
+            updateIssue={updateGitHubIssue}
+            commentIssue={commentGitHubIssue}
+            t={t}
+          />
+      ) : (
+        <>
       <div className={css.toolbar}>
         <BoardFilterBar filters={filters} onFiltersChange={setFilters} channels={channels} members={members} t={t} />
         <button type="button" className={css.newTaskButton} data-testid="board-new-task" onClick={openCreate}>
@@ -718,6 +813,8 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
           onClose={() => setCreateOpen(false)}
           t={t}
         />
+      )}
+        </>
       )}
     </div>
   )

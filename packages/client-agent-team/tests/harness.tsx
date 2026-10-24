@@ -1051,11 +1051,19 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   const skillList = vi.fn(async () => ({ ok: true as const, value: { skills: [] as const } }))
   // The dsh Session controller's cancel — the Team client's stopSession lands here.
   const sessionCancel = vi.fn(async (request: { sessionId: string }) => ({ ok: true as const, value: { accepted: true as const } }))
+  // The GitHub mirror: the fixture is unbound, which is the state a fresh
+  // deployment is in — the board renders its setup instead of issues.
+  const githubStatus = vi.fn(async () => ({ ok: true as const, value: { configured: false as const, reason: 'missing-repo' as const } }))
+  const githubBoard = vi.fn(async () => ({ ok: true as const, value: { repo: 'octo/demo', columns: [], issues: [], fetchedAt: new Date(0).toISOString(), truncated: false } }))
+  const githubIssue = vi.fn(async () => ({ ok: false as const, error: { code: 'team/github-not-configured', message: 'GitHub is not configured' } }))
+  const githubCreateIssue = vi.fn(async () => ({ ok: false as const, error: { code: 'team/github-not-configured', message: 'GitHub is not configured' } }))
+  const githubUpdateIssue = vi.fn(async () => ({ ok: false as const, error: { code: 'team/github-not-configured', message: 'GitHub is not configured' } }))
+  const githubComment = vi.fn(async () => ({ ok: false as const, error: { code: 'team/github-not-configured', message: 'GitHub is not configured' } }))
   runtime.remote.provideNamespaces({
     session: { modelCatalog, cancel: sessionCancel },
     commands: { list: commandList },
     skills: { list: skillList },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, issueView, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, workspaceActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, issueView, githubStatus, githubBoard, githubIssue, githubCreateIssue, githubUpdateIssue, githubComment, threadObservations, threadReplyStats, threadTurnFailures, threadSessions, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, changeAttention, createTask, updateTask, memberActivity, workspaceActivity, resolveTaskRefs, memberSessions, resolveThreadRefs, resolveMessageRefs, docs, doc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, docSectionHistory, decisions, answerDecision, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar, ...memory },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),

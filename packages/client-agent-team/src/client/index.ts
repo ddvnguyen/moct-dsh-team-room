@@ -6,6 +6,12 @@ import type {
   AgentTeamArchiveChannelRequest,
   AgentTeamArchiveMemberRequest,
   AgentTeamClientMemberStatus,
+  AgentTeamGitHubBoardRequest,
+  AgentTeamGitHubCommentRequest,
+  AgentTeamGitHubCreateIssueRequest,
+  AgentTeamGitHubIssueRequest,
+  AgentTeamGitHubStatusRequest,
+  AgentTeamGitHubUpdateIssueRequest,
   AgentTeamInboxRequest,
   AgentTeamIssueViewRequest,
   AgentTeamSendMessageRequest,
@@ -383,6 +389,15 @@ function boardQuery(request: { readonly workspaceId: AgentTeamViewRequest['works
 }
 
 /**
+ * The GitHub board's query identity: GitHub is not a Team change scope, so no
+ * Team commit re-reads the mirror. The board re-reads when the reader asks and
+ * after its own write — a Team change never pretends an issue moved.
+ */
+function gitHubBoardQuery(request: AgentTeamGitHubBoardRequest): TeamQueryIdentity {
+  return { key: `github-board:${request.workspaceId}`, covers: () => false }
+}
+
+/**
  * The issue view's query identity: one key per issue.
  *
  * The key carries the Workspace and the Task alone — every presentation of one
@@ -443,6 +458,15 @@ function teamSharedRemotes(
     // The Thread scope is known only once the board card that opens the issue
     // has been read; passing it narrows the query's covered scopes.
     loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => queries.read(issueViewQuery(request, threadRef), () => ctx.remote.agentTeam.issueView(request)),
+    // The GitHub mirror is read through, never cached on this side: the board
+    // and the issue panel exist to show what GitHub holds right after a write,
+    // so every read is the Host's own answer.
+    loadGitHubStatus: (request: AgentTeamGitHubStatusRequest) => ctx.remote.agentTeam.githubStatus(request),
+    loadGitHubBoard: (request: AgentTeamGitHubBoardRequest) => queries.read(gitHubBoardQuery(request), () => ctx.remote.agentTeam.githubBoard(request)),
+    loadGitHubIssue: (request: AgentTeamGitHubIssueRequest) => ctx.remote.agentTeam.githubIssue(request),
+    createGitHubIssue: (request: AgentTeamGitHubCreateIssueRequest) => ctx.remote.agentTeam.githubCreateIssue(request),
+    updateGitHubIssue: (request: AgentTeamGitHubUpdateIssueRequest) => ctx.remote.agentTeam.githubUpdateIssue(request),
+    commentGitHubIssue: (request: AgentTeamGitHubCommentRequest) => ctx.remote.agentTeam.githubComment(request),
     createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
     updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),

@@ -10,6 +10,32 @@
   background: var(--ml-surface);
 }
 
+/* --- Source switch: the Team's Tasks, or the GitHub mirror --- */
+.sourceBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 0;
+  flex-shrink: 0;
+}
+
+.sourceOption {
+  border: 1px solid var(--ml-border);
+  background: transparent;
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.sourceOption[aria-pressed='true'] {
+  border-color: var(--ml-brand);
+  color: var(--ml-brand);
+  font-weight: 500;
+}
+
 /* --- Toolbar: filter bar + new task --- */
 .toolbar {
   display: flex;

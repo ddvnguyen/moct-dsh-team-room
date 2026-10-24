@@ -230,12 +230,33 @@ import type {
   AgentTeamForkMemberSessionResult,
   AgentTeamIssueView,
   AgentTeamIssueViewRequest,
+  AgentTeamGitHubBoard,
+  AgentTeamGitHubBoardRequest,
+  AgentTeamGitHubCommentRequest,
+  AgentTeamGitHubCommentRow,
+  AgentTeamGitHubCreateIssueRequest,
+  AgentTeamGitHubIssue,
+  AgentTeamGitHubIssueRequest,
+  AgentTeamGitHubIssueSummary,
+  AgentTeamGitHubStatus,
+  AgentTeamGitHubStatusRequest,
+  AgentTeamGitHubUpdateIssueRequest,
 } from './types.ts'
+import {
+  GITHUB_ENV, createGitHubComment, createGitHubIssue, fetchGitHubBoard, fetchGitHubIssue, gitHubStatusOf,
+  resolveGitHubSettings, updateGitHubIssue, type GitHubMirrorConfig,
+} from './github.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim()
   if (!value) throw new Error(`${name} must be set when MOCT_TEAM_URL is set`)
+  return value
+}
+
+/** A GitHub issue number is a positive integer; anything else is a caller bug, not a GitHub answer. */
+function requireIssueNumber(value: number): number {
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`'${value}' is not an issue number`)
   return value
 }
 
@@ -1506,6 +1527,62 @@ export default class AgentTeam extends TypertRemoteService {
       skills: Object.freeze(skills.map<AgentTeamMemberSkill>(skill => Object.freeze({ ...skill }))),
       allow: member.capabilities?.skills?.allow === undefined ? null : Object.freeze([...member.capabilities.skills.allow]),
     })
+  }
+
+  /**
+   * Where the GitHub mirror stands. Reading the binding is local: a deployment
+   * with no repo or no token has not been bound yet, and the surfaces say so
+   * instead of failing.
+   */
+  @Remote('githubStatus')
+  githubStatus(request: AgentTeamGitHubStatusRequest): AgentTeamGitHubStatus {
+    this.requireWorkspace(request.workspaceId)
+    return gitHubStatusOf(resolveGitHubSettings())
+  }
+
+  /**
+   * The board's read: one capped page of issues, placed in the bound project's
+   * `Status` columns when a project is configured. Read-only.
+   */
+  @Remote('githubBoard')
+  async githubBoard(request: AgentTeamGitHubBoardRequest): Promise<AgentTeamGitHubBoard> {
+    this.requireWorkspace(request.workspaceId)
+    return fetchGitHubBoard(this.gitHubConfig())
+  }
+
+  /** One issue with its whole conversation: the issue surface's read. */
+  @Remote('githubIssue')
+  async githubIssue(request: AgentTeamGitHubIssueRequest): Promise<AgentTeamGitHubIssue> {
+    this.requireWorkspace(request.workspaceId)
+    return fetchGitHubIssue(this.gitHubConfig(), requireIssueNumber(request.number))
+  }
+
+  /** Create one GitHub issue, optionally placed in a project option. */
+  @Remote('githubCreateIssue')
+  async githubCreateIssue(request: AgentTeamGitHubCreateIssueRequest): Promise<AgentTeamGitHubIssueSummary> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const title = request.title.trim()
+    if (title === '') throw new Error('an issue needs a title')
+    return createGitHubIssue(this.gitHubConfig(), { title, body: request.body, ...(request.columnId === undefined ? {} : { columnId: request.columnId }) })
+  }
+
+  /** One issue field write: state, project status, assignees, labels. */
+  @Remote('githubUpdateIssue')
+  async githubUpdateIssue(request: AgentTeamGitHubUpdateIssueRequest): Promise<AgentTeamGitHubIssueSummary> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    return updateGitHubIssue(this.gitHubConfig(), { ...request, number: requireIssueNumber(request.number) })
+  }
+
+  /** One comment on the issue: the communication surface's write. */
+  @Remote('githubComment')
+  async githubComment(request: AgentTeamGitHubCommentRequest): Promise<AgentTeamGitHubCommentRow> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const body = request.body.trim()
+    if (body === '') throw new Error('a comment needs a body')
+    return createGitHubComment(this.gitHubConfig(), requireIssueNumber(request.number), body)
   }
 
   /** Read-only navigation lookup for branded Task refs found in message bodies. */
@@ -4897,6 +4974,23 @@ export default class AgentTeam extends TypertRemoteService {
     const workspace = this.ctx.workspaceRegistry.get(workspaceId)
     if (workspace === undefined) throw new Error(`unknown Workspace '${workspaceId}'`)
     return workspace
+  }
+
+  /**
+   * The deployment's GitHub binding, or the typed refusal the surfaces branch
+   * on. The binding is read per call: it is environment, not Team state, and a
+   * Host restarted with a token needs no further setup.
+   */
+  private gitHubConfig(): GitHubMirrorConfig {
+    const settings = resolveGitHubSettings()
+    if (settings.state === 'ready') return settings.config
+    throw new RemoteError(
+      'team/github-not-configured',
+      settings.state === 'missing-token'
+        ? `GitHub is not configured: ${GITHUB_ENV.repo} names ${settings.repo}, but ${GITHUB_ENV.token} (or ${GITHUB_ENV.fallbackToken}) holds no token`
+        : `GitHub is not configured: set ${GITHUB_ENV.repo} to 'owner/repo'`,
+      { ...(settings.state === 'missing-token' ? { repo: settings.repo } : {}) },
+    )
   }
 
   /** A seat's '@handle' and the Thread its slot's running Turn was delivered for; undefined for an unknown seat. */
