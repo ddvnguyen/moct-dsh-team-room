@@ -84,6 +84,9 @@ import type {
   AgentTeamActivity,
   AgentTeamMemberActivityRequest,
   AgentTeamMemberActivityResult,
+  AgentTeamMemberSkill,
+  AgentTeamMemberSkillsRequest,
+  AgentTeamMemberSkillsResult,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
@@ -1481,6 +1484,28 @@ export default class AgentTeam extends TypertRemoteService {
     const activities = this.activityFeed.snapshot(request.threadRef)
       .filter(activity => ledger.participatesIn(activity.memberId, request.workspaceId))
     return { revision: this.activityEpoch, activities }
+  }
+
+  /**
+   * One Member's skills, for the Human's skill-management surface: every
+   * skill the Member can load (its bundled read-only set plus its own
+   * directory) and the stored selection, so the surface can show what is
+   * excluded and offer it back. Read-only; the write is `updateMember`'s
+   * capabilities, which re-applies at the Member's next turn boundary.
+   */
+  @Remote('memberSkills')
+  async memberSkills(request: AgentTeamMemberSkillsRequest): Promise<AgentTeamMemberSkillsResult> {
+    this.requireWorkspace(request.workspaceId)
+    const ledger = this.requireLedger()
+    const member = ledger.listMembers().find(item => item.memberId === request.memberId)
+    if (member === undefined || !ledger.participatesIn(member.memberId, request.workspaceId)) {
+      throw new Error(`Agent Member '${request.memberId}' is not a Member of this Workspace`)
+    }
+    const skills = await this.memberRuntime.readMemberSkills(member)
+    return Object.freeze({
+      skills: Object.freeze(skills.map<AgentTeamMemberSkill>(skill => Object.freeze({ ...skill }))),
+      allow: member.capabilities?.skills?.allow === undefined ? null : Object.freeze([...member.capabilities.skills.allow]),
+    })
   }
 
   /** Read-only navigation lookup for branded Task refs found in message bodies. */

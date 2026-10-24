@@ -22,6 +22,7 @@ import type {
   AgentTeamLeaveWorkspaceRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamMemberActivityRequest,
+  AgentTeamMemberSkillsRequest,
   AgentTeamMembersRequest,
   AgentTeamMemoryActRequest,
   AgentTeamMemoryListRequest,
@@ -445,6 +446,10 @@ function teamSharedRemotes(
     createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
     updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),
+    // Skill management reads the catalog uncached: the surface exists to make
+    // a selection visible right after it is saved, and the read is a directory
+    // scan the Member's own provider already does on every activation.
+    loadMemberSkills: (request: AgentTeamMemberSkillsRequest) => ctx.remote.agentTeam.memberSkills(request),
     // A run's failure reasons are read per Thread. The Agent page's Runs tab
     // needs them from the sidebar seat too, so they live with the shared
     // remotes rather than the main seat's extras.
@@ -888,7 +893,7 @@ function applyUi(ctx: ClientContext): void {
       const open = navigation.getSnapshot().memberSessionId !== undefined
       if (open && dispose === undefined) {
         const bound = (): TeamSidebarProps['t'] => ctx.locale.bind(NS) as TeamSidebarProps['t']
-        const entry = (tab: 'sessions' | 'runs' | 'tasks' | 'overview' | 'memory', id: string, order: number, labelKey: 'agentDetailsTabSessions' | 'agentDetailsTabRuns' | 'agentDetailsTabTasks' | 'agentTabConfig' | 'agentDetailsTabMemory') => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+        const entry = (tab: 'sessions' | 'runs' | 'tasks' | 'overview' | 'skills' | 'memory', id: string, order: number, labelKey: 'agentDetailsTabSessions' | 'agentDetailsTabRuns' | 'agentDetailsTabTasks' | 'agentTabConfig' | 'agentDetailsTabSkills' | 'agentDetailsTabMemory') => ctx.slots.inject('conversation.view', () => ctx.slots.register({
           name: 'conversation.view',
           id,
           order,
@@ -902,6 +907,7 @@ function applyUi(ctx: ClientContext): void {
           entry('runs', AGENT_VIEW_IDS.runs, AGENT_VIEW_ORDER.runs, 'agentDetailsTabRuns'),
           entry('tasks', AGENT_VIEW_IDS.tasks, AGENT_VIEW_ORDER.tasks, 'agentDetailsTabTasks'),
           entry('overview', AGENT_VIEW_IDS.config, AGENT_VIEW_ORDER.config, 'agentTabConfig'),
+          entry('skills', AGENT_VIEW_IDS.skills, AGENT_VIEW_ORDER.skills, 'agentDetailsTabSkills'),
           entry('memory', AGENT_VIEW_IDS.memory, AGENT_VIEW_ORDER.memory, 'agentDetailsTabMemory'),
         ]
         dispose = () => { for (const drop of drops) drop() }

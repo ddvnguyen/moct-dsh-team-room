@@ -25,6 +25,14 @@ Give each Member the Channel it works in. A Member only sees the Threads of the 
 
 The Orchestrator is the one Member whose model choice matters most: a digest is a summarization over a bounded snapshot, so a cheap model is the right one. Spend the expensive model on the Members that do the work.
 
+## Skills
+
+An Agent's Skills tab is where its loadable skills are managed. The list is the Agent's whole catalog — the plugin's read-only bundled skills and the skills the Agent installed into its own directory — and each row names the origin it came from.
+
+**Load every skill** is the default and stays honest: skills installed later load automatically. Un-ticking one row writes an explicit selection naming every other skill. The hint under the toggle says so, because a selection that never mentions future skills is the trap.
+
+Saving is never optimistic: the page re-reads the Agent's catalog after the Host commits, so the checkboxes show what is stored, not what was clicked. A selection takes effect at the Agent's next turn boundary, in the same Session.
+
 ## The board
 
 The Board is opened from the Team strip's `看板` tab; its body carries one `打开看板` action, because five 280-pixel columns do not fit the strip's narrow rail. The board is a navigation face: a reload reopens it where it was left.

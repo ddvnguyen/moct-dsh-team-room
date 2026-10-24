@@ -1346,6 +1346,29 @@ export interface AgentTeamMemberActivityResult {
   readonly activities: readonly AgentTeamMemberActivity[]
 }
 
+/** Read one Member's skill catalog for the Human's skill-management surface. */
+export interface AgentTeamMemberSkillsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+}
+
+/** One skill a Member can load, named by the root that owns it. */
+export interface AgentTeamMemberSkill {
+  readonly name: string
+  readonly description: string
+  /** `bundled` is the plugin's read-only core set; `private` is the Member's own directory. */
+  readonly origin: 'bundled' | 'private'
+}
+
+/**
+ * The catalog and the Member's stored selection: `allow` is `null` when the
+ * Member loads every discovered skill, and the exact allow-list otherwise.
+ */
+export interface AgentTeamMemberSkillsResult {
+  readonly skills: readonly AgentTeamMemberSkill[]
+  readonly allow: readonly string[] | null
+}
+
 /** Subscribe to lightweight invalidations; each connection starts with a current baseline. */
 export interface AgentTeamChangesRequest {
   /** Omit to observe every shared projection change. */

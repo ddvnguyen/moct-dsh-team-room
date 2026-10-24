@@ -109,9 +109,9 @@ describe('Team mode and the shell main panel', () => {
     act(() => { b.runtime.ctx.teamNavigation.actions().selectWorkspace('w1' as never) })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)) })
     act(() => { b.runtime.ctx.teamNavigation.actions().enterMemberSession('ordinary-session' as never) })
-    await waitFor(() => expect(agentTabs()).toEqual(['agent-sessions', 'agent-runs', 'agent-tasks', 'agent-config', 'agent-memory']))
-    // Sessions, Runs, Tasks, Config and Memory sit before the host's Chat (order 0).
-    expect(entries().filter(entry => entry.id.startsWith('agent-')).map(entry => entry.order)).toEqual([-30, -25, -22, -20, -10])
+    await waitFor(() => expect(agentTabs()).toEqual(['agent-sessions', 'agent-runs', 'agent-tasks', 'agent-config', 'agent-skills', 'agent-memory']))
+    // Sessions, Runs, Tasks, Config, Skills and Memory sit before the host's Chat (order 0).
+    expect(entries().filter(entry => entry.id.startsWith('agent-')).map(entry => entry.order)).toEqual([-30, -25, -22, -20, -15, -10])
     // No Modal stands in for the page, and the sidebar stays on the Team tab.
     expect(b.view.queryByRole('dialog')).toBeNull()
     expect(b.view.container.querySelector('[data-native-tab="team"]')).not.toBeNull()
@@ -125,7 +125,7 @@ describe('Team mode and the shell main panel', () => {
     act(() => { b.runtime.ctx.teamNavigation.actions().selectWorkspace('w1' as never) })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)) })
     act(() => { b.runtime.ctx.teamNavigation.actions().enterMemberSession('ordinary-session' as never) })
-    await waitFor(() => expect(agentTabs()).toEqual(['agent-sessions', 'agent-runs', 'agent-tasks', 'agent-config', 'agent-memory']))
+    await waitFor(() => expect(agentTabs()).toEqual(['agent-sessions', 'agent-runs', 'agent-tasks', 'agent-config', 'agent-skills', 'agent-memory']))
     await act(async () => { await b.runtime.sessions.add({ id: 'other-session', summary: { title: 'Other', cwd: '/work/alpha' } }) })
     act(() => { b.openSession('other-session') })
     await waitFor(() => expect(agentTabs()).toEqual([]))

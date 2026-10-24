@@ -49,6 +49,7 @@ describe('Agent Team generated Typert boundary', () => {
       'leaveWorkspace',
       'memberActivity',
       'memberSessions',
+      'memberSkills',
       'members',
       'memoryAct',
       'memoryList',

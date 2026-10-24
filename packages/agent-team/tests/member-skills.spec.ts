@@ -245,6 +245,41 @@ describe('Agent Team member-private skills', () => {
     expect(await catalogNames(ctx, agent)).toEqual(['alpha', 'beta', 'member-memory-manager', 'member-skill-manager'])
   })
 
+  it('reports the whole catalog and the stored selection to the management read, live or not', async () => {
+    const { ctx, workspaceId } = await memberSkillsHarness()
+    const member = await addMember(ctx, workspaceId, 'managed')
+    await writeFile(join(member.privateMemoryPath, 'skills', 'gamma.md'), SKILL_MD('gamma', 'Gamma skill', 'Gamma body.'))
+
+    // Auto: every discovered skill, both origins named, and no selection.
+    const auto = await ctx.agentTeam.memberSkills({ workspaceId, memberId: member.memberId })
+    expect(auto.allow).toBeNull()
+    expect(auto.skills.map(skill => skill.name)).toEqual(['gamma', 'member-memory-manager', 'member-skill-manager'])
+    expect(auto.skills.find(skill => skill.name === 'gamma')?.origin).toBe('private')
+    expect(auto.skills.find(skill => skill.name === 'member-skill-manager')?.origin).toBe('bundled')
+    expect(auto.skills.find(skill => skill.name === 'gamma')?.description).toBe('Gamma skill')
+
+    // An exclusion is visible as a stored selection, and the excluded skill is
+    // still offered: the surface exists to add it back.
+    await ctx.agentTeam.updateMember({
+      requestId: requestId('manage-select'), memberId: member.memberId, handle: 'managed', description: 'Skills member',
+      capabilities: { skills: { allow: ['gamma'] } },
+    })
+    const selected = await ctx.agentTeam.memberSkills({ workspaceId, memberId: member.memberId })
+    expect(selected.allow).toEqual(['gamma'])
+    expect(selected.skills.map(skill => skill.name)).toContain('member-skill-manager')
+
+    // The read belongs to the Member's own two roots, not to its live Session:
+    // a suspended seat (no provider mount) still answers.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('manage-suspend'), memberId: member.memberId })
+    const suspended = await ctx.agentTeam.memberSkills({ workspaceId, memberId: member.memberId })
+    expect(suspended.skills.map(skill => skill.name)).toEqual(['gamma', 'member-memory-manager', 'member-skill-manager'])
+
+    // A Member id this Workspace does not know is refused rather than
+    // answered with an empty catalog the surface would render as "no skills".
+    await expect(ctx.agentTeam.memberSkills({ workspaceId, memberId: 'member:absent' as AgentTeamMemberId }))
+      .rejects.toThrow(/not a Member of this Workspace/)
+  })
+
   it('provisions skills/ on activation and removes it with the Member', async () => {
     const { ctx, workspaceId } = await memberSkillsHarness()
     const member = await addMember(ctx, workspaceId, 'shortlived')

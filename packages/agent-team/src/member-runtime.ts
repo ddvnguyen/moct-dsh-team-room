@@ -30,7 +30,7 @@ import type {
   AgentTeamMemberId,
 } from './types.ts'
 import * as memberSkills from './member-skills.ts'
-import type { MemberSkillSelectionRef } from './member-skills.ts'
+import type { MemberSkillRow, MemberSkillSelectionRef } from './member-skills.ts'
 
 /**
  * Read-only core skills shipped beside the preset (the meta skill first:
@@ -373,6 +373,18 @@ export class MemberRuntime {
   /** Live-apply a capability edit to a registered selection; a no-op when none exists. */
   swapSkillSelection(memberId: AgentTeamMemberId, allow: readonly string[] | undefined): void {
     this.skillSelections.get(memberId)?.swap(allow)
+  }
+
+  /**
+   * Every skill one Member could load, from its own two roots, whether or not
+   * it has a live Session. Selection-independent: the management surface needs
+   * the full catalog to offer a skill back after it was excluded.
+   */
+  async readMemberSkills(member: AgentTeamAgentMember): Promise<readonly MemberSkillRow[]> {
+    return memberSkills.readMemberSkills(this.deps.ctx, {
+      skillsDirectory: join(memberMemoryDirectoryPath(member), 'skills'),
+      bundledSkillsDirectory: BUNDLED_SKILLS_DIRECTORY,
+    })
   }
 
   /**

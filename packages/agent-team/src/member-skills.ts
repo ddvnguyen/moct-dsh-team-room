@@ -34,6 +34,24 @@ export interface MemberSkillsConfig {
 }
 
 /**
+ * One skill a Member can load, as the Human's management surface lists it.
+ * `origin` names which of the Member's two roots owns it: the plugin's
+ * read-only bundled set, or the Member's own writable directory.
+ */
+export interface MemberSkillRow {
+  readonly name: string
+  readonly description: string
+  readonly origin: 'bundled' | 'private'
+}
+
+/** The Member's two Team-owned skill roots; the bundled set first, matching the provider's rank order. */
+function memberSkillRoots(config: Pick<MemberSkillsConfig, 'skillsDirectory' | 'bundledSkillsDirectory'>): string[] {
+  return config.bundledSkillsDirectory === undefined
+    ? [config.skillsDirectory]
+    : [config.bundledSkillsDirectory, config.skillsDirectory]
+}
+
+/**
  * Register the Member-private skill provider on one Member's agent scope and
  * return its disposer. The provider files into that agent's exact layer, so
  * no sibling Member or ordinary session can observe the catalog; discovery,
@@ -85,13 +103,10 @@ class MemberPrivateSkillProvider implements SkillProvider {
     // discovery keeps the first root's same-name candidate, so a bundled
     // skill stays stable across plugin upgrades while a Member installs
     // its own additions under their own names.
-    const customSkillDirs = config.bundledSkillsDirectory === undefined
-      ? [config.skillsDirectory]
-      : [config.bundledSkillsDirectory, config.skillsDirectory]
     this.wrapped = new FileSystemSkillProvider(ctx, control, {
       providerName: this.name,
       includeDefaultRoots: false,
-      customSkillDirs,
+      customSkillDirs: memberSkillRoots(config),
     })
   }
 
@@ -110,6 +125,46 @@ class MemberPrivateSkillProvider implements SkillProvider {
 
   async get(candidate: SkillCandidate, options: Parameters<SkillProvider['get']>[1]): Promise<Awaited<ReturnType<SkillProvider['get']>>> {
     return this.wrapped.get(candidate, options)
+  }
+}
+
+/**
+ * Enumerate one Member's discoverable skills for the Human's management
+ * surface. The read is selection-independent on purpose: the surface shows
+ * every skill the Member could load and marks the selected ones, so a Member
+ * that excluded a skill can still see and re-enable it. It also works for a
+ * Member with no live Session — the same two roots are mounted in a
+ * throwaway provider and disposed before returning, so no watcher outlives
+ * the request.
+ */
+export async function readMemberSkills(
+  ctx: Context,
+  config: Pick<MemberSkillsConfig, 'skillsDirectory' | 'bundledSkillsDirectory'>,
+): Promise<readonly MemberSkillRow[]> {
+  const lifecycle = new AbortController()
+  const provider = new FileSystemSkillProvider(ctx, { signal: lifecycle.signal, invalidate: () => {} }, {
+    providerName: 'member-skills-read',
+    includeDefaultRoots: false,
+    customSkillDirs: memberSkillRoots(config),
+  })
+  try {
+    const output = await provider.list({})
+    const candidates = 'candidates' in output ? output.candidates : output
+    const bundledRoot = config.bundledSkillsDirectory
+    const rows: MemberSkillRow[] = []
+    const seen = new Set<string>()
+    for (const candidate of candidates) {
+      if (seen.has(candidate.name)) continue
+      seen.add(candidate.name)
+      rows.push(Object.freeze({
+        name: candidate.name,
+        description: candidate.description,
+        origin: bundledRoot !== undefined && candidate.path?.startsWith(bundledRoot) === true ? 'bundled' : 'private',
+      }))
+    }
+    return Object.freeze(rows.sort((left, right) => left.name.localeCompare(right.name)))
+  } finally {
+    lifecycle.abort()
   }
 }
 

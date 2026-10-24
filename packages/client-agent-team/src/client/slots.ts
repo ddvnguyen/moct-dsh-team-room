@@ -33,6 +33,8 @@ import type {
   AgentTeamRecoverMemberResult,
   AgentTeamMemberActivityRequest,
   AgentTeamMemberActivityResult,
+  AgentTeamMemberSkillsRequest,
+  AgentTeamMemberSkillsResult,
   AgentTeamUpdateTaskRequest,
   AgentTeamUpdateTaskResult,
   AgentTeamWorkspaceActivityRequest,
@@ -191,6 +193,8 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadBoard: (request: { readonly workspaceId: AgentTeamViewRequest['workspaceId'] }) => Promise<RemoteResult<AgentTeamView>>
     /** Running Turns of the Workspace; the Agent page narrows it to one Member for the live tool label. */
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
+    /** Skill management: one Member's full skill catalog plus its stored selection. */
+    loadMemberSkills: (request: AgentTeamMemberSkillsRequest) => Promise<RemoteResult<AgentTeamMemberSkillsResult>>
     /** Errored Turns of one Thread: the Agent page's run failure reasons. */
     threadTurnFailures: (request: { readonly workspaceId: AgentTeamThreadObservationsRequest['workspaceId']; readonly threadRef: AgentTeamThreadRef }) => Promise<RemoteResult<readonly AgentTeamThreadTurnFailure[]>>
     /** Cancel one Member Session's running Turn through the dsh Session controller (`session.cancel`); the Team Host is untouched. */
