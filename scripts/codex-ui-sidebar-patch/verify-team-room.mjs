@@ -197,24 +197,28 @@ export async function verifyLane(options, probe = {}) {
 
   // 4 — the lane's roster, compared with the backend's. Member ids, never
   // workspace ids: a member's own workspaceId differs from the ledger's by
-  // design.
+  // design. The call goes out under the unit's own trusted host, and it is a
+  // request this module builds itself for the same reason as realHostStatus
+  // below: `fetch` overwrites Host with the URL's authority, so the lane would
+  // answer a trust check on the wrong host while the report claims the right
+  // one.
   let laneMembers = []
   let laneRpcOk = false
+  let laneStatus = 0
   try {
-    const response = await fetchImpl(`${base}/api/agentTeam/members`, {
-      method: 'POST',
-      headers: { Host: trustedHost, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'client-request', rpcId: 'verify-team-room', method: 'agentTeam/members', payload: { args: { request: {} } },
-      }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    const postJson = probe.postJson ?? ((path, host, body) => realPostJson(base, path, host, body))
+    const response = await postJson('/api/agentTeam/members', trustedHost, {
+      type: 'client-request', rpcId: 'verify-team-room', method: 'agentTeam/members', payload: { args: { request: {} } },
     })
-    const payload = await response.json()
+    laneStatus = response.status
+    let payload
+    try { payload = await response.json() } catch { payload = undefined }
     laneRpcOk = response.ok && payload?.result?.ok === true
     laneMembers = laneRpcOk ? payload.result.value : []
     record('lane-roster', laneRpcOk,
-      laneRpcOk ? `${laneMembers.length} members over ${base} (Host: ${trustedHost})`
-        : `unexpected envelope: ${JSON.stringify(payload).slice(0, 160)}`)
+      laneRpcOk ? `${laneMembers.length} members over ${base} (POST Host: ${trustedHost} → ${laneStatus})`
+        : payload === undefined ? `${base} answered ${laneStatus} without the members envelope (POST Host: ${trustedHost})`
+          : `${base} answered ${laneStatus}: ${JSON.stringify(payload).slice(0, 160)}`)
   } catch (error) {
     record('lane-roster', false, `${base} did not answer: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -265,6 +269,39 @@ function realHostStatus(base, host) {
     req.on('error', () => resolve(0))
     req.on('timeout', () => { req.destroy(); resolve(0) })
     req.end()
+  })
+}
+
+/**
+ * A JSON POST under an explicit `Host:` header — the same rule as
+ * `realHostStatus`: `fetch` overwrites Host with the URL's authority, so the
+ * lane's trust check would be made against `127.0.0.1` while the report claims
+ * the unit's public host. The status comes back unmodified so the caller can
+ * print what the lane actually answered.
+ */
+function realPostJson(base, path, host, body) {
+  const url = new URL(path, `${base}/`)
+  const payload = Buffer.from(JSON.stringify(body))
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: 'POST',
+      headers: { Host: host, 'Content-Type': 'application/json', 'Content-Length': payload.length },
+      timeout: REQUEST_TIMEOUT_MS,
+    }, (res) => {
+      const chunks = []
+      res.on('data', (chunk) => chunks.push(chunk))
+      res.on('end', () => {
+        const status = res.statusCode ?? 0
+        const text = Buffer.concat(chunks).toString('utf8')
+        resolve({ ok: status >= 200 && status < 300, status, json: async () => JSON.parse(text) })
+      })
+    })
+    req.on('error', reject)
+    req.on('timeout', () => { req.destroy(); reject(new Error(`the lane did not answer within ${REQUEST_TIMEOUT_MS}ms`)) })
+    req.end(payload)
   })
 }
 
@@ -373,13 +410,13 @@ function fixtureProbe(fixture) {
   const fixtureFetch = async (url) => {
     if (url.includes('/team/v1/operations/head')) return response({ sequence: fixture.head })
     if (url.includes('/team/v1/operations?')) return response({ workspaceId: MIGRATED_WORKSPACE, operations: fixture.operations })
-    if (url.endsWith('/api/agentTeam/members')) {
-      return response({ type: 'server-response', rpcId: 'verify-team-room', result: { ok: true, value: fixture.members } })
-    }
     return response({ error: 'not found' }, 404)
   }
   return {
     fetch: fixtureFetch,
+    postJson: async (path, host, body) => response({
+      type: 'server-response', rpcId: body?.rpcId ?? 'verify-team-room', result: { ok: true, value: fixture.members },
+    }),
     envOf: () => fixture.env,
     holderOf: () => fixture.holder,
     cgroupOf: () => fixture.cgroup,

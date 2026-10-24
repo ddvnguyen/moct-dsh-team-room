@@ -31,11 +31,14 @@
 #      when the lane answers for anything but the migrated room.
 #
 # Usage:
-#   deploy-dsh-x-sidebar.sh [--skip-restart] [--restart-only] [--verify-only] [--allow-install]
+#   deploy-dsh-x-sidebar.sh [--skip-restart] [--restart-only] [--verify-only]
 #     --skip-restart    stop after the patch steps: no restart, no verification
 #     --restart-only    preflight + patch refresh + restart + verify
 #     --verify-only     preflight + verification; touches nothing
-#     --allow-install   install the profile even while the unit is active
+#
+# The profile install has no flag: it runs only while the unit is not running,
+# and an active lane is the train's to install into. To install here yourself,
+# stop the unit first — this script starts it again either way.
 #
 # UNIT / X / P / UNIT_FILE / REPO may be overridden from the environment; they
 # default to the dsh-x lane and to this repository's own tree.
@@ -57,13 +60,11 @@ die()  { printf 'deploy-dsh-x-sidebar: %s\n' "$1" >&2; exit 1; }
 FLAG_SKIP_RESTART=0
 FLAG_RESTART_ONLY=0
 FLAG_VERIFY_ONLY=0
-FLAG_ALLOW_INSTALL=0
 for argument in "$@"; do
   case "$argument" in
     --skip-restart)  FLAG_SKIP_RESTART=1 ;;
     --restart-only)  FLAG_RESTART_ONLY=1 ;;
     --verify-only)   FLAG_VERIFY_ONLY=1 ;;
-    --allow-install) FLAG_ALLOW_INSTALL=1 ;;
     *) die "unknown argument '$argument' (see the usage header)" ;;
   esac
 done
@@ -91,12 +92,13 @@ printf 'port :%s belongs to %s (MainPID %s)\n' "$PORT" "$UNIT" "${MAIN_PID:-not 
 
 # The install belongs to the train while the lane runs: the profile's manifest
 # is the train's to write, and a bare run of this script used to point it at
-# stale tarballs and then install them into a live lane.
+# stale tarballs and then install them into a live lane. There is no override
+# flag: the only way to install here is to stop the unit first, which is what
+# the message says, and this script starts the unit again either way.
 UNIT_STATE=$(systemctl --user is-active "$UNIT" 2>/dev/null || true)
 INSTALL_PROFILE=1
 if [ "$UNIT_STATE" = "active" ] || [ "$UNIT_STATE" = "activating" ]; then
-  [ "$FLAG_ALLOW_INSTALL" = 0 ] || die "--allow-install: $UNIT is $UNIT_STATE. This script will not stop a live lane to install; stop the unit yourself if that is what you mean."
-  printf 'profile install is the train'"'"'s job (scripts/deploy/dsh-customizations-deploy.sh); this script hands %s'"'"' restart to its unit and verifies the room. Pass --allow-install only on an inactive unit.\n' "$UNIT"
+  printf 'profile install is the train'"'"'s job (scripts/deploy/dsh-customizations-deploy.sh); this script hands %s'"'"' restart to its unit and verifies the room. Stop the unit first to install here yourself.\n' "$UNIT"
   INSTALL_PROFILE=0
 fi
 
