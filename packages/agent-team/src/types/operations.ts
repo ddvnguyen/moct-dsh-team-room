@@ -27,6 +27,7 @@ import type {
   AgentTeamStoredThreadReadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
+  AgentTeamTaskDescription,
   AgentTeamTaskPriority,
   AgentTeamTaskRef,
   AgentTeamThread,
@@ -747,6 +748,8 @@ export interface AgentTeamTaskPatch {
   readonly position?: number
   /** The description's own fence, bumped by every description write. */
   readonly descriptionRevision?: number
+  /** The description record, when this write changed the description. */
+  readonly description?: AgentTeamTaskDescription
 }
 
 /** Durable Human Task field update; it does not revise the Thread's Messages. */

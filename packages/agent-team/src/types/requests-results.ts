@@ -90,7 +90,7 @@ export interface AgentTeamAddMemberRequest {
   readonly capabilities?: AgentTeamMemberCapabilities
   /** Concurrent instances, an integer from 1 to 5; absent takes the default (2). */
   readonly instances?: number
-  /** Role label and prompt section; absent reads as `worker` for display. */
+  /** Role label and prompt section; absent means no role: no pill and no role section. */
   readonly role?: AgentTeamMemberRole
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
@@ -584,6 +584,41 @@ export interface AgentTeamStaleRevision {
   readonly revision: number
 }
 
+/** Agent-only request to propose a plan on one Task. */
+export interface AgentTeamCreatePlanRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly title: string
+  /** Section headings in order; each becomes an empty section to fill later. */
+  readonly outline: readonly string[]
+}
+
+/**
+ * One Task's plan and the description it produced.
+ *
+ * The plan is the Doc bound to the Task; the description is the Task's own
+ * record, so a reader learns both what was proposed and whether it became the
+ * issue's description.
+ */
+export interface AgentTeamPlanStatus {
+  readonly taskRef: AgentTeamTaskRef
+  /** Absent when the Task has no plan. */
+  readonly plan?: {
+    readonly docRef: AgentTeamDocRef
+    readonly title: string
+    readonly status: AgentTeamDocStatus
+    readonly revision: number
+  }
+  /** Absent when the Task's description was never written. */
+  readonly description?: {
+    readonly source: 'anchor' | 'approvedPlan'
+    readonly planRef?: AgentTeamDocRef
+    /** The description's own fence. */
+    readonly revision: number
+  }
+}
+
 /** An Agent tried to address an Agent who is not already following. */
 export interface AgentTeamMemberNotFollowing {
   readonly kind: 'member_not_following'
@@ -676,6 +711,18 @@ export interface AgentTeamTaskPatchRequest {
   /** `null` clears the assignment; omitting the key leaves it unchanged. */
   readonly assignee?: AgentTeamMemberId | null
   readonly position?: number
+  /**
+   * The new description body. The Human sends the text; the Host composes the
+   * rest of the record (who wrote it, when, where it came from), so a client
+   * cannot forge "this came from an approved plan".
+   */
+  readonly description?: string
+  /**
+   * The description fence the Human read. A description write is fenced by
+   * the description's own counter, not by the Thread revision, so this is a
+   * sibling of `baseRevision` — and a stale one is a business outcome.
+   */
+  readonly baseDescriptionRevision?: number
 }
 
 export interface AgentTeamUpdateTaskCommittedResult {
@@ -687,8 +734,24 @@ export interface AgentTeamUpdateTaskCommittedResult {
 
 export type AgentTeamUpdateTaskResult =
   | AgentTeamUpdateTaskCommittedResult
-  | AgentTeamUnreadRequired
   | AgentTeamStaleRevision
+  | AgentTeamStaleDescriptionRevision
+
+/**
+ * A description write whose base fence is stale.
+ *
+ * A business outcome, not an error, and the same shape as `staleRevision`:
+ * the description's own counter moved since the writer read it, so the write
+ * was refused and the writer re-reads.
+ */
+export interface AgentTeamStaleDescriptionRevision {
+  readonly kind: 'stale_description_revision'
+  readonly taskRef?: AgentTeamTaskRef
+  /** The fence the writer based the write on. */
+  readonly expectedRevision: number
+  /** The fence now. */
+  readonly revision: number
+}
 
 /** Human Task resolution intent. */
 export interface AgentTeamTaskRequest {
@@ -1674,13 +1737,19 @@ export type AgentTeamDocNoticeResult =
   }
   | AgentTeamStaleDocRevision
 
-/** A Member asks the Human one to six questions on one card in a Thread. */
+/** A Member asks one to six questions on one card in a Thread. */
 export interface AgentTeamAskDecisionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly threadRef?: AgentTeamThreadRef
   readonly taskRef?: AgentTeamTaskRef
   readonly context?: string
+  /**
+   * The seat the card is addressed to. Absent addresses the Human, which is
+   * every card recorded before targeted asks existed. A named target must be
+   * a live Member of the Workspace and of the card's Channel.
+   */
+  readonly target?: AgentTeamMemberId
   readonly questions: readonly AgentTeamDecisionQuestion[]
 }
 
@@ -1719,6 +1788,8 @@ export interface AgentTeamDecisionView {
   /** The Thread reply that asked; the card renders in its place in the timeline. */
   readonly messageRef: AgentTeamMessageRef
   readonly context?: string
+  /** The seat the card is addressed to; absent on a card that addresses the Human. */
+  readonly target?: AgentTeamMemberId
   readonly questions: readonly AgentTeamDecisionQuestion[]
   readonly status: AgentTeamDecisionStatus
   readonly askedAt: string

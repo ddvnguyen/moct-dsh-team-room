@@ -47,7 +47,7 @@ import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.t
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
 import { cacheVerdict, type CacheVerdict } from './cache-verdict.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamAssigneeNotInWorkspaceError, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime, requiredTeamToolNames } from './member-runtime.ts'
 import { memberInstances } from './member-instances.ts'
 import { routeThreads } from './instance-router.ts'
@@ -146,9 +146,11 @@ import type {
   AgentTeamDmResult,
   AgentTeamCommentDocRequest,
   AgentTeamCreateDocRequest,
+  AgentTeamCreatePlanRequest,
   AgentTeamCreateDocResult,
   AgentTeamDocCommentResult,
   AgentTeamDocNoticeResult,
+  AgentTeamPlanStatus,
   AgentTeamAnswerDecisionRequest,
   AgentTeamAskDecisionRequest,
   AgentTeamDecisionNoticeResult,
@@ -328,6 +330,16 @@ type NotificationCause =
   | { readonly kind: 'transition'; readonly requestId: AgentTeamRequestId; readonly previousSessionId: SessionId }
   | { readonly kind: 'activation'; readonly previousSessionId?: SessionId }
   | { readonly kind: 'running' }
+
+/**
+ * The ledger's assignee refusal becomes the typed Remote error; anything else
+ * rethrows unchanged. Both Task write seams call it, so a new assignee failure
+ * shape cannot reach the Client as an untyped error from one seam only.
+ */
+function assignableRemoteError(error: unknown): unknown {
+  if (!(error instanceof AgentTeamAssigneeNotInWorkspaceError)) return error
+  return new RemoteError('team/member-not-in-workspace', error.message, { memberId: error.memberId, channelRef: error.channelRef, reason: error.reason })
+}
 
 function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope): boolean {
   if (left.kind === 'workspace' && right.kind === 'workspace') return left.workspaceId === right.workspaceId
@@ -2557,7 +2569,7 @@ export default class AgentTeam extends TypertRemoteService {
       return result.value
     } catch (error) {
       await this.dropUnreferencedPrepared(request, error)
-      throw error
+      throw assignableRemoteError(error)
     }
   }
 
@@ -2569,9 +2581,13 @@ export default class AgentTeam extends TypertRemoteService {
   async updateTask(request: AgentTeamUpdateTaskRequest): Promise<AgentTeamUpdateTaskResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
-    this.emitCommittedOutcome(result)
-    return result.value
+    try {
+      const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      throw assignableRemoteError(error)
+    }
   }
 
   /** Human-only promotion of a taskless Thread into a real Task plus public Message. */
@@ -3030,6 +3046,17 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /**
+   * Agent answer to one open decision card addressed to it. The seat may
+   * answer only its own card; the Host fills the actor from the Session.
+   */
+  async answerDecisionForAgent(agent: Agent, request: AgentTeamAnswerDecisionRequest): Promise<AgentTeamDecisionNoticeResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().answerDecision({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
@@ -3059,6 +3086,40 @@ export default class AgentTeam extends TypertRemoteService {
     const result = await this.requireLedger().createDoc({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
+  }
+
+  /**
+   * Agent-only start of one plan: a Doc bound to a Task, in that Task's
+   * Thread, while the Task is in its planning phase.
+   *
+   * The Host resolves the Task's Thread, so the model states the Task and not
+   * the Thread the plan lives in; the ledger holds the planning-phase gate.
+   */
+  async createPlanForAgent(agent: Agent, request: AgentTeamCreatePlanRequest): Promise<AgentTeamCreateDocResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const { task, thread } = this.requireLedger().listClaims(actor, { workspaceId: request.workspaceId, taskRef: request.taskRef })
+    const result = await this.requireLedger().createDoc({ requestId: request.requestId, workspaceId: request.workspaceId,
+      threadRef: thread.threadRef, taskRef: task.taskRef, title: request.title, outline: request.outline, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /**
+   * Agent-only read of one Task's plan and the description it produced.
+   *
+   * The read converges first: an approved plan whose promotion was dropped is
+   * completed here, so the model never reads a stale description.
+   */
+  async planStatusForAgent(agent: Agent, request: { workspaceId: WorkspaceId; taskRef: AgentTeamTaskRef }): Promise<AgentTeamPlanStatus> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const ledger = this.requireLedger()
+    ledger.listClaims(actor, { workspaceId: request.workspaceId, taskRef: request.taskRef })
+    try {
+      await ledger.promoteApprovedPlanDescription(request.workspaceId, request.taskRef)
+    } catch {
+      // Best-effort by design: the read answers with the description as it is.
+    }
+    return ledger.planStatus(actor, { workspaceId: request.workspaceId, taskRef: request.taskRef })
   }
 
   /** Agent-only Doc section write; a stale Doc revision is a business outcome. */

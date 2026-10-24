@@ -373,6 +373,15 @@ export interface AgentTeamTask {
    * and every ledger written before the description existed replays unchanged.
    */
   readonly descriptionRevision?: number | undefined
+  /**
+   * The description itself, once it is a fact of its own: the body a reader
+   * sees, and where it came from.
+   *
+   * Absent on a Task whose description was never written — the issue view
+   * then reads the Thread's opening Message. Optional and forward-only: a
+   * ledger written before the description existed replays unchanged.
+   */
+  readonly description?: AgentTeamTaskDescription | undefined
 }
 
 /**
@@ -385,7 +394,11 @@ export interface AgentTeamTask {
  */
 export interface AgentTeamTaskDescription {
   readonly body: string
-  /** Who wrote the body: the Human, or the Member whose plan was approved. */
+  /**
+   * Who wrote the body: the Human — its own edit, or the approval that
+   * promoted a plan. The Member who wrote the plan is named by the plan
+   * itself (`planRef`), not by this field.
+   */
   readonly author: AgentTeamMemberId
   /** Instant of the write that produced this body. */
   readonly occurredAt: string
@@ -663,9 +676,9 @@ export interface AgentTeamDecisionAnswer {
 
 /**
  * The decision event one Thread reply announces. A Member asks (the reply
- * mentions the Human), the Human answers (the reply mentions the asker, so the
- * existing mention wake carries the answer), or the asker withdraws a card it
- * no longer needs.
+ * mentions the Human, or the addressed seat when the card names one), the
+ * addressee answers (the reply mentions the asker, so the existing mention
+ * wake carries the answer), or the asker withdraws a card it no longer needs.
  */
 export type AgentTeamDecisionNotice =
   | {
@@ -673,6 +686,11 @@ export type AgentTeamDecisionNotice =
     readonly event: 'asked'
     /** Background the Human needs to answer, shown above the questions. */
     readonly context?: string
+    /**
+     * The seat the card is addressed to, when it names one. Absent on every
+     * card recorded before targeted asks existed: those address the Human.
+     */
+    readonly target?: AgentTeamMemberId
     readonly questions: readonly AgentTeamDecisionQuestion[]
   }
   | {

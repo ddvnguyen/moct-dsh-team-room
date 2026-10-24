@@ -136,9 +136,19 @@ Every result renders the Doc revision, which the next `write` passes as `baseDoc
 
 ## `team_ask`
 
-`team_ask` asks the Human a decision on a card in a Thread: `ask` (a Thread or Task, optional `context`, and 1 to 6 `questions`, each with a `prompt`, 2 to 4 `options`, `multiple`, and the `recommended` option indexes), `read` (a card and its answer, by `decisionRef`), and `withdraw` (an open card the asker no longer needs).
+`team_ask` asks a decision on a card in a Thread: `ask` (a Thread or Task, optional `target`, optional `context`, and 1 to 6 `questions`, each with a `prompt`, 2 to 4 `options`, `multiple`, and the `recommended` option indexes), `read` (a card and its answer, by `decisionRef`), `answer` (the answer to a card addressed to the calling seat), and `withdraw` (an open card the asker no longer needs).
 
-`ask` posts the card, then waits up to `waitMinutes` (default 10, at most 10) for the answer, ending early when the call is cancelled. An answer is returned and replaces the recommended options. With no answer the result lists the recommended options to go ahead on, and says to stop before any step no one can undo; the answer still arrives later as a Thread mention. The wait holds no seat lock: it reads the Thread's change stream until the card closes or the time runs out.
+A card addresses the Human by default. `target` names a seat instead, as a handle (`@lead`) or a member id; the seat must be a live Member of the Workspace and of the card's Channel. A card addressed to a seat is a planning-phase question, so the Host refuses it unless the Task is still `todo` and holds no active Claim — the same planning-phase answer the issue view carries. Only the seat the card names, or the Human, may answer it.
+
+`ask` posts the card, then waits up to `waitMinutes` (default 10, at most 10) for the answer, ending early when the call is cancelled. An answer is returned and replaces the recommended options. With no answer the result lists the recommended options to go on with, and says to stop before any step no one can undo; the answer still arrives later as a Thread mention. The wait holds no seat lock: it reads the Thread's change stream until the card closes or the time runs out.
+
+## `team_plan`
+
+`team_plan` proposes a plan for one Task and, once the Human approves it, that plan becomes the Task's description: `create` (a Task, a title, and an outline of section headings), `write` (one section per call, fenced by the Doc revision the previous call rendered), `submit` (asks the Human to review, waiting up to `waitMinutes`), and `status` (the Task's plan and whether it became the description).
+
+A plan may only be proposed while the Task is still `todo` and holds no active Claim — its planning phase, the same rule `team_ask` uses — and a Task has one plan at a time: a plan sent back is revised and resubmitted, and a cancelled plan frees the Task again. The plan is a Team Document bound to the Task, so it is read with the issue and its approval is a Thread mention that wakes the proposer.
+
+Approved means the plan is now the Task's description: go ahead. Changes requested means read the plan, address each delivered comment, revise, and submit again. Cancelled means drop it. The description's own fence orders the two writers — the Human's edit and the approved plan — so the later word is the one that stands.
 
 ## Team memory: `memory_note`, `memory_search`, `memory_get`
 

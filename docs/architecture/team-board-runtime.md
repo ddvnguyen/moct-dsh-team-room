@@ -10,7 +10,7 @@ Two durable records carry the Task fields the Board needs. Both are append-only 
 
 `team/task-created` is one commit: the opening Message, the Task overlay, the Thread and the Inbox delta travel together, so a Task never exists without the Message that opened it.
 
-`team/task-updated` carries a `baseRevision` and a patch of `title`, `priority`, `assignee` and `position`. It never revises the Thread's Messages. When the patch moves the Task to a different Member, the same record carries the public `assign` Activity — the wake of the new assignee is a projection of that record, not a side effect of the commit, so a replay derives the same wake.
+`team/task-updated` carries a `baseRevision` and a patch of `title`, `priority`, `assignee`, `position` and the description (`description` with the description's own fence, `descriptionRevision`). It never revises the Thread's Messages. When the patch moves the Task to a different Member, the same record carries the public `assign` Activity — the wake of the new assignee is a projection of that record, not a side effect of the commit, so a replay derives the same wake.
 
 Status is not one of those fields. Acceptance, closing and reopening ride `team/task-changed`, because they are decisions about the Task's work, not about its description.
 

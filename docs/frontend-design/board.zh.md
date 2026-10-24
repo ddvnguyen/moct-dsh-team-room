@@ -2,13 +2,13 @@
 
 [English](board.md) | 中文
 
-看板（Board）是 Workspace 的 kanban：所选 Workspace 的全部 Task，每个 Task 状态一列，从侧栏标签条的 `看板` 标签打开（`Tasks | Board | Team | Agents | Scheduled`）。它是 Human 观察团队工作的地方——什么在排队、哪些 Agent 已认领、什么已完成——也是 Human 在 Agent 不会认领的状态之间移动 Task 的唯一界面。
+看板（Board）是 Workspace 的 kanban：所选 Workspace 的全部 Task，每个 Task 状态一列，从侧栏主面板列表（`agent-team-board` 行）打开。它是 Human 观察团队工作的地方——什么在排队、哪些 Agent 已认领、什么已完成——也是 Human 在 Agent 不会认领的状态之间移动 Task 的唯一界面。
 
 页面实现在 `packages/client-agent-team/src/client/board/` 的 `TeamBoardPage`，是 Multica 看板视图在 Multica License 下的移植（见 [`multica-look.zh.md`](multica-look.zh.md)）。它复用的外观层、移植的纯函数与共享选择器都在那份文档里。
 
 ## 打开看板
 
-`看板` 标签是客户端插入的原生标签（`team-tab.ts`，order 2）。它的标签体只是标签条自己的部分——一个 `打开看板` 动作——因为标签条在宿主较窄的侧栏里，五列 280px 的列在那里只能滚动。该动作选中 Team 导航当前持有的 Workspace（没有则取第一个），并把 Team 座位交给看板界面。
+看板是一个 `sidebar.panellist` 行——id 为 `agent-team-board`，order 21——由客户端注册（`index.ts` 的 `registerTeamPanel`）；标签条本身只承载原生 `team` 标签（`team-tab.ts`，order 3）。该行的面板体是 `TeamBoardPanel`（`board-panel-body.tsx`）：它选中 Team 导航当前持有的 Workspace（没有则取第一个）并调用 `selectBoard()`，于是看板在主列打开——五列 280px 的列属于那里。
 
 看板和 Inbox 一样是一个导航界面（持久化快照 `dsh.agent-team.navigation` 里的 `board: true`）：打开它会清掉 Channel/Thread 界面，刷新后仍回到看板，点开卡片则经由 Thread setter 离开看板。
 
@@ -21,7 +21,7 @@
 一张卡片展示：
 
 - 优先级图标和 `#<taskNumber>`（左上）；
-- 实时 Agent 活动指示（右上）：当 `memberActivity` 快照里有运行中的 Turn 归属于该 Task 的 Thread 时；
+- 实时 Agent 活动指示（右上）：当 `memberActivity` 快照里有运行中的 Turn 作用于该 Task 的 Thread 时——规则以 Thread 为界：无论谁在跑这个 Turn（负责人或任何助手），徽标只落在该 Thread 的卡片上，同列其他卡片一概没有；
 - 标题（看板之前创建的 Task 没有标题，显示 `#<taskNumber>`）；
 - 频道胶囊与负责人头像；
 - 正在运行的 Task 的 Claim 方向行。
@@ -53,7 +53,9 @@
 
 revision 过期（Task 已在别处变更）与 Thread 未读（Human 须先读新消息）都以普通 `ok` 结果返回，而不是错误，各有自己的提示；过期时还会重新拉取，使重试带上当前 revision。
 
-每张卡片是一个 Tab 停靠点（带名称的分组）；标题是打开 Task 的 Thread（现有的 Thread 界面）的控件，优先级与负责人选择器是独立控件，不会打开 Thread。
+每张卡片是一个 Tab 停靠点（带名称的分组）；标题是打开 Task 的 issue 的控件，优先级与负责人选择器是独立控件，不会打开它。
+
+issue 是 Task 当前的界面（D10）。它取代的 Thread 界面是**旧版（legacy）**：已冻结，仍可从 Channel 界面进入，也可从 issue 头部的 *打开旧版 Thread 视图* 控件进入，读的是同一份 Host 事实——一份存储，两个视图。
 
 ## 筛选
 

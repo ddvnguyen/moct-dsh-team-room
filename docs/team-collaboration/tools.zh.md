@@ -98,9 +98,19 @@ preset 未挂载 compaction 引擎的 Member 会被告知该能力在此作用�
 
 ## `team_ask`
 
-`team_ask` 在某个 Thread 中以卡片向 Human 提出决策：`ask`（一个 Thread 或 Task、可选的 `context`，以及 1 到 6 个 `questions`，每个包含 `prompt`、2 到 4 个 `options`、`multiple` 和推荐选项的下标 `recommended`）、`read`（按 `decisionRef` 读取卡片及其回答）以及 `withdraw`（撤回提问者不再需要的未回答卡片）。
+`team_ask` 在某个 Thread 中以卡片提出决策：`ask`（一个 Thread 或 Task、可选的 `target`、可选的 `context`，以及 1 到 6 个 `questions`，每个包含 `prompt`、2 到 4 个 `options`、`multiple` 和推荐选项的下标 `recommended`）、`read`（按 `decisionRef` 读取卡片及其回答）、`answer`（回答发给调用座位的那张卡片）以及 `withdraw`（撤回提问者不再需要的未回答卡片）。
+
+卡片默认发给 Human。`target` 改为指名一个座位，可以是 handle（`@lead`）或 member id；该座位必须是 Workspace 的存活 Member，且属于卡片所在 Channel。发给座位的卡片属于规划阶段的问题，因此除非 Task 仍是 `todo` 且没有 active Claim，否则 Host 会拒绝它——这与 issue view 携带的规划阶段答案一致。只有卡片指名的座位，或 Human，可以回答它。
 
 `ask` 发出卡片后最多等待 `waitMinutes`（默认 10，最多 10）分钟，调用被取消时提前结束。有回答时返回回答，回答取代推荐选项。没有回答时，结果列出可以据此继续的推荐选项，并要求在任何无法撤销的步骤前停下；回答之后仍会以 Thread 提及送达。等待不占用座位锁：它读取 Thread 的变更流，直到卡片关闭或时间用完。
+
+## `team_plan`
+
+`team_plan` 为一个 Task 提出计划；Human 批准后，该计划成为这个 Task 的 description：`create`（一个 Task、一个标题以及若干小节标题的 outline）、`write`（每次调用写一节，由上一次调用渲染出的 Doc revision 围栏）、`submit`（请 Human 审阅，最多等待 `waitMinutes`）以及 `status`（该 Task 的计划，以及它是否已成为 description）。
+
+只有当 Task 仍是 `todo` 且没有 active Claim 时——也就是它的 planning phase，与 `team_ask` 同一规则——才能提出计划；一个 Task 同时只有一个计划：被退回的计划就地修改后重新提交，被取消的计划会释放这个 Task。计划是绑定到该 Task 的 Team Document，因此它与这个 issue 一起被读出，它的批准是以 Thread 提及送达的，也会唤醒提议者。
+
+Approved 意味着计划已经成为 Task 的 description：继续执行。Changes requested 意味着读计划、逐条回应已送达的评论、修改后重新提交。Cancelled 意味着放弃。description 自己的围栏决定两个写者——Human 的编辑与已批准的计划——的先后，因此较晚的那句话才是有效的。
 
 ## Team memory: `memory_note`, `memory_search`, `memory_get`
 

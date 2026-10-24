@@ -32,7 +32,7 @@ Durable capability intent on the Member entity (optional `capabilities` field: `
 
 An optional `role` field (`architect`, `leader`, `worker`, or `orchestrator`) on the Member entity. It is a label plus a fixed prompt section in the Member's identity block, never a routing rule: unassigned Tasks stay unassigned, and the Orchestrator only reports. `addMember` sets it, `updateMember` changes it, and `null` clears it. A role outside the four is refused at commit. It rides `team/member-added` and `team/member-updated`, so an older ledger without it replays unchanged and renders the identity block it had before.
 
-The Orchestrator's "only observes and reports" is prompt guidance: the Host does not stop an Orchestrator from calling Team tools.
+The Orchestrator's "only observes and reports" is prompt guidance on top of one real fence: `team_claim` is withheld from the Orchestrator's tool surface (Board 9/10 in the CHANGELOG), so it cannot hold a Direction Claim; other Team tools remain callable.
 
 ## Workspace
 
@@ -175,9 +175,11 @@ A Doc in review shows in its Thread and Channel as a plan card with Approve and 
 
 ## Decision
 
-A card of 1 to 6 questions an Agent Member asks the Human in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The Human answers every question at once, once.
+A card of 1 to 6 questions an Agent Member asks in one Thread, in place of a question in prose. Each question has 2 to 4 options, allows one pick or several, may recommend the asker's choice, and always takes a written answer too. The addressee is the Human by default, or a named seat when the card names one. The answerer answers every question at once, once.
 
-A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions the Human, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.
+A decision is not its own record: the ask, the answer and the withdrawal are Thread replies that carry the decision fact, like a Doc's submit and verdict. The ask mentions its addressee, so an open card reaches their Inbox; the answer mentions the asker, which wakes it with the answer. Only the asker can withdraw an open card; a withdrawn card takes no answer and wakes nobody.
+
+A card addressed to a seat is a planning-phase question: the Host refuses it once the Task it sits on has left the planning phase, because a seat is asked for a decision while the work is still being designed. The Human may always answer such a card, whether or not the card names a seat.
 
 ## Decision Record
 
