@@ -104,6 +104,50 @@ describe('the GitHub board', () => {
     expect(calls[0]?.url).toContain('/repos/octo/demo/issues?state=all&per_page=100')
   })
 
+  it('reads a project the repository owner holds as a user, not only one linked to the repository', async () => {
+    // GitHub answers a miss with a NOT_FOUND error beside the data, so the
+    // repository that does not hold the project must not kill the read.
+    const answer = projectAnswer()
+    const { fetcher } = transport(call => {
+      if (!call.url.endsWith('/graphql')) return [issueRow(1)]
+      return {
+        data: { repository: { projectV2: null }, user: (answer as { data: { repository: unknown } }).data.repository, organization: null },
+        errors: [{ type: 'NOT_FOUND', message: "Could not resolve to a ProjectV2 with the number 7.", path: ['repository', 'projectV2'] }],
+      }
+    })
+    const board = await fetchGitHubBoard(CONFIG, fetcher)
+    expect(board.issues.map(issue => issue.columnId)).toEqual(['opt_doing'])
+    expect(board.columns.map(column => column.name)).toEqual(['Todo', 'In progress', 'Done', 'No status'])
+  })
+
+  it('names a bound project that resolves nowhere, and still reads an issue without a status', async () => {
+    const missing = {
+      data: { repository: { projectV2: null }, user: null, organization: null },
+      errors: [
+        { type: 'NOT_FOUND', message: 'Could not resolve to a ProjectV2 with the number 7.', path: ['repository', 'projectV2'] },
+        { type: 'NOT_FOUND', message: "Could not resolve to an Organization with the login of 'octo'.", path: ['organization'] },
+      ],
+    }
+    const { fetcher } = transport(call => {
+      if (call.url.endsWith('/graphql')) return missing
+      if (call.url.includes('/comments?')) return []
+      return issueRow(1)
+    })
+    await expect(fetchGitHubBoard(CONFIG, fetcher)).rejects.toThrow(/project 7 is not reachable from octo\/demo/)
+    const issue = await fetchGitHubIssue(CONFIG, 1, fetcher)
+    expect(issue.body).toBe('Body 1')
+    expect(issue.columnId).toBe('open')
+    expect(issue.statusName).toBeUndefined()
+  })
+
+  it('still fails on a GraphQL error that is not a miss', async () => {
+    const { fetcher } = transport(() => ({
+      data: { repository: { projectV2: null }, user: null, organization: null },
+      errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible by personal access token', path: ['repository', 'projectV2'] }],
+    }))
+    await expect(fetchGitHubBoard(CONFIG, fetcher)).rejects.toThrow(/Resource not accessible/)
+  })
+
   it('falls back to the two issue states when no project is bound', async () => {
     const { fetcher } = transport(() => [issueRow(5), issueRow(6, { state: 'closed' })])
     const board = await fetchGitHubBoard({ ...CONFIG, projectNumber: undefined }, fetcher)

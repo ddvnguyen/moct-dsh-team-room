@@ -75,6 +75,8 @@ Configuration is the deployment's, read from the environment at every call:
 | `DSH_AGENT_TEAM_GITHUB_PROJECT` | optional Projects v2 number; its `Status` field becomes the columns |
 | `DSH_AGENT_TEAM_GITHUB_API` | optional API base of a GitHub Enterprise instance |
 
+The project may be linked to the repository, or held by the repository owner as a user project or an organization project; all three are found from the number. A number that resolves nowhere is named as an error rather than quietly falling back to the two issue states.
+
 One page is read — the newest 100 issues, the first 100 comments — and each cap says so when it is crossed. A deployment with no repo or no token shows its setup instead of an empty board.
 
 ## The issue

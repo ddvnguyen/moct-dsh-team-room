@@ -71,6 +71,8 @@ Agent 的「技能」页管理它能加载的技能。列表是这个 Agent 的�
 | `DSH_AGENT_TEAM_GITHUB_PROJECT` | 可选：Projects v2 编号；它的 `Status` 字段成为看板的列 |
 | `DSH_AGENT_TEAM_GITHUB_API` | 可选：GitHub Enterprise 实例的 API 地址 |
 
+Project 可以挂在仓库上，也可以是仓库所有者名下的用户 Project 或组织 Project；这三种都能只凭编号找到。编号找不到任何 Project 时报出错误，而不是悄悄退回两个 Issue 状态。
+
 只读一页——最近更新的 100 个 Issue、最早的 100 条评论——越过上限时会明确说明。没有配置仓库或令牌的部署显示配置说明，而不是一块空看板。
 
 ## Issue

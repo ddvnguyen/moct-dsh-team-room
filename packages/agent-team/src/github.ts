@@ -223,11 +223,24 @@ async function call(transport: Transport, method: string, path: string, body?: u
   return response.status === 204 ? undefined : response.json()
 }
 
-async function graphql(transport: Transport, query: string, variables: Readonly<Record<string, unknown>>): Promise<Json> {
+/**
+ * `allowNotFound` exists for one shape of query: a lookup that asks several
+ * places for the same thing and treats "not here" as an answer. GitHub reports
+ * a miss as an `errors` entry of type `NOT_FOUND` while still answering the
+ * fields that did resolve, so a strict read would turn a normal miss into a
+ * dead surface.
+ */
+async function graphql(transport: Transport, query: string, variables: Readonly<Record<string, unknown>>, options: { readonly allowNotFound?: boolean } = {}): Promise<Json> {
   const payload = asRecord(await call(transport, 'POST', '/graphql', { query, variables }))
-  const errors = asArray(payload?.errors)
-  if (errors.length > 0) {
-    const message = errors.map(entry => asString(asRecord(entry)?.message, 'unknown error')).join('; ')
+  const errors = asArray(payload?.errors).flatMap(entry => {
+    const error = asRecord(entry)
+    return error === undefined ? [] : [error]
+  })
+  const fatal = options.allowNotFound === true
+    ? errors.filter(error => asString(error.type) !== 'NOT_FOUND')
+    : errors
+  if (fatal.length > 0) {
+    const message = fatal.map(entry => asString(entry.message, 'unknown error')).join('; ')
     throw new Error(`GitHub GraphQL failed: ${message}`)
   }
   return asRecord(payload?.data) ?? {}
@@ -235,10 +248,7 @@ async function graphql(transport: Transport, query: string, variables: Readonly<
 
 // --- Projects (Projects v2, the board's grouping) ---
 
-const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    projectV2(number: $number) {
-      id
+const PROJECT_FIELDS = `id
       fields(first: 50) {
         nodes {
           ... on ProjectV2SingleSelectField { id name options { id name color } }
@@ -259,9 +269,18 @@ const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
             }
           }
         }
-      }
-    }
-  }
+      }`
+
+/**
+ * Projects v2 live on a repository, a user or an organization, and the binding
+ * is only `owner/repo` plus a number: a project the repository owner created is
+ * a user project unless it was linked to the repository. All three are asked in
+ * one round trip, and the two that do not hold it answer `null`.
+ */
+const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { projectV2(number: $number) { ${PROJECT_FIELDS} } }
+  user(login: $owner) { projectV2(number: $number) { ${PROJECT_FIELDS} } }
+  organization(login: $owner) { projectV2(number: $number) { ${PROJECT_FIELDS} } }
 }`
 
 interface ProjectOption {
@@ -291,8 +310,10 @@ async function readProject(transport: Transport, projectNumber: number): Promise
     owner: transport.config.owner,
     name: transport.config.repo,
     number: projectNumber,
-  })
+  }, { allowNotFound: true })
   const project = asRecord(asRecord(data.repository)?.projectV2)
+    ?? asRecord(asRecord(data.user)?.projectV2)
+    ?? asRecord(asRecord(data.organization)?.projectV2)
   const projectId = asString(project?.id)
   if (projectId === '') return undefined
   const fieldNodes = asArray(asRecord(project?.fields)?.nodes).map(asRecord).filter((node): node is Json => node !== undefined)
@@ -381,6 +402,11 @@ export async function fetchGitHubBoard(config: GitHubMirrorConfig, fetchImpl: Gi
   const transport: Transport = { config, fetchImpl }
   const rows = asArray(await call(transport, 'GET', `/repos/${config.owner}/${config.repo}/issues?state=all&per_page=${GITHUB_PAGE_LIMIT}&sort=updated&direction=desc`))
   const project = config.projectNumber === undefined ? undefined : await readProject(transport, config.projectNumber)
+  // A bound project that resolves nowhere leaves the board without columns, so
+  // it is said instead of quietly falling back to the two issue states.
+  if (config.projectNumber !== undefined && project === undefined) {
+    throw new Error(`project ${config.projectNumber} is not reachable from ${config.owner}/${config.repo}`)
+  }
   const issues = rows
     .filter(row => !isPullRequest(row))
     .flatMap(row => {
