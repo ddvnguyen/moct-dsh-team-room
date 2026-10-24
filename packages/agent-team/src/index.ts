@@ -47,7 +47,7 @@ import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.t
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
 import { cacheVerdict, type CacheVerdict } from './cache-verdict.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamAssigneeNotInWorkspaceError, AgentTeamLedger, agentTeamHumanActor, type AgentTeamBindThreadSessionRequest, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { deepCopyCapabilities, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime, requiredTeamToolNames } from './member-runtime.ts'
 import { memberInstances } from './member-instances.ts'
 import { routeThreads } from './instance-router.ts'
@@ -330,6 +330,16 @@ type NotificationCause =
   | { readonly kind: 'transition'; readonly requestId: AgentTeamRequestId; readonly previousSessionId: SessionId }
   | { readonly kind: 'activation'; readonly previousSessionId?: SessionId }
   | { readonly kind: 'running' }
+
+/**
+ * The ledger's assignee refusal becomes the typed Remote error; anything else
+ * rethrows unchanged. Both Task write seams call it, so a new assignee failure
+ * shape cannot reach the Client as an untyped error from one seam only.
+ */
+function assignableRemoteError(error: unknown): unknown {
+  if (!(error instanceof AgentTeamAssigneeNotInWorkspaceError)) return error
+  return new RemoteError('team/member-not-in-workspace', error.message, { memberId: error.memberId, channelRef: error.channelRef, reason: error.reason })
+}
 
 function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope): boolean {
   if (left.kind === 'workspace' && right.kind === 'workspace') return left.workspaceId === right.workspaceId
@@ -2559,7 +2569,7 @@ export default class AgentTeam extends TypertRemoteService {
       return result.value
     } catch (error) {
       await this.dropUnreferencedPrepared(request, error)
-      throw error
+      throw assignableRemoteError(error)
     }
   }
 
@@ -2571,9 +2581,13 @@ export default class AgentTeam extends TypertRemoteService {
   async updateTask(request: AgentTeamUpdateTaskRequest): Promise<AgentTeamUpdateTaskResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
-    this.emitCommittedOutcome(result)
-    return result.value
+    try {
+      const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      throw assignableRemoteError(error)
+    }
   }
 
   /** Human-only promotion of a taskless Thread into a real Task plus public Message. */

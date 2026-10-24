@@ -3292,6 +3292,20 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   await dialog.getByLabel('名称').fill('builder')
   await dialog.getByLabel('说明').fill('Runs the board work')
   await dialog.getByLabel('角色').selectOption('worker')
+  // The role editor is an M-7 acceptance point: it is captured at the desktop
+  // width and at the 390×844 narrow width, where every field must stay inside
+  // the viewport (the archived validation images come from these two shots).
+  // The dialog's open animation must be done first, or the shot catches it
+  // mid-fade.
+  await settleLayout(page)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-role-editor.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  const roleSelectBox = await dialog.getByLabel('角色').boundingBox()
+  expect(roleSelectBox).not.toBeNull()
+  expect(roleSelectBox!.x + roleSelectBox!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-role-editor-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   await dialog.getByRole('button', { name: '创建 Agent' }).click()
   await dialog.waitFor({ state: 'detached' })
 
@@ -3323,6 +3337,8 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   // filters, never over one of them, and the whole row stays inside the
   // viewport.
   await page.setViewportSize({ width: 390, height: 844 })
+  // The role pill rides the row at the narrow width too — M-7's acceptance.
+  await expect.poll(async () => await row.locator('[data-member-role]').count()).toBe(1)
   const countBox = await page.locator('[data-agent-list-count]').boundingBox()
   const presenceBox = await page.getByRole('button', { name: '按在线状态筛选: 全部状态' }).boundingBox()
   expect(countBox).not.toBeNull()

@@ -283,6 +283,24 @@ export function agentTeamHumanActor(): AgentTeamHumanActor {
   return HUMAN_ACTOR
 }
 
+/**
+ * A Task assignee that cannot take the Task: unknown to this Host, disabled,
+ * or not a Member of the Task's Channel. The ledger's own error (it imports
+ * no protocol); the Remote boundary maps it to the one typed code with a
+ * discriminating `details.reason`. The messages stay the ones the specs pin.
+ */
+export class AgentTeamAssigneeNotInWorkspaceError extends Error {
+  constructor(
+    readonly memberId: AgentTeamMemberId,
+    readonly channelRef: AgentTeamChannelRef,
+    readonly reason: 'unknown' | 'disabled' | 'not-in-channel',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'AgentTeamAssigneeNotInWorkspaceError'
+  }
+}
+
 /** Caller-owned payload of the idempotent Team initialization request. */
 export interface AgentTeamInitializeRequest {
   readonly requestId: AgentTeamRequestId
@@ -7195,9 +7213,16 @@ export class AgentTeamLedger {
 
   /** An assignee must be an enabled Member of the Task's Channel; returns the Member so callers store its canonical id. */
   private assertAssignable(memberId: AgentTeamMemberId, channelRef: AgentTeamChannelRef): AgentTeamAgentMember {
-    const member = this.requireMember(memberId)
-    if (member.state !== 'enabled') throw new Error(`Agent Member '${memberId}' is not enabled`)
-    this.requireMemberChannel(member, channelRef)
+    let member: AgentTeamAgentMember
+    try {
+      member = this.requireMember(memberId)
+    } catch (error) {
+      // Both the unknown-ref message and the ambiguous-candidates contract stay
+      // requireRefKey's; the assignee refusal is typed for the Remote boundary.
+      throw new AgentTeamAssigneeNotInWorkspaceError(memberId, channelRef, 'unknown', error instanceof Error ? error.message : String(error))
+    }
+    if (member.state !== 'enabled') throw new AgentTeamAssigneeNotInWorkspaceError(memberId, channelRef, 'disabled', `Agent Member '${memberId}' is not enabled`)
+    if (!this.isChannelMember(channelRef, member.memberId)) throw new AgentTeamAssigneeNotInWorkspaceError(memberId, channelRef, 'not-in-channel', `Agent Member '${member.memberId}' is not authorized for Channel '${channelRef}'`)
     return member
   }
 

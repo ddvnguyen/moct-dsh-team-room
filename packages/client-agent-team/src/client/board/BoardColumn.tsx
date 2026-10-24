@@ -25,6 +25,9 @@ export const BOARD_COL_WIDTH = 280
 /** Columns at or below this render every card plainly; larger ones virtualize. */
 const BOARD_VIRTUALIZE_THRESHOLD = 30
 
+/** One frozen empty list, so a quiet card's props are referentially stable across renders. */
+const EMPTY_ACTIVITIES: readonly ActivitySource[] = Object.freeze([])
+
 export interface BoardColumnProps {
   readonly status: TaskStatus
   readonly tasks: readonly BoardCardTask[]
@@ -54,13 +57,23 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
     setScrollEl(el)
   }, [setNodeRef])
 
+  const byThread = useMemo(() => {
+    const map = new Map<string, ActivitySource[]>()
+    for (const activity of activities) {
+      if (activity.threadRef === undefined) continue
+      const list = map.get(activity.threadRef)
+      if (list === undefined) map.set(activity.threadRef, [activity])
+      else list.push(activity)
+    }
+    return map
+  }, [activities])
+
   const cardProps = useMemo(() => ({
     members,
-    activities,
     onUpdate: onCardUpdate,
     onOpen: onCardClick,
     t,
-  }), [members, activities, onCardUpdate, onCardClick, t])
+  }), [members, onCardUpdate, onCardClick, t])
 
   const computeItemKey = useCallback((_index: number, task: BoardCardTask) => task.taskRef, [])
   const itemContent = useCallback((_index: number, task: BoardCardTask) => (
@@ -68,9 +81,10 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
       key={task.taskRef}
       task={task}
       settling={settlingRefs.has(task.taskRef)}
+      activities={byThread.get(task.threadRef) ?? EMPTY_ACTIVITIES}
       {...cardProps}
     />
-  ), [cardProps, settlingRefs])
+  ), [byThread, cardProps, settlingRefs])
   // Virtuoso items are not flex children of the column, so the card gap is a slot padding.
   const virtualItemContent = useCallback((index: number, task: BoardCardTask) => (
     <div className={css.virtualSlot}>{itemContent(index, task)}</div>

@@ -21,13 +21,11 @@ export interface AvatarStackMember {
 /**
  * Overlapping avatar group. The component does not dedupe — callers pass a
  * unique list — and drops the tail into a `+N` chip past `max` heads.
- * `opacity="half"` marks a queued-only state: same heads, weaker signal.
  */
-export function AgentAvatarStack({ members, size = 'sm', max = 3, opacity = 'full', t }: {
+export function AgentAvatarStack({ members, size = 'sm', max = 3, t }: {
   readonly members: readonly AvatarStackMember[]
   readonly size?: AvatarSize
   readonly max?: number
-  readonly opacity?: 'full' | 'half'
   readonly t: TeamSidebarProps['t']
 }) {
   if (members.length === 0) return null
@@ -37,7 +35,7 @@ export function AgentAvatarStack({ members, size = 'sm', max = 3, opacity = 'ful
   // 30% overlap reads as "stacked" without obscuring the next head's glyph.
   const overlap = Math.round(px * 0.3)
   return (
-    <span className={[look.multicaLook, css.stack, opacity === 'half' ? css.half : undefined].filter(part => part !== undefined).join(' ')} data-size={size}>
+    <span className={`${look.multicaLook} ${css.stack}`} data-size={size}>
       {visible.map((member, index) => (
         <span key={member.memberId} className={css.head} style={{ marginLeft: index === 0 ? 0 : -overlap }}>
           <ActorAvatar name={member.handle} avatarUrl={member.avatarUrl} kind="agent" size={size} />
