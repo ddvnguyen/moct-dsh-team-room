@@ -42,6 +42,34 @@ function failureText(error: unknown, t: TeamConversationProps['t']): string {
 }
 
 /**
+ * The open issue is in the URL, so a reload reopens it and a link shares it.
+ * It is not a Team position: the query key belongs to the GitHub board alone,
+ * and the write is a query-only relative URL that leaves every other parameter
+ * (including the Team's own) alone.
+ */
+export const GITHUB_ISSUE_QUERY_KEY = 'ghIssue'
+
+/** The issue a link names, if any: a cold load of a shared link opens it. */
+export function queriedIssueNumber(): number | undefined {
+  if (typeof location === 'undefined') return undefined
+  const raw = new URLSearchParams(location.search).get(GITHUB_ISSUE_QUERY_KEY)
+  if (raw === null) return undefined
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function writeQueriedIssue(number: number | undefined): void {
+  if (typeof window === 'undefined' || typeof location === 'undefined') return
+  const params = new URLSearchParams(location.search)
+  if (number === undefined) params.delete(GITHUB_ISSUE_QUERY_KEY)
+  else params.set(GITHUB_ISSUE_QUERY_KEY, String(number))
+  const query = params.toString()
+  // The harness mounts under a `<base href="./">`, so the query resolves
+  // against the current document; the path never moves.
+  window.history.replaceState(window.history.state, '', query === '' ? '?' : `?${query}`)
+}
+
+/**
  * The mirror's board face. The binding is decided by the Host, so an unbound
  * deployment renders its setup instead of an empty board that would read as
  * "no issues".
@@ -78,7 +106,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
   const [board, setBoard] = useState<AgentTeamGitHubBoard>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
-  const [openNumber, setOpenNumber] = useState<number>()
+  const [openNumber, setOpenNumber] = useState<number | undefined>(() => queriedIssueNumber())
   // The card the reader came from: the panel is a dialog over the board, so
   // closing it puts the keyboard back on that card rather than on the page.
   const opener = useRef<HTMLElement | null>(null)
@@ -140,15 +168,21 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
   const openIssue = useCallback((number: number): void => {
     opener.current = typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null
     setOpenNumber(number)
+    writeQueriedIssue(number)
   }, [])
 
   const closeIssue = useCallback((): void => {
+    const closed = openNumber
     setOpenNumber(undefined)
+    writeQueriedIssue(undefined)
     void reload()
+    // A card the reader clicked is the opener. A panel opened from a link has
+    // none, so the keyboard lands on that issue's card instead of on the page.
     const target = opener.current
+      ?? (closed === undefined ? null : document.querySelector<HTMLElement>(`[data-github-card="${closed}"]`))
     opener.current = null
     target?.focus()
-  }, [reload])
+  }, [reload, openNumber])
 
   const byColumn = useMemo(() => {
     const map = new Map<string, AgentTeamGitHubIssueSummary[]>()
@@ -219,6 +253,7 @@ function GitHubIssueBoard({ workspaceId, status, loadBoard, loadIssue, createIss
           workspaceId={workspaceId}
           number={openNumber}
           columns={board.columns}
+          catalog={{ labels: board.labels, people: board.people }}
           loadIssue={loadIssue}
           updateIssue={updateIssue}
           commentIssue={commentIssue}

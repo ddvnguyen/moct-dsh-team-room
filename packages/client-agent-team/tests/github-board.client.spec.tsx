@@ -45,7 +45,10 @@ vi.mock('@dnd-kit/utilities', () => ({
   CSS: { Transform: { toString: () => undefined } },
 }))
 
-beforeEach(() => { localStorage.clear() })
+beforeEach(() => {
+  localStorage.clear()
+  window.history.replaceState(null, '', '/')
+})
 afterEach(cleanup)
 
 const t = ((key: string) => key) as never
@@ -76,6 +79,8 @@ const boardFixture = (issues: readonly AgentTeamGitHubIssueSummary[] = [issue(3,
   projectNumber: 7,
   columns: COLUMNS,
   issues,
+  labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'enhancement', color: 'a2eeef' }],
+  people: ['ada', 'lin', 'grace'],
   fetchedAt: '2026-10-24T00:00:00Z',
   truncated: false,
 })
@@ -92,7 +97,7 @@ interface MountOptions {
   readonly status?: { readonly configured: boolean; readonly repo?: string; readonly reason?: 'missing-repo' | 'missing-token' }
   readonly boards?: readonly AgentTeamGitHubBoard[]
   readonly details?: readonly AgentTeamGitHubIssue[]
-  readonly updateRule?: (request: { number: number; status?: string }) => unknown
+  readonly updateRule?: (request: { readonly number: number; readonly status?: string, readonly labels?: readonly string[], readonly assignees?: readonly string[] }) => unknown
 }
 
 function mount(options: MountOptions = {}) {
@@ -102,7 +107,10 @@ function mount(options: MountOptions = {}) {
   const loadGitHubBoard = vi.fn(async () => ok(boards.length > 1 ? boards.shift()! : boards[0]!))
   const loadGitHubIssue = vi.fn(async () => ok(details.length > 1 ? details.shift()! : details[0]!))
   const createGitHubIssue = vi.fn(async () => ok(issue(9, 'opt_todo')))
-  const updateGitHubIssue = vi.fn(async (request: { number: number; status?: string }) => ok(issue(request.number, request.status ?? 'opt_todo')) as never)
+  const updateGitHubIssue = vi.fn(async (request: { number: number; status?: string; labels?: readonly string[]; assignees?: readonly string[] }) => {
+    if (options.updateRule !== undefined) return options.updateRule(request) as never
+    return ok(issue(request.number, request.status ?? 'opt_todo')) as never
+  })
   const commentGitHubIssue = vi.fn(async () => ok({ id: '101', author: 'ada', body: 'Ship it', createdAt: '2026-10-24T01:00:00Z', url: 'u' }))
   const navigation = new TeamNavigation()
   render(
@@ -200,6 +208,96 @@ describe('the GitHub board source', () => {
     await waitFor(() => expect(m.updateGitHubIssue).toHaveBeenCalledWith({ workspaceId: 'w1', number: 3, status: 'opt_done' }))
     await waitFor(() => expect(columnText('opt_done')).toContain('Issue 3'))
     expect(columnText('opt_todo')).not.toContain('Issue 3')
+  })
+
+  it('adds a label on GitHub and paints it only when the re-read brings it back', async () => {
+    const after = detailFixture({ labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'enhancement', color: 'a2eeef' }] })
+    const m = mount({ details: [detailFixture(), after] })
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(document.querySelector('[data-github-add-label]')).not.toBeNull())
+    expect(document.querySelector('[data-label="enhancement"]')).toBeNull()
+    fireEvent.change(document.querySelector<HTMLSelectElement>('[data-github-add-label]')!, { target: { value: 'enhancement' } })
+    // The whole new set is sent: GitHub replaces an issue's labels wholesale.
+    await waitFor(() => expect(m.updateGitHubIssue).toHaveBeenCalledWith({ workspaceId: 'w1', number: 3, labels: ['bug', 'enhancement'] }))
+    await waitFor(() => expect(document.querySelector('[data-label="enhancement"]')).not.toBeNull())
+    expect(m.loadGitHubIssue).toHaveBeenCalledTimes(2)
+    // Both labels are attached now, so the picker has nothing left to offer.
+    expect(document.querySelector('[data-github-add-label]')).toBeNull()
+  })
+
+  it('removes a label with the rest of the set', async () => {
+    const attached = detailFixture({ labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'enhancement', color: 'a2eeef' }] })
+    const m = mount({ details: [attached, detailFixture()] })
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(document.querySelector('[data-github-remove-label="enhancement"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-github-remove-label="enhancement"]')!)
+    await waitFor(() => expect(m.updateGitHubIssue).toHaveBeenCalledWith({ workspaceId: 'w1', number: 3, labels: ['bug'] }))
+    await waitFor(() => expect(document.querySelector('[data-label="enhancement"]')).toBeNull())
+    expect(document.querySelector('[data-label="bug"]')).not.toBeNull()
+  })
+
+  it('assigns someone by adding them to the people GitHub already holds', async () => {
+    const after = detailFixture({ assignees: ['lin', 'grace'] })
+    const m = mount({ details: [detailFixture(), after] })
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(document.querySelector('[data-github-add-assignee]')).not.toBeNull())
+    fireEvent.change(document.querySelector<HTMLSelectElement>('[data-github-add-assignee]')!, { target: { value: 'grace' } })
+    await waitFor(() => expect(m.updateGitHubIssue).toHaveBeenCalledWith({ workspaceId: 'w1', number: 3, assignees: ['lin', 'grace'] }))
+    await waitFor(() => expect(document.querySelector('[data-assignee="grace"]')).not.toBeNull())
+  })
+
+  it('unassigns the last person and sends an empty set', async () => {
+    const m = mount({ details: [detailFixture(), detailFixture({ assignees: [] })] })
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(document.querySelector('[data-github-remove-assignee="lin"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-github-remove-assignee="lin"]')!)
+    await waitFor(() => expect(m.updateGitHubIssue).toHaveBeenCalledWith({ workspaceId: 'w1', number: 3, assignees: [] }))
+    await waitFor(() => expect(document.querySelector('[data-assignee="lin"]')).toBeNull())
+  })
+
+  it('shows a refused label write and leaves the issue as GitHub holds it', async () => {
+    const m = mount({
+      updateRule: () => ({ ok: false, error: { message: 'Resource not accessible by personal access token' } }),
+    })
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(document.querySelector('[data-github-remove-label="bug"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-github-remove-label="bug"]')!)
+    await waitFor(() => expect(document.querySelector('[data-github-issue-panel="3"] [role="alert"]')?.textContent)
+      .toContain('Resource not accessible by personal access token'))
+    // Nothing was re-read: GitHub refused the write, so its truth is unchanged.
+    expect(m.loadGitHubIssue).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-label="bug"]')).not.toBeNull()
+  })
+
+  it('names the open issue in the URL and drops it when the panel closes', async () => {
+    mount()
+    await openGitHubSource()
+    fireEvent.click(await screen.findByText('Issue 3'))
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('ghIssue')).toBe('3'))
+    fireEvent.click(screen.getByText('close'))
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('ghIssue')).toBeNull())
+    expect(document.querySelector('[data-github-issue-panel]')).toBeNull()
+  })
+
+  it('opens the GitHub face and the issue a cold link names, with no switch first', async () => {
+    // The link is shareable: a browser that last read the Task board still
+    // lands on GitHub's store, because that is where the issue lives.
+    localStorage.setItem('dsh.agent-team.board.source', 'tasks')
+    window.history.replaceState(null, '', '/?ghIssue=4')
+    const m = mount({ details: [detailFixture({ number: 4, title: 'Issue 4', columnId: 'opt_done' })] })
+    await waitFor(() => expect(document.querySelector('[data-github-issue-panel="4"]')).not.toBeNull())
+    expect(m.loadGitHubIssue).toHaveBeenCalledWith({ workspaceId: 'w1', number: 4 })
+    expect(document.querySelector('[data-github-board]')).not.toBeNull()
+    expect(document.querySelector('[data-github-issue-title]')?.textContent).toBe('Issue 4')
+    // Closing a link-opened panel puts the keyboard on that issue's card: no
+    // opener click happened, so the card stands in for it.
+    fireEvent.click(screen.getByText('close'))
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-github-card')).toBe('4'))
   })
 
   it('refuses a drop on the "No status" bucket without calling GitHub', async () => {

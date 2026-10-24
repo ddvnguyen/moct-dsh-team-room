@@ -64,6 +64,12 @@ Without a project the columns are the two issue states. Nothing is mirrored into
 
 A card opens the issue panel, the place the work is talked about. It carries the description, the state, the labels and assignees, and the issue's whole conversation. A comment posted there goes to GitHub, and the panel re-reads before the comment appears.
 
+Labels and assignees are edited there too. The field offers the repository's own labels and assignable people, read with the board, so a choice is always a name GitHub knows: a `×` on a chip removes it and the add-picker offers what is not attached.
+
+GitHub replaces both fields wholesale, so each edit sends the complete new set. A refused write leaves the chips as GitHub holds them, with the reason on screen.
+
+The panel is addressable: an open issue is `?ghIssue=<number>`, so a reload reopens it and the URL is shareable. The parameter is the GitHub board's own and leaves the Team's query parameters alone.
+
 `新建 Issue` creates the issue in GitHub, placed in the project's first status when a project is bound.
 
 Configuration is the deployment's, read from the environment at every call:

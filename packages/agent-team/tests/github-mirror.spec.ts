@@ -89,6 +89,8 @@ describe('the GitHub board', () => {
   it('takes its columns and placements from the bound project and hides pull requests', async () => {
     const { fetcher, calls } = transport(call => {
       if (call.url.endsWith('/graphql')) return projectAnswer()
+      if (call.url.includes('/labels?')) return [{ name: 'bug', color: 'd73a4a' }, { name: 'ui', color: '0e8a16' }]
+      if (call.url.includes('/assignees?')) return [{ login: 'ada' }, { login: 'lin' }]
       return [issueRow(1), issueRow(2), issueRow(3), issueRow(4, { pull_request: { url: 'x' } })]
     })
     const board = await fetchGitHubBoard(CONFIG, fetcher, () => '2026-10-24T00:00:00Z')
@@ -100,8 +102,14 @@ describe('the GitHub board', () => {
     ])
     expect(board.issues.map(issue => [issue.number, issue.columnId])).toEqual([[1, 'opt_doing'], [2, 'opt_done'], [3, GITHUB_NO_STATUS_COLUMN_ID]])
     expect(board.issues[0]?.labels).toEqual([{ name: 'bug', color: 'd73a4a' }])
+    // The catalogues ride along with the board: the issue panel offers the
+    // repository's real labels and people, never a guessed name.
+    expect(board.labels).toEqual([{ name: 'bug', color: 'd73a4a' }, { name: 'ui', color: '0e8a16' }])
+    expect(board.people).toEqual(['ada', 'lin'])
     expect(board.fetchedAt).toBe('2026-10-24T00:00:00Z')
     expect(calls[0]?.url).toContain('/repos/octo/demo/issues?state=all&per_page=100')
+    expect(calls.map(call => call.url)).toContain('https://api.test/repos/octo/demo/labels?per_page=100')
+    expect(calls.map(call => call.url)).toContain('https://api.test/repos/octo/demo/assignees?per_page=100')
   })
 
   it('reads a project the repository owner holds as a user, not only one linked to the repository', async () => {
@@ -206,6 +214,43 @@ describe('GitHub writes', () => {
     const mutation = calls.find(call => call.url.endsWith('/graphql') && (call.body as { readonly query: string }).query.includes('updateProjectV2ItemFieldValue'))
     expect(mutation?.body).toMatchObject({ variables: { project: 'PVT_1', item: 'PVTI_new', field: 'F_status', option: 'opt_done' } })
     expect(summary.columnId).toBe(GITHUB_NO_STATUS_COLUMN_ID)
+  })
+
+  it('replaces an issue’s labels and assignees with the sets the reader chose', async () => {
+    const { fetcher, calls } = transport(call => {
+      if (call.url.endsWith('/graphql')) return projectAnswer()
+      if (call.url.includes('/labels?')) return [{ name: 'ui', color: '0e8a16' }]
+      if (call.url.includes('/assignees?')) return [{ login: 'lin' }]
+      // The write goes to GitHub and the summary is a fresh read of it.
+      return issueRow(3, { labels: [{ name: 'ui', color: '0e8a16' }], assignees: [{ login: 'lin' }] })
+    })
+    const summary = await updateGitHubIssue(CONFIG, {
+      workspaceId: 'w1' as never, number: 3, labels: ['ui'], assignees: ['lin'],
+    }, fetcher)
+    const patch = calls.find(call => call.method === 'PATCH')
+    expect(patch?.url).toBe('https://api.test/repos/octo/demo/issues/3')
+    // The whole set, not a delta: GitHub replaces both fields wholesale.
+    expect(patch?.body).toEqual({ labels: ['ui'], assignees: ['lin'] })
+    expect(summary.labels).toEqual([{ name: 'ui', color: '0e8a16' }])
+    expect(summary.assignees).toEqual(['lin'])
+    expect(summary.number).toBe(3)
+  })
+
+  it('clears every label and assignee when the reader removed the last one', async () => {
+    const { fetcher, calls } = transport(call => {
+      if (call.url.endsWith('/graphql')) return projectAnswer()
+      return issueRow(3, { labels: [], assignees: [] })
+    })
+    await updateGitHubIssue(CONFIG, { workspaceId: 'w1' as never, number: 3, labels: [], assignees: [] }, fetcher)
+    expect(calls.find(call => call.method === 'PATCH')?.body).toEqual({ labels: [], assignees: [] })
+  })
+
+  it('surfaces a refused write instead of answering with a summary', async () => {
+    const fetcher: GitHubFetcher = async (url, init) => init.method === 'PATCH'
+      ? { ok: false, status: 403, json: async () => ({}), text: async () => 'Resource not accessible by personal access token' }
+      : { ok: true, status: 200, json: async () => issueRow(3), text: async () => '' }
+    await expect(updateGitHubIssue(CONFIG, { workspaceId: 'w1' as never, number: 3, labels: ['ui'] }, fetcher))
+      .rejects.toThrow(/\(403\): Resource not accessible by personal access token/)
   })
 
   it('refuses the bucket column and an unknown option', async () => {

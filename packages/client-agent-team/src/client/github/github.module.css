@@ -416,6 +416,37 @@
   font-size: var(--ml-text-caption);
 }
 
+/* The chip's own removal: a small target, so the chip stays a chip. */
+.chipRemove {
+  border: 0;
+  background: none;
+  padding: 0 0 0 2px;
+  color: var(--ml-text-tertiary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.chipRemove:hover:not(:disabled) { color: var(--ml-text-primary); }
+.chipRemove:focus-visible { outline: 2px solid var(--ml-brand); outline-offset: 1px; }
+.chipRemove:disabled { cursor: default; opacity: 0.5; }
+
+/* The add-a-field picker sits under its chips, only as wide as it needs. */
+.fieldSelect {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 1px dashed var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-surface);
+  color: var(--ml-text-secondary);
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  padding: 2px 6px;
+}
+
+.fieldSelect:disabled { cursor: default; opacity: 0.6; }
+
 .section {
   display: flex;
   flex-direction: column;

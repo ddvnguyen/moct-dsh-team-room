@@ -69,6 +69,10 @@ export interface AgentTeamGitHubBoard {
   readonly projectNumber?: number | undefined
   readonly columns: readonly AgentTeamGitHubColumn[]
   readonly issues: readonly AgentTeamGitHubIssueSummary[]
+  /** The labels this repository defines: the only names an issue may carry. */
+  readonly labels: readonly AgentTeamGitHubLabel[]
+  /** The logins this repository can assign an issue to. */
+  readonly people: readonly string[]
   /** ISO-8601, the moment GitHub answered. */
   readonly fetchedAt: string
   /** GitHub holds more rows than one capped page: the board says so instead of pretending. */
@@ -108,7 +112,9 @@ export interface AgentTeamGitHubCreateIssueRequest {
 
 /**
  * One field write. Absent fields are untouched — a write names exactly what
- * it changes, because every one of them is a separate GitHub call.
+ * it changes, because every one of them is a separate GitHub call. `labels`
+ * and `assignees` are the complete new sets: GitHub replaces an issue's
+ * labels and assignees wholesale, so a caller removes by sending the rest.
  */
 export interface AgentTeamGitHubUpdateIssueRequest {
   readonly workspaceId: WorkspaceId

@@ -397,10 +397,36 @@ function columnOf(project: ProjectView | undefined, issue: RawIssue): string {
 
 // --- Reads ---
 
+/**
+ * The repository's own catalogs: the labels an issue can carry and the people
+ * it can be assigned to. They are one capped page each, read with the board so
+ * the issue panel can offer a real choice instead of a free-text guess — GitHub
+ * replaces an issue's labels and assignees wholesale, so a wrong name would
+ * rewrite the issue rather than fail.
+ */
+function readLabels(value: unknown): readonly AgentTeamGitHubLabel[] {
+  return asArray(value).flatMap(entry => {
+    const label = asRecord(entry)
+    const name = asString(label?.name)
+    return name === '' ? [] : [{ name, color: asString(label?.color) }]
+  })
+}
+
+function readPeople(value: unknown): readonly string[] {
+  return asArray(value).flatMap(entry => {
+    const login = asString(asRecord(entry)?.login)
+    return login === '' ? [] : [login]
+  })
+}
+
 /** One capped page of issues, placed in the project's columns when one is bound. */
 export async function fetchGitHubBoard(config: GitHubMirrorConfig, fetchImpl: GitHubFetcher = defaultFetcher, now: () => string = () => new Date().toISOString()): Promise<AgentTeamGitHubBoard> {
   const transport: Transport = { config, fetchImpl }
   const rows = asArray(await call(transport, 'GET', `/repos/${config.owner}/${config.repo}/issues?state=all&per_page=${GITHUB_PAGE_LIMIT}&sort=updated&direction=desc`))
+  const [labelPayload, peoplePayload] = await Promise.all([
+    call(transport, 'GET', `/repos/${config.owner}/${config.repo}/labels?per_page=${GITHUB_PAGE_LIMIT}`),
+    call(transport, 'GET', `/repos/${config.owner}/${config.repo}/assignees?per_page=${GITHUB_PAGE_LIMIT}`),
+  ])
   const project = config.projectNumber === undefined ? undefined : await readProject(transport, config.projectNumber)
   // A bound project that resolves nowhere leaves the board without columns, so
   // it is said instead of quietly falling back to the two issue states.
@@ -418,6 +444,8 @@ export async function fetchGitHubBoard(config: GitHubMirrorConfig, fetchImpl: Gi
     ...(config.projectNumber === undefined ? {} : { projectNumber: config.projectNumber }),
     columns: columnsOf(project),
     issues,
+    labels: readLabels(labelPayload),
+    people: readPeople(peoplePayload),
     fetchedAt: now(),
     truncated: rows.length >= GITHUB_PAGE_LIMIT || project?.truncated === true,
   }

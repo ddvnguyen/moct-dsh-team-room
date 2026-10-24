@@ -56,7 +56,7 @@ import { BoardCardContent } from './BoardCard.tsx'
 import { BoardColumn, BOARD_COL_WIDTH } from './BoardColumn.tsx'
 import { BoardFilterBar } from './BoardFilterBar.tsx'
 import { CreateTaskDialog } from './CreateTaskDialog.tsx'
-import { GitHubBoard } from '../github/github-board.tsx'
+import { GitHubBoard, queriedIssueNumber } from '../github/github-board.tsx'
 import { HiddenColumnsPanel } from './HiddenColumnsPanel.tsx'
 import { dropAction, mayDrop } from './drop-rules.ts'
 import { planPositionWrites } from './reorder.ts'
@@ -206,7 +206,10 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   const requestIds = useRequestIds()
 
   // --- Board source: the Team's Tasks, or the GitHub mirror ---
-  const [source, setSource] = useState<BoardSource>(readBoardSource)
+  // A link that names an issue is a link into GitHub's store, so it lands on
+  // the GitHub face even in a browser that last read the Task board.
+  const [source, setSource] = useState<BoardSource>(() =>
+    queriedIssueNumber() === undefined ? readBoardSource() : 'github')
   const [gitHubStatus, setGitHubStatus] = useState<AgentTeamGitHubStatus>()
   // The switch exists only where the seat carries the mirror: a seat without
   // those Remotes keeps the one board it can actually draw.

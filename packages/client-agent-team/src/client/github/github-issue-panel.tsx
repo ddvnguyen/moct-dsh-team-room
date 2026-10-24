@@ -11,7 +11,7 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import { MarkdownText, Modal, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   AgentTeamGitHubColumn, AgentTeamGitHubCommentRequest, AgentTeamGitHubCommentRow, AgentTeamGitHubIssue,
-  AgentTeamGitHubIssueRequest, AgentTeamGitHubIssueSummary, AgentTeamGitHubUpdateIssueRequest,
+  AgentTeamGitHubIssueRequest, AgentTeamGitHubIssueSummary, AgentTeamGitHubLabel, AgentTeamGitHubUpdateIssueRequest,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamConversationProps } from '../slots.ts'
 import { makeTimeAgo } from '../multica/time-ago.ts'
@@ -24,6 +24,8 @@ export interface GitHubIssuePanelProps {
   readonly number: number
   /** The board's columns: the status picker offers the ones a drop may target. */
   readonly columns: readonly AgentTeamGitHubColumn[]
+  /** The repository's labels and people: a field offers only names GitHub knows. */
+  readonly catalog: { readonly labels: readonly AgentTeamGitHubLabel[]; readonly people: readonly string[] }
   readonly loadIssue: (request: AgentTeamGitHubIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssue>>
   readonly updateIssue: (request: AgentTeamGitHubUpdateIssueRequest) => Promise<RemoteResult<AgentTeamGitHubIssueSummary>>
   readonly commentIssue: (request: AgentTeamGitHubCommentRequest) => Promise<RemoteResult<AgentTeamGitHubCommentRow>>
@@ -41,7 +43,7 @@ function failureText(error: unknown): string {
  * One issue over the board: the description, the properties GitHub holds, and
  * the conversation — the place the work is talked about.
  */
-export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, updateIssue, commentIssue, onClose, t }: GitHubIssuePanelProps) {
+export function GitHubIssuePanel({ workspaceId, number, columns, catalog, loadIssue, updateIssue, commentIssue, onClose, t }: GitHubIssuePanelProps) {
   const [issue, setIssue] = useState<AgentTeamGitHubIssue>()
   const [error, setError] = useState<string>()
   const [draft, setDraft] = useState('')
@@ -109,6 +111,12 @@ export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, upda
   }, [draft, sending, commentIssue, workspaceId, number, read])
 
   const statusOptions = columns.filter(column => column.kind === 'project-status' && column.droppable)
+  // Both fields are replaced wholesale on GitHub, so the pickers offer exactly
+  // what is not attached yet and a removal sends the rest of the set.
+  const attachedLabels = issue?.labels.map(label => label.name) ?? []
+  const addableLabels = catalog.labels.filter(label => !attachedLabels.includes(label.name))
+  const attachedPeople = issue?.assignees ?? []
+  const addablePeople = catalog.people.filter(login => !attachedPeople.includes(login))
 
   // A headless dialog renders its children in the card itself, so `className`
   // is what carries the width and the height cap; `contentClassName` never
@@ -161,17 +169,71 @@ export function GitHubIssuePanel({ workspaceId, number, columns, loadIssue, upda
                     : issue.labels.map(label => (
                       <span key={label.name} className={css.labelChip} data-label={label.name}>
                         <i style={{ background: `#${label.color === '' ? '888888' : label.color}` }} />{label.name}
+                        <button
+                          type="button"
+                          className={css.chipRemove}
+                          aria-label={t('githubRemoveLabel', { name: label.name })}
+                          title={t('githubRemoveLabel', { name: label.name })}
+                          data-github-remove-label={label.name}
+                          disabled={pendingField}
+                          onClick={() => { void writeField({ labels: attachedLabels.filter(name => name !== label.name) }) }}
+                        >×</button>
                       </span>
                     ))}
                 </span>
+                {addableLabels.length > 0 && (
+                  <select
+                    className={css.fieldSelect}
+                    value=""
+                    aria-label={t('githubAddLabel')}
+                    data-github-add-label=""
+                    disabled={pendingField}
+                    onChange={event => {
+                      const name = event.target.value
+                      if (name !== '') void writeField({ labels: [...attachedLabels, name] })
+                    }}
+                  >
+                    <option value="">{t('githubAddLabel')}</option>
+                    {addableLabels.map(label => <option key={label.name} value={label.name}>{label.name}</option>)}
+                  </select>
+                )}
               </div>
               <div className={css.field}>
                 <span>{t('githubAssigneesLabel')}</span>
                 <span className={css.chips}>
                   {issue.assignees.length === 0
                     ? <span className={css.muted}>{t('githubNone')}</span>
-                    : issue.assignees.map(login => <span key={login} className={css.personChip}>{login}</span>)}
+                    : issue.assignees.map(login => (
+                      <span key={login} className={css.personChip} data-assignee={login}>
+                        {login}
+                        <button
+                          type="button"
+                          className={css.chipRemove}
+                          aria-label={t('githubRemoveAssignee', { name: login })}
+                          title={t('githubRemoveAssignee', { name: login })}
+                          data-github-remove-assignee={login}
+                          disabled={pendingField}
+                          onClick={() => { void writeField({ assignees: attachedPeople.filter(name => name !== login) }) }}
+                        >×</button>
+                      </span>
+                    ))}
                 </span>
+                {addablePeople.length > 0 && (
+                  <select
+                    className={css.fieldSelect}
+                    value=""
+                    aria-label={t('githubAddAssignee')}
+                    data-github-add-assignee=""
+                    disabled={pendingField}
+                    onChange={event => {
+                      const login = event.target.value
+                      if (login !== '') void writeField({ assignees: [...attachedPeople, login] })
+                    }}
+                  >
+                    <option value="">{t('githubAddAssignee')}</option>
+                    {addablePeople.map(login => <option key={login} value={login}>{login}</option>)}
+                  </select>
+                )}
               </div>
               <button
                 type="button"
