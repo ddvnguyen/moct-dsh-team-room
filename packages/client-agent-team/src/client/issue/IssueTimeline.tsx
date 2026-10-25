@@ -1,7 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+// Derived from multica-x packages/views/issues/components/issue-detail.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+//
+// Rendering adapted: Multica's issue body is one chronological list —
+// comments, agent runs and grouped activity in one `TimelineItem` array
+// (`:572`, `:590–604`). The Team Room used to render `IssueComments` and then
+// `IssueActivity` as two regions, so an activity that happened between two
+// comments could not sit between them. This is that one region: the merge is
+// `timeline.ts`'s pure function, the rows are the same comment cards, one
+// expandable activity group, and one run row per Session.
+//
+// The Host's bounds still govern: the comment page is `commentLimit`, the
+// activity region is the newest fifty, and both `hasMore` flags decide the
+// tail. The timeline never reads older history on its own.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamIssueComment, AgentTeamIssueComments, AgentTeamIssueDecision,
-  AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskRef,
+  AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamIssueActivity, AgentTeamIssueComment, AgentTeamIssueComments,
+  AgentTeamIssueDecision, AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskRef, AgentTeamThreadSessionRuns,
+  AgentTeamThreadTurnFailure,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { TeamComposer } from '../TeamComposer.tsx'
@@ -12,10 +27,18 @@ import { mintRequestId, uploadComposerFiles } from '../requests.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from '../refs.ts'
 import type { TeamDraftKey, TeamDraftStore } from '../drafts.ts'
 import type { TeamConversationProps } from '../slots.ts'
-import css from './issue-comments.module.css'
+import { issueShareHref } from '../history.ts'
+import { useTickingNow } from '../thread/ExecutionLog.tsx'
+import { buildTimeline, commentWindowStart, timelineRuns } from './timeline.ts'
+import { IssueActivityGroup } from './IssueActivityGroup.tsx'
+import { IssueRunRow } from './IssueRunRow.tsx'
+import css from './issue-timeline.module.css'
+
+/** The query parameter a copied comment link carries. */
+const COMMENT_QUERY_KEY = 'comment'
 
 /**
- * The seams the comment region writes through: the reply, the attachments, the
+ * The seams the timeline writes through: the reply, the attachments, the
  * quote resolution and the composer. They are one bundle because the page owns
  * them and the region borrows them — the region never reads a context.
  */
@@ -37,9 +60,15 @@ export interface IssueCommentWrite {
   readonly draftKey: TeamDraftKey
 }
 
-export interface IssueCommentsProps extends IssueCommentWrite {
+export interface IssueTimelineProps extends IssueCommentWrite {
   /** The Host's comment region: the Messages, oldest first, the anchor excluded. */
   readonly comments: AgentTeamIssueComments
+  /** The Host's activity region: the newest fifty, oldest first, ordering key attached. */
+  readonly activity: AgentTeamIssueActivity
+  /** The Thread's Session runs, one per seat, the live one included. */
+  readonly runs: readonly AgentTeamThreadSessionRuns[]
+  /** The Thread's errored Turns: a run with one reads as failed. */
+  readonly failures: readonly AgentTeamThreadTurnFailure[]
   /** The decision region: the rows that own the ask messages, so the list skips them. */
   readonly decisions: readonly AgentTeamIssueDecision[]
   /** The display name of one Member. */
@@ -55,33 +84,70 @@ export interface IssueCommentsProps extends IssueCommentWrite {
   readonly loadingOlder: boolean
   /** The seats the composer names. */
   readonly members: readonly AgentTeamClientMemberStatus[]
+  /** Opens one run's native dsh session: the same seam the execution log uses. */
+  readonly openMemberSession: TeamConversationProps['openMemberSession']
+  /** The presentation the copy-link names, so the copied URL reopens the same way. */
+  readonly variant: 'page' | 'slice'
   readonly t: TeamConversationProps['t']
 }
 
 /**
- * The issue's comment region: the Task's messages as comment cards, the
- * replies under their parent, and the composer the Human answers in.
+ * The issue's one chronological list: the Task's comments with their replies,
+ * runs of consecutive activity folded into one expandable block, and the
+ * Thread's Session runs — all in instant order, with the composer the Human
+ * answers in.
  *
- * The region reads the contract's comments region and shows the same facts the
- * Thread page shows: one store, two views. It never keeps a second copy of the
- * Task's comments, and it never re-derives what the Host recorded.
+ * Every value is the Host's. The region keeps no second copy of the Task's
+ * comments, re-derives no order the projection dropped, and writes only
+ * through the seams it is given.
  */
-export function IssueComments({
-  comments, decisions, nameOf, humanMemberId, humanName, mentionHandles, workspaceId, taskRef, baseRevision, onLoadOlder, loadingOlder,
-  members, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, draftKey, t,
-}: IssueCommentsProps) {
+export function IssueTimeline({
+  comments, activity, runs, failures, decisions, nameOf, humanMemberId, humanName, mentionHandles, workspaceId, taskRef, baseRevision,
+  onLoadOlder, loadingOlder, members, openMemberSession, variant, reply, putAttachment, getAttachment, resolveMessageRefs, drafts,
+  loadTriggerCatalog, draftKey, t,
+}: IssueTimelineProps) {
   const [posted, setPosted] = useState<readonly AgentTeamIssueComment[]>([])
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [confirmation, setConfirmation] = useState<string | undefined>(undefined)
   const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef | undefined>(undefined)
   const [files, setFiles] = useState<readonly File[]>([])
+  const [copied, setCopied] = useState<AgentTeamMessageRef | undefined>(undefined)
+
+  // The link a reader arrived on, read once: the timeline scrolls that card
+  // into view. A ref that is not in the rendered window is a no-op.
+  const [anchor] = useState<AgentTeamMessageRef | null>(() => {
+    if (typeof location === 'undefined') return null
+    const value = new URLSearchParams(location.search).get(COMMENT_QUERY_KEY)
+    return value === null || value === '' ? null : value as AgentTeamMessageRef
+  })
+  const anchorNode = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const node = anchorNode.current
+    if (node === null || typeof node.scrollIntoView !== 'function') return
+    node.scrollIntoView({ block: 'center' })
+  }, [])
 
   const askRefs = useMemo(() => decisionAskMessageRefs(decisions), [decisions])
   // One list: the region the Host carried and the rows this surface committed
   // since. A message present in both is one row.
   const facts = useMemo(() => mergeComments([...comments.items, ...posted]), [comments.items, posted])
   const tree = useMemo(() => buildCommentThread(facts, askRefs), [facts, askRefs])
+
+  // The one timeline: roots only (a reply never splits a root from its answer),
+  // and the window starts where the comment page starts when the Host holds more.
+  const windowStart = useMemo(() => commentWindowStart(comments), [comments])
+  const rows = useMemo(() => buildTimeline({
+    comments: tree.roots.map(root => root.fact),
+    activity: activity.items,
+    runs: timelineRuns(runs),
+    windowStart,
+  }), [tree, activity.items, runs, windowStart])
+
+  const anyRunning = useMemo(() => rows.some(row => row.kind === 'run' && row.running), [rows])
+  const now = useTickingNow(anyRunning)
+  const failedSessions = useMemo(() => new Set(failures.map(failure => failure.sessionId)), [failures])
+  const handleByMember = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle])), [members])
 
   // The quote of the message a reply answers: the loaded fact when it is on
   // screen, the Host's resolution when it is not.
@@ -121,6 +187,20 @@ export function IssueComments({
       ...(reply.fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(reply.fact.message.replyToMessageRef) }),
     }))
   }, [tree, nameOf, humanMemberId, mentionNamesOfFact, quoteOf])
+
+  // The copied link is the history module's own URL plus the comment it names:
+  // one builder, so the link a reader copies cannot drift from the issue URL.
+  const copyLink = useCallback((messageRef: AgentTeamMessageRef): void => {
+    if (typeof location === 'undefined' || typeof navigator === 'undefined' || navigator.clipboard === undefined) return
+    const url = new URL(issueShareHref(taskRef, variant), location.href)
+    url.searchParams.set(COMMENT_QUERY_KEY, messageRef)
+    void navigator.clipboard.writeText(url.href).then(() => { setCopied(messageRef) }).catch(() => { setCopied(undefined) })
+  }, [taskRef, variant])
+  useEffect(() => {
+    if (copied === undefined) return
+    const timer = setTimeout(() => { setCopied(undefined) }, 2000)
+    return () => { clearTimeout(timer) }
+  }, [copied])
 
   const send = useCallback(async (): Promise<void> => {
     const { draft, recipients } = drafts.getSnapshot(draftKey)
@@ -176,39 +256,63 @@ export function IssueComments({
   const replyParentMember = replyTarget === undefined ? undefined : factByRef.get(replyTarget)?.message.sender
 
   return (
-    <section className={css.region} aria-label={t('issueCommentsLabel')} data-issue-comments="" data-testid="issue-comments">
-      <h2 className={css.heading}>{t('issueCommentsLabel')}</h2>
-      {tree.roots.length === 0
-        ? <p className={css.empty} data-issue-comments-empty="">{t('issueCommentsEmpty')}</p>
+    <section className={css.region} aria-label={t('issueTimelineLabel')} data-issue-timeline="" data-testid="issue-timeline">
+      {rows.length === 0
+        ? <p className={css.empty} data-issue-timeline-empty="">{t('issueTimelineEmpty')}</p>
         : (
-          <div className={css.list} data-issue-comment-list="">
-            {tree.roots.map(root => {
-              const fact = root.fact
-              return (
-                <CommentCard
-                  key={fact.message.messageRef}
-                  author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
-                  body={fact.message.body}
-                  human={fact.message.sender === humanMemberId}
-                  occurredAt={fact.message.occurredAt}
-                  mentionNames={mentionNamesOfFact(fact)}
-                  attachments={fact.message.attachments}
-                  {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
-                  {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
-                  replies={repliesOf(fact)}
-                  orphan={root.orphan}
-                  onReply={() => { setReplyTarget(fact.message.messageRef) }}
+          <div className={css.list} data-issue-timeline-list="">
+            {rows.map(row => {
+              if (row.kind === 'activity-group') {
+                return <IssueActivityGroup key={row.id} facts={row.entries} nameOf={nameOf} t={t} />
+              }
+              if (row.kind === 'run') {
+                return <IssueRunRow
+                  key={row.run.sessionId}
+                  run={row.run}
+                  running={row.running}
+                  failed={failedSessions.has(row.run.sessionId)}
+                  handle={handleByMember.get(row.run.memberId) ?? nameOf(row.run.memberId)}
+                  now={now}
+                  onOpenSession={() => { openMemberSession(row.run.sessionId) }}
                   t={t}
                 />
+              }
+              const fact = row.entry
+              const messageRef = fact.message.messageRef
+              return (
+                <div
+                  key={messageRef}
+                  ref={messageRef === anchor ? anchorNode : undefined}
+                  data-message-ref={messageRef}
+                  className={messageRef === anchor ? css.anchored : undefined}
+                >
+                  <CommentCard
+                    author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
+                    body={fact.message.body}
+                    human={fact.message.sender === humanMemberId}
+                    occurredAt={fact.message.occurredAt}
+                    mentionNames={mentionNamesOfFact(fact)}
+                    attachments={fact.message.attachments}
+                    {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
+                    {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
+                    replies={repliesOf(fact)}
+                    orphan={tree.roots.find(root => root.fact.message.messageRef === messageRef)?.orphan ?? false}
+                    onReply={() => { setReplyTarget(messageRef) }}
+                    onCopyLink={() => { copyLink(messageRef) }}
+                    linkCopied={copied === messageRef}
+                    t={t}
+                  />
+                </div>
               )
             })}
           </div>
         )}
       {comments.hasMore && (
-        <button type="button" className={css.loadOlder} data-issue-comments-load-older="" disabled={loadingOlder} onClick={onLoadOlder}>
+        <button type="button" className={css.loadOlder} data-issue-timeline-load-older="" disabled={loadingOlder} onClick={onLoadOlder}>
           {loadingOlder ? t('issueCommentsLoading') : t('issueCommentsMore')}
         </button>
       )}
+      {activity.hasMore && <p className={css.empty} data-issue-activity-more="">{t('issueActivityMore')}</p>}
       <TeamComposer
         key={draftKey}
         members={members}

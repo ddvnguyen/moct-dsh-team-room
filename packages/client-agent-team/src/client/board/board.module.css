@@ -197,6 +197,48 @@
   line-height: var(--ml-text-caption-line);
 }
 
+/* --- Collapsed column (a Trello-style strip) --- */
+.collapsedColumn {
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: var(--ml-radius-xl);
+  background: var(--ml-surface-raised);
+  color: var(--ml-text-tertiary);
+  padding: 8px 6px;
+  cursor: pointer;
+}
+
+.collapsedColumn:hover { background: var(--ml-surface-hover); }
+
+.collapsedColumnName {
+  writing-mode: vertical-rl;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+  font-weight: 500;
+}
+
+.collapsedColumnCount {
+  flex-shrink: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--ml-surface);
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+}
+
 /* --- Card --- */
 .card {
   border: 1px solid var(--ml-border);
@@ -512,6 +554,7 @@
 }
 
 .newTaskButton:focus-visible,
+.collapsedColumn:focus-visible,
 .columnMenuButton:focus-visible,
 .columnAddButton:focus-visible,
 .hiddenShowButton:focus-visible,

@@ -123,6 +123,7 @@ export function IssueActionsMenu({ taskRef, status, priority, assignee, members,
             type="button"
             className={css.menuTrigger}
             aria-label={t('issueActionsLabel')}
+            title={t('issueActionsLabel')}
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={(event) => {

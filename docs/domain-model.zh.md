@@ -50,6 +50,8 @@ Member 在 Channel 或已有 Thread 中显式发出的不可变内容。Channel 
 
 它不是稳定身份；跨 Channel 导航和持久引用必须使用 branded `taskRef`。
 
+看板上被隐藏或收起的列只是本浏览器的界面偏好，不是 Task 事实：两者都不决定 Task 处于哪个状态，状态仍只从 Claims 派生。
+
 ## Thread
 
 Channel 内独立的单层公开协作 aggregate：一定有 `threadRef`、anchor Message 和 revision，但可以没有 Task。Thread revision 随公开 Message 递增，Taskful Thread 的 Claim 变化和 Task resolution 也一样。往既有 Thread 公开写入时，必须带上该 Thread 的当前 revision。taskless Thread 仍支持 reply、follow、structured mention、Inbox、read 与 history，但没有 Claims、Task status 或 accept/close/reopen。协作读写定位优先用 `threadRef`。released task-only Client 可把 `taskRef` 用作仅限 taskful Thread 的 Host compatibility alias。Task/Claim 操作的身份仍是 `taskRef`。revision 是内部并发令牌，只在工具 baseRevision 里透传，不写进消息正文当引用事实。

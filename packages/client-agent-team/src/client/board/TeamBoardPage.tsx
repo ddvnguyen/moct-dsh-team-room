@@ -53,6 +53,8 @@ import { mintRequestId } from '../requests.ts'
 import type { AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
 import { BoardCardContent } from './BoardCard.tsx'
 import { BoardColumn, BOARD_COL_WIDTH } from './BoardColumn.tsx'
+import { CollapsedBoardColumn } from './CollapsedBoardColumn.tsx'
+import { readCollapsedColumns, toggleCollapsedColumn, writeCollapsedColumns } from './collapsed-columns.ts'
 import { BoardFilterBar } from './BoardFilterBar.tsx'
 import { CreateTaskDialog } from './CreateTaskDialog.tsx'
 import { HiddenColumnsPanel } from './HiddenColumnsPanel.tsx'
@@ -65,6 +67,12 @@ import look from '../multica-look.module.css'
 import css from './board.module.css'
 
 const HIDDEN_KEY = 'dsh.agent-team.board.hiddenColumns'
+
+/**
+ * Every column id the board knows: today the five status columns are the whole
+ * set, and M-51's status catalog is the seam that widens this one list.
+ */
+const KNOWN_COLUMN_IDS: ReadonlySet<string> = new Set(STATUS_ORDER.map(statusGroupId))
 
 function readHiddenColumns(): TaskStatus[] {
   if (typeof localStorage === 'undefined') return []
@@ -155,6 +163,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   const [notice, setNotice] = useState<Notice>()
   const [filters, setFilters] = useState<TaskFilters>({ channelRefs: [], assignees: [], priorities: [], statuses: [], text: '' })
   const [hidden, setHidden] = useState<TaskStatus[]>(readHiddenColumns)
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => readCollapsedColumns(workspaceId, KNOWN_COLUMN_IDS))
   const [createOpen, setCreateOpen] = useState(false)
   const [activeTask, setActiveTask] = useState<BoardCardTask | null>(null)
   // The board's own root: the card the reader was on is found in it, and the
@@ -268,10 +277,13 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   )
   const pan = useBoardDragPan<HTMLDivElement>()
 
+  // A collapsed column and a hidden one both resolve to no status: a drop over
+  // either moves nothing and writes nothing.
   const columnStatusOf = useCallback((columnId: string): TaskStatus | null => {
     const status = statusOfColumnId(columnId)
-    return status !== null && visibleStatuses.includes(status) ? status : null
-  }, [visibleStatuses])
+    if (status === null || !visibleStatuses.includes(status)) return null
+    return collapsed.has(columnId) ? null : status
+  }, [collapsed, visibleStatuses])
 
   // --- Screen-reader announcements (dnd-kit's defaults are English only) ---
   const announcements = useMemo<Announcements>(() => {
@@ -307,6 +319,8 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       const activeCol = findColumn(prev, activeId, columnIdSet)
       const overCol = findColumn(prev, overId, columnIdSet)
       if (!activeCol || !overCol || activeCol === overCol) return prev
+      // A collapsed column is a label, not a target: the preview never crosses into it.
+      if (columnStatusOf(overCol) === null) return prev
       recentlyMovedRef.current = true
       const oldIds = (prev[activeCol] ?? []).filter(id => id !== activeId)
       const newIds = [...(prev[overCol] ?? [])]
@@ -314,7 +328,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       newIds.splice(overIndex >= 0 ? overIndex : newIds.length, 0, activeId)
       return { ...prev, [activeCol]: oldIds, [overCol]: newIds }
     })
-  }, [columnIdSet, recentlyMovedRef, setColumns])
+  }, [columnIdSet, columnStatusOf, recentlyMovedRef, setColumns])
 
   /** Marks one card settling until the write's answer is in. */
   const beginCardSettle = useCallback((taskRef: string) => {
@@ -543,6 +557,23 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
 
   const openCreate = useCallback(() => { setCreateOpen(true) }, [])
 
+  const toggleCollapse = useCallback((columnId: string) => {
+    setCollapsed(prev => {
+      const next = toggleCollapsedColumn(prev, columnId)
+      writeCollapsedColumns(workspaceId, next)
+      return next
+    })
+  }, [workspaceId])
+
+  // The preference is per Workspace and the board stays mounted when the reader
+  // switches Workspace, so the set is re-read when the id changes.
+  const collapsedWorkspace = useRef(workspaceId)
+  useEffect(() => {
+    if (collapsedWorkspace.current === workspaceId) return
+    collapsedWorkspace.current = workspaceId
+    setCollapsed(readCollapsedColumns(workspaceId, KNOWN_COLUMN_IDS))
+  }, [workspaceId])
+
   // The columns' tasks and live badges, derived once per render of the mirror.
   // `visibleTaskMap` is the frozen map while a drag or settle holds the mirror, the live one otherwise.
   const visibleTaskMap = taskMapRef.current
@@ -564,11 +595,14 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   const openTaskRef = navigationState.issueVariant === 'slice' ? navigationState.issueRef : undefined
 
   // The columns as they stand, with the Tasks in each: the walk moves
-  // between the issues of a column, and between the columns.
-  const walkableColumns = useMemo(() => visibleStatuses.map(status => ({
-    status,
-    taskRefs: (columnTasks.get(status) ?? []).map(task => task.taskRef),
-  })), [visibleStatuses, columnTasks])
+  // between the issues of a column, and between the columns. A collapsed
+  // column shows no cards, so the walk never opens an issue into it.
+  const walkableColumns = useMemo(() => visibleStatuses
+    .filter(status => !collapsed.has(statusGroupId(status)))
+    .map(status => ({
+      status,
+      taskRefs: (columnTasks.get(status) ?? []).map(task => task.taskRef),
+    })), [visibleStatuses, collapsed, columnTasks])
 
   // J/K step between the issues of the column, H/L between the columns. The
   // walk is the board's: a slice opened over another face has no board to
@@ -674,7 +708,15 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
             <div className={css.emptyBoard}>{t('boardEmpty')}</div>
           ) : (
             <>
-              {visibleStatuses.map(status => (
+              {visibleStatuses.map(status => collapsed.has(statusGroupId(status)) ? (
+                <CollapsedBoardColumn
+                  key={status}
+                  status={status}
+                  count={(columnTasks.get(status) ?? []).length}
+                  onExpand={() => { toggleCollapse(statusGroupId(status)) }}
+                  t={t}
+                />
+              ) : (
                 <BoardColumn
                   key={status}
                   status={status}
@@ -683,6 +725,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
                   onCardClick={handleCardClick}
                   onCardUpdate={handleCardUpdate}
                   onHide={hideColumn}
+                  onToggleCollapse={() => { toggleCollapse(statusGroupId(status)) }}
                   onCreate={openCreate}
                   members={members}
                   activities={columnActivities.get(status) ?? []}

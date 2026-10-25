@@ -46,6 +46,13 @@ import css from './BoardCard.module.css'
 一致性审计（`node scripts/audit-ui-parity.mjs`）会递归子目录，因此 `multica-ui/`
 下的样式表与顶层样式表适用同一套焦点、token 与几何规则。
 
+## 看板
+
+看板沿用 Multica 的 kanban 节奏，由 `board/board.module.css` 在 `--ml-*` 上实现。折叠的列是一条 44px 宽的竖条：状态图标、竖写的列名与卡片数胶囊。
+
+- `board/CollapsedBoardColumn.tsx` 来自 `board-column.tsx` 的竖条：图标、竖写的名称与计数，且不注册 droppable——折叠的列是标签，不是落点。
+- `board/collapsed-columns.ts` 把按 Workspace 的折叠集合存在 localStorage，而不是 Multica 的 view store。
+
 ## Task 详情页
 
 Thread 页面按 Multica 的 issue 详情布局重构。

@@ -15,8 +15,7 @@ import look from '../multica-look.module.css'
 import { IssueHeader } from './IssueHeader.tsx'
 import { IssueDescription } from './IssueDescription.tsx'
 import { IssueProperties } from './IssueProperties.tsx'
-import { IssueComments, type IssueCommentWrite } from './IssueComments.tsx'
-import { IssueActivity } from './IssueActivity.tsx'
+import { IssueTimeline, type IssueCommentWrite } from './IssueTimeline.tsx'
 import { IssueDecisions } from './IssueDecisions.tsx'
 import { IssueExecutionLog, type IssueExecutionLogProps } from './IssueExecutionLog.tsx'
 import css from './issue-view.module.css'
@@ -43,6 +42,19 @@ export interface IssueViewProps {
    * the crumb's channel as plain text.
    */
   readonly onOpenChannel?: ((channelRef: AgentTeamChannelRef) => void) | undefined
+  /**
+   * The page's chrome: the reader goes back to the slice and closes the issue
+   * from the header. The slice owns its own icon bar, so it passes none of
+   * these — a control exists once per presentation.
+   */
+  readonly onBackToPanel?: (() => void) | undefined
+  readonly onCloseIssue?: (() => void) | undefined
+  /**
+   * The shell column's own state: the header offers the reopen control while
+   * the column is closed. Presentation only — the issue never reads the shell.
+   */
+  readonly sidebarCollapsed?: boolean | undefined
+  readonly openSidebar?: (() => void) | undefined
   /**
    * Which presentation hosts this tree: the whole-column page, or the slice
    * dialog over the reader's screen. The variant is presentation only — the
@@ -71,11 +83,12 @@ export interface IssueViewProps {
 }
 
 /**
- * The issue's seven regions: the header, the description, the properties, the
- * comment thread, the activity, the decisions and the execution log. The
- * regions are laid out in that order, and every value in them is the Host's.
+ * The issue's regions: the header, the description, the properties, the one
+ * timeline (comments, runs and grouped activity in instant order), the
+ * decisions and the execution log. The regions are laid out in that order, and
+ * every value in them is the Host's.
  */
-export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onOpenChannel, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
+export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
   // way the Thread page folds its sidebar. The column is hidden by the
   // stylesheet there and the opener appears; the Modal carries the same
@@ -110,7 +123,14 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         channelRef={view.properties.channelRef}
         onOpenChannel={onOpenChannel}
         onRename={onRename}
-        onOpenLegacyThread={onOpenLegacyThread}
+        // The Thread control lives in the header on the page and in the
+        // slice's icon bar; both are the same `goToThread`, so the header
+        // renders it only where the bar is not.
+        onOpenLegacyThread={variant === 'page' ? onOpenLegacyThread : undefined}
+        onBackToPanel={variant === 'page' ? onBackToPanel : undefined}
+        onClose={variant === 'page' ? onCloseIssue : undefined}
+        sidebarCollapsed={variant === 'page' ? sidebarCollapsed : undefined}
+        openSidebar={variant === 'page' ? openSidebar : undefined}
         actions={{
           taskRef: view.task.taskRef,
           status: view.properties.status,
@@ -132,8 +152,11 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
       <div className={css.bodyRow}>
         <div className={css.content}>
           <IssueDescription description={view.description} authorName={nameOf(view.description.author)} t={t} />
-          <IssueComments
+          <IssueTimeline
             comments={view.comments}
+            activity={view.activity}
+            runs={view.executionLog.sessions}
+            failures={view.executionLog.failures}
             decisions={view.decisions}
             nameOf={nameOf}
             humanMemberId={humanMemberId}
@@ -142,10 +165,11 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
             onLoadOlder={onLoadOlderComments}
             loadingOlder={loadingOlderComments}
             members={members}
+            openMemberSession={execution.openMemberSession}
+            variant={variant}
             {...commentWrite}
             t={t}
           />
-          <IssueActivity activity={view.activity} nameOf={nameOf} t={t} />
           <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
         </div>
         <aside className={css.side} data-team-issue-side data-testid="issue-properties">

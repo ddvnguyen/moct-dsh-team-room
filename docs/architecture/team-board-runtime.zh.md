@@ -59,4 +59,6 @@ Client 的 Overview 页面读取它，并跟随 `workspace` 与 `activity` 两�
 
 `npm run check:multica`（`scripts/check-multica-provenance.mjs`）断言三件事：每个移植文件都带这个头部；Client 源码不导入任何 `@multica/*` 说明符（Multica 自己的包绑在 Multica 的服务端 API 上）；头部里写下的每个 commit 都在 `NOTICE` 中固定。
 
-重新同步一个移植文件是拿它头部写明的那个 commit 做 diff，而不是从上游重新拷贝：取上游文件在该 commit 的版本，重新套用头部第二段注释记录的本仓库适配，然后把固定点同时推进到头部与 `NOTICE`。`NOTICE` 固定两个 commit——源文件的 commit 与外观 token 的 commit——并说明后者是前者的祖先，因此两者一起推进。
+重新同步一个移植文件是拿它头部写明的那个 commit 做 diff，而不是从上游重新拷贝：取上游文件在该 commit 的版本，重新套用头部第二段注释记录的本仓库适配，然后把固定点同时推进到头部与 `NOTICE`。
+
+`NOTICE` 固定头部写明的每一个 commit：源文件的 commit、外观 token 的 commit（它是前者的祖先），以及看板折叠列竖条所取的那个后代 commit。

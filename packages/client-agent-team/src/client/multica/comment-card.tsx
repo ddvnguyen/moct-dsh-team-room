@@ -66,6 +66,13 @@ export interface CommentCardProps {
   readonly orphan?: boolean | undefined
   /** Answers this comment; the composer takes the message as its target. */
   readonly onReply?: (() => void) | undefined
+  /**
+   * Copies this comment's own deep link. The URL is the host's business — the
+   * card asks, it never builds one.
+   */
+  readonly onCopyLink?: (() => void) | undefined
+  /** The link was just copied: the control says so, then reverts. */
+  readonly linkCopied?: boolean | undefined
   readonly t?: TeamConversationProps['t'] | undefined
 }
 
@@ -77,13 +84,18 @@ export interface CommentCardProps {
  * author, the instant, the body and the attachments, and it never re-derives
  * any of them.
  */
-export function CommentCard({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, replies, orphan, onReply, t }: CommentCardProps) {
+export function CommentCard({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, replies, orphan, onReply, onCopyLink, linkCopied, t }: CommentCardProps) {
   return (
     <article className={[look.multicaLook, css.card].join(' ')} data-comment-card="" data-comment-orphan={orphan === true ? '' : undefined}>
       <header className={css.header}>
         <ActorAvatar name={author.name} kind={author.kind} {...(author.avatarUrl === undefined ? {} : { avatarUrl: author.avatarUrl })} size="sm" />
         <span className={css.name} {...(author.title === undefined ? {} : { title: author.title })}>{author.name}</span>
         <time className={css.time} dateTime={occurredAt} title={formatAbsoluteTime(occurredAt)}>{formatMessageTime(occurredAt)}</time>
+        {onCopyLink !== undefined && (
+          <button type="button" className={css.replyAction} data-comment-copy-link="" onClick={onCopyLink}>
+            {linkCopied === true ? (t?.('issueLinkCopied') ?? 'Link copied') : (t?.('issueCopyLink') ?? 'Copy link')}
+          </button>
+        )}
         {onReply !== undefined && (
           <button type="button" className={css.replyAction} data-comment-reply="" onClick={onReply}>
             {t?.('replyMessage') ?? 'Reply'}

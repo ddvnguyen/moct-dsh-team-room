@@ -19,27 +19,23 @@
   min-width: 0;
 }
 
-.pageFoot {
-  display: flex;
-  gap: 8px;
-  padding: 0 20px 20px;
-}
-
-/* The page: a header band over a two-column body. */
+/* The page: a header band over a two-column body. The page is not a scroll
+   container — the band stays put and each pane below scrolls itself, so the
+   timeline runs under the header instead of carrying it off the screen. */
 .page {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 16px 20px 28px;
+  overflow: hidden;
+  padding: 16px 20px 0;
 }
 
 .head {
   display: grid;
+  flex: none;
   gap: 6px;
 }
 
@@ -56,23 +52,14 @@
   color: var(--ml-text-secondary);
 }
 
-/* The one control that makes the legacy surface visible: the issue is what a
- * reader lands on, and the Thread is what they ask for. It sits at the end of
- * the breadcrumb so it never competes with the title. */
-.crumbAction {
-  background: none;
-  border: 0;
-  color: var(--ml-text-tertiary);
-  cursor: pointer;
-  font: inherit;
+/* The header's icon controls — into the legacy Thread, back to the slice
+   panel, close — sit at the breadcrumb row's right end, the way Multica's
+   issue header carries its actions: icons with names, never bare glyphs. */
+.headActions {
+  align-items: center;
+  display: inline-flex;
+  gap: 2px;
   margin-left: auto;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.crumbAction:hover {
-  color: var(--ml-text-secondary);
 }
 
 .titleRow {
@@ -162,10 +149,14 @@
   line-height: var(--ml-text-caption-line);
 }
 
-/* The body row: the content column and the property column side by side. */
+/* The body row: the content column and the property column side by side. The
+   single fr row is what bounds both panes — without it the tallest column
+   would stretch the row past the page and neither pane could scroll itself. */
 .bodyRow {
   display: grid;
+  flex: 1;
   grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }
@@ -174,8 +165,11 @@
   display: grid;
   align-content: start;
   gap: 18px;
+  min-height: 0;
   min-width: 0;
-  padding-right: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 18px 28px 0;
 }
 
 .side {

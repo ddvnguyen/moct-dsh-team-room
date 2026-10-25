@@ -72,7 +72,9 @@ The URL's query is the plugin's own state, and it carries the issue: `issue` nam
 
 A cold load reads the query and opens the issue in the `page` variant — a slice is transient, and a cold start has no opener to return the focus to. The mount path and the base are never touched, and no other parameter on the URL belongs to the Team.
 
-The issue surface is an orthogonal slot over those faces, not a face of its own: the snapshot carries the Task whose issue is open and how it is presented (the whole-column page, or the dialog over the live face), the face behind it stays where it was, and closing the issue returns the reader to it. The issue's content is the Host's `issueView` snapshot — one read per issue, variant-agnostic — and the client renders the seven regions it carries; the presentation is the client's, never a field on the read model.
+The issue surface is an orthogonal slot over those faces, not a face of its own: the snapshot carries the Task whose issue is open and how it is presented (the whole-column page, or the dialog over the live face), the face behind it stays where it was, and closing the issue returns the reader to it. The issue's content is the Host's `issueView` snapshot — one read per issue, variant-agnostic — and the client renders the six regions it carries; the presentation is the client's, never a field on the read model.
+
+The timeline region is one merged list. The merge is the client's pure function over the Host's comment page, activity region and Session runs, keyed on the instant each row carries, so the Host keeps its bounds and the client invents no order.
 
 The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage` preference, merged over Remote defaults.
 

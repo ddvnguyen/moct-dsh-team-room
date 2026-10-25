@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within, type RenderResult } from '@testing-library/react'
 import type {
-  AgentTeamActivity,
   AgentTeamClientMemberStatus,
+  AgentTeamIssueActivityFact,
   AgentTeamIssueComment,
   AgentTeamIssueView,
   AgentTeamMemberId,
@@ -61,13 +61,20 @@ function comment(body: string, sequence: number, replyToMessageRef?: string): Ag
 }
 
 function issueView(overrides: Partial<AgentTeamIssueView> = {}): AgentTeamIssueView {
-  const activity: AgentTeamActivity = {
-    kind: 'promote',
-    actor: human,
+  // The activity arm of a Thread fact: the ordering key rides with it, so the
+  // timeline can place it between two comments.
+  const activity: AgentTeamIssueActivityFact = {
+    kind: 'activity',
     sequence: 1,
-    activityRef: 'activity:1' as never,
-    taskRef,
-    threadRef,
+    occurredAt: '2026-10-22T00:30:00.000Z',
+    activity: {
+      kind: 'promote',
+      actor: human,
+      sequence: 1,
+      activityRef: 'activity:1' as never,
+      taskRef,
+      threadRef,
+    },
   }
   return {
     task: { taskRef, channelRef, threadRef, status: 'todo', resolution: 'open', position: 0 },
@@ -189,8 +196,9 @@ describe('IssueView', () => {
     const bodies = [...view.container.querySelectorAll('[data-comment-body]')].map(node => node.textContent)
     expect(bodies).toEqual(['First comment.', 'A reply.'])
     expect(view.container.querySelector('[data-comment-quote]')?.textContent).toContain('First comment.')
-    // 5. Activity.
-    expect(view.getByText(zh.issueActivityLabel)).toBeTruthy()
+    // 5. Activity, in the same list: the promote happened before both comments,
+    //    so its group opens the timeline.
+    expect(view.getByText(zh.issueActivityStatusCount.replace('{count}', '1'))).toBeTruthy()
     // 6. Decisions.
     expect(view.getByText(zh.issueDecisionsLabel)).toBeTruthy()
     // 7. Execution log, once its read lands: the page sidebar's own region.
@@ -292,7 +300,7 @@ describe('IssueView', () => {
     fireEvent.click(view.getByRole('button', { name: zh.issueActionsLabel }))
     expect(within(screen.getByRole('menu')).getByText(zh.issueCopyLink)).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByText(zh.issueCopyLink)).toBeNull()
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 
   it('carries the execution log in the page sidebar and its drawer, and not in the slice', async () => {

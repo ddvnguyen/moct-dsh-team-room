@@ -68,6 +68,11 @@ export interface IssueSurfaceProps {
   readonly variant: 'page' | 'slice'
   /** Navigates back to the Channel the header's crumb names. */
   readonly onOpenChannel?: ((channelRef: AgentTeamChannelRef) => void) | undefined
+  /** The page's own header chrome; the slice passes none of these (see `IssueViewProps`). */
+  readonly onBackToPanel?: (() => void) | undefined
+  readonly onCloseIssue?: (() => void) | undefined
+  readonly sidebarCollapsed?: boolean | undefined
+  readonly openSidebar?: (() => void) | undefined
   readonly t: TeamConversationProps['t']
 }
 
@@ -78,7 +83,7 @@ export interface IssueSurfaceProps {
  * changes what the reader sees.
  */
 export function IssueSurface(props: IssueSurfaceProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
@@ -260,6 +265,10 @@ export function IssueSurface(props: IssueSurfaceProps) {
         onOpenLegacyThread={onOpenLegacyThread}
         variant={variant}
         onOpenChannel={onOpenChannel}
+        onBackToPanel={onBackToPanel}
+        onCloseIssue={onCloseIssue}
+        sidebarCollapsed={sidebarCollapsed}
+        openSidebar={openSidebar}
         onStatus={moveStatus}
         onPriority={priority => { void patchTask({ priority: normalizePriority(priority) }) }}
         onAssignee={memberId => { void patchTask({ assignee: memberId }) }}

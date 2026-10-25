@@ -31,6 +31,10 @@ The Board is opened from the sidebar's main panel list — the Board row (`agent
 
 Five columns, one per Task status: `待办` (todo), `进行中` (in progress), `待评审` (in review), `已完成` (done), `已关闭` (closed).
 
+Each column's header carries `收起列表` beside the `⋯` menu's `隐藏列`: a collapse folds the column to a slim strip that keeps its icon, its name written vertically and its card count, and clicking the strip expands it again.
+
+A collapsed column accepts no drop: a card dragged onto the strip moves nothing and opens nothing, and the keyboard walk steps past it. The set is remembered per Workspace, in this browser only.
+
 `新建任务` opens the create dialog: title, description, Channel, priority and assignee. The defaults are the rules — the assignee starts at **未分配**, because creating never assigns, and the Channel defaults to the last one a Task was created in.
 
 ### Drag rules
@@ -54,7 +58,11 @@ A card's title opens the Task's **issue**, not its Thread. The issue opens as a 
 
 Esc closes it and returns the focus to the card the reader came from, and a reload reopens it where it was. The URL's `issue` query names the Task, so a copied link opens the same issue.
 
-The issue is one read of the Host's own snapshot, drawn in seven regions: the header (the Channel breadcrumb, `#n`, the status and the inline title editor), the description, the properties column (status, priority, assignee, created and last activity), the comment thread and its composer, the activity, the decisions, and the execution log.
+The issue is one read of the Host's own snapshot, drawn in six regions: the header (the Channel breadcrumb, `#n`, the status and the inline title editor), the description, the properties column (status, priority, assignee, created and last activity), the timeline, the decisions, and the execution log.
+
+The timeline is one chronological list: the comments with their replies, the runs of consecutive activity folded into an expandable line, and each agent run of the Thread. An activity that happened between two comments sits between them, and a run says who ran and for how long.
+
+`打开完整记录` opens that run's dsh session — the transcript is not rebuilt here. The composer sits under the list.
 
 Nothing moves before the Host commits it: a rename, a comment or a picker waits for the commit and for the change to arrive, and a rejected write snaps back and says why.
 

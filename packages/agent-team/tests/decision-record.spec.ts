@@ -85,6 +85,14 @@ const questions = [
   { prompt: 'Which release day?', multiple: false, options: [{ label: 'Thursday' }, { label: 'Friday' }], recommended: [1] },
 ]
 
+/** The same operations, replayed: a copy of the ledger as it stands. */
+function copyLedger(pool: MemoryMediaPool): Promise<AgentTeamLedger> {
+  const copy = new MemoryMediaPool()
+  copy.versions.set('agent_team', pool.versions.get('agent_team')!)
+  copy.media.set('agent_team', { tables: new Map([['operations', new Map(pool.media.get('agent_team')!.tables.get('operations')!)]]), global: null })
+  return openLedger(copy)
+}
+
 /**
  * A ledger as it looked before decision records existed: the answer notice is
  * still there, but the operation carries no decision record.
@@ -262,5 +270,68 @@ describe('decision records', () => {
     const records = ledger.decisionRecords(human, { workspaceId: alpha, taskRef: promoted.task.taskRef }).records
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({ taskRef: promoted.task.taskRef, source: { kind: 'ask' } })
+  })
+
+  it('9. records nothing when the seat a card names answers it', async () => {
+    const { pool, ledger, channel, ann, threadRef } = await tasklessRoom()
+    const bob = await addMember(ledger, channel.channelRef, 'bob')
+    // The Human promotes a Thread the asker already follows, so the ask is a
+    // planning-phase question on a Task and the seat's answer can name it.
+    const read = (await ledger.readThread({ requestId: requestId('read'), workspaceId: alpha, threadRef, actor: human })).value
+    const promoted = committed((await ledger.promoteThread({ requestId: requestId('promote'), workspaceId: alpha, threadRef,
+      baseRevision: read.thread.revision, actor: human })).value)
+    const taskRef = promoted.task.taskRef
+    const asked = (await ledger.askDecision({ requestId: requestId('ask-seat'), workspaceId: alpha, taskRef, actor: ann,
+      target: bob.memberId, context: 'Which day ships?', questions })).value
+    await ledger.answerDecision({ requestId: requestId('answer-seat'), workspaceId: alpha, decisionRef: asked.notice.decisionRef,
+      actor: bob, answers: [{ selected: [0] }] })
+
+    // The card is resolved, and no decision was recorded for it.
+    expect(ledger.decision(human, { workspaceId: alpha, decisionRef: asked.notice.decisionRef })).toMatchObject({
+      status: 'answered', closedBy: bob.memberId, target: bob.memberId,
+    })
+    expect(ledger.decisionRecords(human, { workspaceId: alpha, taskRef }).records).toHaveLength(0)
+    // The answer carries no record at all, not merely one the projection skips.
+    const answer = storedOperations(pool).find(operation => operation.kind === 'team/thread-replied'
+      && operation.data.decision?.event === 'answered')
+    expect(answer?.kind === 'team/thread-replied' ? answer.data : {}).not.toHaveProperty('decisionRecord')
+    // A replay derives none either: a seat's answer is a card fact, never the
+    // Owner's decision.
+    expect((await copyLedger(pool)).decisionRecords(human, { workspaceId: alpha, taskRef }).records).toHaveLength(0)
+  })
+
+  it('10. still records the Owner\'s answer to a card addressed to a seat, in the unchanged shape', async () => {
+    const { pool, ledger, channel, ann, taskRef } = await room()
+    const bob = await addMember(ledger, channel.channelRef, 'bob')
+    const asked = (await ledger.askDecision({ requestId: requestId('ask-seat'), workspaceId: alpha, taskRef, actor: ann,
+      target: bob.memberId, questions })).value
+    await ledger.answerDecision({ requestId: requestId('answer-seat'), workspaceId: alpha, decisionRef: asked.notice.decisionRef,
+      actor: human, answers: [{ selected: [1], text: 'The gate is green.' }] })
+
+    const answer = storedOperations(pool).find(operation => operation.kind === 'team/thread-replied'
+      && operation.data.decision?.event === 'answered')
+    const stored = answer?.kind === 'team/thread-replied' ? answer.data.decisionRecord : undefined
+    expect(stored).toMatchObject({
+      taskRef,
+      decided: 'Friday — The gate is green.',
+      rationale: 'The gate is green.',
+      source: { kind: 'ask', decisionRef: asked.notice.decisionRef, messageRef: asked.message.messageRef },
+    })
+    expect(stored?.recordRef).toMatch(/^decisionRecord:/)
+    // The payload is the shape it always was: nothing was added for a seat.
+    expect(Object.keys(stored ?? {}).sort()).toEqual(['decided', 'rationale', 'recordRef', 'source', 'taskRef'])
+
+    const records = ledger.decisionRecords(human, { workspaceId: alpha, taskRef }).records
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      taskRef,
+      decidedBy: human.memberId,
+      decided: 'Friday — The gate is green.',
+      rationale: 'The gate is green.',
+      source: { kind: 'ask', decisionRef: asked.notice.decisionRef, messageRef: asked.message.messageRef },
+    })
+    expect(records[0]!.supersedes).toBeUndefined()
+    // The stored payload and its replay agree, so the record is the same one.
+    expect((await copyLedger(pool)).decisionRecords(human, { workspaceId: alpha, taskRef }).records).toEqual(records)
   })
 })
