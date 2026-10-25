@@ -2691,8 +2691,12 @@ export class AgentTeamLedger {
       }
       const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'answered' as const, answers })
       const body = decisionAnswerBody(asker.handle, state.decisionRef, state.questions, answers)
+      // A record is the Owner's decision. A seat answering the card it was
+      // addressed by closes that card and records nothing, so the card keeps
+      // its own row in the issue view rather than becoming a decision row.
+      const record = request.actor.kind === 'human' ? this.answerDecisionRecord(state, answers) : undefined
       const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId],
-        { decision: notice, decisionRecord: this.answerDecisionRecord(state, answers) })
+        { decision: notice, ...(record === undefined ? {} : { decisionRecord: record }) })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2723,6 +2727,8 @@ export class AgentTeamLedger {
   /**
    * The decision fact the Human's answer records, attached to the very
    * operation that answers the card: one decision, one operation, one record.
+   * Only the Owner answers into a record — a seat's answer is a card answer,
+   * not the Task's decision.
    */
   private answerDecisionRecord(state: AgentTeamDecisionState, answers: readonly AgentTeamDecisionAnswer[]): AgentTeamDecisionRecordPayload {
     const taskRef = this.state.threads.get(state.threadRef)?.taskRef
@@ -4593,6 +4599,11 @@ export class AgentTeamLedger {
    * notice it already carried, with a recordRef that is a function of the
    * operation — never minted — so a replay derives the same ref and the same
    * indexes.
+   *
+   * Only the Human answers into a record, so the derivation skips a member
+   * actor: a seat answering the card it was addressed is a card fact and never
+   * a Task decision, and a stored payload is read as the durable fact it is
+   * whatever the actor, leaving an older ledger's records as they were written.
    */
   private foldDecisionRecord(target: Projection, operation: AgentTeamOperation): void {
     if (operation.kind !== 'team/thread-replied') return
@@ -4611,6 +4622,7 @@ export class AgentTeamLedger {
       }), thread.threadRef)
       return
     }
+    if (operation.actor.kind !== 'human') return
     const decision = operation.data.decision
     if (decision?.event === 'answered') {
       const card = target.decisions.get(decision.decisionRef)
