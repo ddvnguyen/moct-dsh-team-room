@@ -668,6 +668,35 @@ export type AgentTeamReplyResult =
   | AgentTeamStaleRevision
   | AgentTeamMemberNotFollowing
 
+/**
+ * Human or entitled Member intent to close or reopen one comment thread.
+ * The root Message addresses the thread; a reply is refused.
+ */
+export interface AgentTeamResolveCommentRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
+  /** The thread's root comment. */
+  readonly messageRef: AgentTeamMessageRef
+  /** `true` closes the thread; `false` reopens it. */
+  readonly resolved: boolean
+  /** The Thread revision on screen: the other Thread writes' optimistic fence. */
+  readonly baseRevision: number
+}
+
+export interface AgentTeamResolveCommentCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly threadRef: AgentTeamThreadRef
+  readonly messageRef: AgentTeamMessageRef
+  /** Present when the write closed the thread; absent when it reopened it. */
+  readonly resolved?: AgentTeamCommentResolution | undefined
+}
+
+/** A stale Thread revision is a business outcome; a reply ref or a repeat is refused. */
+export type AgentTeamResolveCommentResult = AgentTeamResolveCommentCommittedResult | AgentTeamStaleRevision
+
 /** Human intent to create one Task with an opening Message. */
 export interface AgentTeamCreateTaskRequest {
   readonly requestId: AgentTeamRequestId
@@ -1262,6 +1291,17 @@ export interface AgentTeamIssueProperties {
   readonly updatedAt: string
 }
 
+/**
+ * One comment thread's resolution: who closed it, and when. The Host derives it
+ * from the ledger's own resolution operations, so the client reads it and never
+ * invents it.
+ */
+export interface AgentTeamCommentResolution {
+  readonly memberId: AgentTeamMemberId
+  /** The instant of the operation that closed the thread. */
+  readonly resolvedAt: string
+}
+
 /** The issue's comments: the newest page of the Thread's Messages, the anchor excluded. */
 export interface AgentTeamIssueComments {
   /** The `message` arm of `AgentTeamThreadFact`. No second message shape. The anchor is never here. */
@@ -1271,8 +1311,15 @@ export interface AgentTeamIssueComments {
   readonly cursor: number
 }
 
-/** One comment of the issue: the `message` arm of a Thread fact. */
-export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }>
+/** One comment of the issue: the `message` arm of a Thread fact, plus its thread's resolution. */
+export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }> & {
+  /**
+   * Present on a root comment whose thread the Host closed. A reply never
+   * carries one: a reply is not resolvable on its own, and a thread is closed
+   * by its root comment.
+   */
+  readonly resolved?: AgentTeamCommentResolution | undefined
+}
 
 /**
  * One activity of the issue: the `activity` arm of a Thread fact.

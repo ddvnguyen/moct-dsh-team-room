@@ -41,6 +41,7 @@ const at = (hour: number): string => `2026-10-22T0${hour}:00:00.000Z`
 function messageFact(sequence: number, ref: string, body: string, sender: AgentTeamMemberId = ann, extra?: {
   readonly replyToMessageRef?: AgentTeamMessageRef
   readonly attachments?: readonly { readonly attachmentId: AgentTeamAttachmentId; readonly name: string; readonly byteSize: number; readonly mediaType: string }[]
+  readonly resolved?: { readonly memberId: AgentTeamMemberId; readonly resolvedAt: string }
 }): AgentTeamIssueComment {
   return {
     kind: 'message',
@@ -54,6 +55,7 @@ function messageFact(sequence: number, ref: string, body: string, sender: AgentT
     },
     mentions: [],
     occurredAt: at(Math.min(sequence, 9)),
+    ...(extra?.resolved === undefined ? {} : { resolved: extra.resolved }),
   }
 }
 
@@ -95,6 +97,7 @@ function renderTimeline(overrides: Partial<IssueTimelineProps> = {}) {
     taskRef,
     baseRevision: 7,
     reply: vi.fn(async () => ({ ok: true, value: { kind: 'committed' } })) as unknown as IssueTimelineProps['reply'],
+    resolveComment: vi.fn(async () => ({ ok: true, value: { kind: 'committed', messageRef: 'message:a', threadRef: 'thread:plan' } })) as unknown as IssueTimelineProps['resolveComment'],
     drafts,
     loadTriggerCatalog: vi.fn(async () => []) as unknown as IssueTimelineProps['loadTriggerCatalog'],
     draftKey: 'thread:thread:plan' as never,
@@ -294,6 +297,84 @@ describe('IssueTimeline', () => {
     await waitFor(() => { expect(view.container.textContent).toContain('stale revision') })
     expect(drafts.getSnapshot('thread:thread:plan' as never).draft).toBe('a new comment')
     expect(cardBodies(view.container)).toEqual(['first comment'])
+  })
+
+  it('resolves a thread through the Host, and only then shows it closed', async () => {
+    const resolveComment = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: 'committed' as const, receipt: { sequence: 12 }, messageRef: 'message:a' as AgentTeamMessageRef,
+        threadRef: 'thread:plan' as never, resolved: { memberId: human, resolvedAt: at(5) } },
+    })) as unknown as IssueTimelineProps['resolveComment']
+    const { view } = renderTimeline({ comments: region([messageFact(4, 'message:a', 'close me')]), resolveComment })
+    // The write is the Host's: the card's own position and fence ride along.
+    fireEvent.click(view.container.querySelector('[data-comment-resolve]') as HTMLElement)
+    await waitFor(() => {
+      expect(resolveComment).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceId, taskRef, messageRef: 'message:a', resolved: true, baseRevision: 7,
+      }))
+    })
+    // Nothing moved before the commit: the card was still the card.
+    await waitFor(() => { expect(view.container.querySelector('[data-comment-resolved-bar]')).not.toBeNull() })
+    expect(view.container.querySelector('[data-comment-card]')).toBeNull()
+    expect(view.container.querySelector('[data-comment-resolved-bar]')?.textContent).toContain(zh.issueResolvedThreadBar)
+  })
+
+  it('leaves a refused resolve open and says why', async () => {
+    const resolveComment = vi.fn(async () => ({ ok: false as const, error: { message: 'only the comment\'s author may resolve' } })) as unknown as IssueTimelineProps['resolveComment']
+    const { view } = renderTimeline({ comments: region([messageFact(4, 'message:a', 'close me')]), resolveComment })
+    fireEvent.click(view.container.querySelector('[data-comment-resolve]') as HTMLElement)
+    await waitFor(() => { expect(view.container.textContent).toContain('only the comment\'s author may resolve') })
+    // The state did not move: the thread is still the Host's open thread.
+    expect(view.container.querySelector('[data-comment-card]')).not.toBeNull()
+    expect(view.container.querySelector('[data-comment-resolved-bar]')).toBeNull()
+    expect(view.container.querySelector('[data-comment-resolve]')?.textContent).toBe(zh.issueResolveComment)
+  })
+
+  it('reads a stale revision as a business outcome, with the reason', async () => {
+    const resolveComment = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: 'stale_revision' as const, threadRef: 'thread:plan' as never, expectedRevision: 7, revision: 9 },
+    })) as unknown as IssueTimelineProps['resolveComment']
+    const { view } = renderTimeline({ comments: region([messageFact(4, 'message:a', 'close me')]), resolveComment })
+    fireEvent.click(view.container.querySelector('[data-comment-resolve]') as HTMLElement)
+    await waitFor(() => { expect(view.container.textContent).toContain(zh.staleRevision) })
+    expect(view.container.querySelector('[data-comment-card]')).not.toBeNull()
+  })
+
+  it('collapses a resolved thread to a bar that expands to the full thread', () => {
+    const resolved = messageFact(4, 'message:a', 'the closed thread', ann, { resolved: { memberId: human, resolvedAt: at(5) } })
+    const reply = messageFact(6, 'message:reply', 'the answer', ann, { replyToMessageRef: 'message:a' as AgentTeamMessageRef })
+    const { view } = renderTimeline({ comments: region([resolved, reply]) })
+
+    const bar = view.container.querySelector('[data-comment-resolved-bar]') as HTMLElement
+    expect(bar).not.toBeNull()
+    // Collapsed: the bar, and no card behind it.
+    expect(view.container.querySelector('[data-comment-card]')).toBeNull()
+    expect(bar.textContent).toContain(zh.issueCommentResolvedBy.replace('{name}', 'Ddv'))
+    const toggle = bar.querySelector('[data-resolved-bar-toggle]') as HTMLElement
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const body = bar.querySelector('[data-resolved-bar-body]') as HTMLElement
+    expect(body.querySelector('[data-comment-body]')?.textContent).toBe('the closed thread')
+    expect(body.querySelector('[data-comment-replies]')?.textContent).toContain('the answer')
+  })
+
+  it('reopens from the bar and restores the card when the Host answers', async () => {
+    const resolved = messageFact(4, 'message:a', 'the closed thread', ann, { resolved: { memberId: human, resolvedAt: at(5) } })
+    const resolveComment = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: 'committed' as const, receipt: { sequence: 12 }, messageRef: 'message:a' as AgentTeamMessageRef, threadRef: 'thread:plan' as never },
+    })) as unknown as IssueTimelineProps['resolveComment']
+    const { view } = renderTimeline({ comments: region([resolved]), resolveComment })
+
+    fireEvent.click(view.container.querySelector('[data-comment-reopen]') as HTMLElement)
+    await waitFor(() => { expect(resolveComment).toHaveBeenCalledWith(expect.objectContaining({ messageRef: 'message:a', resolved: false })) })
+    await waitFor(() => { expect(view.container.querySelector('[data-comment-resolved-bar]')).toBeNull() })
+    // The card is back, with its resolve action again.
+    expect(view.container.querySelector('[data-comment-card]')?.textContent).toContain('the closed thread')
+    expect(view.container.querySelector('[data-comment-resolve]')?.textContent).toBe(zh.issueResolveComment)
   })
 
   it('renders a comment that carries an attachment', () => {

@@ -60,6 +60,8 @@ import type {
   AgentTeamDecisionNoticeResult,
   AgentTeamDecisionsRequest,
   AgentTeamDecisionsResult,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocSectionHistory,
@@ -238,6 +240,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   /** Archive a Channel from the Channel page's overflow menu (D1b). */
   archiveChannel: (request: AgentTeamArchiveChannelRequest) => Promise<RemoteResult<AgentTeamArchiveChannelResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>
+  /** Close or reopen one issue comment thread by its root comment, fenced by the Thread revision. */
+  resolveComment: (request: AgentTeamResolveCommentRequest) => Promise<RemoteResult<AgentTeamResolveCommentResult>>
   changeTask: (request: AgentTeamTaskRequest) => Promise<RemoteResult<AgentTeamTaskResult>>
   /** Human's own Thread Attention: follow/unfollow of this Thread as the reading Human. */
   changeAttention: (request: AgentTeamThreadAttentionRequest) => Promise<RemoteResult<AgentTeamThreadAttentionResult>>

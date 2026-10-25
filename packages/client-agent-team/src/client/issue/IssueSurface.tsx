@@ -37,6 +37,8 @@ export interface IssueSurfaceProps {
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   /** The Human's answer on the issue: one comment on the Task. */
   readonly reply: TeamConversationProps['reply']
+  /** Closes or reopens one comment thread on the issue; a stale revision is a business outcome. */
+  readonly resolveComment: TeamConversationProps['resolveComment']
   /** The attachment write the composer's file pick uploads through. */
   readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
   readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
@@ -78,7 +80,7 @@ export interface IssueSurfaceProps {
  * changes what the reader sees.
  */
 export function IssueSurface(props: IssueSurfaceProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, resolveComment, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
@@ -270,6 +272,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
           taskRef,
           baseRevision: view.thread.revision,
           reply,
+          resolveComment,
           putAttachment,
           getAttachment,
           resolveMessageRefs,
