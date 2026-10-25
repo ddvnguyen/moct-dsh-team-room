@@ -59,4 +59,6 @@ Every ported file opens with its origin and the upstream commit it was taken at:
 
 `npm run check:multica` (`scripts/check-multica-provenance.mjs`) asserts three facts: every ported file carries that header, no Client source imports a `@multica/*` specifier (Multica's own packages are bound to Multica's server API), and every commit named in a header is pinned in `NOTICE`.
 
-Re-syncing a ported file is a diff against the commit its header names, not a fresh copy from upstream: take the upstream file at that commit, re-apply the local adaptation the header's second comment block records, then advance the pin in the header and in `NOTICE` together. `NOTICE` pins two commits — the source files' commit and the look-and-feel tokens' commit — and states that the tokens' commit is an ancestor of the source commit, so the two advance together.
+Re-syncing a ported file is a diff against the commit its header names, not a fresh copy from upstream: take the upstream file at that commit, re-apply the local adaptation the header's second comment block records, then advance the pin in the header and in `NOTICE` together.
+
+`NOTICE` pins every commit a header names: the source files' commit, the look-and-feel tokens' commit (an ancestor of it), and the descendant commit the board's collapsed column strip was taken at.

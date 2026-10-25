@@ -465,4 +465,127 @@ describe('Team board page', () => {
     act(() => { dndHandlers.onDragCancel?.() })
     await b.runtime.dispose()
   })
+
+  // A collapsed column is a display preference: it keeps its place and its
+  // count, shows no cards, owns no droppable, and writes nothing to the Host.
+  it('collapses a column to a strip that keeps its place, name and count, and expands again', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    const todo = columnOf(b.view, 'todo')
+    // The expanded header's count chip: the heading names the column, the
+    // count is its last child. Capture it before the column folds away.
+    const [heading] = [...todo.querySelectorAll<HTMLElement>('[data-status="todo"]')]
+    const expandedCount = heading?.lastElementChild?.textContent
+    expect(expandedCount).toBe('3')
+    const collapse = within(todo).getByRole('button', { name: '收起列表' })
+    expect(collapse.getAttribute('aria-pressed')).toBe('false')
+    // Hide and collapse are two affordances: the column menu is still there.
+    expect(within(todo).getByRole('button', { name: '列选项' })).toBeTruthy()
+
+    fireEvent.click(collapse)
+    const strip = await b.view.findByTestId('board-collapsed-column')
+    expect(strip.getAttribute('data-status')).toBe('todo')
+    expect(strip.getAttribute('aria-label')).toBe('展开列表 待办')
+    expect(strip.textContent).toContain('待办')
+    // The same number the expanded column showed, and nothing else in the strip.
+    expect(strip.lastElementChild?.textContent).toBe(expandedCount)
+    // The column kept its place at the head of the scroller instead of moving aside.
+    expect(b.view.container.querySelector('[data-board-scroller]')?.firstElementChild).toBe(strip)
+    expect(b.view.container.querySelectorAll('[data-testid="board-column"]')).toHaveLength(4)
+
+    fireEvent.click(strip)
+    await waitFor(() => expect(b.view.queryByTestId('board-collapsed-column')).toBeNull())
+    expect(b.view.container.querySelectorAll('[data-testid="board-column"]')).toHaveLength(5)
+    expect(columnOf(b.view, 'todo').textContent).toContain('Alpha task')
+    await b.runtime.dispose()
+  })
+
+  it('refuses a card dropped on a collapsed column: nothing moves and nothing is written', async () => {
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    fireEvent.click(within(columnOf(b.view, 'done')).getByRole('button', { name: '收起列表' }))
+    await b.view.findByTestId('board-collapsed-column')
+
+    drag('task:a', 'status:done')
+    // No accept, no position write: the drop resolved to no column at all.
+    expect(b.changeTask).not.toHaveBeenCalled()
+    expect(b.updateTask).not.toHaveBeenCalled()
+    expect(b.view.queryByTestId('board-drop-hint')).toBeNull()
+    expect(b.view.queryByTestId('board-notice')).toBeNull()
+    await waitFor(() => expect(columnOf(b.view, 'todo').textContent).toContain('Alpha task'))
+    await b.runtime.dispose()
+  })
+
+  it('keeps the collapsed set across a remount, scoped to the workspace id', async () => {
+    // Another Workspace's preference is another set: it never folds this board.
+    localStorage.setItem('dsh.agent-team.board.collapsedColumns:w2', JSON.stringify(['status:todo']))
+    const first = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await first.view.findByTestId('team-board-page')
+    await waitFor(() => expect(first.view.container.textContent).toContain('Alpha task'))
+    expect(columnOf(first.view, 'todo').textContent).toContain('Alpha task')
+    fireEvent.click(within(columnOf(first.view, 'done')).getByRole('button', { name: '收起列表' }))
+    await first.view.findByTestId('board-collapsed-column')
+    expect(JSON.parse(localStorage.getItem('dsh.agent-team.board.collapsedColumns:w1') ?? '[]')).toEqual(['status:done'])
+    const persisted = localStorage.getItem('dsh.agent-team.board.collapsedColumns:w1')
+    // The test runtime wipes localStorage on dispose, which is teardown rather
+    // than a reload: put the preference back so the next mount is the browser
+    // keeping it, with nothing else carried over.
+    await first.runtime.dispose()
+    localStorage.setItem('dsh.agent-team.board.collapsedColumns:w1', persisted ?? '[]')
+
+    // A fresh page seeds from the preference: the strip is there before any click.
+    const second = await boardRuntime({ seedBoardTasks: boardSeed() })
+    const strip = await second.view.findByTestId('board-collapsed-column')
+    expect(strip.getAttribute('data-status')).toBe('done')
+    await waitFor(() => expect(columnOf(second.view, 'todo').textContent).toContain('Alpha task'))
+    await second.runtime.dispose()
+  })
+
+  it('drops a stale or corrupt collapsed key on read instead of folding a live column', async () => {
+    localStorage.setItem('dsh.agent-team.board.collapsedColumns:w1', JSON.stringify(['status:done', 'status:retired', 7]))
+    const b = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    const strips = [...b.view.container.querySelectorAll('[data-testid="board-collapsed-column"]')]
+    expect(strips.map(entry => entry.getAttribute('data-status'))).toEqual(['done'])
+    expect(b.view.container.querySelectorAll('[data-testid="board-column"]')).toHaveLength(4)
+    await b.runtime.dispose()
+
+    // A value that is not a list of ids reads as "nothing collapsed".
+    localStorage.setItem('dsh.agent-team.board.collapsedColumns:w1', 'not json')
+    const c = await boardRuntime({ seedBoardTasks: boardSeed() })
+    await c.view.findByTestId('team-board-page')
+    await waitFor(() => expect(c.view.container.textContent).toContain('Alpha task'))
+    expect(c.view.queryByTestId('board-collapsed-column')).toBeNull()
+    await c.runtime.dispose()
+  })
+
+  it('skips a collapsed column when the keyboard walk changes columns', async () => {
+    const seed = [
+      { taskRef: 'task:a', status: 'todo' as const, title: 'Alpha task', taskNumber: 11, position: 1 },
+      { taskRef: 'task:d', status: 'done' as const, title: 'Done task', taskNumber: 14, position: 1 },
+      { taskRef: 'task:e', status: 'closed' as const, title: 'Closed task', taskNumber: 15, position: 1 },
+    ]
+    const b = await boardRuntime({ seedBoardTasks: seed })
+    await b.view.findByTestId('team-board-page')
+    await waitFor(() => expect(b.view.container.textContent).toContain('Alpha task'))
+    const navigation = b.runtime.ctx.get('teamNavigation')
+    const cardOf = (taskRef: string): HTMLElement =>
+      [...b.view.container.querySelectorAll<HTMLElement>('[data-testid="board-card"]')].find(entry => entry.getAttribute('data-task-ref') === taskRef)!
+
+    fireEvent.click(within(cardOf('task:a')).getByRole('button', { name: 'Alpha task' }))
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
+    fireEvent.click(within(columnOf(b.view, 'done')).getByRole('button', { name: '收起列表' }))
+    await b.view.findByTestId('board-collapsed-column')
+
+    // L walks past the folded done column to the next open one that holds a card.
+    fireEvent.keyDown(document, { key: 'l' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:e'))
+    // And H comes back over it.
+    fireEvent.keyDown(document, { key: 'h' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
+    await b.runtime.dispose()
+  })
 })
