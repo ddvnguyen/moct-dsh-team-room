@@ -26,6 +26,9 @@ const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
 }) as TeamConversationProps['t']
 
 afterEach(cleanup)
+// The panel width is a browser-local preference the width tests seed; none of
+// the other cases may inherit it.
+afterEach(() => { localStorage.removeItem('dsh.agent-team.issue-panel-width') })
 
 const workspaceId = 'workspace:alpha' as WorkspaceId
 const channelRef = 'channel:room' as never
@@ -205,5 +208,64 @@ describe('the issue slice', () => {
     await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
     await waitFor(() => expect(document.activeElement).toBe(opener))
     opener.remove()
+  })
+
+  it('names every icon control on the panel, each exactly once', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+
+    // A glyph with no name is invisible to a screen reader, and a control that
+    // exists in both the panel bar and the header is a control a test (and a
+    // reader) cannot tell apart: one named control per action, here.
+    const panel = view.getByRole('dialog')
+    for (const key of ['issueMaximize', 'issueClose', 'issueOpenLegacyThread'] as const) {
+      const controls = [...panel.querySelectorAll('button')].filter(button => button.getAttribute('aria-label') === zh[key])
+      expect(controls, key).toHaveLength(1)
+      const [control] = controls
+      expect(control?.getAttribute('title'), key).toBe(zh[key])
+    }
+  })
+
+  it('opens at the remembered width, nudges 24px an arrow, and keeps both', async () => {
+    localStorage.setItem('dsh.agent-team.issue-panel-width', '700')
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+
+    // The width the reader dragged to is the width the panel opens at.
+    const handle = view.getByTestId('issue-panel-resize')
+    expect(view.getByRole('dialog').getAttribute('style')).toContain('width: 700px')
+    expect(handle.getAttribute('aria-valuenow')).toBe('700')
+
+    // Arrow keys move the edge by the splitter's 24px step, left wider and
+    // right narrower, and each press is remembered for the next open.
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' })
+    expect(handle.getAttribute('aria-valuenow')).toBe('724')
+    expect(localStorage.getItem('dsh.agent-team.issue-panel-width')).toBe('724')
+    fireEvent.keyDown(handle, { key: 'ArrowRight' })
+    expect(handle.getAttribute('aria-valuenow')).toBe('700')
+    expect(localStorage.getItem('dsh.agent-team.issue-panel-width')).toBe('700')
+  })
+
+  it('clamps a remembered width that no longer fits the viewport', async () => {
+    // jsdom's window is 1024px wide; the panel leaves the face behind its 64px.
+    localStorage.setItem('dsh.agent-team.issue-panel-width', '99999')
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+
+    const widest = Math.max(360, window.innerWidth - 64)
+    expect(view.getByRole('dialog').getAttribute('style')).toContain(`width: ${widest}px`)
+    expect(view.getByTestId('issue-panel-resize').getAttribute('aria-valuemax')).toBe(String(widest))
   })
 })

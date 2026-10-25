@@ -11,6 +11,7 @@
 
 import { useRef, useState } from 'react'
 import type { AgentTeamChannelRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import { Button, IconChevronRightOutlineRegular, IconCloseOutlineRegular, IconPanelLeftOutlineRegular, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
 import { STATUS_LABEL_KEY } from '../multica/status.ts'
 import { StatusIcon } from '../multica-ui/StatusIcon.tsx'
@@ -37,11 +38,21 @@ export interface IssueHeaderProps {
    */
   readonly onRename: (title: string) => Promise<string | undefined>
   /**
-   * Opens the Task's Thread — the legacy surface D10 froze. It is the one
-   * control that makes "legacy" visible in the product: the issue is what a
-   * reader lands on, and the Thread is what they ask for.
+   * Opens the Task's Thread — the legacy surface D10 froze. The page's header
+   * carries it as an icon; the slice's own icon bar carries it instead, so the
+   * control exists once per presentation.
    */
   readonly onOpenLegacyThread?: (() => void) | undefined
+  /**
+   * Reopens the shell's left column. The control renders only while the column
+   * is closed — the open column needs no way to be opened.
+   */
+  readonly sidebarCollapsed?: boolean | undefined
+  readonly openSidebar?: (() => void) | undefined
+  /** Puts the issue back into its slice presentation; the page's own control. */
+  readonly onBackToPanel?: (() => void) | undefined
+  /** Closes the issue surface; the page's own control. */
+  readonly onClose?: (() => void) | undefined
   /** The header's actions menu: the status, priority, assignee, Copy link and Close writes. */
   readonly actions: IssueActionsMenuProps
   /** A write is in flight; the editor waits for it. */
@@ -55,7 +66,7 @@ export interface IssueHeaderProps {
  * The title is the one editable field here; it writes through the board's
  * title field, which exists today.
  */
-export function IssueHeader({ title, taskNumber, status, channelName, channelRef, onOpenChannel, onRename, onOpenLegacyThread, actions, pending, t }: IssueHeaderProps) {
+export function IssueHeader({ title, taskNumber, status, channelName, channelRef, onOpenChannel, onRename, onOpenLegacyThread, sidebarCollapsed, openSidebar, onBackToPanel, onClose, actions, pending, t }: IssueHeaderProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
@@ -88,18 +99,27 @@ export function IssueHeader({ title, taskNumber, status, channelName, channelRef
   }
 
   return (
-    <header className={css.head} data-testid="issue-header">
+    <header className={css.head} data-team-slim-header="issue" data-testid="issue-header">
       <div className={css.crumb}>
+        {sidebarCollapsed === true && openSidebar !== undefined && (
+          <Button size="sm" variant="outline" icon={<IconPanelLeftOutlineRegular size={16} />} aria-label={t('openSidebar')} title={t('openSidebar')} onClick={openSidebar} data-testid="issue-open-sidebar" />
+        )}
         {onOpenChannel !== undefined
           ? <button type="button" className={css.crumbChannelLink} title={t('issueCrumbChannel', { channel: channelName })} onClick={() => { onOpenChannel(channelRef) }}>{channelName}</button>
           : <span className={css.crumbChannel}>{channelName}</span>}
         <span aria-hidden="true">/</span>
         <span>#{taskNumber}</span>
-        {onOpenLegacyThread !== undefined && (
-          <button type="button" className={css.crumbAction} data-testid="issue-open-legacy-thread" onClick={onOpenLegacyThread}>
-            {t('issueOpenLegacyThread')}
-          </button>
-        )}
+        <span className={css.headActions}>
+          {onOpenLegacyThread !== undefined && (
+            <Button size="sm" icon={<IconRightUpOutlineRegular size={16} />} aria-label={t('issueOpenLegacyThread')} title={t('issueOpenLegacyThread')} onClick={onOpenLegacyThread} data-testid="issue-open-legacy-thread" />
+          )}
+          {onBackToPanel !== undefined && (
+            <Button size="sm" icon={<IconChevronRightOutlineRegular size={16} />} aria-label={t('issueBackToSlice')} title={t('issueBackToSlice')} onClick={onBackToPanel} data-testid="issue-back-to-slice" />
+          )}
+          {onClose !== undefined && (
+            <Button size="sm" icon={<IconCloseOutlineRegular size={16} />} aria-label={t('issueClose')} title={t('issueClose')} onClick={onClose} data-testid="issue-close" />
+          )}
+        </span>
       </div>
       <div className={css.titleRow}>
         {editing

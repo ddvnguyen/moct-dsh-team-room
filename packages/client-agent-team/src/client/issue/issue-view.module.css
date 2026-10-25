@@ -19,12 +19,6 @@
   min-width: 0;
 }
 
-.pageFoot {
-  display: flex;
-  gap: 8px;
-  padding: 0 20px 20px;
-}
-
 /* The page: a header band over a two-column body. The page is not a scroll
    container — the band stays put and each pane below scrolls itself, so the
    timeline runs under the header instead of carrying it off the screen. */
@@ -58,23 +52,14 @@
   color: var(--ml-text-secondary);
 }
 
-/* The one control that makes the legacy surface visible: the issue is what a
- * reader lands on, and the Thread is what they ask for. It sits at the end of
- * the breadcrumb so it never competes with the title. */
-.crumbAction {
-  background: none;
-  border: 0;
-  color: var(--ml-text-tertiary);
-  cursor: pointer;
-  font: inherit;
+/* The header's icon controls — into the legacy Thread, back to the slice
+   panel, close — sit at the breadcrumb row's right end, the way Multica's
+   issue header carries its actions: icons with names, never bare glyphs. */
+.headActions {
+  align-items: center;
+  display: inline-flex;
+  gap: 2px;
   margin-left: auto;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.crumbAction:hover {
-  color: var(--ml-text-secondary);
 }
 
 .titleRow {
