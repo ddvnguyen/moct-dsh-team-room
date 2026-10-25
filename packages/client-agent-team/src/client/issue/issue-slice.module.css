@@ -45,11 +45,15 @@
   background: var(--ml-surface);
 }
 
-/* The tree's own scroll container inside the dialog. */
+/* The tree fills the dialog and passes its height down: the dialog is not a
+   scroll container — the page's panes are — so the slice carries one
+   scrollbar per pane instead of a second one wrapped around them. */
 .tree {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
 }
 
 /* Under the narrow width the overlay stops working as a wide card, so the

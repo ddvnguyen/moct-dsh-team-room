@@ -25,21 +25,23 @@
   padding: 0 20px 20px;
 }
 
-/* The page: a header band over a two-column body. */
+/* The page: a header band over a two-column body. The page is not a scroll
+   container — the band stays put and each pane below scrolls itself, so the
+   timeline runs under the header instead of carrying it off the screen. */
 .page {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 16px 20px 28px;
+  overflow: hidden;
+  padding: 16px 20px 0;
 }
 
 .head {
   display: grid;
+  flex: none;
   gap: 6px;
 }
 
@@ -162,10 +164,14 @@
   line-height: var(--ml-text-caption-line);
 }
 
-/* The body row: the content column and the property column side by side. */
+/* The body row: the content column and the property column side by side. The
+   single fr row is what bounds both panes — without it the tallest column
+   would stretch the row past the page and neither pane could scroll itself. */
 .bodyRow {
   display: grid;
+  flex: 1;
   grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }
@@ -174,8 +180,11 @@
   display: grid;
   align-content: start;
   gap: 18px;
+  min-height: 0;
   min-width: 0;
-  padding-right: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 18px 28px 0;
 }
 
 .side {
