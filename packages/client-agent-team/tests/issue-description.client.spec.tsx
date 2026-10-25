@@ -127,4 +127,81 @@ describe('the issue description', () => {
     expect(view.queryByTestId('issue-description-input')).toBeNull()
     expect(props.patchDescription).not.toHaveBeenCalled()
   })
+
+  it('wraps the selection in Markdown and leaves it selected', async () => {
+    const { view, props } = renderDescription()
+    fireEvent.click(view.getByTestId('issue-description-edit'))
+    const draft = view.getByTestId('issue-description-input') as HTMLTextAreaElement
+    fireEvent.change(draft, { target: { value: 'the anchor body' } })
+    draft.setSelectionRange(4, 10)
+
+    fireEvent.click(view.getByTestId('issue-description-format-bold'))
+
+    // Plain source in, plain source out: the toolbar wraps the words it was
+    // given and the same words stay selected for the next edit.
+    expect(draft.value).toBe('the **anchor** body')
+    expect([draft.selectionStart, draft.selectionEnd]).toEqual([6, 12])
+    expect(draft.value.slice(draft.selectionStart, draft.selectionEnd)).toBe('anchor')
+
+    // What commits is the Markdown source, unchanged in shape by the editor.
+    fireEvent.click(view.getByTestId('issue-description-save'))
+    await waitFor(() => { expect(props.patchDescription).toHaveBeenCalledWith('the **anchor** body', 3) })
+  })
+
+  it('prefixes every line the selection touches', () => {
+    const { view } = renderDescription()
+    fireEvent.click(view.getByTestId('issue-description-edit'))
+    const draft = view.getByTestId('issue-description-input') as HTMLTextAreaElement
+    fireEvent.change(draft, { target: { value: 'first\nsecond' } })
+    draft.setSelectionRange(0, 'first\nsecond'.length)
+
+    fireEvent.click(view.getByTestId('issue-description-format-taskList'))
+
+    expect(draft.value).toBe('- [ ] first\n- [ ] second')
+  })
+
+  it('opens the markers and puts the caret between them when nothing is selected', () => {
+    const { view } = renderDescription()
+    fireEvent.click(view.getByTestId('issue-description-edit'))
+    const draft = view.getByTestId('issue-description-input') as HTMLTextAreaElement
+    fireEvent.change(draft, { target: { value: 'ab' } })
+    draft.setSelectionRange(1, 1)
+
+    fireEvent.click(view.getByTestId('issue-description-format-bold'))
+
+    expect(draft.value).toBe('a****b')
+    expect([draft.selectionStart, draft.selectionEnd]).toEqual([3, 3])
+  })
+
+  it('previews the draft on the Preview tab and keeps the source and the shortcut', async () => {
+    const { view, props } = renderDescription()
+    fireEvent.click(view.getByTestId('issue-description-edit'))
+    const source = '## Steps\n\n**bold** plan'
+    fireEvent.change(view.getByTestId('issue-description-input'), { target: { value: source } })
+
+    fireEvent.click(view.getByRole('tab', { name: zh.issueDescriptionTabPreview }))
+    const preview = view.getByTestId('issue-description-preview')
+    // The preview renders the draft as Markdown — the same MarkdownText the
+    // record itself is read with — and the draft is not edited by the switch.
+    expect(preview.querySelector('strong')?.textContent).toBe('bold')
+    expect(preview.textContent).toContain('Steps')
+    expect(view.getByTestId('issue-description-input').closest('[hidden]')).not.toBeNull()
+
+    // ⌘/Ctrl+Enter still commits from the Preview tab, and it commits the source.
+    fireEvent.keyDown(preview, { key: 'Enter', metaKey: true })
+    await waitFor(() => { expect(props.patchDescription).toHaveBeenCalledWith(source, 3) })
+  })
+
+  it('returns to the Write tab with the draft untouched', () => {
+    const { view } = renderDescription()
+    fireEvent.click(view.getByTestId('issue-description-edit'))
+    const draft = view.getByTestId('issue-description-input') as HTMLTextAreaElement
+    fireEvent.change(draft, { target: { value: 'kept across tabs' } })
+
+    fireEvent.click(view.getByRole('tab', { name: zh.issueDescriptionTabPreview }))
+    fireEvent.click(view.getByRole('tab', { name: zh.issueDescriptionTabWrite }))
+
+    expect(draft.value).toBe('kept across tabs')
+    expect(draft.closest('[hidden]')).toBeNull()
+  })
 })
