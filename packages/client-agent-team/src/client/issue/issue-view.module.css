@@ -161,15 +161,31 @@
   min-width: 0;
 }
 
+/* The main column: the scrolling regions over the pinned composer. One flex
+   column, so the dock's height is the space the scroll pane does not get —
+   the composer never overlaps the last row it follows. */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
 .content {
   display: grid;
   align-content: start;
+  flex: 1;
   gap: 18px;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 18px 28px 0;
+  padding: 0 18px 12px 0;
+}
+
+.composerDock {
+  flex: none;
+  padding: 0 18px 20px 0;
 }
 
 .side {
@@ -208,6 +224,101 @@
   white-space: pre-wrap;
 }
 
+/* A region heading that carries its own control: the edit affordance sits at
+   the heading's right end, where the header's actions sit. */
+.regionHead {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+/* The description editor: the textarea, its preview, and the row that
+   commits or discards the draft. */
+.descriptionEditor {
+  display: grid;
+  gap: 8px;
+}
+
+.descriptionInput {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border-strong);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  font: inherit;
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+  min-height: 96px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+.descriptionInput:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+/* The draft as it will read: capped so a long body cannot push Save off the
+   pane — the textarea is where the words are edited, this is how they land. */
+.descriptionPreview {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-body-line);
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+
+/* The record moved while the draft was open: the current text beside it, and
+   the choice to take it is the reader's. */
+.descriptionNotice {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border-strong);
+  border-radius: var(--ml-radius-sm);
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.descriptionNoticeText {
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+}
+
+.descriptionNoticeBody {
+  color: var(--ml-text);
+  font-size: var(--ml-text-body);
+  line-height: var(--ml-text-body-line);
+}
+
+.descriptionActions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.descriptionHint {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin-right: auto;
+}
+
+.descriptionError {
+  color: var(--ml-priority-urgent);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+}
+
 .descriptionMeta {
   color: var(--ml-text-tertiary);
   font-size: var(--ml-text-caption);
@@ -216,7 +327,59 @@
 
 /* Property rows: one labelled row per fact, the label column sizing to the
    widest label the way Multica's subgrid rows do. */
+.propGroups {
+  display: grid;
+  gap: 12px;
+}
+
 .propSection {
+  display: grid;
+  gap: 4px;
+}
+
+/* The group's heading is its toggle: a real button, so `aria-expanded` is
+   the disclosure a screen reader hears. */
+.propSectionHead {
+  margin: 0;
+}
+
+.propSectionToggle {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: var(--ml-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--ml-text-micro);
+  font-weight: 600;
+  gap: 2px;
+  letter-spacing: 0.02em;
+  line-height: var(--ml-text-micro-line);
+  padding: 0;
+  text-transform: uppercase;
+  width: fit-content;
+}
+
+.propSectionToggle:hover {
+  color: var(--ml-text);
+}
+
+.propSectionToggle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: 1px;
+}
+
+.propSectionChevron {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.propSectionToggle[aria-expanded='true'] .propSectionChevron {
+  transform: rotate(90deg);
+}
+
+.propRows {
   display: grid;
   gap: 2px;
 }

@@ -202,6 +202,43 @@ describe('IssuePage', () => {
     }
   })
 
+  it('pins the composer outside the scrolling regions, so the last row is never covered', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    const dock = harness.view.container.querySelector('[data-issue-composer]')
+    const timeline = harness.view.container.querySelector('[data-issue-timeline]')
+    expect(dock).not.toBeNull()
+    expect(timeline).not.toBeNull()
+    // The composer is the column's furniture, not a row of the timeline: it is
+    // its sibling inside the main column, so no scroll slides it off screen
+    // and no row can slide underneath it.
+    expect(dock?.contains(timeline)).toBe(false)
+    expect(dock?.parentElement?.contains(timeline)).toBe(true)
+  })
+
+  it('groups the panel facts: Properties open, Details and Related collapsed until asked', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    const side = harness.view.getByTestId('issue-properties')
+
+    // Properties is the group a reader meets first: the writable fields are
+    // open without a click.
+    expect(side.querySelector('[data-testid="issue-prop-status"]')).not.toBeNull()
+    expect(side.querySelector('[data-testid="issue-prop-resolution"]')).toBeNull()
+
+    const details = harness.view.getByRole('button', { name: zh.propDetails })
+    expect(details.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(details)
+    expect(details.getAttribute('aria-expanded')).toBe('true')
+    expect(side.querySelector('[data-testid="issue-prop-resolution"]')).not.toBeNull()
+    expect(side.querySelector('[data-testid="issue-prop-phase"]')).not.toBeNull()
+    expect(side.querySelector('[data-testid="issue-prop-claims"]')).not.toBeNull()
+
+    fireEvent.click(harness.view.getByRole('button', { name: zh.propRelated }))
+    expect(side.querySelector('[data-testid="issue-prop-docs"]')).not.toBeNull()
+    expect(side.querySelector('[data-testid="issue-prop-decisions"]')).not.toBeNull()
+  })
+
   /**
    * The browser journey (M-42) drives this surface by hook, not by copy: a
    * heading is a translated string and a region's name changes with the

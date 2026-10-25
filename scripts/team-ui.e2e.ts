@@ -4123,6 +4123,26 @@ it('walks the issue journey from the board card to the legacy Thread in real Web
   await expect.poll(async () => thread.getByText('A comment on the issue').count(), { timeout: 30_000 }).toBeGreaterThan(0)
   await page.screenshot({ path: join(BOARD_SHOTS, 'journey-03-legacy-thread.png'), fullPage: true })
 
+  // The panel over a Thread face — the view the PR2 review asked for: the
+  // Thread's sticky rows and the composer's menus paint at 2 and 10, and the
+  // panel sits in the shell's overlay layer (20), so it stays on top of them.
+  await page.evaluate(([id, ref]) => {
+    const current = JSON.parse(localStorage.getItem('dsh.agent-team.navigation') ?? '{}') as Record<string, unknown>
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ ...current, mode: 'team', workspaceId: id, board: false, issueRef: ref, issueVariant: 'slice' }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  const overThread = page.getByTestId('issue-slice')
+  await overThread.waitFor({ timeout: 30_000 })
+  const onTop = await page.evaluate(() => {
+    const panel = document.querySelector('[data-team-issue-panel]') as HTMLElement | null
+    if (panel === null) return false
+    const rect = panel.getBoundingClientRect()
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + 40)
+    return hit !== null && panel.contains(hit)
+  })
+  expect(onTop).toBe(true)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-over-thread.png'), fullPage: true })
+
   // And back: the board opens the same issue, with the rename and the comment
   // still on it. The legacy view is a peer surface, not a second store.
   await page.evaluate(id => {

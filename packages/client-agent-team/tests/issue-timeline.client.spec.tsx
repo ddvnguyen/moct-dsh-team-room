@@ -10,7 +10,7 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { zh } from '../src/client/locales.ts'
 import { IssueTimeline, type IssueTimelineProps } from '../src/client/issue/IssueTimeline.tsx'
-import { TeamDraftStore } from '../src/client/drafts.ts'
+import { quoteResolver } from '../src/client/issue/comment-thread.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
 
 usePinnedBrowserLanguages('zh-CN')
@@ -91,17 +91,18 @@ function sessionRun(sessionId: string, startedAt: string, endedAt: string): Agen
 }
 
 function renderTimeline(overrides: Partial<IssueTimelineProps> = {}) {
-  const drafts = new TeamDraftStore()
+  const comments = overrides.comments ?? region([])
   const props: IssueTimelineProps = {
     workspaceId,
     taskRef,
     baseRevision: 7,
-    reply: vi.fn(async () => ({ ok: true, value: { kind: 'committed' } })) as unknown as IssueTimelineProps['reply'],
     resolveComment: vi.fn(async () => ({ ok: true, value: { kind: 'committed', messageRef: 'message:a', threadRef: 'thread:plan' } })) as unknown as IssueTimelineProps['resolveComment'],
-    drafts,
-    loadTriggerCatalog: vi.fn(async () => []) as unknown as IssueTimelineProps['loadTriggerCatalog'],
-    draftKey: 'thread:thread:plan' as never,
-    comments: region([]),
+    comments,
+    // The rows the view resolves: this harness posts nothing, so the region's
+    // own page is the list — and the quote runs through the view's resolver.
+    facts: comments.items,
+    quoteOf: quoteResolver(new Map(comments.items.map(fact => [fact.message.messageRef, fact])), nameOf),
+    onReply: vi.fn(),
     activity: noActivity,
     runs: [],
     failures: [],
@@ -119,7 +120,7 @@ function renderTimeline(overrides: Partial<IssueTimelineProps> = {}) {
     ...overrides,
   }
   const view = render(<IssueTimeline {...props} />)
-  return { view, props, drafts }
+  return { view, props }
 }
 
 /** The bodies of the comment cards, in the order the region renders them. */
@@ -277,28 +278,6 @@ describe('IssueTimeline', () => {
     expect(copied.searchParams.get('comment')).toBe('message:a')
   })
 
-  it('posts the comment when the write commits, and shows nothing before it does', async () => {
-    const reply = vi.fn(async () => ({ ok: true, value: { kind: 'committed', receipt: { sequence: 11 }, message: messageFact(11, 'message:new', 'a new comment').message } })) as unknown as IssueTimelineProps['reply']
-    const { view, drafts } = renderTimeline({ comments: region([messageFact(4, 'message:a', 'first comment')]), reply })
-    fireEvent.change(screen.getByLabelText(zh.messageDraft), { target: { value: 'a new comment' } })
-    fireEvent.click(screen.getByRole('button', { name: zh.sendMessage }))
-    // Nothing is inserted before the write commits.
-    expect(cardBodies(view.container)).toEqual(['first comment'])
-    await waitFor(() => { expect(reply).toHaveBeenCalledWith(expect.objectContaining({ body: 'a new comment', taskRef: 'task:1', baseRevision: 7 })) })
-    await waitFor(() => { expect(cardBodies(view.container)).toEqual(['first comment', 'a new comment']) })
-    expect(drafts.getSnapshot('thread:thread:plan' as never).draft).toBe('')
-  })
-
-  it('keeps the draft and shows the reason when the write is refused', async () => {
-    const reply = vi.fn(async () => ({ ok: false, error: { message: 'stale revision' } })) as unknown as IssueTimelineProps['reply']
-    const { view, drafts } = renderTimeline({ comments: region([messageFact(4, 'message:a', 'first comment')]), reply })
-    fireEvent.change(screen.getByLabelText(zh.messageDraft), { target: { value: 'a new comment' } })
-    fireEvent.click(screen.getByRole('button', { name: zh.sendMessage }))
-    await waitFor(() => { expect(view.container.textContent).toContain('stale revision') })
-    expect(drafts.getSnapshot('thread:thread:plan' as never).draft).toBe('a new comment')
-    expect(cardBodies(view.container)).toEqual(['first comment'])
-  })
-
   it('resolves a thread through the Host, and only then shows it closed', async () => {
     const resolveComment = vi.fn(async () => ({
       ok: true as const,
@@ -408,7 +387,6 @@ describe('IssueTimeline', () => {
     expect(view.container.querySelector('[data-comment-card]')?.textContent).toContain('close me')
     expect(view.container.querySelector('[data-comment-resolve]')?.textContent).toBe(zh.issueResolveComment)
   })
-
   it('renders a comment that carries an attachment', () => {
     const withFile = messageFact(4, 'message:a', 'see the file', ann, {
       attachments: [{ attachmentId: 'attachment:1' as AgentTeamAttachmentId, name: 'report.pdf', byteSize: 1024, mediaType: 'application/pdf' }],

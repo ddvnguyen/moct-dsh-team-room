@@ -6,8 +6,8 @@
 // props, changes out through callbacks, never a context. M-38's slice chrome
 // renders this same tree, so a region exists once.
 
-import { useState } from 'react'
-import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
+import { useCallback, useMemo, useState } from 'react'
+import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
 import type { TeamConversationProps } from '../slots.ts'
@@ -16,8 +16,10 @@ import { IssueHeader } from './IssueHeader.tsx'
 import { IssueDescription } from './IssueDescription.tsx'
 import { IssueProperties } from './IssueProperties.tsx'
 import { IssueTimeline, type IssueCommentWrite } from './IssueTimeline.tsx'
+import { IssueComposer } from './IssueComposer.tsx'
 import { IssueDecisions } from './IssueDecisions.tsx'
 import { IssueExecutionLog, type IssueExecutionLogProps } from './IssueExecutionLog.tsx'
+import { mergeComments, quoteResolver } from './comment-thread.ts'
 import css from './issue-view.module.css'
 
 export interface IssueViewProps {
@@ -35,6 +37,12 @@ export interface IssueViewProps {
   readonly mentionHandles: ReadonlyMap<AgentTeamMemberId, string>
   /** Commits a new title; resolves with the failure message, or undefined. */
   readonly onRename: (title: string) => Promise<string | undefined>
+  /**
+   * Commits the description body, fenced by the description's own revision.
+   * Resolves with the failure message — a stale fence among them — or
+   * undefined when the Host took the write.
+   */
+  readonly patchDescription: (body: string) => Promise<string | undefined>
   /** Opens the Task's Thread, the legacy surface (D10); absent when there is no way out. */
   readonly onOpenLegacyThread?: (() => void) | undefined
   /**
@@ -88,12 +96,25 @@ export interface IssueViewProps {
  * decisions and the execution log. The regions are laid out in that order, and
  * every value in them is the Host's.
  */
-export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
+export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, patchDescription, onOpenLegacyThread, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
   // way the Thread page folds its sidebar. The column is hidden by the
   // stylesheet there and the opener appears; the Modal carries the same
   // region, so the properties are the same facts either way.
   const [propertiesOpen, setPropertiesOpen] = useState(false)
+  // The two facts that cross the column: the rows committed since the last
+  // read (the timeline shows them) and the message being answered (the
+  // composer shows its quote). The region reads both; neither is a second copy
+  // of the Task's comments — `facts` is the one merge of the read model's page
+  // and the commits, and it is the list every region in the column reads.
+  const [posted, setPosted] = useState<readonly AgentTeamIssueComment[]>([])
+  const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef | undefined>(undefined)
+  const facts = useMemo(() => mergeComments([...posted, ...view.comments.items]), [posted, view.comments.items])
+  const factByRef = useMemo(() => new Map(facts.map(fact => [fact.message.messageRef, fact])), [facts])
+  // The quote a reply shows: one resolver for the cards and the composer, so
+  // a reply never quotes a different message than the card it started from.
+  const quoteOf = useMemo(() => quoteResolver(factByRef, nameOf), [factByRef, nameOf])
+  const onPosted = useCallback((fact: AgentTeamIssueComment): void => { setPosted(current => [...current, fact]) }, [])
   const assigneeOptions = members.map(status => ({
     memberId: status.member.memberId,
     handle: status.member.handle,
@@ -106,6 +127,8 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
       onPriority={onPriority}
       onAssignee={onAssignee}
       pending={pending}
+      docsCount={view.docs.length}
+      decisionsCount={view.decisions.length}
       t={t}
     />
   )
@@ -150,27 +173,50 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         {t('issuePropertiesOpen')}
       </button>
       <div className={css.bodyRow}>
-        <div className={css.content}>
-          <IssueDescription description={view.description} authorName={nameOf(view.description.author)} t={t} />
-          <IssueTimeline
-            comments={view.comments}
-            activity={view.activity}
-            runs={view.executionLog.sessions}
-            failures={view.executionLog.failures}
-            decisions={view.decisions}
-            nameOf={nameOf}
-            humanMemberId={humanMemberId}
-            humanName={humanName}
-            mentionHandles={mentionHandles}
-            onLoadOlder={onLoadOlderComments}
-            loadingOlder={loadingOlderComments}
-            members={members}
-            openMemberSession={execution.openMemberSession}
-            variant={variant}
-            {...commentWrite}
-            t={t}
-          />
-          <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
+        <div className={css.main}>
+          <div className={css.content}>
+            <IssueDescription description={view.description} authorName={nameOf(view.description.author)} patchDescription={patchDescription} pending={pending} t={t} />
+            <IssueTimeline
+              comments={view.comments}
+              facts={facts}
+              activity={view.activity}
+              runs={view.executionLog.sessions}
+              failures={view.executionLog.failures}
+              decisions={view.decisions}
+              nameOf={nameOf}
+              humanMemberId={humanMemberId}
+              humanName={humanName}
+              mentionHandles={mentionHandles}
+              workspaceId={commentWrite.workspaceId}
+              taskRef={commentWrite.taskRef}
+              getAttachment={commentWrite.getAttachment}
+              resolveMessageRefs={commentWrite.resolveMessageRefs}
+              quoteOf={quoteOf}
+              onReply={setReplyTarget}
+              onLoadOlder={onLoadOlderComments}
+              loadingOlder={loadingOlderComments}
+              members={members}
+              openMemberSession={execution.openMemberSession}
+              variant={variant}
+              t={t}
+            />
+            <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
+          </div>
+          {/* The composer is the column's own furniture: it pins under the
+              scrolling regions, so the last row can never hide behind it and
+              the reader can answer without losing their place. */}
+          <div className={css.composerDock} data-issue-composer="">
+            <IssueComposer
+              {...commentWrite}
+              members={members}
+              humanMemberId={humanMemberId}
+              replyTarget={replyTarget}
+              onReplyTarget={setReplyTarget}
+              replyQuote={replyTarget === undefined ? undefined : quoteOf(replyTarget)}
+              onPosted={onPosted}
+              t={t}
+            />
+          </div>
         </div>
         <aside className={css.side} data-team-issue-side data-testid="issue-properties">
           {properties}
