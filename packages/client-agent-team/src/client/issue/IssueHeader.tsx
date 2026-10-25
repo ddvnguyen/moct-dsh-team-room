@@ -1,16 +1,21 @@
-// Derived from multica-x packages/views/issues/components/issue-detail.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
+// Derived from multica-x packages/views/issues/components/issue-detail.tsx and
+// packages/views/layout/breadcrumb-header.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
 //
-// Rendering adapted: Multica's issue header — the breadcrumb, the `#n`
-// identifier, the inline-editable title and the status chip — ported as one
-// region of the issue view. The title edit is not optimistic: the Remote
-// commits, the change-wake refetches, and only then does the title settle; a
-// rejected write leaves the title where it was and shows why.
+// Rendering adapted: Multica's issue header — the breadcrumb (container ›
+// identifier › title), the inline-editable title, and the actions dropdown —
+// ported as one region of the issue view. The container crumb is the Channel
+// the Task lives in and navigates back to it; the number comes from the
+// Host's `taskNumber`, never from the title. The title edit is not optimistic:
+// the Remote commits, the change-wake refetches, and only then does the title
+// settle; a rejected write leaves the title where it was and shows why.
 
 import { useRef, useState } from 'react'
+import type { AgentTeamChannelRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TaskStatus } from '../multica/types.ts'
 import { STATUS_LABEL_KEY } from '../multica/status.ts'
 import { StatusIcon } from '../multica-ui/StatusIcon.tsx'
 import type { TeamConversationProps } from '../slots.ts'
+import { IssueActionsMenu, type IssueActionsMenuProps } from './IssueActionsMenu.tsx'
 import css from './issue-view.module.css'
 
 export interface IssueHeaderProps {
@@ -20,6 +25,12 @@ export interface IssueHeaderProps {
   readonly status: TaskStatus
   /** The Channel the Task lives in; the breadcrumb's first crumb. */
   readonly channelName: string
+  readonly channelRef: AgentTeamChannelRef
+  /**
+   * Navigates back to the Channel the crumb names. Absent renders the channel
+   * name as plain text — the crumb is presentation, never a dead control.
+   */
+  readonly onOpenChannel?: ((channelRef: AgentTeamChannelRef) => void) | undefined
   /**
    * Commits a new title. Resolves with the failure message, or undefined when
    * the Host committed it — the caller does not move the title itself.
@@ -31,17 +42,20 @@ export interface IssueHeaderProps {
    * reader lands on, and the Thread is what they ask for.
    */
   readonly onOpenLegacyThread?: (() => void) | undefined
+  /** The header's actions menu: the status, priority, assignee, Copy link and Close writes. */
+  readonly actions: IssueActionsMenuProps
   /** A write is in flight; the editor waits for it. */
   readonly pending: boolean
   readonly t: TeamConversationProps['t']
 }
 
 /**
- * The issue's header: where the Task lives, which one it is, what it is
- * called, and where it stands. The title is the one editable field here; it
- * writes through the board's title field, which exists today.
+ * The issue's header: where the Task lives (`channel / #n`), what it is
+ * called, and where it stands — with the one actions menu that moves it.
+ * The title is the one editable field here; it writes through the board's
+ * title field, which exists today.
  */
-export function IssueHeader({ title, taskNumber, status, channelName, onRename, onOpenLegacyThread, pending, t }: IssueHeaderProps) {
+export function IssueHeader({ title, taskNumber, status, channelName, channelRef, onOpenChannel, onRename, onOpenLegacyThread, actions, pending, t }: IssueHeaderProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
@@ -76,9 +90,11 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
   return (
     <header className={css.head} data-testid="issue-header">
       <div className={css.crumb}>
-        <span className={css.crumbChannel}>{channelName}</span>
+        {onOpenChannel !== undefined
+          ? <button type="button" className={css.crumbChannelLink} title={t('issueCrumbChannel', { channel: channelName })} onClick={() => { onOpenChannel(channelRef) }}>{channelName}</button>
+          : <span className={css.crumbChannel}>{channelName}</span>}
         <span aria-hidden="true">/</span>
-        <span>{t('issueLabel')}</span>
+        <span>#{taskNumber}</span>
         {onOpenLegacyThread !== undefined && (
           <button type="button" className={css.crumbAction} data-testid="issue-open-legacy-thread" onClick={onOpenLegacyThread}>
             {t('issueOpenLegacyThread')}
@@ -86,7 +102,6 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
         )}
       </div>
       <div className={css.titleRow}>
-        <span className={css.number} aria-hidden="true">#{taskNumber}</span>
         {editing
           ? <span className={css.titleEditor}>
               <input
@@ -112,6 +127,7 @@ export function IssueHeader({ title, taskNumber, status, channelName, onRename, 
           <StatusIcon status={status} />
           {t(STATUS_LABEL_KEY[status])}
         </span>
+        <IssueActionsMenu {...actions} t={t} />
       </div>
     </header>
   )

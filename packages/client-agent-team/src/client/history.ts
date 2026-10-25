@@ -232,14 +232,12 @@ export class TeamHistory {
    * parameters and leaves every other parameter on the URL alone.
    */
   private urlFor(position: TeamPosition): string {
-    const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
-    if (position.issueRef === undefined) {
-      params.delete(ISSUE_QUERY_KEY)
-      params.delete(VARIANT_QUERY_KEY)
-    } else {
-      params.set(ISSUE_QUERY_KEY, position.issueRef)
-      params.set(VARIANT_QUERY_KEY, position.issueVariant ?? 'page')
+    if (position.issueRef !== undefined) {
+      return issueShareHref(position.issueRef, position.issueVariant ?? 'page')
     }
+    const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
+    params.delete(ISSUE_QUERY_KEY)
+    params.delete(VARIANT_QUERY_KEY)
     const query = params.toString()
     return query === '' ? '?' : `?${query}`
   }
@@ -411,6 +409,24 @@ export class TeamHistory {
       // Local persistence is a convenience; private mode and quota failures do not block navigation.
     }
   }
+}
+
+/**
+ * The shareable link for one issue, as the history module writes it: the
+ * plugin's two query parameters over the current document's query, nothing
+ * else. `urlFor` writes exactly this string for an issue position, and the
+ * header's Copy link copies this same string — one builder, so the link a
+ * reader copies can never drift from the URL the history stack stands on.
+ *
+ * A cold load of this link opens the issue in the `page` variant: a slice is
+ * transient and a cold start has no opener to return the focus to.
+ */
+export function issueShareHref(issueRef: AgentTeamTaskRef, variant: TeamPosition['issueVariant'] = 'page'): string {
+  const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
+  params.set(ISSUE_QUERY_KEY, issueRef)
+  params.set(VARIANT_QUERY_KEY, variant ?? 'page')
+  const query = params.toString()
+  return query === '' ? '?' : `?${query}`
 }
 
 /**

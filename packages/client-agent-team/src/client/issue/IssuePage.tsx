@@ -16,7 +16,7 @@ import look from '../multica-look.module.css'
 import { IssueSurface, type IssueSurfaceProps } from './IssueSurface.tsx'
 import css from './issue-view.module.css'
 
-export interface IssuePageProps extends IssueSurfaceProps {
+export interface IssuePageProps extends Omit<IssueSurfaceProps, 'variant'> {
   /** Closes the issue surface; the face behind it stays where it was. */
   readonly closeIssue: () => void
   /**
@@ -36,12 +36,14 @@ export interface IssuePageProps extends IssueSurfaceProps {
 /**
  * The issue page: the whole column shows one issue, its seven regions and the
  * Human's writes. The page is one presentation of the shared surface — the
- * slice dialog is the other, and both read the same value.
+ * slice dialog is the other, and both read the same value. The page is the
+ * `page` variant: it carries the sidebar, and with it the execution-log
+ * section.
  */
 export function IssuePage(props: IssuePageProps) {
   return (
     <main className={`${look.multicaLook} ${css.pageSurface}`} data-team-issue-page data-testid="issue-page">
-      <IssueSurface {...props} onOpenLegacyThread={props.goToThread} />
+      <IssueSurface {...props} variant="page" onOpenLegacyThread={props.goToThread} />
       <div className={css.pageFoot}>
         <Button size="sm" variant="outline" onClick={props.showSlice} data-testid="issue-back-to-slice">{props.t('issueBackToSlice')}</Button>
         <Button size="sm" variant="outline" onClick={props.closeIssue} data-testid="issue-close">{props.t('issueClose')}</Button>

@@ -12,7 +12,7 @@
 // it was and says why; a stale revision is a business outcome, not an error.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
@@ -64,6 +64,10 @@ export interface IssueSurfaceProps {
    * to leave the issue to find the Thread it replaced.
    */
   readonly onOpenLegacyThread?: (() => void) | undefined
+  /** Which presentation hosts the tree: the page or the slice (see `IssueViewProps`). */
+  readonly variant: 'page' | 'slice'
+  /** Navigates back to the Channel the header's crumb names. */
+  readonly onOpenChannel?: ((channelRef: AgentTeamChannelRef) => void) | undefined
   readonly t: TeamConversationProps['t']
 }
 
@@ -74,7 +78,7 @@ export interface IssueSurfaceProps {
  * changes what the reader sees.
  */
 export function IssueSurface(props: IssueSurfaceProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
@@ -254,6 +258,8 @@ export function IssueSurface(props: IssueSurfaceProps) {
         mentionHandles={mentionHandles}
         onRename={title => patchTask({ title })}
         onOpenLegacyThread={onOpenLegacyThread}
+        variant={variant}
+        onOpenChannel={onOpenChannel}
         onStatus={moveStatus}
         onPriority={priority => { void patchTask({ priority: normalizePriority(priority) }) }}
         onAssignee={memberId => { void patchTask({ assignee: memberId }) }}

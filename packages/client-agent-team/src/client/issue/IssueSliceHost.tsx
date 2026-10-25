@@ -65,6 +65,12 @@ export function IssueSliceHost(props: IssueSliceHostProps) {
       humanName={identity.name ?? props.t('human')}
       closeIssue={() => { navigation.actions().closeIssue() }}
       maximize={() => { navigation.actions().setIssueVariant('page') }}
+      onOpenChannel={channelRef => {
+        // The Channel is a face of its own: the issue closes first, the way
+        // the Thread control does, so no dialog stands over a face.
+        navigation.actions().closeIssue()
+        navigation.actions().selectChannel(channelRef)
+      }}
       goToThread={() => {
         // The slice closes first: the Thread is a face of its own, and a
         // dialog over it would be a dialog nobody asked for.
