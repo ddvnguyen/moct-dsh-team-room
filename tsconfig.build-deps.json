@@ -53,6 +53,9 @@
       "@ddvnguyen/moct-dsh-team-room/mentions": [
         "./packages/agent-team/lib/types/mentions.d.ts"
       ],
+      "@ddvnguyen/moct-dsh-team-room/team-decisions": [
+        "./packages/agent-team/lib/types/team-decisions.d.ts"
+      ],
       "@ddvnguyen/moct-dsh-team-room/member-skills": [
         "./packages/agent-team/lib/types/member-skills.d.ts"
       ],
