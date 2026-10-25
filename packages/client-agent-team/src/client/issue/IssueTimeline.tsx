@@ -14,13 +14,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamIssueActivity, AgentTeamIssueComment, AgentTeamIssueComments,
+  AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamCommentResolution, AgentTeamIssueActivity, AgentTeamIssueComment, AgentTeamIssueComments,
   AgentTeamIssueDecision, AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskRef, AgentTeamThreadSessionRuns,
   AgentTeamThreadTurnFailure,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { TeamComposer } from '../TeamComposer.tsx'
-import { CommentCard, type CommentCardReply } from '../multica/comment-card.tsx'
+import { CommentCard, ResolvedThreadBar, type CommentCardReply } from '../multica/comment-card.tsx'
 import { buildCommentThread, committedCommentFact, decisionAskMessageRefs } from './comment-thread.ts'
 import { mentionedMemberIds, mentionNamesOf, type MentionHandle } from '../team-formatters.ts'
 import { mintRequestId, uploadComposerFiles } from '../requests.ts'
@@ -51,6 +51,8 @@ export interface IssueCommentWrite {
   readonly baseRevision: number
   /** The write: one comment on the issue. */
   readonly reply: TeamConversationProps['reply']
+  /** The write: close or reopen one comment thread; the card's value moves when the Host answers. */
+  readonly resolveComment: TeamConversationProps['resolveComment']
   readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
   readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
   /** Quote context for the replies whose parent is not on screen. */
@@ -103,7 +105,7 @@ export interface IssueTimelineProps extends IssueCommentWrite {
  */
 export function IssueTimeline({
   comments, activity, runs, failures, decisions, nameOf, humanMemberId, humanName, mentionHandles, workspaceId, taskRef, baseRevision,
-  onLoadOlder, loadingOlder, members, openMemberSession, variant, reply, putAttachment, getAttachment, resolveMessageRefs, drafts,
+  onLoadOlder, loadingOlder, members, openMemberSession, variant, reply, resolveComment, putAttachment, getAttachment, resolveMessageRefs, drafts,
   loadTriggerCatalog, draftKey, t,
 }: IssueTimelineProps) {
   const [posted, setPosted] = useState<readonly AgentTeamIssueComment[]>([])
@@ -113,6 +115,12 @@ export function IssueTimeline({
   const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef | undefined>(undefined)
   const [files, setFiles] = useState<readonly File[]>([])
   const [copied, setCopied] = useState<AgentTeamMessageRef | undefined>(undefined)
+  // The Host's own answers to a resolve / reopen: `null` is "reopened". The
+  // value moves here only after the write commits, so nothing is guessed — a
+  // refused write leaves the card exactly as the Host still reads it.
+  const [resolvedAnswers, setResolvedAnswers] = useState<ReadonlyMap<AgentTeamMessageRef, AgentTeamCommentResolution | null>>(new Map())
+  const [resolving, setResolving] = useState<AgentTeamMessageRef | undefined>(undefined)
+  const [resolveErrors, setResolveErrors] = useState<ReadonlyMap<AgentTeamMessageRef, string>>(new Map())
 
   // The link a reader arrived on, read once: the timeline scrolls that card
   // into view. A ref that is not in the rendered window is a no-op.
@@ -202,6 +210,46 @@ export function IssueTimeline({
     return () => { clearTimeout(timer) }
   }, [copied])
 
+  /**
+   * The thread's resolution: the Host's answer once one has landed here, and
+   * otherwise the value the view carried. A fresh read reconciles the two.
+   */
+  const resolutionOf = useCallback((fact: AgentTeamIssueComment): AgentTeamCommentResolution | undefined => {
+    if (resolvedAnswers.has(fact.message.messageRef)) return resolvedAnswers.get(fact.message.messageRef) ?? undefined
+    return fact.resolved
+  }, [resolvedAnswers])
+
+  const reportResolveError = useCallback((messageRef: AgentTeamMessageRef, reason: string): void => {
+    setResolveErrors(current => new Map(current).set(messageRef, t('issueCommentResolvedFailed', { reason })))
+  }, [t])
+
+  /**
+   * One resolve / reopen, written through the Host and read back from its
+   * answer. Nothing is shown before the commit: a refused write leaves the
+   * thread exactly as it was and says why.
+   */
+  const toggleResolved = useCallback(async (messageRef: AgentTeamMessageRef, resolved: boolean): Promise<void> => {
+    if (resolving !== undefined) return
+    setResolving(messageRef)
+    setResolveErrors(current => {
+      if (!current.has(messageRef)) return current
+      const next = new Map(current)
+      next.delete(messageRef)
+      return next
+    })
+    try {
+      const result = await resolveComment({ requestId: mintRequestId(), workspaceId, taskRef, messageRef, resolved, baseRevision })
+      if (!result.ok) { reportResolveError(messageRef, result.error.message); return }
+      const answer = result.value
+      if (answer.kind !== 'committed') { reportResolveError(messageRef, t('staleRevision')); return }
+      setResolvedAnswers(current => new Map(current).set(messageRef, answer.resolved ?? null))
+    } catch (cause) {
+      reportResolveError(messageRef, cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setResolving(undefined)
+    }
+  }, [resolving, resolveComment, workspaceId, taskRef, baseRevision, reportResolveError, t])
+
   const send = useCallback(async (): Promise<void> => {
     const { draft, recipients } = drafts.getSnapshot(draftKey)
     if (pending || draft.trim() === '') return
@@ -279,6 +327,30 @@ export function IssueTimeline({
               }
               const fact = row.entry
               const messageRef = fact.message.messageRef
+              const resolution = resolutionOf(fact)
+              const resolveError = resolveErrors.get(messageRef)
+              const card = (
+                <CommentCard
+                  author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
+                  body={fact.message.body}
+                  human={fact.message.sender === humanMemberId}
+                  occurredAt={fact.message.occurredAt}
+                  mentionNames={mentionNamesOfFact(fact)}
+                  attachments={fact.message.attachments}
+                  {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
+                  {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
+                  replies={repliesOf(fact)}
+                  orphan={tree.roots.find(root => root.fact.message.messageRef === messageRef)?.orphan ?? false}
+                  {...(resolution === undefined ? {} : { resolved: { by: nameOf(resolution.memberId), at: resolution.resolvedAt } })}
+                  onReply={() => { setReplyTarget(messageRef) }}
+                  onCopyLink={() => { copyLink(messageRef) }}
+                  linkCopied={copied === messageRef}
+                  {...(resolution === undefined ? { onToggleResolved: () => { void toggleResolved(messageRef, true) } } : {})}
+                  resolvePending={resolving === messageRef}
+                  {...(resolveError === undefined ? {} : { resolveError })}
+                  t={t}
+                />
+              )
               return (
                 <div
                   key={messageRef}
@@ -286,22 +358,19 @@ export function IssueTimeline({
                   data-message-ref={messageRef}
                   className={messageRef === anchor ? css.anchored : undefined}
                 >
-                  <CommentCard
-                    author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
-                    body={fact.message.body}
-                    human={fact.message.sender === humanMemberId}
-                    occurredAt={fact.message.occurredAt}
-                    mentionNames={mentionNamesOfFact(fact)}
-                    attachments={fact.message.attachments}
-                    {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
-                    {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
-                    replies={repliesOf(fact)}
-                    orphan={tree.roots.find(root => root.fact.message.messageRef === messageRef)?.orphan ?? false}
-                    onReply={() => { setReplyTarget(messageRef) }}
-                    onCopyLink={() => { copyLink(messageRef) }}
-                    linkCopied={copied === messageRef}
-                    t={t}
-                  />
+                  {/* A closed thread collapses to one bar; opening it shows
+                      the same card an open thread shows. */}
+                  {resolution === undefined ? card : (
+                    <ResolvedThreadBar
+                      resolved={{ by: nameOf(resolution.memberId), at: resolution.resolvedAt }}
+                      onReopen={() => { void toggleResolved(messageRef, false) }}
+                      reopenPending={resolving === messageRef}
+                      reopenError={resolveError}
+                      t={t}
+                    >
+                      {card}
+                    </ResolvedThreadBar>
+                  )}
                 </div>
               )
             })}

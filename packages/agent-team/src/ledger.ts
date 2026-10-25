@@ -31,6 +31,8 @@ import type {
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
   AgentTeamClaimRef,
+  AgentTeamCommentResolution,
+  AgentTeamCommentResolvedOperation,
   AgentTeamConfirmationRequired,
   AgentTeamConfirmationToken,
   AgentTeamCreateChannelRequest,
@@ -48,6 +50,9 @@ import type {
   AgentTeamDocCommentRef,
   AgentTeamDocCommentResult,
   AgentTeamDocCommentResolvedOperation,
+  AgentTeamResolveCommentCommittedResult,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocReview,
@@ -547,6 +552,11 @@ export interface AgentTeamAuthorizedResolveDocCommentRequest extends AgentTeamRe
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
 
+/** Any actor the ledger rule admits: the Human, the comment's author, or the Task's assignee. */
+export interface AgentTeamAuthorizedResolveCommentRequest extends AgentTeamResolveCommentRequest {
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+}
+
 export interface AgentTeamAuthorizedCommentDocRequest extends AgentTeamCommentDocRequest {
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
@@ -699,6 +709,12 @@ interface Projection {
   readonly observationsByThread: Map<AgentTeamThreadRef, AgentTeamAttentionObservation[]>
   /** Team Documents, folded from their own operations and the submit and review notices on Thread replies. */
   readonly docs: Map<AgentTeamDocRef, AgentTeamDocState>
+  /**
+   * Closed comment threads, keyed by their root Message: who closed it and when.
+   * A reopened thread has no entry, so the map is the current state and never a
+   * history — the ledger holds the history.
+   */
+  readonly commentResolutions: Map<AgentTeamMessageRef, AgentTeamCommentResolution>
   /** Docs per home Thread, in creation order. */
   readonly docsByThread: Map<AgentTeamThreadRef, AgentTeamDocRef[]>
   /** Decision cards, folded from the ask, answer and withdraw notices on Thread replies. */
@@ -781,7 +797,7 @@ function emptyProjection(): Projection {
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map(),
-    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map(),
+    docs: new Map(), docsByThread: new Map(), commentResolutions: new Map(), decisions: new Map(), decisionsByThread: new Map(),
     decisionRecords: new Map(), decisionRecordsByThread: new Map(), decisionRecordsByTask: new Map(), descriptionWriteSequences: new Map() }
 }
 
@@ -2509,6 +2525,56 @@ export class AgentTeamLedger {
   }
 
   /**
+   * Close or reopen one issue comment thread, addressed by its root Message.
+   *
+   * Who may do it: the Human, the root comment's author, or the Task's
+   * assignee. It is not the Doc-comment rule reused — a Doc comment lives in
+   * the Doc's own state and is resolve-only, while an issue thread is a run of
+   * Thread Messages that must also reopen — but the shape follows it: one
+   * operation carries the direction, and it wakes nobody and adds no Inbox
+   * fact, because it is a marker on a comment rather than a claim about the
+   * Thread's other facts.
+   *
+   * The fence is the other Thread writes': the Thread revision the writer saw.
+   * The write does NOT advance it — a resolution is metadata about one comment,
+   * so it must not make a reply already in flight stale.
+   */
+  resolveComment(request: AgentTeamAuthorizedResolveCommentRequest): Promise<AgentTeamLedgerResult<AgentTeamResolveCommentResult>> {
+    return this.enqueue(async () => {
+      // The idempotent branch reads `byRequest` before any authorization or
+      // projection work, so a retry answers the stored write even after the
+      // Thread has moved on.
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameCommentResolution(existing, request)
+        return this.resolved(this.resolveCommentResult(existing))
+      }
+      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
+      const { task, thread } = this.threadContextForActor(actor, request.workspaceId, request)
+      const comment = this.requireResolvableComment(thread.threadRef, request.messageRef)
+      if (actor.kind === 'member' && comment.sender !== actor.memberId && task?.assignee !== actor.memberId) {
+        throw new Error(`only the comment's author, the Task's assignee, or the Human can resolve '${comment.messageRef}'`)
+      }
+      if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
+      const resolved = this.state.commentResolutions.has(comment.messageRef)
+      if (request.resolved === resolved) {
+        throw new Error(request.resolved
+          ? `comment '${comment.messageRef}' is already resolved`
+          : `comment '${comment.messageRef}' is not resolved`)
+      }
+      const sequence = this.nextSequence()
+      const operation: AgentTeamCommentResolvedOperation = Object.freeze({
+        ...this.operationBase(request, sequence), kind: 'team/comment-resolved',
+        data: Object.freeze({ workspaceId: request.workspaceId, threadRef: thread.threadRef, messageRef: comment.messageRef,
+          resolved: request.resolved, baseRevision: request.baseRevision }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.resolveCommentResult(operation))
+    })
+  }
+
+  /**
    * The author asks the Human to review the Doc at its current revision. The
    * notice is a Thread reply that mentions the Human, so the Doc reaches their
    * Inbox; it is not gated on the author's unread work, because it adds no
@@ -2987,6 +3053,13 @@ export class AgentTeamLedger {
 
   private resolveDocCommentResult(operation: AgentTeamDocCommentResolvedOperation): AgentTeamResolveDocCommentResult {
     return Object.freeze({ receipt: this.receipt(operation), docRef: operation.data.docRef, commentRef: operation.data.commentRef })
+  }
+
+  /** Reads only the operation, so a retry answers the stored write with the same resolution. */
+  private resolveCommentResult(operation: AgentTeamCommentResolvedOperation): AgentTeamResolveCommentCommittedResult {
+    return Object.freeze({ kind: 'committed' as const, receipt: this.receipt(operation), threadRef: operation.data.threadRef,
+      messageRef: operation.data.messageRef,
+      ...(operation.data.resolved ? { resolved: Object.freeze({ memberId: operation.actor.memberId, resolvedAt: operation.occurredAt }) } : {}) })
   }
 
   private docNoticeResult(operation: AgentTeamThreadRepliedOperation): AgentTeamDocNoticeResult {
@@ -3794,8 +3867,10 @@ export class AgentTeamLedger {
       case 'team/initialized':
       case 'team/thread-attention-changed':
       case 'team/thread-read':
-        // Not room activity: a DM has no Channel, a read or attention change is private, and the
-        // rest is workspace or channel administration a room view does not narrate.
+      case 'team/comment-resolved':
+        // Not room activity: a DM has no Channel, a read or attention change is private, a comment
+        // resolution rides the comment in the issue view rather than the feed, and the rest is
+        // workspace or channel administration a room view does not narrate.
         return undefined
       default:
         return undefined
@@ -4283,7 +4358,12 @@ export class AgentTeamLedger {
         updatedAt,
       }),
       comments: Object.freeze({
-        items: Object.freeze(carried),
+        // A root comment carries the resolution the Host records; a reply
+        // never does, because a thread is closed by its root.
+        items: Object.freeze(carried.map(fact => {
+          const resolution = this.state.commentResolutions.get(fact.message.messageRef)
+          return resolution === undefined ? fact : Object.freeze({ ...fact, resolved: resolution })
+        })),
         hasMore: commentFacts.length > carried.length,
         cursor: carried.at(0)?.sequence ?? 0,
       }),
@@ -4513,6 +4593,9 @@ export class AgentTeamLedger {
       case 'team/doc-comment-resolved':
         // A Doc page subscribes to its home Thread's scope, so each write refreshes it.
         return [{ kind: 'thread', threadRef: operation.data.threadRef }]
+      case 'team/comment-resolved':
+        // An open issue reads the timeline it just changed; nobody is woken.
+        return [{ kind: 'thread', threadRef: operation.data.threadRef }]
       default:
         return assertUnhandledKind(operation)
     }
@@ -4584,6 +4667,9 @@ export class AgentTeamLedger {
       case 'team/doc-section-written':
       case 'team/doc-comment-added':
       case 'team/doc-comment-resolved':
+      // A resolution is a marker on one comment: it adds no Thread fact, so no
+      // follower has unread work behind it.
+      case 'team/comment-resolved':
         return []
       default:
         return assertUnhandledKind(operation)
@@ -5274,6 +5360,31 @@ export class AgentTeamLedger {
         || comment.parentCommentRef !== undefined || state.resolved.has(comment.commentRef)) throw new Error('invalid Doc comment resolution')
       return
     }
+    if (operation.kind === 'team/comment-resolved') {
+      const member = operation.actor.kind === 'member' ? assertMember() : (assertHuman(), undefined)
+      const thread = projection.threads.get(operation.data.threadRef)
+      const comment = projection.messagesByRef.get(operation.data.messageRef)
+      const channelRef = thread === undefined ? undefined : projection.channelRefByThread.get(thread.threadRef)
+      if (thread === undefined || comment === undefined || channelRef === undefined
+        || comment.threadRef !== thread.threadRef
+        // A reply is never a target, the anchor is not a comment, and the
+        // stored fence must be the revision this record fenced on.
+        || comment.replyToMessageRef !== undefined
+        || projection.anchorByThread.get(thread.threadRef)?.messageRef === comment.messageRef
+        || thread.revision !== operation.data.baseRevision
+        // The direction must be a real transition from the prior projection.
+        || operation.data.resolved === projection.commentResolutions.has(comment.messageRef)
+        || (member !== undefined && !this.isChannelMemberFrom(projection, channelRef, member.memberId))) {
+        throw new Error('invalid comment resolution')
+      }
+      // Who may resolve, re-derived rather than trusted: the comment's author,
+      // the Task's assignee, or (as at write time) no Member at all.
+      if (member !== undefined && comment.sender !== member.memberId) {
+        const task = thread.taskRef === undefined ? undefined : projection.tasks.get(thread.taskRef)
+        if (task?.assignee !== member.memberId) throw new Error('invalid comment resolution authority')
+      }
+      return
+    }
     if (operation.kind === 'team/dm-sent') {
       const sender = assertMember()
       const recipient = projection.members.get(operation.data.recipientMemberId)
@@ -5799,6 +5910,17 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/doc-comment-resolved') {
       const state = target.docs.get(operation.data.docRef)
       if (state !== undefined) target.docs.set(operation.data.docRef, withDocCommentResolved(state, operation.data.commentRef, operation.occurredAt))
+      return
+    }
+    if (operation.kind === 'team/comment-resolved') {
+      // The map is the current state, not a history: reopening removes the
+      // entry, so a replay folds the last write and nothing else.
+      if (operation.data.resolved) {
+        target.commentResolutions.set(operation.data.messageRef,
+          Object.freeze({ memberId: operation.actor.memberId, resolvedAt: operation.occurredAt }))
+      } else {
+        target.commentResolutions.delete(operation.data.messageRef)
+      }
       return
     }
     if (operation.kind === 'team/doc-comment-added') {
@@ -6921,6 +7043,23 @@ export class AgentTeamLedger {
   }
 
   /**
+   * The root comment one resolution addresses.
+   *
+   * A thread is closed by its root only: a reply is not resolvable on its own,
+   * so a reply ref is refused rather than silently resolving the thread it
+   * hangs under. The anchor is the issue's opening Message, not a comment.
+   */
+  private requireResolvableComment(threadRef: AgentTeamThreadRef, messageRef: AgentTeamMessageRef): AgentTeamMessage {
+    const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
+    const comment = key === undefined ? undefined : this.state.messagesByRef.get(key)
+    if (comment === undefined) throw new Error(`unknown Message '${messageRef}' for a comment resolution`)
+    if (comment.threadRef !== threadRef) throw new Error(`Message '${comment.messageRef}' belongs to another Thread; only Thread '${threadRef}' can be resolved`)
+    if (comment.replyToMessageRef !== undefined) throw new Error('a reply cannot be resolved; resolve the comment its thread starts at')
+    if (this.threadAnchor(threadRef).messageRef === comment.messageRef) throw new Error('the opening Message is not a comment; there is nothing to resolve')
+    return comment
+  }
+
+  /**
    * Answering a Message reaches its author the way a mention does. Only an
    * author the Channel can still address joins — a departed Member stays out
    * rather than failing the reply — and a reply to one's own Message adds no one.
@@ -7139,6 +7278,16 @@ export class AgentTeamLedger {
       || !this.sameList(operation.data.message.attachments?.map(attachment => attachment.attachmentId) ?? [],
         request.resolvedAttachments?.map(attachment => attachment.attachmentId) ?? [])
       || !this.sameList(operation.data.mentions, recipients)) this.throwRequestCollision(request.requestId)
+  }
+
+  /** One resolution is one request: the direction and its fence must match the stored record. */
+  private assertSameCommentResolution(operation: AgentTeamOperation, request: AgentTeamAuthorizedResolveCommentRequest): asserts operation is AgentTeamCommentResolvedOperation {
+    if (operation.kind !== 'team/comment-resolved' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId
+      || operation.data.messageRef !== request.messageRef
+      || operation.data.resolved !== request.resolved
+      || operation.data.baseRevision !== request.baseRevision
+      || (request.threadRef !== undefined && operation.data.threadRef !== request.threadRef)) this.throwRequestCollision(request.requestId)
   }
 
   private assertSamePromotion(operation: AgentTeamOperation, request: AgentTeamAuthorizedPromoteThreadRequest): asserts operation is AgentTeamThreadPromotedOperation {

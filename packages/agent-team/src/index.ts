@@ -166,6 +166,8 @@ import type {
   AgentTeamDocsResult,
   AgentTeamDocView,
   AgentTeamReviewDocRequest,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocSectionHistory,
@@ -2993,6 +2995,20 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.humanCall(request.workspaceId)
     const result = await this.requireLedger().writeDocSection({ ...request, actor })
     this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /**
+   * Human close or reopen of one issue comment thread, fenced by the Thread
+   * revision on screen; a stale revision is a business outcome. The ledger
+   * also admits the comment's author and the Task's assignee; this remote is
+   * the Human's, because the Human owns the issue view's comment surface.
+   */
+  @Remote('resolveComment')
+  async resolveComment(request: AgentTeamResolveCommentRequest): Promise<AgentTeamResolveCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().resolveComment({ ...request, actor })
+    if (result.committed && result.value.kind === 'committed') this.emitCommitted(result.value.receipt)
     return result.value
   }
 

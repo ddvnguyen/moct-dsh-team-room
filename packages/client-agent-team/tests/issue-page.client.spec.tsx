@@ -128,6 +128,7 @@ function renderPage(options: {
       humanName="ddvnguyen"
       loadThreadHistory={loadThreadHistory}
       reply={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } })) as unknown as TeamConversationProps['reply']}
+      resolveComment={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } })) as unknown as TeamConversationProps['resolveComment']}
       drafts={new TeamDraftStore()}
       loadTriggerCatalog={vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog']}
       updateTask={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } as unknown as AgentTeamUpdateTaskResult }))}
