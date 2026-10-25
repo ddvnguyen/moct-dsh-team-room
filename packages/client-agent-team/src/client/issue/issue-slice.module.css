@@ -1,0 +1,67 @@
+/*
+ * The issue slice: the issue view as a dialog over whatever screen the reader
+ * is on.
+ *
+ * Derived from multica-x packages/views/issues/components/issue-peek.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
+ * Copyright Index Labs. Multica License.
+ *
+ * The width is the owner's screenshot's: a wide overlay (GitHub Projects'
+ * issue panel), not upstream's 520px peek — the screenshot supersedes the
+ * peek, so the panel is drawn at the width a wide issue overlay needs.
+ */
+
+/* The dialog itself: a wide card, capped by the viewport. */
+.dialog {
+  width: min(960px, calc(100vw - 64px));
+  max-height: calc(100vh - 64px);
+}
+
+/* The dialog's body: the tree fills it and scrolls inside it. */
+.content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - 64px);
+  overflow: hidden;
+  padding: 0;
+}
+
+/* The slice's own body: the chrome bar over the tree. */
+.sliceBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The chrome bar: the two controls the slice adds over the shared tree. */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ml-border);
+  background: var(--ml-surface);
+}
+
+/* The tree's own scroll container inside the dialog. */
+.tree {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Under the narrow width the overlay stops working as a wide card, so the
+   slice hands the issue to the page variant instead (the slot's variant is
+   the client's business). */
+@media (max-width: 768px) {
+  .dialog {
+    width: 100vw;
+    max-height: 100vh;
+  }
+
+  .content {
+    max-height: 100vh;
+  }
+}

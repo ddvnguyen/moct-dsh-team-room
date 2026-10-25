@@ -1,3 +1,15 @@
+/**
+ * @deprecated The legacy Thread view (D10, 2026-10-22). The issue surface
+ * (`./issue/`) is what every entry point opens now; this page is a **peer
+ * surface**, not a component the issue view borrows from. It is frozen —
+ * fixes only, no new region, no new write, no new op kind — and it stays
+ * reachable from the Channel face and from the issue header's
+ * "Open the legacy thread view" control. See `docs/frontend-design/board.md`.
+ *
+ * One store, two views: both surfaces read the same Thread facts from the
+ * Host, so a comment posted in one must appear in the other. A disagreement
+ * is a bug in the issue view, never a second comment store.
+ */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   AgentTeamClientMemberStatus,
@@ -46,7 +58,7 @@ import { makeTimeAgo } from './multica/time-ago.ts'
 import { normalizePriority } from './multica/priority.ts'
 import look from './multica-look.module.css'
 import detailCss from './thread-detail.module.css'
-import { hostTaskRefLookup, jumpToTaskThread } from './refs.ts'
+import { hostTaskRefLookup } from './refs.ts'
 import { hostThreadRefLookup, jumpToThread } from './refs.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from './refs.ts'
 import { rosterChannelName, rosterMember } from './refs.ts'
@@ -87,6 +99,8 @@ interface TeamThreadPageProps {
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly selectThread: TeamConversationProps['selectThread']
+  /** The global opener: a cited Task opens as an issue slice over the Thread. */
+  readonly openIssue: TeamConversationProps['openIssue']
   readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly resolveThreadRefs: TeamConversationProps['resolveThreadRefs']
   readonly resolveMessageRefs: TeamConversationProps['resolveMessageRefs']
@@ -150,9 +164,10 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
   return new Map(facts.map(fact => [factKey(fact.fact), fact]))
 }
 
+/** @deprecated The legacy Thread view (D10). The issue surface is current; this page is frozen and stays reachable. */
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
+    workspaceId, humanName, humanAvatarUrl, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, openIssue, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, openMemberSession, putAttachment,
     loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, updateTask, stopSession,
     changeAttention, loadDocs, reviewDoc, loadDecisions, answerDecision, selectDoc,
     subscribeChanges, loadMembers, loadMemberActivity, drafts, loadTriggerCatalog, getAttachment, reply, changeTask, promoteThread, sidebarCollapsed, openSidebar, inLane = false, t,
@@ -668,8 +683,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       return
     }
     if (ref.startsWith('task:') && ref !== taskRef) {
-      // Another Task cited here: resolve its home Channel and jump.
-      jumpToTaskThread(resolveTaskRefs, workspaceId, ref as AgentTeamTaskRef, selectThread)
+      // Another Task cited here: open it as an issue slice over this Thread,
+      // the same seam the board and the Inbox use. The Thread's own Workspace
+      // is the one the issue is read in.
+      openIssue(ref as AgentTeamTaskRef, { workspaceId })
     }
   }, [channelRef, threadRef, taskRef, workspaceId, selectChannel, selectThread, resolveTaskRefs, resolveThreadRefs])
 
@@ -1038,12 +1055,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread })
         return undefined
       }
-      if (result.value.kind === 'unread_required') {
-        setError(t('unreadRequired', { count: result.value.unreadCount }))
-        mutationRequests.current.delete(key)
-        await refreshAfterFence()
-        return t('unreadRequired', { count: result.value.unreadCount })
-      }
+      // updateTask's only remaining business outcome is the stale revision:
+      // board fields are metadata, so no unread fence applies to them.
       setError(t('staleRevision'))
       mutationRequests.current.delete(key)
       await refreshPassiveFacts()

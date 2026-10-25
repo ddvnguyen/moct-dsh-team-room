@@ -75,6 +75,22 @@ UI work 的边界如下：
 
   Thread reads 使用 Host projections（`readThread`、`threadHistory`）和 Host mutations（replies、promotion、Task actions）。 当前 Thread UI 不提供 Attention controls 或 observations。这些 controls 的 Host Remote methods 留给后续自有 UI。 Browser 会持久化五样东西。Team navigation mode、Workspace selection、最近选中的 Channel 或 Thread、Inbox 页位置，还有 Overview 页。回到 Team 时恢复位置。unread 或 Attention 不持久化。Overview 页与 Channel 页一样以 Workspace 为范围：选中 Workspace 或 Channel 即离开它，页面数据始终实时读取。
 
+  issue 界面有**同一棵树上的两种呈现**：占满整列的页面，以及浮在当前界面之上的 slice 浮层。slice 只有一个宿主——挂在 shell 的浮层层里——所以底下的界面仍然活着、仍然可交互；它读的是和页面同一个 `issueView` 值，**最大化**在不改变位置的情况下在两者之间切换。窄视口下 slice 退化为页面。打开它只有一个入口——`openIssue(taskRef)`——看板、收件箱、Thread 里被引用的 Task、seat 的 Task 都走它；slice 不新增任何导航标志：`issueRef` / `issueVariant` 那个槽是位置的，slice 是浮层而不是位置。
+
+这个入口还带两件槽里没有的事：**issue 读取的那个 Workspace**，以及**焦点要回到的那个控件**。收件箱合并了所有可见的 Workspace，所以某一行可能属于读者没有选中的那个 Workspace——选它就会离开收件箱，而那正是 slice 要浮在上面的界面——所以 issue 在该行自己的 Workspace 里读取。焦点回到读者按下的那个控件，而且它以「聚焦它的方法」而不是「一个节点」的形式记录：看板目录一变，卡片就会重绘，等到读者关闭 issue 时，记下的节点已经过期。slice 是瞬时的，页面是位置：只有页面会被持久化，所以刷新永远不会凭空打开一个没人要求过的对话框。
+
+  Issue 界面是与这些 face 正交的一个 slot，不是新的 face：snapshot 里记着当前打开的 issue 所属的 Task 以及它的呈现方式（整列的页面，或浮在当前 face 之上的对话框），底下的 face 原地不动，关闭 issue 就回到原处。issue 的内容是 Host 的 `issueView` 快照——每个 issue 一次读取，不带 variant——client 渲染它携带的七个 region；呈现方式是 client 的事，永远不是读模型上的字段。
+
+  浏览器自己的后退/前进按钮会走过这些位置。Team 在导航快照之上维护一个历史栈：每次导航压入一个 `pushState` 条目——路径永远是文档自己的，只带一个 state 对象，URL 也不掺进路由这件事——而 `popstate` 是位置唯一的回放路径，所以浏览器按钮和座位自己的后退控件不会各走各的。
+
+  这个栈存的是位置，不是渲染出来的视图：界面标志、引用，以及带变体的问题槽。只有「读者在哪」变了才产生条目——筛选、选择器、折叠和行内编辑都不是位置——栈上限 32 条，超出丢最旧的一条，刷新后仍在。
+
+  关闭问题会消费掉它打开时压入的那一条，所以浏览器后退是合上浮层而不是从它底下走开。浮层本身是瞬态的：刷新只恢复界面，不恢复浮层。
+
+  URL 的 query 是插件自己的状态，它带着 issue：`issue` 指出 Task，`variant` 指出呈现方式，所以复制出去的链接能打开那个 issue。query 每次导航都从当前位置写出，它只是 query 的相对 URL，路径永远不变。
+
+  冷启动读 query，用 `page` 变体打开 issue——浮层是瞬态的，冷启动也没有可以归还焦点的开合动作。挂载路径和 base 都不会被碰到，URL 上别的参数也不归 Team 管。
+
   Agent Inbox 仍由 Host 持有，并通过 `team_inbox` 提供。
 - Sidebar row order（Channels/Agents）是每个 browser 的 Human presentation preference，保存在 `localStorage`。加载时折叠到 Remote default order 上。保留的 refs 保持顺序，移除的 refs 丢弃，新的 refs 追加。它从不成为 ledger fact。Whole-row native drag 复用 Harness list interaction model。它是 Team-owned rows 唯一的重排控件。
 - 嵌入的 Team Member Session 使用未修改的 shipped composer。Team 不注册任何成员会话的 composer 表面。它不接管 seat，没有 trigger sources，没有 dock 提示条。rc.1 把 trigger-menu overlay 移进了 `conversation.composer.bar` 的 children。接管者会一并继承渲染义务，并使 overlay 悬空。Team 自有的命令/成员引用入口相对 shipped 词汇表不再有不可替代的价值，因此一并移除。普通会话与 Member Session 共享同一 composer 与词汇表。
@@ -85,5 +101,6 @@ UI work 的边界如下：
 - Message、Activity、Claim 和 Task 的 presentation 要保持区分且用户可读。不要暴露 opaque refs 或 internal enums。
 - Durable mutations 不做 optimistic update。失败时保留 input，并渲染下一份 Host projection。
 - 保持 Team mode enter/leave、refresh recovery、slot restoration 和 narrow layout behavior。
+- issue 的评论区域读契约的 `comments` 区域，用同一条 history 读分页 Thread 页读的同一批事实：一个 store，两个视图。分页只有一处调用——issue page 的那次——并且写明了自己的 limit（`limit: 20`，在 Host 的 1–100 边界内）。决策区域拥有那条 ask 消息，评论区域跳过它；回复挂在其父级下一层，因为 ledger 每条消息只记一个父级。编辑评论、resolve 与 reactions 不在本批：ledger 是 append-only。
 
 UI redesign 已完成。需要理解当时的取舍时，查 [`.scratch/archive/2026-08/ui-redesign/`](../../.scratch/archive/2026-08/ui-redesign/)。它是历史设计背景，不是当前实现权威。UI 改动的当前验收规则见 [`development/README.zh.md`](../development/README.zh.md)。

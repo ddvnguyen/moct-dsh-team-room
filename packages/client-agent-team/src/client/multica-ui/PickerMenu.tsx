@@ -10,7 +10,7 @@
 // itself.
 
 import { useState, type ReactNode } from 'react'
-import { IconCheckOutlineRegular, IconChevronDownOutlineRegular, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconChevronDownOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import look from '../multica-look.module.css'
 import css from './picker-menu.module.css'
 
@@ -65,19 +65,18 @@ export function PickerMenu({ label, icon, triggerLabel, valueLabel, children }: 
 
 /**
  * One selectable row. A disabled row still renders (the field explains why it
- * cannot move) and carries the reason in a tooltip; the Menu's keyboard walk
- * skips disabled buttons, so arrows cannot choose it either.
+ * cannot move, through the hint `describedBy` points at) and the Menu's
+ * keyboard walk skips disabled buttons, so arrows cannot choose it either.
  */
-export function PickerItem({ selected, disabled = false, tooltip, describedBy, onSelect, children }: {
+export function PickerItem({ selected, disabled = false, describedBy, onSelect, children }: {
   readonly selected: boolean
   readonly disabled?: boolean
-  readonly tooltip?: string | undefined
   /** Id of the visible hint that explains why a row is disabled. */
   readonly describedBy?: string | undefined
   readonly onSelect: () => void
   readonly children: ReactNode
 }) {
-  const button = (
+  return (
     <button
       type="button"
       role="menuitem"
@@ -93,14 +92,5 @@ export function PickerItem({ selected, disabled = false, tooltip, describedBy, o
         {selected && <IconCheckOutlineRegular size={12} />}
       </span>
     </button>
-  )
-  if (tooltip === undefined) return button
-  // The tooltip anchors the wrapper, not the button: a disabled button does
-  // not emit pointer events in every browser, and the row must still explain
-  // itself on hover.
-  return (
-    <Tooltip label={tooltip} side="right">
-      <span className={css.tooltipAnchor}>{button}</span>
-    </Tooltip>
   )
 }

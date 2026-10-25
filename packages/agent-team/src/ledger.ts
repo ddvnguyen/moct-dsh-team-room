@@ -50,6 +50,7 @@ import type {
   AgentTeamDocCommentResolvedOperation,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
+  AgentTeamDocReview,
   AgentTeamDocSectionHistory,
   AgentTeamDocSectionHistoryRequest,
   AgentTeamDocCreatedOperation,
@@ -132,9 +133,11 @@ import type {
   AgentTeamResolvedThreadRef,
   AgentTeamResolvedMessageRef,
   AgentTeamMessageAttachment,
+  AgentTeamPlanStatus,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
   AgentTeamSetMemberStateRequest,
+  AgentTeamStaleDescriptionRevision,
   AgentTeamStaleDocRevision,
   AgentTeamStaleRevision,
   AgentTeamStatus,
@@ -144,6 +147,7 @@ import type {
   AgentTeamTaskActivity,
   AgentTeamTaskChangedOperation,
   AgentTeamTaskCreatedOperation,
+  AgentTeamTaskDescription,
   AgentTeamTaskPatch,
   AgentTeamTaskPatchRequest,
   AgentTeamTaskPriority,
@@ -277,6 +281,24 @@ const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
 /** Resolve the one Human authority owned by this Team. */
 export function agentTeamHumanActor(): AgentTeamHumanActor {
   return HUMAN_ACTOR
+}
+
+/**
+ * A Task assignee that cannot take the Task: unknown to this Host, disabled,
+ * or not a Member of the Task's Channel. The ledger's own error (it imports
+ * no protocol); the Remote boundary maps it to the one typed code with a
+ * discriminating `details.reason`. The messages stay the ones the specs pin.
+ */
+export class AgentTeamAssigneeNotInWorkspaceError extends Error {
+  constructor(
+    readonly memberId: AgentTeamMemberId,
+    readonly channelRef: AgentTeamChannelRef,
+    readonly reason: 'unknown' | 'disabled' | 'not-in-channel',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'AgentTeamAssigneeNotInWorkspaceError'
+  }
 }
 
 /** Caller-owned payload of the idempotent Team initialization request. */
@@ -534,7 +556,7 @@ export interface AgentTeamAuthorizedAskDecisionRequest extends AgentTeamAskDecis
 }
 
 export interface AgentTeamAuthorizedAnswerDecisionRequest extends AgentTeamAnswerDecisionRequest {
-  readonly actor: AgentTeamHumanActor
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
 
 export interface AgentTeamAuthorizedWithdrawDecisionRequest extends AgentTeamWithdrawDecisionRequest {
@@ -689,6 +711,14 @@ interface Projection {
   readonly decisionRecordsByThread: Map<AgentTeamThreadRef, AgentTeamDecisionRecordRef[]>
   /** Recorded decisions per Task, in the order they were recorded. */
   readonly decisionRecordsByTask: Map<AgentTeamTaskRef, AgentTeamDecisionRecordRef[]>
+  /**
+   * The sequence of the operation that last wrote each Task's description.
+   *
+   * A derived read index, rebuilt by replay: the description's own counter
+   * cannot order a write against the approval that precedes it, so the
+   * convergence compares ledger order, never a timestamp.
+   */
+  readonly descriptionWriteSequences: Map<AgentTeamTaskRef, number>
 }
 
 /** Minimal replay-time Attention observation; the read projection adds the current Task ref. */
@@ -752,7 +782,7 @@ function emptyProjection(): Projection {
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map(),
     docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map(),
-    decisionRecords: new Map(), decisionRecordsByThread: new Map(), decisionRecordsByTask: new Map() }
+    decisionRecords: new Map(), decisionRecordsByThread: new Map(), decisionRecordsByTask: new Map(), descriptionWriteSequences: new Map() }
 }
 
 /**
@@ -1699,10 +1729,11 @@ export class AgentTeamLedger {
   updateTask(request: AgentTeamAuthorizedUpdateTaskRequest): Promise<AgentTeamLedgerResult<AgentTeamUpdateTaskResult>> {
     return this.enqueue(async () => {
       const patch = this.normalizeTaskPatch(request.patch)
-      if (Object.keys(patch).length === 0) throw new Error('task update must change at least one field')
+      const descriptionBody = this.normalizeDescriptionBody(request.patch.description)
+      if (Object.keys(patch).length === 0 && descriptionBody === undefined) throw new Error('task update must change at least one field')
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameTaskUpdate(existing, request, this.canonicalTaskPatch(patch))
+        this.assertSameTaskUpdate(existing, request, this.canonicalTaskPatch(patch), descriptionBody, request.patch.baseDescriptionRevision)
         return this.resolved(this.taskUpdatedResult(existing))
       }
       this.assertHumanActor(request.actor)
@@ -1712,9 +1743,24 @@ export class AgentTeamLedger {
       // Board fields are metadata: the Human need not have read the Thread to
       // reorder or relabel a Task, so only the revision fences the write.
       if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
+      // The description has its own fence: a description write neither
+      // advances nor is fenced by the Thread revision, so the Human's edit
+      // checks the description's counter and bumps it. A stale fence is a
+      // business outcome, the same shape as a stale Thread revision.
+      const descriptionRevision = task.descriptionRevision ?? 0
+      if (descriptionBody !== undefined && (request.patch.baseDescriptionRevision ?? 0) !== descriptionRevision) {
+        return this.resolved(this.staleDescriptionRevision(task, request.patch.baseDescriptionRevision ?? 0, descriptionRevision))
+      }
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
-      const nextTask: AgentTeamTask = Object.freeze({ ...task, ...canonical })
+      const opPatch: AgentTeamTaskPatch = Object.freeze(descriptionBody === undefined
+        ? { ...canonical }
+        : {
+            ...canonical,
+            description: this.composeHumanDescription(task, descriptionBody, request.actor.memberId, base.occurredAt),
+            descriptionRevision: descriptionRevision + 1,
+          })
+      const nextTask: AgentTeamTask = Object.freeze({ ...task, ...opPatch })
       const assigned = canonical.assignee != null && canonical.assignee !== (task.assignee ?? null)
       // Assignment is a public Thread fact: it is what makes the assignee (and
       // every other follower) see the change as unread and wakes it, and what
@@ -1732,12 +1778,164 @@ export class AgentTeamLedger {
       const operation: AgentTeamTaskUpdatedOperation = Object.freeze({
         ...base, kind: 'team/task-updated',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
-          patch: canonical, ...(activity === undefined ? {} : { activity }), task: nextTask, thread: nextThread, inbox }),
+          patch: opPatch, ...(activity === undefined ? {} : { activity }), task: nextTask, thread: nextThread, inbox }),
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.taskUpdatedResult(operation))
     })
+  }
+
+  /**
+   * The plan of one Task, when it was approved.
+   *
+   * The plan is a Doc bound to the Task; its approval is the Doc's last
+   * review, and the review's sequence is the approval's place in the
+   * ledger's order — the fact the convergence compares against.
+   */
+  private approvedPlanFor(task: AgentTeamTask): { readonly doc: AgentTeamDoc; readonly state: AgentTeamDocState; readonly review: AgentTeamDocReview } | undefined {
+    let approved: { readonly doc: AgentTeamDoc; readonly state: AgentTeamDocState; readonly review: AgentTeamDocReview } | undefined
+    for (const state of this.state.docs.values()) {
+      if (state.doc.taskRef !== task.taskRef) continue
+      const review = state.reviews.at(-1)
+      if (review === undefined || review.verdict !== 'approve') continue
+      if (approved === undefined || review.sequence > approved.review.sequence) approved = { doc: state.doc, state, review }
+    }
+    return approved
+  }
+
+  /** The plan's body, as the description reads it: its sections, in order, as Markdown. */
+  private renderPlanBody(state: AgentTeamDocState): string {
+    const sections: string[] = []
+    for (const section of state.sections) {
+      const markdown = section.markdown.trim()
+      if (markdown === '') continue
+      sections.push(`## ${section.heading}\n\n${markdown}`)
+    }
+    return sections.join('\n\n')
+  }
+
+  /**
+   * The description of one Task, promoted from its approved plan.
+   *
+   * The approval is two writes: the Doc's verdict, then the Task's
+   * description. This is the second one, and it is the Host's own write — the
+   * caller supplies no content and no actor. The body comes from the plan's
+   * sections; the actor is the Human whose approval authorised it.
+   *
+   * The convergence is order-based: the promotion runs when the last
+   * description write is older than the approval, so a Human edit made after
+   * the approval is never clobbered, and the promotion's own write — newer
+   * than the approval — leaves the description converged.
+   *
+   * The retry key is derived from the approval, so a retry resolves the
+   * stored operation instead of colliding: the Thread revision and the
+   * Human's handle are not part of the key, and a fence that moved in the
+   * meantime makes the promotion a no-op rather than an error.
+   */
+  private async promotePlanDescription(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): Promise<AgentTeamTaskUpdatedOperation | undefined> {
+    const task = this.state.tasks.get(taskRef)
+    if (task === undefined) return undefined
+    const plan = this.approvedPlanFor(task)
+    if (plan === undefined) return undefined
+    const lastWrite = this.state.descriptionWriteSequences.get(task.taskRef)
+    if (lastWrite !== undefined && lastWrite >= plan.review.sequence) return undefined
+    const descriptionRevision = task.descriptionRevision ?? 0
+    const requestId = `agent-team:plan-promotion:${plan.doc.docRef}:${plan.review.docRevision}:${descriptionRevision}` as AgentTeamRequestId
+    const existing = this.state.byRequest.get(requestId)
+    if (existing !== undefined) {
+      if (existing.kind !== 'team/task-updated') this.throwRequestCollision(requestId)
+      return existing
+    }
+    // An empty plan is not promoted: an empty description would destroy the
+    // anchor the issue view reads.
+    const body = this.renderPlanBody(plan.state)
+    if (body === '') return undefined
+    const thread = this.requireThread(task.threadRef)
+    const sequence = this.nextSequence()
+    const actor: AgentTeamHumanActor = Object.freeze({
+      kind: 'human', memberId: this.initialization().data.humanMemberId, handle: this.humanHandle,
+    })
+    const base = this.operationBase({ requestId, actor }, sequence)
+    const patch: AgentTeamTaskPatch = Object.freeze({
+      description: Object.freeze({
+        body, author: actor.memberId, occurredAt: base.occurredAt, source: 'approvedPlan' as const, planRef: plan.doc.docRef,
+      }),
+      descriptionRevision: descriptionRevision + 1,
+    })
+    const nextTask: AgentTeamTask = Object.freeze({ ...task, ...patch })
+    const operation: AgentTeamTaskUpdatedOperation = Object.freeze({
+      ...base, kind: 'team/task-updated',
+      data: Object.freeze({ workspaceId, baseRevision: thread.revision, patch, task: nextTask, thread, inbox: this.inboxDelta([]) }),
+    })
+    await this.table.put(operation.operationId, operation)
+    this.apply(operation)
+    return operation
+  }
+
+  /**
+   * Complete a pending description promotion for one Task.
+   *
+   * The approval is two writes, and the second can be lost. This is the
+   * convergence the read path attempts, and it is best-effort: a failed
+   * promotion never fails the read, the view answers with the description as
+   * it is, and the next read retries.
+   */
+  async promoteApprovedPlanDescription(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): Promise<AgentTeamTaskUpdatedOperation | undefined> {
+    return this.enqueue(() => this.promotePlanDescription(workspaceId, taskRef))
+  }
+
+  /**
+   * The convergence a read attempts, and never fails on.
+   *
+   * A failed promotion leaves the description as it is and the next read
+   * retries: a recoverable staleness must never become a broken surface.
+   */
+  private async repairDescription(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): Promise<void> {
+    try {
+      await this.promoteApprovedPlanDescription(workspaceId, taskRef)
+    } catch {
+      // Best-effort by design; the next read retries.
+    }
+  }
+
+  /**
+   * The plan of one Task, and the description it produced.
+   *
+   * The plan is the Doc bound to the Task; the description is the Task's own
+   * record, so a reader learns both what was proposed and whether it became
+   * the issue's description.
+   */
+  planStatus(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: { workspaceId: WorkspaceId; taskRef: AgentTeamTaskRef }): AgentTeamPlanStatus {
+    const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
+    const { task } = this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    const plan = this.planDocFor(task.taskRef)
+    return Object.freeze({
+      taskRef: task.taskRef,
+      ...(plan === undefined ? {} : { plan: Object.freeze({
+        docRef: plan.doc.docRef, title: plan.doc.title, status: plan.state.status, revision: plan.state.revision,
+      }) }),
+      ...(task.description === undefined ? {} : { description: Object.freeze({
+        source: task.description.source,
+        ...(task.description.planRef === undefined ? {} : { planRef: task.description.planRef }),
+        revision: task.descriptionRevision ?? 0,
+      }) }),
+    })
+  }
+
+  /**
+   * The plan of one Task: the Doc bound to it, newest first.
+   *
+   * A cancelled plan is final but is not a plan in flight, so it frees the
+   * Task for another one.
+   */
+  private planDocFor(taskRef: AgentTeamTaskRef): { readonly doc: AgentTeamDoc; readonly state: AgentTeamDocState } | undefined {
+    let plan: { readonly doc: AgentTeamDoc; readonly state: AgentTeamDocState } | undefined
+    for (const state of this.state.docs.values()) {
+      if (state.doc.taskRef !== taskRef) continue
+      if (plan === undefined || state.doc.createdAtSequence > plan.doc.createdAtSequence) plan = { doc: state.doc, state }
+    }
+    return plan
   }
 
   reply(request: AgentTeamAuthorizedReplyRequest): Promise<AgentTeamLedgerResult<AgentTeamReplyResult>> {
@@ -2167,6 +2365,17 @@ export class AgentTeamLedger {
         const task = this.state.tasks.get(taskRef)
         if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
         if (task.threadRef !== thread.threadRef) throw new Error(`Task '${taskRef}' does not belong to Thread '${thread.threadRef}'`)
+        // A plan is a planning-phase act: the Task is still being designed.
+        if (!this.inPlanningPhase(task)) {
+          throw new Error(`Task '${taskRef}' is not in its planning phase; a plan is proposed while the Task is still 'todo' and unclaimed`)
+        }
+        // One plan per Task: a plan in flight is revised and resubmitted, not
+        // replaced by a second one. A cancelled plan is final but is not a
+        // plan in flight, so it frees the Task.
+        const existing = this.planDocFor(taskRef)
+        if (existing !== undefined && existing.state.status !== 'cancelled') {
+          throw new Error(`Task '${taskRef}' already has a plan ('${existing.doc.docRef}'); revise it instead of proposing another`)
+        }
       }
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
@@ -2320,6 +2529,14 @@ export class AgentTeamLedger {
       this.assertDocOpen(state)
       if (request.docRevision !== state.revision) return this.resolved(this.staleDocRevision(state, request.docRevision))
       if (state.status === 'in_review' && state.submittedRevision === state.revision) throw new Error(`Doc '${state.doc.docRef}' is already in review at revision ${state.revision}`)
+      // A plan is submitted for a Task that is still being designed: a plan
+      // submitted after the Task was claimed is a plan for execution.
+      if (state.doc.taskRef !== undefined) {
+        const task = this.state.tasks.get(state.doc.taskRef)
+        if (task !== undefined && !this.inPlanningPhase(task)) {
+          throw new Error(`Task '${state.doc.taskRef}' is not in its planning phase; a plan is submitted while the Task is still 'todo' and unclaimed`)
+        }
+      }
       const notice: AgentTeamDocNotice = Object.freeze({ docRef: state.doc.docRef, event: 'submitted', docRevision: state.revision })
       const body = docSubmitNoticeBody(state.doc, this.humanHandle, state.revision, request.note)
       const operation = this.docNoticeOperation(request, state, body, [this.initialization().data.humanMemberId], notice)
@@ -2363,14 +2580,24 @@ export class AgentTeamLedger {
       const operation = this.docNoticeOperation(request, state, body, [author.memberId], notice, record)
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
+      // The approval is two writes: the verdict above, then the Task's
+      // description. The second one follows in the same commit, so the issue
+      // view reads the plan the Human approved.
+      if (request.verdict === 'approve' && state.doc.taskRef !== undefined) {
+        await this.promotePlanDescription(request.workspaceId, state.doc.taskRef)
+      }
       return this.committed(this.docNoticeResult(operation))
     })
   }
 
   /**
-   * A Member asks the Human one to six questions on one card. The notice is a
-   * Thread reply that mentions the Human, so the open card reaches their Inbox.
-   * The asker keeps working on the recommended options while the card is open.
+   * A Member asks one to six questions on one card. The notice is a Thread
+   * reply that mentions the addressee — the Human, or the seat the card names —
+   * so the open card reaches their Inbox. The asker keeps working on the
+   * recommended options while the card is open.
+   *
+   * A card that names a seat is a planning-phase question, so it is refused
+   * once the Task it sits on has left the planning phase.
    */
   askDecision(request: AgentTeamAuthorizedAskDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
     return this.enqueue(async () => {
@@ -2380,16 +2607,20 @@ export class AgentTeamLedger {
       if (existing !== undefined) {
         if (existing.kind !== 'team/thread-replied' || existing.data.decision?.event !== 'asked' || !this.sameActor(existing.actor, request.actor)
           || existing.data.workspaceId !== request.workspaceId || !isDeepStrictEqual(existing.data.decision.questions, questions)
-          || existing.data.decision.context !== context) this.throwRequestCollision(request.requestId)
+          || existing.data.decision.context !== context || existing.data.decision.target !== request.target) this.throwRequestCollision(request.requestId)
         return this.resolved(this.decisionNoticeResult(existing))
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId) as AgentTeamMemberActor
-      const { thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
+      const { task, thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
       this.assertThreadChannelActive(channelRef)
+      const target = request.target === undefined ? undefined : this.decisionTarget(request.target, channelRef, actor.memberId)
+      if (target !== undefined) this.assertPlanningPhase(task, thread.threadRef)
       const decisionRef = this.ref('decision')
-      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef, event: 'asked' as const, ...(context === undefined ? {} : { context }), questions })
-      const body = decisionAskBody(this.humanHandle, decisionRef, context, questions)
-      const operation = this.noticeReplyOperation(request, thread.threadRef, channelRef, body, [this.initialization().data.humanMemberId], { decision: notice })
+      const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef, event: 'asked' as const, ...(context === undefined ? {} : { context }),
+        ...(target === undefined ? {} : { target }), questions })
+      const body = decisionAskBody(target === undefined ? this.humanHandle : this.memberHandle(target), decisionRef, context, questions)
+      const addressee = target === undefined ? this.initialization().data.humanMemberId : target
+      const operation = this.noticeReplyOperation(request, thread.threadRef, channelRef, body, [addressee], { decision: notice })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2397,8 +2628,50 @@ export class AgentTeamLedger {
   }
 
   /**
-   * The Human answers an open card. The notice mentions the asker, so the
-   * existing direct-mention wake carries the answer to it. A card answers once.
+   * The seat a card names: a live Member of the Workspace who can be reached
+   * in the card's Channel. The Human is never a target — a card with no target
+   * already addresses them — and a seat cannot ask itself.
+   */
+  private decisionTarget(target: AgentTeamMemberId, channelRef: AgentTeamChannelRef, asker: AgentTeamMemberId): AgentTeamMemberId {
+    if (target === this.initialization().data.humanMemberId) {
+      throw new Error('a card with no target already addresses the Human')
+    }
+    if (target === asker) throw new Error('a card cannot be addressed to the seat that asked')
+    const member = this.state.members.get(target)
+    if (member === undefined) throw new Error(`unknown Agent Member '${target}'`)
+    if (!this.validMentionTarget(this.state, channelRef, target)) {
+      throw new Error(`Agent Member '${target}' cannot be reached in Channel '${channelRef}'`)
+    }
+    return target
+  }
+
+  /**
+   * A card that names a seat asks a planning-phase question, so it is
+   * permitted only while the Task is `todo` and holds no active Claim — the
+   * same rule the issue view carries as `properties.planningPhase`, read from
+   * one definition so the two cannot drift. A card with no target asks the
+   * Human and is never gated.
+   */
+  private assertPlanningPhase(task: AgentTeamTask | undefined, threadRef: AgentTeamThreadRef): void {
+    if (task === undefined) {
+      throw new Error(`a card addressed to a seat needs a Task: Thread '${threadRef}' has none`)
+    }
+    if (this.inPlanningPhase(task)) return
+    const claimed = this.claimsForTask(task.taskRef).some(claim => claim.state === 'active')
+    throw new Error(claimed
+      ? `a card addressed to a seat is a planning-phase question: Task '${task.taskRef}' is claimed`
+      : `a card addressed to a seat is a planning-phase question: Task '${task.taskRef}' is '${task.status}'`)
+  }
+
+  /** The handle a Member is addressed by. */
+  private memberHandle(memberId: AgentTeamMemberId): string {
+    return this.state.members.get(memberId)?.handle ?? memberId
+  }
+
+  /**
+   * The Human, or the seat the card names, answers an open card. The notice
+   * mentions the asker, so the existing direct-mention wake carries the answer
+   * to it. A card answers once.
    */
   answerDecision(request: AgentTeamAuthorizedAnswerDecisionRequest): Promise<AgentTeamLedgerResult<AgentTeamDecisionNoticeResult>> {
     return this.enqueue(async () => {
@@ -2408,8 +2681,8 @@ export class AgentTeamLedger {
           || existing.data.workspaceId !== request.workspaceId || existing.data.decision.decisionRef !== request.decisionRef) this.throwRequestCollision(request.requestId)
         return this.resolved(this.decisionNoticeResult(existing))
       }
-      this.assertHumanActor(request.actor)
       const state = this.decisionForActor(request.actor, request.workspaceId, request.decisionRef)
+      this.assertDecisionAnswerer(request.actor, state)
       this.assertDecisionOpen(state)
       const answers = normalizeDecisionAnswers(state.questions, request.answers)
       const asker = this.state.members.get(state.asker)
@@ -2464,12 +2737,12 @@ export class AgentTeamLedger {
 
   /**
    * The decision fact the Human's approval records, attached to the very
-   * operation that carries the verdict. The plan's Task is the Task its Thread
-   * is bound to; M-39's durable `AgentTeamDoc.taskRef` takes precedence once
-   * that card lands.
+   * operation that carries the verdict. The plan's Task is the Task the plan
+   * is bound to; the Thread's own Task is the fallback for a plan that was
+   * not bound to one.
    */
   private planApprovalRecord(state: AgentTeamDocState, note: string | undefined): AgentTeamDecisionRecordPayload {
-    const taskRef = this.state.threads.get(state.doc.threadRef)?.taskRef
+    const taskRef = state.doc.taskRef ?? this.state.threads.get(state.doc.threadRef)?.taskRef
     return Object.freeze({
       recordRef: this.ref('decisionRecord'),
       ...(taskRef === undefined ? {} : { taskRef }),
@@ -2553,6 +2826,25 @@ export class AgentTeamLedger {
 
   private assertDecisionOpen(state: AgentTeamDecisionState): void {
     if (state.status !== 'open') throw new Error(`decision card '${state.decisionRef}' is already ${state.status}`)
+  }
+
+  /**
+   * Who may answer a card: the Human, who may always take over, or the seat
+   * the card names — never any other Member. A card with no target is the
+   * Human's alone.
+   */
+  private assertDecisionAnswerer(actor: AgentTeamHumanActor | AgentTeamMemberActor, state: AgentTeamDecisionState): void {
+    if (actor.kind === 'human') {
+      this.assertHumanActor(actor)
+      return
+    }
+    if (state.target === undefined) {
+      throw new Error(`decision card '${state.decisionRef}' is addressed to the Human`)
+    }
+    if (actor.memberId !== state.target) {
+      throw new Error(`only '${state.target}' can answer decision card '${state.decisionRef}'`)
+    }
+    this.assertMemberActor(actor)
   }
 
   private decisionNoticeResult(operation: AgentTeamThreadRepliedOperation): AgentTeamDecisionNoticeResult {
@@ -3933,8 +4225,14 @@ export class AgentTeamLedger {
     const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
     const limit = request.commentLimit ?? 50
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('comment limit must be an integer between 1 and 100')
-    const { task, thread } = this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    // The read converges before it answers: an approved plan whose promotion
+    // was dropped is completed here, so the view never shows a description
+    // that the ledger already knows is stale. The Task is read after the
+    // convergence, so the view carries the repaired description.
+    const { thread } = this.threadForActor(authorized, request.workspaceId, request.taskRef)
+    await this.repairDescription(request.workspaceId, request.taskRef)
     await this.settled()
+    const task = this.requireTask(request.workspaceId, request.taskRef)
     const anchor = this.threadAnchor(thread.threadRef)
     const facts = this.threadFacts(thread.threadRef)
     const cards = this.decisions(authorized, { workspaceId: request.workspaceId, threadRef: thread.threadRef }).decisions
@@ -3959,13 +4257,9 @@ export class AgentTeamLedger {
       thread,
       taskNumber,
       title: task.title ?? boundedInboxPreview(anchor.body),
-      description: Object.freeze({
-        body: anchor.body,
-        author: anchor.sender,
-        occurredAt: anchor.occurredAt,
-        source: 'anchor' as const,
-        revision: task.descriptionRevision ?? 0,
-      }),
+      description: Object.freeze(task.description === undefined
+        ? { body: anchor.body, author: anchor.sender, occurredAt: anchor.occurredAt, source: 'anchor' as const, revision: task.descriptionRevision ?? 0 }
+        : { ...task.description, revision: task.descriptionRevision ?? 0 }),
       properties: Object.freeze({
         status: task.status,
         resolution: task.resolution,
@@ -3976,7 +4270,7 @@ export class AgentTeamLedger {
         channelName: channel.name,
         taskNumber,
         claimOwners: Object.freeze(this.liveClaimOwners(task).map(owner => owner.memberId)),
-        planningPhase: task.status === 'todo' && !this.claimsForTask(task.taskRef).some(claim => claim.state === 'active'),
+        planningPhase: this.inPlanningPhase(task),
         createdAt,
         updatedAt,
       }),
@@ -4734,6 +5028,15 @@ export class AgentTeamLedger {
       if (patch.title !== undefined && patch.title.trim() === '') throw new Error('invalid Task title')
       if (patch.priority !== undefined && !TASK_PRIORITIES.includes(patch.priority)) throw new Error('invalid Task priority')
       if (patch.position !== undefined && !Number.isFinite(patch.position)) throw new Error('invalid Task position')
+      // A description write carries the whole record and bumps the
+      // description's own fence by one; the counter never moves on its own.
+      if (patch.description !== undefined) {
+        if (patch.description.body.trim() === '') throw new Error('invalid Task description body')
+        if (patch.descriptionRevision !== (priorTask.descriptionRevision ?? 0) + 1) throw new Error('invalid Task description fence')
+        if ((patch.description.source === 'approvedPlan') !== (patch.description.planRef !== undefined)) throw new Error('invalid Task description source')
+      } else if (patch.descriptionRevision !== undefined && patch.descriptionRevision !== priorTask.descriptionRevision) {
+        throw new Error('invalid Task description fence')
+      }
       if (patch.assignee !== undefined && patch.assignee !== null) {
         const assignee = projection.members.get(patch.assignee)
         if (assignee === undefined || assignee.state !== 'enabled'
@@ -5158,7 +5461,11 @@ export class AgentTeamLedger {
     const { message, mentions } = operation.data
     if (operation.data.doc !== undefined || message.replyToMessageRef !== undefined || message.attachments !== undefined) throw new Error('invalid decision notice')
     if (notice.event === 'asked') {
-      if (operation.actor.kind !== 'member' || projection.decisions.has(notice.decisionRef) || !this.sameList(mentions, [humanMemberId])
+      // A card with no target addresses the Human; a card with one addresses
+      // that seat, and the notice mentions exactly its addressee.
+      const addressee = notice.target ?? humanMemberId
+      if (operation.actor.kind !== 'member' || projection.decisions.has(notice.decisionRef) || !this.sameList(mentions, [addressee])
+        || (notice.target !== undefined && !this.validMentionTarget(projection, message.channelRef, notice.target))
         || normalizeDecisionContext(notice.context) !== notice.context || !isDeepStrictEqual(normalizeDecisionQuestions(notice.questions), notice.questions)) {
         throw new Error('invalid decision ask notice')
       }
@@ -5168,7 +5475,11 @@ export class AgentTeamLedger {
     const state = projection.decisions.get(notice.decisionRef)
     if (state === undefined || state.status !== 'open' || state.threadRef !== message.threadRef) throw new Error('invalid decision notice')
     if (notice.event === 'answered') {
-      if (operation.actor.kind !== 'human' || !this.sameList(mentions, [state.asker])
+      // The Human may always answer, and so may the seat the card names.
+      const answerer = operation.actor.memberId
+      const mayAnswer = operation.actor.kind === 'human' || (state.target !== undefined && state.target === answerer)
+      if (!mayAnswer || !this.sameList(mentions, [state.asker])
+        || (operation.actor.kind === 'member' && !projection.memberships.get(state.channelRef)?.has(answerer))
         || !isDeepStrictEqual(normalizeDecisionAnswers(state.questions, notice.answers), notice.answers)) throw new Error('invalid decision answer notice')
       return
     }
@@ -5178,10 +5489,17 @@ export class AgentTeamLedger {
   private validateMessageInbox(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation, projection: Projection): void {
     const { message, mentions } = operation.data
     const mentionedAgents = mentions.filter(memberId => projection.members.has(memberId))
+    // A decision card addressed to a seat is an invitation the Host already
+    // validated against the Workspace and the card's Channel, so that seat may
+    // be pulled into the Thread. Every other Member reply may not pull an
+    // unfollowed Member into an existing Thread.
+    const invited = operation.kind === 'team/thread-replied' && operation.data.decision?.event === 'asked'
+      ? operation.data.decision.target
+      : undefined
     // Top-level mentions are open to every actor; only a Member reply may not
     // pull an unfollowed Member into an existing Thread.
     if (operation.actor.kind === 'member' && operation.kind === 'team/thread-replied'
-      && mentionedAgents.some(memberId => !this.everParticipatedFrom(projection, message.threadRef, memberId))) {
+      && mentionedAgents.some(memberId => memberId !== invited && !this.everParticipatedFrom(projection, message.threadRef, memberId))) {
       throw new Error('invalid Agent mention projection')
     }
     const started = operation.kind === 'team/message-sent'
@@ -5350,6 +5668,9 @@ export class AgentTeamLedger {
       if (operation.data.activity !== undefined) this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      // The description's last write, in ledger order: the convergence reads
+      // it to tell an approval from a later Human edit.
+      if (operation.data.patch.description !== undefined) target.descriptionWriteSequences.set(operation.data.task.taskRef, operation.sequence)
       this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
@@ -6846,11 +7167,62 @@ export class AgentTeamLedger {
     return Object.freeze(next)
   }
 
+  /** Trim and bound a description body; absent means the description is not written. */
+  private normalizeDescriptionBody(body: string | undefined): string | undefined {
+    if (body === undefined) return undefined
+    const trimmed = body.trim()
+    if (trimmed === '') throw new Error('task description must not be empty')
+    return trimmed
+  }
+
+  /**
+   * The description a Human's direct edit produces.
+   *
+   * The Human keeps the lineage it found: a description promoted from a plan
+   * stays that description, with the edit stamped on it, and the plan it came
+   * from is still named. The Host composes this record — the client states
+   * only the body, so a client cannot forge where a description came from.
+   */
+  private composeHumanDescription(task: AgentTeamTask, body: string, author: AgentTeamMemberId, occurredAt: string): AgentTeamTaskDescription {
+    const prior = task.description
+    return Object.freeze({
+      body,
+      author,
+      occurredAt,
+      source: prior?.source ?? 'anchor',
+      ...(prior?.planRef === undefined ? {} : { planRef: prior.planRef }),
+      editedAt: occurredAt,
+    })
+  }
+
+  /** A description write whose base fence is stale: a business outcome, not an error. */
+  private staleDescriptionRevision(task: AgentTeamTask, expectedRevision: number, revision: number): AgentTeamStaleDescriptionRevision {
+    return Object.freeze({ kind: 'stale_description_revision', taskRef: task.taskRef, expectedRevision, revision })
+  }
+
+  /**
+   * The planning phase of one Task: it is still `todo` and holds no claim
+   * with `state === 'active'`.
+   *
+   * One definition, in the Host, where the truth is. The issue view carries
+   * the answer as `properties.planningPhase`; a client never re-derives it.
+   */
+  private inPlanningPhase(task: AgentTeamTask): boolean {
+    return task.status === 'todo' && !this.claimsForTask(task.taskRef).some(claim => claim.state === 'active')
+  }
+
   /** An assignee must be an enabled Member of the Task's Channel; returns the Member so callers store its canonical id. */
   private assertAssignable(memberId: AgentTeamMemberId, channelRef: AgentTeamChannelRef): AgentTeamAgentMember {
-    const member = this.requireMember(memberId)
-    if (member.state !== 'enabled') throw new Error(`Agent Member '${memberId}' is not enabled`)
-    this.requireMemberChannel(member, channelRef)
+    let member: AgentTeamAgentMember
+    try {
+      member = this.requireMember(memberId)
+    } catch (error) {
+      // Both the unknown-ref message and the ambiguous-candidates contract stay
+      // requireRefKey's; the assignee refusal is typed for the Remote boundary.
+      throw new AgentTeamAssigneeNotInWorkspaceError(memberId, channelRef, 'unknown', error instanceof Error ? error.message : String(error))
+    }
+    if (member.state !== 'enabled') throw new AgentTeamAssigneeNotInWorkspaceError(memberId, channelRef, 'disabled', `Agent Member '${memberId}' is not enabled`)
+    if (!this.isChannelMember(channelRef, member.memberId)) throw new AgentTeamAssigneeNotInWorkspaceError(memberId, channelRef, 'not-in-channel', `Agent Member '${member.memberId}' is not authorized for Channel '${channelRef}'`)
     return member
   }
 
@@ -6919,11 +7291,38 @@ export class AgentTeamLedger {
     operation: AgentTeamOperation,
     request: AgentTeamAuthorizedUpdateTaskRequest,
     patch: AgentTeamTaskPatch,
+    descriptionBody: string | undefined,
+    baseDescriptionRevision: number | undefined,
   ): asserts operation is AgentTeamTaskUpdatedOperation {
     if (operation.kind !== 'team/task-updated' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId || operation.data.task.taskRef !== request.taskRef
       || operation.data.baseRevision !== request.baseRevision
-      || !isDeepStrictEqual(operation.data.patch, patch)) this.throwRequestCollision(request.requestId)
+      || !this.sameTaskUpdatePatch(operation.data.patch, patch, descriptionBody, baseDescriptionRevision)) this.throwRequestCollision(request.requestId)
+  }
+
+  /**
+   * The same write, compared the way the request states it.
+   *
+   * The operation stores the composed description record; the request carries
+   * the body the Human typed. A retry is the same write, so the comparison is
+   * over the body and the fence it was based on — never over the composed
+   * record, whose instant is the one that differs between two attempts.
+   */
+  private sameTaskUpdatePatch(
+    stored: AgentTeamTaskPatch,
+    requested: AgentTeamTaskPatch,
+    descriptionBody: string | undefined,
+    baseDescriptionRevision: number | undefined,
+  ): boolean {
+    const { description: storedDescription, descriptionRevision: storedRevision, ...storedScalars } = stored
+    const { description: _requestedDescription, ...requestedScalars } = requested
+    if (!isDeepStrictEqual(storedScalars, requestedScalars)) return false
+    if ((storedDescription !== undefined) !== (descriptionBody !== undefined)) return false
+    if (storedDescription === undefined) return true
+    // The stored counter is the fence the write bumped: one past the base the
+    // request states.
+    return storedDescription.body === descriptionBody
+      && storedRevision === (baseDescriptionRevision ?? 0) + 1
   }
 
   private assertSameTask(operation: AgentTeamOperation, request: AgentTeamAuthorizedTaskRequest): asserts operation is AgentTeamTaskChangedOperation {

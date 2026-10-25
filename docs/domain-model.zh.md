@@ -30,7 +30,7 @@ Member 与 workspace 之间是可 join、可 leave 的关系。每次变动都�
 
 Member 实体上的可选 `role` 字段（`architect`、`leader`、`worker` 或 `orchestrator`）。它只是一个标签，并在 Member 的 identity 块中追加一段固定 prompt，从不用于路由：未分配的 Task 保持未分配，Orchestrator 只报告。`addMember` 设置它，`updateMember` 修改它，`null` 清除它。四个值以外的 role 会在提交时被拒绝。它随 `team/member-added` 与 `team/member-updated` 落账，因此不含该字段的旧 ledger 仍可原样重放，并渲染此前的 identity 块。
 
-Orchestrator「只观察和报告」是 prompt 层面的约束：Host 不会阻止 Orchestrator 调用 Team 工具。
+Orchestrator「只观察和报告」是 prompt 层面的约束，其上只有一道真实的栅栏：`team_claim` 不在 Orchestrator 的工具面上（CHANGELOG 的 Board 9/10 条目），因此它无法持有 Direction Claim；其余 Team 工具仍可调用。
 
 ## Workspace
 
@@ -181,9 +181,11 @@ Human 针对选中的段落评论，Agent 可以回复评论。Human 的评论�
 
 ## Decision
 
-Agent Member 在某个 Thread 里向 Human 提出的一张决策卡，包含 1 到 6 个问题，用来代替散文式提问。每个问题有 2 到 4 个选项，可单选或多选，可以标出提问者推荐的选项，并且始终接受文字回答。Human 一次回答全部问题，且只回答一次。
+Agent Member 在某个 Thread 里提出的一张决策卡，包含 1 到 6 个问题，用来代替散文式提问。每个问题有 2 到 4 个选项，可单选或多选，可以标出提问者推荐的选项，并且始终接受文字回答。收件人默认是 Human；卡片指名某个座位时，收件人就是那个座位。回答者一次回答全部问题，且只回答一次。
 
-决策没有独立记录：提问、回答和撤回都是携带决策事实的 Thread 回复，与 Doc 的提交和裁决相同。提问会提及 Human，于是未回答的卡片进入其 Inbox；回答会提及提问者，以回答唤醒它。只有提问者能撤回未回答的卡片；撤回后的卡片不再接受回答，也不唤醒任何人。
+决策没有独立记录：提问、回答和撤回都是携带决策事实的 Thread 回复，与 Doc 的提交和裁决相同。提问会提及它的收件人，于是未回答的卡片进入其 Inbox；回答会提及提问者，以回答唤醒它。只有提问者能撤回未回答的卡片；撤回后的卡片不再接受回答，也不唤醒任何人。
+
+发给座位的卡片属于规划阶段的问题：一旦它所在的 Task 离开规划阶段，Host 就会拒绝它，因为座位是在工作仍处于设计时被征求意见的。Human 始终可以回答这样的卡片，无论卡片是否指名了座位。
 
 ## Decision Record
 

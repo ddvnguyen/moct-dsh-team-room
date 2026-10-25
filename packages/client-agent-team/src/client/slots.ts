@@ -99,6 +99,7 @@ import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation
 import type { TeamChangeListener, TeamChangeScope } from './team-changes.ts'
 import type { TeamDraftStore } from './drafts.ts'
 import type { TeamHumanIdentitySource } from './human-identity.ts'
+import type { IssueClient, IssueContextStore } from './issue/issue-client.ts'
 import type { TeamTriggerCatalogItem, TeamTriggerCatalogScope } from './trigger-catalog.ts'
 
 export interface TeamNavigationSource {
@@ -140,9 +141,18 @@ export interface TeamModelCatalog {
 
 export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & PropsLocale<'team'>
-  & TeamNavigationActions
+  & Omit<TeamNavigationActions, 'openIssue'>
   & {
     navigation: TeamNavigationSource
+    /**
+     * The one seam: open one Task's issue as a slice over the face the reader
+     * is on. The navigation's own `openIssue` writes the slot; this one also
+     * carries the Workspace the issue is read in and the control the focus
+     * returns to.
+     */
+    openIssue: IssueClient['openIssue']
+    /** The open issue's client-side context: its Workspace, and its opener. */
+    issueContext: IssueContextStore
     /** The Human's own identity: the display name and avatar every seat that names or draws them reads. */
     humanIdentity: TeamHumanIdentitySource
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
@@ -196,8 +206,17 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     selectedChannelRef?: AgentTeamChannelRef
   }
 
-export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> & TeamNavigationActions & {
+export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> & Omit<TeamNavigationActions, 'openIssue'> & {
   navigation: TeamNavigationSource
+  /**
+   * The one seam: open one Task's issue as a slice over the face the reader
+   * is on. The navigation's own `openIssue` writes the slot; this one also
+   * carries the Workspace the issue is read in and the control the focus
+   * returns to.
+   */
+  openIssue: IssueClient['openIssue']
+  /** The open issue's client-side context: its Workspace, and its opener. */
+  issueContext: IssueContextStore
   /** Keyed composer draft cache; one store per Client context. */
   drafts: TeamDraftStore
   /**

@@ -3292,6 +3292,20 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   await dialog.getByLabel('名称').fill('builder')
   await dialog.getByLabel('说明').fill('Runs the board work')
   await dialog.getByLabel('角色').selectOption('worker')
+  // The role editor is an M-7 acceptance point: it is captured at the desktop
+  // width and at the 390×844 narrow width, where every field must stay inside
+  // the viewport (the archived validation images come from these two shots).
+  // The dialog's open animation must be done first, or the shot catches it
+  // mid-fade.
+  await settleLayout(page)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-role-editor.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  const roleSelectBox = await dialog.getByLabel('角色').boundingBox()
+  expect(roleSelectBox).not.toBeNull()
+  expect(roleSelectBox!.x + roleSelectBox!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(AGENT_SHOTS, 'agent-role-editor-390.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   await dialog.getByRole('button', { name: '创建 Agent' }).click()
   await dialog.waitFor({ state: 'detached' })
 
@@ -3323,6 +3337,8 @@ it('opens an Agent from the roster and reads its Runs tab in real Web', async ()
   // filters, never over one of them, and the whole row stays inside the
   // viewport.
   await page.setViewportSize({ width: 390, height: 844 })
+  // The role pill rides the row at the narrow width too — M-7's acceptance.
+  await expect.poll(async () => await row.locator('[data-member-role]').count()).toBe(1)
   const countBox = await page.locator('[data-agent-list-count]').boundingBox()
   const presenceBox = await page.getByRole('button', { name: '按在线状态筛选: 全部状态' }).boundingBox()
   expect(countBox).not.toBeNull()
@@ -3565,9 +3581,13 @@ it('walks the Team Board journey in real Web', async () => {
     actor: { kind: 'member', memberId: worker.memberId, handle: worker.handle },
   })
   await card.getByRole('button', { name: 'Board journey task' }).click()
-  // The property column carries the execution log. The Thread opened in the
-  // lane beside its Channel, where the column is not rendered inline, so the
-  // journey reads the log the way a narrow seat does: the property sheet.
+  // The card opens the issue as a slice over the board; the slice's own "go
+  // to thread" control opens the Thread in the lane beside its Channel, where
+  // the property column is not rendered inline, so the journey reads the log
+  // the way a narrow seat does: the property sheet.
+  const slice = page.locator('[data-team-issue-slice]')
+  await slice.waitFor({ timeout: 30_000 })
+  await slice.getByRole('button', { name: '前往 Thread' }).click()
   await page.setViewportSize({ width: 820, height: 960 })
   await settleLayout(page)
   await page.getByRole('button', { name: '属性', exact: true }).click()
@@ -3671,6 +3691,454 @@ it('walks the Team Board journey in real Web', async () => {
 }, 300_000)
 
 /**
+ * The issue view (M-35): the Host's read model for one issue, shown as the
+ * whole column over the face the reader is on.
+ *
+ * The journey opens the board, takes a Task from the card the board renders —
+ * the card's own `data-task-ref` — and opens the issue through the navigation
+ * slot the page reads. It then renames the issue and reloads: the title is the
+ * Host's fact, so the edit is still there after the reload.
+ */
+it('opens the issue view, renames the issue, and keeps the edit across a reload in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+  }
+  const channel = await team.createChannel({ requestId: 'issue-journey-channel', workspaceId, name: 'delivery', description: 'Issue journey' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The board is a navigation face: the persisted snapshot is how the reader
+  // reaches it, and a reload reopens it.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // One Task on the board: the issue reads it, so the journey creates it the
+  // way a Human does.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Issue journey task')
+  await dialog.getByLabel('描述').fill('The body the issue view reads')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Issue journey task' })
+  await card.waitFor({ timeout: 20_000 })
+  const taskRef = await card.getAttribute('data-task-ref')
+  expect(taskRef).toBeTruthy()
+
+  // The issue slot: the Task whose issue surface is open, and how it is
+  // presented. The face flags stay, so the board is still behind the issue.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      mode: 'team', workspaceId: id, board: true, issueRef: ref, issueVariant: 'page',
+    }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  const issue = page.locator('[data-team-issue-page]')
+  await issue.waitFor({ timeout: 30_000 })
+  // The seven regions are all there, populated from the Host's one snapshot.
+  // The region headings are the assertion: the empty states name their region
+  // too, so a bare text match would count two.
+  await expect.poll(async () => issue.getByRole('button', { name: '编辑标题' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByText('The body the issue view reads').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByText('状态', { exact: true }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '描述' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '评论' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '动态' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '决策' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByRole('heading', { name: '执行记录' }).count(), { timeout: 30_000 }).toBe(1)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page.png'), fullPage: true })
+
+  // The title is the Human's to change, and the write is not optimistic: the
+  // Host commits it and the change-wake refetches.
+  await issue.getByRole('button', { name: '编辑标题' }).click()
+  const title = issue.getByRole('textbox', { name: '编辑标题' })
+  await title.fill('Issue journey task, renamed')
+  await title.press('Enter')
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { taskRef: string }) => task.taskRef === taskRef)?.title, { timeout: 20_000 }).toBe('Issue journey task, renamed')
+  await expect.poll(async () => issue.getByRole('button', { name: '编辑标题' }).textContent(), { timeout: 20_000 }).toBe('Issue journey task, renamed')
+
+  // A reload does not lose the issue: the slot is durable, and the title is
+  // the Host's fact, so the rename is still there. The Team page is entered
+  // the way a reader enters it — the shell owns the mode, the slot is ours.
+  await page.reload()
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  const reopened = page.locator('[data-team-issue-page]')
+  await reopened.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => reopened.getByRole('button', { name: '编辑标题' }).textContent(), { timeout: 30_000 }).toBe('Issue journey task, renamed')
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
+ * The issue's comment region (M-36): the Human answers on the issue itself.
+ *
+ * The journey opens the issue over the board, writes a comment in the issue's
+ * own composer, and reloads: the comment is the Host's fact, so it is still
+ * there afterwards. It then answers that comment, and the answer is drawn
+ * under the message it answers — one level, the way the ledger records it.
+ */
+it('posts a comment on the issue, keeps it across a reload, and nests the reply under its parent in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-comment-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Comment Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+    createTask(request: Record<string, unknown>): Promise<{ readonly task: { readonly taskRef: string } }>
+  }
+  const channel = await team.createChannel({ requestId: 'issue-comment-journey-channel', workspaceId, name: 'delivery', description: 'Issue comment journey' })
+  // The Task carries the Thread the issue's comments live on. Its opening
+  // Message is the Thread's anchor, which the Host's issue read leaves out —
+  // so the region starts empty and the journey's own comment is the first row.
+  const created = await team.createTask({
+    requestId: 'issue-comment-journey-task', workspaceId, channelRef: channel.channel.channelRef,
+    title: 'Issue comment task', body: 'The body the comment journey reads',
+  })
+  const taskRef = created.task.taskRef
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The issue slot: the Task whose issue surface is open, and how it is
+  // presented. The face flags stay, so the board is still behind the issue.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      mode: 'team', workspaceId: id, board: true, issueRef: ref, issueVariant: 'page',
+    }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  const issue = page.locator('[data-team-issue-page]')
+  await issue.waitFor({ timeout: 30_000 })
+  const comments = issue.locator('[data-issue-comments]')
+  await comments.waitFor({ timeout: 30_000 })
+
+  // The Human writes in the issue's own composer. The write is not optimistic:
+  // the row appears when the Host commits it, and the change-wake refetches.
+  const composer = issue.locator('[data-team-composer]')
+  await composer.getByPlaceholder('写下评论…').fill('A comment on the issue')
+  await composer.getByRole('button', { name: '发送' }).click()
+  await expect.poll(async () => comments.locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => comments.locator('[data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+
+  // A reload does not lose the comment: it is the Host's fact, read back.
+  await page.reload()
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  const reopened = page.locator('[data-team-issue-page]')
+  await reopened.waitFor({ timeout: 30_000 })
+  const reopenedComments = reopened.locator('[data-issue-comments]')
+  await expect.poll(async () => reopenedComments.locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => reopenedComments.locator('[data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+
+  // The answer is drawn under the message it answers: the reply row lives
+  // inside the parent's card, one level deep.
+  await reopenedComments.locator('[data-comment-reply]').first().click()
+  const reopenedComposer = reopened.locator('[data-team-composer]')
+  await reopenedComposer.getByPlaceholder('写下评论…').fill('A reply on the issue')
+  await reopenedComposer.getByRole('button', { name: '发送' }).click()
+  await expect.poll(async () => reopenedComments.locator('[data-comment-reply-row]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => reopenedComments.locator('[data-comment-reply-row] [data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A reply on the issue')
+  // The parent still carries its own body, and the answer quotes it.
+  await expect.poll(async () => reopenedComments.locator('[data-comment-card] [data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-comments.png'), fullPage: true })
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
+ * The issue slice (M-38): the issue opens as a dialog over the board, the
+ * board stays live behind it, Maximize turns it into the page, and the narrow
+ * viewport degrades back to the page.
+ *
+ * The journey drives the board the way a reader does — the card click — and
+ * reads the two presentations the slot names: the dialog over the board, and
+ * the whole-column page.
+ */
+it('opens the issue as a slice over the board and over the Inbox, maximizes it to the page, and degrades to the page when narrow', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-slice-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Slice Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+    createTask(request: Record<string, unknown>): Promise<{ readonly task: { readonly taskRef: string }; readonly thread: { readonly threadRef: string } }>
+    addMember(request: Record<string, unknown>): Promise<{ readonly status: { readonly member: { readonly memberId: string; readonly handle: string; readonly sessionId: string } } }>
+  }
+  await team.createChannel({ requestId: 'issue-slice-journey-channel', workspaceId, name: 'delivery', description: 'Issue slice journey' })
+  // A Member who asks a decision on a Task's Thread: the open card is a
+  // mention in the Human's Inbox, so the queue holds a row that names a Task
+  // — the row the Inbox opens the issue from.
+  const inboxChannel = (await team.createChannel({ requestId: 'issue-slice-journey-inbox-channel', workspaceId, name: 'inbox', description: 'Inbox journey' })).channel.channelRef
+  const planner = (await team.addMember({
+    requestId: 'issue-slice-journey-member', workspaceId, handle: 'planner', description: 'Plans the work',
+    presetId: 'team-member', role: 'worker', channelRefs: [inboxChannel],
+  })).status.member
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // One Task on the board, so the card pick has somewhere to go.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Issue slice task')
+  await dialog.getByLabel('描述').fill('The task the slice opens')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Issue slice task' })
+  await card.waitFor({ timeout: 20_000 })
+  // A Task of its own, with a decision card on its Thread: that is what puts
+  // a row naming a Task into the Human's Inbox.
+  const ledger = (scaffold.ctx.agentTeam as unknown as { ledger: any }).ledger
+  const created = await team.createTask({
+    requestId: 'issue-slice-journey-inbox-task', workspaceId, channelRef: inboxChannel,
+    title: 'Inbox journey task', body: 'The task the Inbox opens',
+  })
+  await ledger.askDecision({ requestId: 'issue-slice-journey-ask', actor: { kind: 'member', memberId: planner.memberId, handle: 'planner' }, workspaceId, threadRef: created.thread.threadRef,
+    context: 'The slice opens over the Inbox, and the Inbox stays behind it.',
+    questions: [{ prompt: 'Ship it?', multiple: false, options: [{ label: 'Yes' }, { label: 'No' }], recommended: [0] }] })
+
+  // The card opens the issue as a slice: a dialog over the board, and the
+  // board behind it is still there.
+  await card.click()
+  const slice = page.locator('[data-team-issue-slice]')
+  await slice.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => page.locator('[role="dialog"]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => slice.getByText('Issue slice task').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-over-the-board.png'), fullPage: true })
+
+  // Escape closes the slice, and the focus goes back to the card the reader
+  // came from: the card's own title, not the body of the page.
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.evaluate(() => {
+    const active = document.activeElement
+    return active instanceof HTMLElement && active.hasAttribute('data-board-card-title') ? active.textContent ?? '' : ''
+  }), { timeout: 30_000 }).toContain('Issue slice task')
+
+  // Maximize is the variant switch: the same issue, the whole-column page.
+  await card.click()
+  await slice.waitFor({ timeout: 30_000 })
+  await slice.getByRole('button', { name: '最大化' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page-from-the-slice.png'), fullPage: true })
+
+  // The switch runs both ways: the page puts the issue back into the slice.
+  await page.getByRole('button', { name: '回到浮层' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(0)
+
+  // The slice closes back onto the face it was opened over.
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+
+  // The narrow viewport degrades the slice to the page: the wide overlay
+  // stops working there, and the issue stays open.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await card.click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-narrow.png'), fullPage: true })
+  await page.getByRole('button', { name: '关闭 Issue' }).click()
+  await expect.poll(async () => page.locator('[data-team-issue-page]').count(), { timeout: 30_000 }).toBe(0)
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // The Inbox opens the issue the same way, and the Inbox is still the face
+  // behind the slice: the issue slot is orthogonal to the face flags, so the
+  // row's own Workspace is not selected and the queue does not leave.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, inbox: true }))
+  }, workspaceId)
+  await page.reload()
+  const inbox = page.locator('[data-team-inbox]')
+  await inbox.waitFor({ timeout: 30_000 })
+  const row = inbox.locator('[data-inbox-list] button[data-severity="action_required"]')
+  await row.waitFor({ timeout: 30_000 })
+  // A modifier click is the Inbox's own grammar for opening a row's issue: a
+  // plain click selects the row into the detail pane.
+  await row.click({ modifiers: ['Control'] })
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(1)
+  // The Inbox is still on screen, behind the dialog.
+  await expect.poll(async () => inbox.count(), { timeout: 30_000 }).toBe(1)
+  await page.screenshot({ path: join(INBOX_SHOTS, 'issue-slice-over-the-inbox.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.locator('[data-team-issue-slice]').count(), { timeout: 30_000 }).toBe(0)
+  await expect.poll(async () => inbox.count(), { timeout: 30_000 }).toBe(1)
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
+ * The issue journey (M-42): one scenario that walks the surface the batch
+ * built, in the order the Owner walks it — the board card, the slice over the
+ * board, the page, the regions, the title, a comment, two reloads, and the way
+ * back to the Thread the issue replaced.
+ *
+ * The journey drives the surface by hook (`data-testid`), never by copy: a
+ * region's heading and a control's label are translated strings, so a wording
+ * change must not be able to fail a browser run. `issue-page.client.spec.tsx`
+ * and `issue-slice.client.spec.tsx` hold the same names, so a hook that moves
+ * fails the unit suite before it fails this one.
+ *
+ * What it does not walk: `team_ask` from a planning-phase Task (M-42's step 6)
+ * needs a Member Turn, and the ask card, the answer and the wake are already
+ * proven by the decision journey above; the plan approval (step 7) is proven
+ * on the Thread it lands on, by the same journey's Thread leg. Both stay
+ * listed on the card until a scripted Member Turn can walk them here.
+ */
+it('walks the issue journey from the board card to the legacy Thread in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-issue-journey-full')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team Issue Journey Full')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+  }
+  await team.createChannel({ requestId: 'issue-journey-full-channel', workspaceId, name: 'delivery', description: 'Issue journey' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // The board renders its columns and one Task, created the way a Human
+  // creates one: the dialog is the only writer, so the issue reads a Task the
+  // product made rather than a row the test injected.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('Issue journey')
+  await dialog.getByLabel('描述').fill('The body the issue reads')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'Issue journey' })
+  await card.waitFor({ timeout: 20_000 })
+  const taskRef = await card.getAttribute('data-task-ref')
+  expect(taskRef).toBeTruthy()
+
+  // The card opens the issue as a slice over the board, and the board behind
+  // it is still the face the reader came from.
+  await card.click()
+  const slice = page.getByTestId('issue-slice')
+  await slice.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => board.count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => slice.getByTestId('issue-title').textContent(), { timeout: 30_000 }).toBe('Issue journey')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'journey-01-slice.png'), fullPage: true })
+
+  // Maximize is the page: the same issue, the whole column, the same regions.
+  await slice.getByTestId('issue-maximize').click()
+  const issue = page.getByTestId('issue-page')
+  await issue.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => page.getByTestId('issue-slice').count(), { timeout: 30_000 }).toBe(0)
+
+  // The seven regions are all there and populated from the Host's one
+  // snapshot: the description carries the body the dialog wrote, the
+  // properties carry the Task's own facts, and the regions with nothing to
+  // say are present rather than absent.
+  for (const id of ['issue-description', 'issue-properties', 'issue-comments', 'issue-activity', 'issue-decisions', 'issue-execution-log']) {
+    await expect.poll(async () => issue.getByTestId(id).count(), { timeout: 30_000 }).toBe(1)
+  }
+  await expect.poll(async () => issue.getByTestId('issue-description-body').textContent(), { timeout: 30_000 }).toBe('The body the issue reads')
+  await expect.poll(async () => issue.getByTestId('issue-prop-status').textContent(), { timeout: 30_000 }).toContain('待办')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'journey-02-page.png'), fullPage: true })
+
+  // The title is the Human's to change, and the write is not optimistic: the
+  // Host commits it, the change-wake refetches, and only then does the title
+  // settle.
+  await issue.getByTestId('issue-title').click()
+  const title = issue.getByTestId('issue-title-input')
+  await title.fill('Issue journey, renamed')
+  await title.press('Enter')
+  await expect.poll(async () => scaffold.ctx.agentTeam.view({ workspaceId }).tasks
+    .find((task: { taskRef: string }) => task.taskRef === taskRef)?.title, { timeout: 20_000 }).toBe('Issue journey, renamed')
+  await expect.poll(async () => issue.getByTestId('issue-title').textContent(), { timeout: 20_000 }).toBe('Issue journey, renamed')
+
+  // A reload keeps the page and the rename: the slot is durable and the title
+  // is the Host's fact. The Team page is entered the way a reader enters it —
+  // the shell owns the mode, the slot is ours.
+  await page.reload()
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  const reopened = page.getByTestId('issue-page')
+  await reopened.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => reopened.getByTestId('issue-title').textContent(), { timeout: 30_000 }).toBe('Issue journey, renamed')
+
+  // The Human answers on the issue itself. The write is not optimistic: the
+  // row appears when the Host commits it, and the change-wake refetches.
+  const comments = reopened.getByTestId('issue-comments')
+  const composer = reopened.locator('[data-team-composer]')
+  await composer.locator('textarea').fill('A comment on the issue')
+  await composer.locator('button[type="submit"]').click()
+  await expect.poll(async () => comments.locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => comments.locator('[data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
+
+  // A reload does not lose the comment: it is the Host's fact, read back.
+  await page.reload()
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  const afterComment = page.getByTestId('issue-page')
+  await afterComment.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => afterComment.getByTestId('issue-comments').locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+
+  // The legacy Thread is one control away, in the issue's own header (D10):
+  // the issue closes, and the Thread it replaced opens on the same Task.
+  await afterComment.getByTestId('issue-open-legacy-thread').click()
+  await expect.poll(async () => page.getByTestId('issue-page').count(), { timeout: 30_000 }).toBe(0)
+  const thread = page.locator('[data-team-thread]').first()
+  await thread.waitFor({ timeout: 30_000 })
+  // One store, two views: the comment written on the issue is the comment the
+  // Thread shows, because both read the same Thread facts from the Host.
+  await expect.poll(async () => thread.getByText('A comment on the issue').count(), { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'journey-03-legacy-thread.png'), fullPage: true })
+
+  // And back: the board opens the same issue, with the rename and the comment
+  // still on it. The legacy view is a peer surface, not a second store.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const boardAgain = page.getByTestId('team-board-page')
+  await boardAgain.waitFor({ timeout: 30_000 })
+  await boardAgain.locator(`[data-testid="board-card"][data-task-ref="${taskRef}"]`).click()
+  const back = page.getByTestId('issue-slice')
+  await back.waitFor({ timeout: 30_000 })
+  await expect.poll(async () => back.getByTestId('issue-title').textContent(), { timeout: 30_000 }).toBe('Issue journey, renamed')
+  await expect.poll(async () => back.getByTestId('issue-comments').locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
+/**
  * The Orchestrator digest (Team Board 9/10): the Host's own timer wakes the
  * Orchestrator, the Orchestrator posts one digest into its Channel, and the
  * Human reads it where every other Team message is read.
@@ -3682,6 +4150,135 @@ it('walks the Team Board journey in real Web', async () => {
  * is named by the Host's own prompt, so the scripted arguments read that ref
  * out of the request instead of guessing it.
  */
+/**
+ * The Team's history (M-40): the browser's own back and forward buttons walk
+ * the seat's positions, the path never changes, and a reload keeps the stack.
+ *
+ * The journey drives the browser's history the way a reader does — the button,
+ * not a call into the client — and reads the browser's own entry count to see
+ * whether a navigation created one.
+ */
+it('walks the Team history with the browser back and forward buttons in real Web', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  const workspacePath = join(scaffold.workspaceCwd, 'team-history-journey')
+  await mkdir(workspacePath, { recursive: true })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(workspacePath, 'Team History Journey')
+  const workspaceId = workspace.id
+  const team = scaffold.ctx.agentTeam as unknown as {
+    createChannel(request: Record<string, unknown>): Promise<{ readonly channel: { readonly channelRef: string } }>
+  }
+  // The Channel the journey's Workspace carries; the board reads the whole
+  // catalog, so the journey needs the Workspace, not a Channel of its own.
+  await team.createChannel({ requestId: 'history-journey-channel', workspaceId, name: 'delivery', description: 'History journey' })
+
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  // The board is a navigation face: the persisted snapshot is how the reader
+  // reaches it, and a reload reopens it.
+  await page.evaluate(id => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: 'team', workspaceId: id, board: true }))
+  }, workspaceId)
+  await page.reload()
+  const board = page.getByTestId('team-board-page')
+  await board.waitFor({ timeout: 30_000 })
+
+  // The path never changes: the position lives in the history state object,
+  // never in the URL.
+  const path = await page.evaluate(() => location.pathname)
+  expect(await page.evaluate(() => history.length)).toBeGreaterThan(0)
+
+  // One Task on the board, so the card pick has somewhere to go.
+  await board.getByTestId('board-new-task').click()
+  const dialog = page.getByTestId('board-create-dialog')
+  await dialog.getByLabel('标题').fill('History journey task')
+  await dialog.getByLabel('描述').fill('The card the history walks')
+  await page.getByTestId('board-create-submit').click()
+  const card = board.locator('[data-testid="board-card"]', { hasText: 'History journey task' })
+  await card.waitFor({ timeout: 20_000 })
+  const taskRef = await card.getAttribute('data-task-ref')
+  expect(taskRef).toBeTruthy()
+
+  // A filter is not a place: it changes what the board shows, not where the
+  // reader is, so it creates no history entry.
+  const entriesBeforeFilter = await page.evaluate(() => history.length)
+  await board.getByTestId('board-filter-bar').getByRole('searchbox').fill('History')
+  await expect.poll(async () => board.locator('[data-testid="board-card"]', { hasText: 'History journey task' }).count()).toBe(1)
+  expect(await page.evaluate(() => history.length)).toBe(entriesBeforeFilter)
+  await board.getByTestId('board-filter-bar').getByRole('searchbox').fill('')
+
+  // A card pick is a place: one history entry, and the path does not move.
+  const entriesBeforePick = await page.evaluate(() => history.length)
+  await card.click()
+  await page.locator('[data-team-thread]').waitFor({ timeout: 30_000 })
+  expect(await page.evaluate(() => history.length)).toBe(entriesBeforePick + 1)
+  expect(await page.evaluate(() => location.pathname)).toBe(path)
+
+  // The browser's back returns to the board, and its forward returns to the
+  // Thread: the same stack the in-app affordance walks.
+  await page.evaluate(() => { history.back() })
+  await expect.poll(async () => page.getByTestId('team-board-page').count(), { timeout: 30_000 }).toBe(1)
+  await page.evaluate(() => { history.forward() })
+  await expect.poll(async () => page.locator('[data-team-thread]').count(), { timeout: 30_000 }).toBe(1)
+
+  // A reload keeps the stack: the position is restored and the browser's back
+  // still walks the path it walked before the reload.
+  await page.reload()
+  // The app's own panel selection is the host's state, and it does not
+  // survive a reload: the reader re-enters the Team the way they left it.
+  await page.getByRole('button', { name: '团队', exact: true }).click()
+  await expect.poll(async () => page.locator('[data-team-thread]').count(), { timeout: 30_000 }).toBe(1)
+  await page.evaluate(() => { history.back() })
+  await expect.poll(async () => page.getByTestId('team-board-page').count(), { timeout: 30_000 }).toBe(1)
+  expect(await page.evaluate(() => location.pathname)).toBe(path)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'history-back-on-the-board.png'), fullPage: true })
+
+  // The issue the link names: the issue slot over the board. The URL is the
+  // link a reader copies, so the query carries the issue and its variant —
+  // and the path is still the document's.
+  await page.evaluate(([id, ref]) => {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      mode: 'team', workspaceId: id, board: true, issueRef: ref, issueVariant: 'page',
+    }))
+  }, [workspaceId, taskRef] as const)
+  await page.reload()
+  await page.locator('[data-team-issue-page]').waitFor({ timeout: 30_000 })
+  const sharedUrl = new URL(page.url())
+  expect(sharedUrl.pathname).toBe(path)
+  expect(sharedUrl.searchParams.get('issue')).toBe(taskRef)
+  expect(sharedUrl.searchParams.get('variant')).toBe('page')
+  await page.screenshot({ path: join(BOARD_SHOTS, 'history-issue-link.png'), fullPage: true })
+
+  // The shared link in a fresh tab: the stored position there carries no
+  // issue, so the query is what opens it. The tab is one of the same
+  // browser's — it carries the session and the reader's stored position,
+  // which is what makes the link work for a reader.
+  const sharedContext = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  await sharedContext.addCookies(await page.context().cookies())
+  const sharedTab = await sharedContext.newPage()
+  const sharedSnapshot = await page.evaluate(() => {
+    const raw = localStorage.getItem('dsh.agent-team.navigation')
+    if (raw === null) return null
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    delete parsed.issueRef
+    delete parsed.issueVariant
+    return JSON.stringify(parsed)
+  })
+  await sharedTab.addInitScript(seed => {
+    if (seed !== null) localStorage.setItem('dsh.agent-team.navigation', seed)
+  }, sharedSnapshot)
+  await sharedTab.goto(page.url())
+  await sharedTab.locator('[data-team-issue-page]').waitFor({ timeout: 30_000 })
+  await expect.poll(async () => sharedTab.locator('[data-issue-comments]').count(), { timeout: 30_000 }).toBe(1)
+  expect(await sharedTab.evaluate(() => location.pathname)).toBe(path)
+  await sharedTab.screenshot({ path: join(BOARD_SHOTS, 'history-shared-link.png'), fullPage: true })
+  await sharedTab.close()
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 300_000)
+
 it('delivers the scheduled Orchestrator digest in real Web', async () => {
   await installLocalBundle(false)
   const replayDirectory = join(HOME, 'replay')

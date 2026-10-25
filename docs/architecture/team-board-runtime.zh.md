@@ -10,7 +10,7 @@
 
 `team/task-created` 是一次提交：开头 Message、Task 覆盖层、Thread 与 Inbox 增量一起落盘，因此 Task 不会脱离打开它的 Message 而存在。
 
-`team/task-updated` 携带 `baseRevision` 与 `title`、`priority`、`assignee`、`position` 的补丁。它从不修订 Thread 的 Message。当补丁把 Task 换给另一个 Member 时，同一条记录携带公开的 `assign` Activity——新负责人的唤醒是这条记录的投影，而不是提交的副作用，因此重放会推导出同样的唤醒。
+`team/task-updated` 携带 `baseRevision` 与 `title`、`priority`、`assignee`、`position` 以及 description（`description` 与 description 自己的围栏 `descriptionRevision`）的补丁。它从不修订 Thread 的 Message。当补丁把 Task 换给另一个 Member 时，同一条记录携带公开的 `assign` Activity——新负责人的唤醒是这条记录的投影，而不是提交的副作用，因此重放会推导出同样的唤醒。
 
 状态不在这几个字段里。验收、关闭与重新打开走 `team/task-changed`，因为它们是对 Task 所做工作的决定，而不是对 Task 描述的改变。
 

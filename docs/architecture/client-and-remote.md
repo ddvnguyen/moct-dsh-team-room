@@ -54,8 +54,30 @@ The Human Client consumes the Host's Inbox projection (the 「收件箱 / Inbox�
 
 Team navigation mode, Workspace selection, the last Channel/Thread, the Inbox page position and the Board page position are browser-persisted; unread and Attention are Host-owned. The workspace Overview is not a navigation face: it lives in the Team Detail page, keeps its own Workspace scope, and always reads its data live.
 
+The issue surface has **two presentations over one tree**: the page, which takes the whole column, and the slice, a dialog over whatever screen the reader is on. The slice is one host in the shell's floating layer, so the face behind it stays live and interactive; it reads the same `issueView` value the page reads, and **Maximize** moves between the two without changing the position. The narrow viewport degrades the slice to the page.
+
+One seam opens it — `openIssue(taskRef)` — from the board, the Inbox, a Task cited in a Thread and a seat's Task, and the slice adds no navigation flag of its own: the `issueRef` / `issueVariant` slot is the position's, and the slice is an overlay rather than a place.
+
+The seam carries two facts the slot does not: the **Workspace** the issue is read in, and the **control the focus returns to**. The Inbox merges every visible Workspace, so a row may name one the reader has not selected — selecting it would leave the Inbox, the very face the slice is over — and the issue reads in the row's own Workspace instead.
+
+The focus returns to the control the reader invoked, named as a way to focus it rather than as a node: a board card is re-drawn whenever the catalog moves, and a captured node would be stale by the time the reader closes the issue. The slice is transient and the page is a position: only the page is persisted, so a reload never re-opens a dialog nobody asked for.
+
+The browser's own back and forward buttons walk those positions. The Team keeps a history stack over the navigation snapshot: one `pushState` entry per navigation — the path is the document's and never changes, the state object carries the position, and the URL stays out of the routing business — and `popstate` is the only way a position comes back, so the browser's button and the seat's own back control cannot disagree.
+
+The stack holds positions, not rendered views: the face flags, the refs, and the issue slot with its variant. Only a change of where the reader is creates an entry — a filter, a picker, a disclosure and an inline edit are not places — the stack is bounded at 32 entries with the oldest dropped, and it survives a reload.
+
+Closing the issue consumes the entry its open pushed, so the browser's back closes the slice instead of walking out from under it. The slice itself is transient: a reload restores the face without it.
+
+The URL's query is the plugin's own state, and it carries the issue: `issue` names the Task and `variant` names how it is presented, so a copied link opens that issue. The query is written from the position on every navigation, it is a query-only relative URL, and the path never changes.
+
+A cold load reads the query and opens the issue in the `page` variant — a slice is transient, and a cold start has no opener to return the focus to. The mount path and the base are never touched, and no other parameter on the URL belongs to the Team.
+
+The issue surface is an orthogonal slot over those faces, not a face of its own: the snapshot carries the Task whose issue is open and how it is presented (the whole-column page, or the dialog over the live face), the face behind it stays where it was, and closing the issue returns the reader to it. The issue's content is the Host's `issueView` snapshot — one read per issue, variant-agnostic — and the client renders the seven regions it carries; the presentation is the client's, never a field on the read model.
+
 The Team sidebar keeps Channels/Agents ordering as a browser-only `localStorage` preference, merged over Remote defaults.
 
 An embedded Member Session uses the shipped composer unmodified: the Team registers no member-session composer surface — no seat shadow, no trigger sources, no dock strip. rc.1 moved the trigger-menu overlay into `conversation.composer.bar`'s children (a shadowing entry would inherit — and strand — the overlay), and the Team's own command/member reference entry points carried no irreplaceable value over the shipped vocabulary, so they were removed together.
 
 Ordinary and member sessions share the same composer and vocabulary. Reuse public primitives and `--dsw-*` tokens, keep CSS in CSS Modules, and preserve Team mode restoration and narrow layouts.
+
+The issue's comment region reads the contract's `comments` region and pages the same facts the Thread page pages, through the same history read: one store, two views. There is one paging call — the issue page's — and it states its limit (`limit: 20`, inside the Host's 1–100 bound). The decision region owns the ask message, so the comment region skips it, and a reply hangs under its parent one level deep because the ledger records one parent per message. Editing a comment, resolve and reactions are not in this cut: the ledger is append-only.

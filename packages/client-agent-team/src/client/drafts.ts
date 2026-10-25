@@ -1,12 +1,16 @@
-import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 
 /**
  * Keyed draft cache for the Channel/Thread composers. Drafts are local UI
  * convenience state — never Host-authoritative facts — so localStorage is the
  * right home: switching views unmounts the pages, and a refresh should not
  * cost the Human their half-written message.
+ *
+ * The issue view's composer is keyed by its Task, not by the Thread: the
+ * issue and the Thread are two surfaces of one conversation, and a half-written
+ * comment in one must not overwrite the other.
  */
-export type TeamDraftKey = `channel:${AgentTeamChannelRef}` | `thread:${AgentTeamThreadRef}`
+export type TeamDraftKey = `channel:${AgentTeamChannelRef}` | `thread:${AgentTeamThreadRef}` | `issue:${AgentTeamTaskRef}`
 
 /** One cached composer state; `recipients` mirrors the structured mention set. */
 export interface TeamDraftState {
@@ -27,7 +31,7 @@ const LIMIT = 50
 const EMPTY: TeamDraftState = Object.freeze({ draft: '', recipients: new Set<AgentTeamMemberId>() })
 
 function isTeamDraftKey(value: string): value is TeamDraftKey {
-  return value.startsWith('channel:') || value.startsWith('thread:')
+  return value.startsWith('channel:') || value.startsWith('thread:') || value.startsWith('issue:')
 }
 
 function readStored(): Map<TeamDraftKey, StoredDraft> {

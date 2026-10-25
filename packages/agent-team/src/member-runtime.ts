@@ -57,6 +57,7 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'memory_get',
   'team_doc',
   'team_ask',
+  'team_plan',
 ] as const)
 
 /**

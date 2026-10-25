@@ -28,7 +28,9 @@ The patch is applied by anchored edits (`scripts/codex-ui-sidebar-patch/edits.mj
 
 ## How it is applied and kept applied
 
-`scripts/codex-ui-sidebar-patch/apply.mjs` patches an installed codex-ui in place, is idempotent, keeps the original next to the patched file, and parse-checks the result before it writes. `deploy-dsh-x-sidebar.sh` runs the whole dsh-x path: profile versions, install, patch, restart.
+`scripts/codex-ui-sidebar-patch/apply.mjs` patches an installed codex-ui in place, is idempotent, keeps the original next to the patched file, and parse-checks the result before it writes; the check's scratch sits beside the bundle being written, never in `tmpdir()`, so a host whose shared `/tmp` is full cannot fail the install (M-66).
+
+`deploy-dsh-x-sidebar.sh` refreshes the applier copy and hands the lane's restart back to its systemd unit, which owns the port, the flags and the team environment; it refuses a listener the unit does not own, and `verify-team-room.mjs` fails the deploy when the lane answers for a room the MOCT backend does not replay.
 
 The dsh-x profile carries a `postinstall` hook that runs the applier after every profile install, so `dsh plugin update @michengai/dsh-codex-ui` re-applies the patch instead of silently dropping the `Teams` tab.
 

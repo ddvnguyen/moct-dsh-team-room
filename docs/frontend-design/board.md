@@ -2,13 +2,15 @@
 
 English | [中文](board.zh.md)
 
-The Board is the workspace's kanban: every Task of the selected Workspace, one column per status, opened from the strip's `看板` tab (`Tasks | Board | Team | Agents | Scheduled`). It is the Human's view of what the Team is doing — what is queued, what Agents claimed, and what is finished — and the one surface where a Human moves Tasks between the statuses Agents do not claim.
+The Board is the workspace's kanban: every Task of the selected Workspace, one column per status, opened from the sidebar's main panel list (the `agent-team-board` row). It is the Human's view of what the Team is doing — what is queued, what Agents claimed, and what is finished — and the one surface where a Human moves Tasks between the statuses Agents do not claim.
 
 The page is `TeamBoardPage` in `packages/client-agent-team/src/client/board/`, a port of Multica's board view under the Multica License (see [`multica-look.md`](multica-look.md)). The look layer, the ported helpers and the shared pickers it reuses are documented there.
 
 ## Opening the board
 
-The `看板` tab is a native strip tab inserted by the client (`team-tab.ts`, order 2). Its body is the strip's own slice — one `打开看板` action — because the strip lives in the host's narrow sidebar where five 280px columns would only scroll. The action selects the Workspace the Team navigation holds (or the first one) and hands the Team seat to the board face.
+The Board is a `sidebar.panellist` row — id `agent-team-board`, order 21 — registered by the client (`index.ts`, `registerTeamPanel`); the strip itself carries only the native `team` tab (`team-tab.ts`, order 3).
+
+The row's body is `TeamBoardPanel` (`board-panel-body.tsx`): it adopts the Workspace the Team navigation holds (or the first one) and calls `selectBoard()`, so the board opens in the main column, where five 280px columns fit.
 
 The board is a navigation face like the Inbox (`board: true` in the persisted `dsh.agent-team.navigation` snapshot): opening it clears the Channel/Thread faces, a reload reopens it, and picking a card leaves it through the Thread setters.
 
@@ -21,7 +23,7 @@ The catalog read is a `TeamQueries` entry keyed `board:<workspaceId>`. Task comm
 A card shows:
 
 - the priority icon and `#<taskNumber>` (top left);
-- the live agent activity indicator (top right) when a running Turn is attributed to the Task's Thread in the `memberActivity` snapshot;
+- the live agent activity indicator (top right) when a running Turn runs against the Task's Thread in the `memberActivity` snapshot — the rule is Thread-scoped: whoever runs the Turn (the assignee or any helper), the badge lands on that Thread's card and on no other card of the column;
 - the title (Tasks created before the board have none and show `#<taskNumber>`);
 - the Channel pill and the assignee avatar;
 - the Task's active Claim direction line, when one is running.
@@ -53,7 +55,9 @@ The house rule is **no optimistic mutations**: a drop never moves data locally. 
 
 A stale revision (the Task changed elsewhere) and an unread Thread (the Human must read new messages first) come back as ordinary `ok` answers, not errors, and each has its own notice; a stale answer also refetches so the retry carries the current revision.
 
-Each card is one tab stop (a named group); its title is the control that opens the Task's Thread (the existing Thread face), and the priority and assignee pickers are separate controls that never open it.
+Each card is one tab stop (a named group); its title is the control that opens the Task's issue, and the priority and assignee pickers are separate controls that never open it.
+
+The issue is the current surface for a Task (D10). The Thread view it replaced is **legacy**: frozen, still reachable from the Channel face and from the issue header's *Open the legacy thread view* control, and reading the same Host facts — one store, two views.
 
 ## Filters
 

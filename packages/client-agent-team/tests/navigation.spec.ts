@@ -133,8 +133,12 @@ describe('TeamNavigation', () => {
       mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
       taskRef: 'task:orphaned', taskNumber: 7,
     }))
+    // The Task identity is restored on its own: the issue surface is
+    // mutually exclusive with the Thread face, so a position that carries a
+    // Task and no Thread must keep its Task. The Thread's own facts — the
+    // number — still ride with the Thread.
     expect(new TeamNavigation().getSnapshot()).toEqual({
-      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1', taskRef: 'task:orphaned',
     })
 
     localStorage.setItem(STORAGE_KEY, '{broken')
@@ -232,6 +236,80 @@ describe('TeamNavigation', () => {
     navigation.actions().selectInbox()
     navigation.actions().selectWorkspace('workspace:two' as never)
     expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:two' })
+  })
+
+  it('opens the issue over the face it was opened from, and closes back onto it', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    actions.selectWorkspace('workspace:one' as never)
+    actions.enterTeam()
+    actions.selectBoard()
+
+    // The issue is an orthogonal slot: the Board face stays behind it.
+    actions.openIssue('task:one' as never, 'page')
+    expect(navigation.getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', board: true, issueRef: 'task:one', issueVariant: 'page',
+    })
+
+    // Closing it returns to exactly where the reader was.
+    actions.closeIssue()
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', board: true })
+  })
+
+  it('moves the open issue between its presentations without changing the Task', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    actions.openIssue('task:one' as never, 'slice')
+    actions.setIssueVariant('page')
+    expect(navigation.getSnapshot()).toMatchObject({ issueRef: 'task:one', issueVariant: 'page' })
+    actions.setIssueVariant('slice')
+    expect(navigation.getSnapshot()).toMatchObject({ issueRef: 'task:one', issueVariant: 'slice' })
+  })
+
+  it('reopens the issue after a reload, with its presentation', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+    navigation.actions().openIssue('task:one' as never, 'page')
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
+      mode: 'conversation', workspaceId: 'workspace:one', issueRef: 'task:one', issueVariant: 'page',
+    })
+    expect(new TeamNavigation().getSnapshot()).toMatchObject({ issueRef: 'task:one', issueVariant: 'page' })
+  })
+
+  it('does not persist the slice: an overlay is not a place', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    actions.selectWorkspace('workspace:one' as never)
+    actions.openIssue('task:one' as never, 'slice')
+
+    // The slice is an overlay, not a position: the persisted snapshot does
+    // not carry it, so a reload never re-opens a dialog nobody asked for.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
+    expect(new TeamNavigation().getSnapshot().issueRef).toBeUndefined()
+  })
+
+  it('ignores a persisted slice left behind by an older build', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode: 'team', workspaceId: 'workspace:one', issueRef: 'task:one', issueVariant: 'slice',
+    }))
+    // The slice is not a place: a persisted one is not a place to come back
+    // to either, and the reader lands on the face.
+    expect(new TeamNavigation().getSnapshot().issueRef).toBeUndefined()
+  })
+
+  it('keeps the face flags when the issue opens, and keeps the issue when a face is picked', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    actions.selectWorkspace('workspace:one' as never)
+    actions.enterTeam()
+    actions.selectInbox()
+    actions.openIssue('task:one' as never, 'slice')
+    expect(navigation.getSnapshot()).toMatchObject({ inbox: true, issueRef: 'task:one' })
+    // Picking a face is a move of the seat: the issue is not a face, so the
+    // face switch leaves the issue where it was.
+    actions.selectBoard()
+    expect(navigation.getSnapshot()).toMatchObject({ board: true, issueRef: 'task:one' })
   })
 
 })

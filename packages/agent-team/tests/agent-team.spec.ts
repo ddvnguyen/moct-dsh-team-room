@@ -27,7 +27,7 @@ import { SUMMARY_OUTPUT_TOKEN_CAP } from '../src/thread-summary.ts'
 import type { ThreadSummaryModelCall } from '../src/thread-summary-model.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
 import type { AgentTeamReplyCommittedResult, AgentTeamSendMessageCommittedResult } from '../src/types.ts'
-import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamTask, AgentTeamTaskRef, AgentTeamThreadReadData, AgentTeamThreadReadOperation, AgentTeamThreadReadReceipt, AgentTeamThreadReadResult, AgentTeamThreadRef } from '../src/types.ts'
+import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamMemberId, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamTask, AgentTeamTaskRef, AgentTeamThreadReadData, AgentTeamThreadReadOperation, AgentTeamThreadReadReceipt, AgentTeamThreadReadResult, AgentTeamThreadRef } from '../src/types.ts'
 
 interface TeamHarness {
   readonly ctx: Context
@@ -472,6 +472,52 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       .rejects.toThrow(/not authorized for Channel/)
   })
 
+  it('raises the typed team/member-not-in-workspace error from both Task write seams, discriminated by reason (M-6)', async () => {
+    const test = await harness()
+    const host = test.ctx.agentTeam
+    const channel = await host.createChannel({ requestId: requestId('typed-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const other = await host.createChannel({ requestId: requestId('typed-other'), workspaceId: alpha, name: 'design', description: 'Design work' })
+    const channelRef = channel.channel.channelRef
+    const stranger = 'member:typed-stranger' as AgentTeamMemberId
+    const disabled = (await host.addMember({ requestId: requestId('typed-disabled'), workspaceId: alpha,
+      handle: 'typed-disabled', description: 'Disabled seat', presetId: 'team-member', channelRefs: [channelRef] })).status.member
+    await host.suspendMember({ requestId: requestId('typed-suspend'), memberId: disabled.memberId })
+    const outsider = (await host.addMember({ requestId: requestId('typed-outsider'), workspaceId: alpha,
+      handle: 'typed-outsider', description: 'Seat of another Channel', presetId: 'team-member', channelRefs: [other.channel.channelRef] })).status.member
+    const expected = (memberId: AgentTeamMemberId, reason: 'unknown' | 'disabled' | 'not-in-channel') =>
+      ({ name: 'RemoteError', code: 'team/member-not-in-workspace', details: { memberId, channelRef, reason } })
+
+    // createTask: the typed refusal for each reason.
+    await expect(host.createTask({ requestId: requestId('typed-create-unknown'), workspaceId: alpha,
+      channelRef, body: 'Task', assignee: stranger })).rejects.toMatchObject(expected(stranger, 'unknown'))
+    await expect(host.createTask({ requestId: requestId('typed-create-disabled'), workspaceId: alpha,
+      channelRef, body: 'Task', assignee: disabled.memberId })).rejects.toMatchObject(expected(disabled.memberId, 'disabled'))
+    await expect(host.createTask({ requestId: requestId('typed-create-outsider'), workspaceId: alpha,
+      channelRef, body: 'Task', assignee: outsider.memberId })).rejects.toMatchObject(expected(outsider.memberId, 'not-in-channel'))
+
+    // updateTask: the same code and details from its own seam.
+    const created = committed(await host.createTask({ requestId: requestId('typed-create'), workspaceId: alpha, channelRef, body: 'Ship the board' }))
+    const patch = (assignee: AgentTeamMemberId, id: string) => host.updateTask({ requestId: requestId(id), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: created.thread.revision, patch: { assignee } })
+    await expect(patch(stranger, 'typed-update-unknown')).rejects.toMatchObject(expected(stranger, 'unknown'))
+    await expect(patch(disabled.memberId, 'typed-update-disabled')).rejects.toMatchObject(expected(disabled.memberId, 'disabled'))
+    await expect(patch(outsider.memberId, 'typed-update-outsider')).rejects.toMatchObject(expected(outsider.memberId, 'not-in-channel'))
+  })
+
+  it('refuses Task creation and field update from a non-Human actor (M-6)', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('authority-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const created = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('authority-create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Ship the board' }))
+    await expect(ledger.createTask({ requestId: requestId('authority-forge-create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Forged', actor: actor as never })).rejects.toThrow(/lacks Human authority/)
+    await expect(ledger.updateTask({ requestId: requestId('authority-forge-update'), workspaceId: alpha,
+      taskRef: created.task.taskRef, baseRevision: created.thread.revision, actor: actor as never, patch: { assignee: member.memberId } }))
+      .rejects.toThrow(/lacks Human authority/)
+  })
+
   it('shows an assignment to the assignee as an unread assign activity, including when it already follows', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
@@ -503,6 +549,50 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       baseRevision: (await ledger.readThread({ requestId: requestId('read-4'), workspaceId: alpha, taskRef: created.task.taskRef, actor })).value.thread.revision,
       actor: agentTeamHumanActor(), patch: { assignee: member.memberId, priority: 'high' } })).value)
     expect(same.task.priority).toBe('high')
+    expect(() => replayLedger(test).validate()).not.toThrow()
+  })
+
+  it('reassigns across Members: the move names only the new assignee, and both hear it (M-6)', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const created = committed(await test.ctx.agentTeam.createTask({ requestId: requestId('create'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Ship the board' }))
+    const ledger = replayLedger(test)
+    const first = await addLedgerMember(ledger, channel.channel.channelRef, 'member:first-assignee', '', 'first-assignee')
+    const second = await addLedgerMember(ledger, channel.channel.channelRef, 'member:second-assignee', '', 'second-assignee')
+    committed((await ledger.updateTask({ requestId: requestId('assign-first'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: created.thread.revision, actor: agentTeamHumanActor(), patch: { assignee: first.member.memberId } })).value)
+
+    // The reassignment moves the Task; the old assignee is a plain follower from here.
+    const moved = committed((await ledger.updateTask({ requestId: requestId('assign-second'), workspaceId: alpha, taskRef: created.task.taskRef,
+      baseRevision: (await ledger.readThread({ requestId: requestId('read-before-move'), workspaceId: alpha, taskRef: created.task.taskRef, actor: first.actor })).value.thread.revision,
+      actor: agentTeamHumanActor(), patch: { assignee: second.member.memberId } })).value)
+    expect(moved.task.assignee).toBe(second.member.memberId)
+    // The reassignment's own assign activity names the new assignee and nobody
+    // else: the old assignee gains no assign fact of its own tenure.
+    const moveOperation = ledger.getOperation(moved.receipt.operationId)!
+    expect(moveOperation.kind).toBe('team/task-updated')
+    expect((moveOperation as Extract<AgentTeamOperation, { readonly kind: 'team/task-updated' }>).data.activity?.assignee).toBe(second.member.memberId)
+    // The old assignee, still a follower, hears the change as a public thread
+    // fact — and its read returns no assign fact naming itself.
+    const firstAfter = (await ledger.readThread({ requestId: requestId('read-first-after'), workspaceId: alpha, taskRef: created.task.taskRef, actor: first.actor })).value.facts
+    const firstSeenAssignees: AgentTeamMemberId[] = []
+    for (const entry of firstAfter) {
+      if (entry.fact.kind === 'activity' && entry.fact.activity.kind === 'assign' && entry.fact.activity.assignee !== undefined) firstSeenAssignees.push(entry.fact.activity.assignee)
+    }
+    expect(firstSeenAssignees.filter(assignee => assignee === first.member.memberId)).toHaveLength(0)
+    expect(firstSeenAssignees.filter(assignee => assignee === second.member.memberId)).toHaveLength(1)
+    // The wake follows the touched Thread: the new assignee is woken as the
+    // assignee, the old one as the follower it still is.
+    const woken = ledger.affectedMembersOf(moveOperation)
+    expect(woken).toContain(second.member.memberId)
+    expect(woken).toContain(first.member.memberId)
+    // The new assignee's own read shows exactly one unread assign fact — once.
+    const secondUnread = (await ledger.readThread({ requestId: requestId('read-second-after'), workspaceId: alpha, taskRef: created.task.taskRef, actor: second.actor })).value
+      .facts.filter(entry => entry.fact.kind === 'activity' && entry.fact.activity.kind === 'assign' && entry.unread)
+    expect(secondUnread).toHaveLength(1)
+    expect((await ledger.readThread({ requestId: requestId('read-second-again'), workspaceId: alpha, taskRef: created.task.taskRef, actor: second.actor })).value
+      .facts.filter(entry => entry.fact.kind === 'activity' && entry.fact.activity.kind === 'assign' && entry.unread)).toHaveLength(0)
     expect(() => replayLedger(test).validate()).not.toThrow()
   })
 
@@ -3224,6 +3314,32 @@ async function seatedHost() {
 }
 
 describe('AgentTeam host seat identity (A4, §4.1)', () => {
+  it('wakes the assignee of a created Task, and on reassignment the new assignee plus the follower the old one still is (M-6)', async () => {
+    const { host, channelRef, seatA, seatB } = await seatedHost()
+    const wakes: Array<{ readonly member: AgentTeamAgentMember | undefined; readonly operationKind: unknown }> = []
+    const notifiable = host as unknown as { notifyMember: (agent: unknown, cause: { readonly kind: string; readonly operationKind?: unknown }) => void }
+    const original = notifiable.notifyMember
+    notifiable.notifyMember = (agent, cause) => {
+      if (cause.kind === 'commit') wakes.push({ member: host.memberForAgent(agent as never), operationKind: cause.operationKind })
+      original.call(host, agent, cause)
+    }
+    try {
+      const created = committed(await host.createTask({ requestId: requestId('wake-create'), workspaceId: alpha,
+        channelRef, body: 'Ship the board', assignee: seatA.memberId }))
+      // The Human has no seated agent here, so the assignee is the only wake.
+      expect(wakes.map(wake => wake.member?.memberId)).toEqual([seatA.memberId])
+
+      wakes.length = 0
+      committed(await host.updateTask({ requestId: requestId('wake-reassign'), workspaceId: alpha, taskRef: created.task.taskRef,
+        baseRevision: created.thread.revision, patch: { assignee: seatB.memberId } }))
+      // The new assignee is woken by the assignment; the old assignee keeps
+      // its follow and is woken as the Thread's follower (a public fact).
+      expect(wakes.map(wake => wake.member?.memberId).sort()).toEqual([seatA.memberId, seatB.memberId].sort())
+    } finally {
+      notifiable.notifyMember = original
+    }
+  })
+
   it('posts as the calling seat even when the request names another Member', async () => {
     const { test, host, channelRef, seatA, seatB, agentA } = await seatedHost()
     const spoof = { memberId: seatB.memberId, actor: { kind: 'member', memberId: seatB.memberId, handle: seatB.handle } }

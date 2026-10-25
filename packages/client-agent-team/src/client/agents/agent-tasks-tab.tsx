@@ -22,7 +22,7 @@ export function AgentTasksTab({ state, message, groups, members, activities, onO
   readonly groups: readonly { readonly status: TaskStatus; readonly rows: readonly MemberTaskRow[] }[]
   readonly members: readonly AvatarStackMember[]
   readonly activities: readonly AgentTeamMemberActivity[]
-  readonly onOpen: (row: MemberTaskRow) => void
+  readonly onOpen: (row: MemberTaskRow, focusOpener?: (() => void) | undefined) => void
   readonly t: TeamSidebarProps['t']
 }) {
   if (state === 'loading') return <p className={css.muted} data-agent-tasks>{t('agentDetailsLoading')}</p>
@@ -47,7 +47,7 @@ export function AgentTasksTab({ state, message, groups, members, activities, onO
                   activities={activities}
                   settling={false}
                   onUpdate={() => { /* the compact face is read-only */ }}
-                  onOpen={() => { onOpen(row) }}
+                  onOpen={(_task, focusOpener) => { onOpen(row, focusOpener) }}
                   t={t}
                 />
               </li>
