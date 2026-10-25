@@ -212,7 +212,9 @@ export function useThreadLog({ workspaceId, threadRef, loadThreadSessions, loadM
 /**
  * One log row: the seat, its state, the live step/tool line or the recorded
  * tokens, and the two affordances — the seat's own transcript, and Stop on a
- * live row. Shared by the Thread page's log and the issue sidebar's section.
+ * live row. Shared by the Thread page's log and the issue's history region;
+ * the history renders finished runs only, so it passes no `onStop` and the
+ * row offers none.
  */
 export function ExecutionLogRow({ row, now, handle, tool, steps, stopping, onOpenSession, onStop, timeAgo, t }: {
   readonly row: LogRow
@@ -222,7 +224,7 @@ export function ExecutionLogRow({ row, now, handle, tool, steps, stopping, onOpe
   readonly steps: number | undefined
   readonly stopping: boolean
   readonly onOpenSession: () => void
-  readonly onStop: () => void
+  readonly onStop?: (() => void) | undefined
   readonly timeAgo: (value: string) => string
   readonly t: TeamConversationProps['t']
 }) {
@@ -255,7 +257,7 @@ export function ExecutionLogRow({ row, now, handle, tool, steps, stopping, onOpe
     </div>
     <span className={css.actions}>
       <Button size="sm" variant="outline" onClick={onOpenSession}>{t('openSession')}</Button>
-      {row.running && !stopping && <Button size="sm" variant="outline" onClick={onStop}>{t('stopRun')}</Button>}
+      {row.running && !stopping && onStop !== undefined && <Button size="sm" variant="outline" onClick={onStop}>{t('stopRun')}</Button>}
     </span>
   </article>
 }
