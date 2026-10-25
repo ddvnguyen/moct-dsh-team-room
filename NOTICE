@@ -15,6 +15,10 @@ commercial license from Index Labs (Hong Kong) Limited.
 Pinned upstream sources
 -----------------------
 Source files: multica-x commit 18fa9f728a9e25f2465df2789631edb2a75442ad.
+The board's collapsed column strip (M-63) was ported at
+cbd75011884bd0ee75e9de57d86fbb05c150c421, a descendant of that commit; every
+derived file names the commit it was taken at, and each commit named there is
+pinned here.
 Look and feel (packages/ui/styles/tokens.css): last changed upstream at
 e7742b052be2b2340609b9d7dbd32aabcb3e9fb7, which is an ancestor of that commit.
 Advance both together; each derived file names its own upstream path.

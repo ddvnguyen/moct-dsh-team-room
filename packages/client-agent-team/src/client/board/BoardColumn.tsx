@@ -39,6 +39,8 @@ export interface BoardColumnProps {
   readonly onCardClick: (task: BoardCardTask, focusOpener?: (() => void) | undefined) => void
   readonly onCardUpdate: (taskRef: string, update: BoardCardUpdate) => void
   readonly onHide: (status: TaskStatus) => void
+  /** Folds the column to the slim strip; `…` › Hide column is a separate affordance. */
+  readonly onToggleCollapse: () => void
   readonly onCreate: () => void
   readonly members: readonly AssigneeOption[]
   readonly activities: readonly ActivitySource[]
@@ -46,7 +48,7 @@ export interface BoardColumnProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, onCardClick, onCardUpdate, onHide, onCreate, members, activities, settlingRefs, t }: BoardColumnProps) {
+export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, onCardClick, onCardUpdate, onHide, onToggleCollapse, onCreate, members, activities, settlingRefs, t }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: `status:${status}` })
   const [menuOpen, setMenuOpen] = useState(false)
   // The column's scroll container is both dnd-kit's droppable and Virtuoso's
@@ -111,6 +113,17 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
           <StatusHeading status={status} count={tasks.length} t={t} />
         </span>
         <span className={css.columnActions}>
+          {/* Never pressed: a collapsed column renders the strip instead of this
+              header, so the collapse state is never shown beside a drawn column. */}
+          <button
+            type="button"
+            className={css.columnMenuButton}
+            aria-label={t('boardCollapseList')}
+            aria-pressed={false}
+            onClick={onToggleCollapse}
+          >
+            <CollapseGlyph />
+          </button>
           <Menu
             open={menuOpen}
             onClose={() => setMenuOpen(false)}
@@ -154,3 +167,15 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
     </div>
   )
 })
+
+/** The collapse control's glyph: Multica's `ArrowLeftRight` icon. */
+function CollapseGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 3 4 7l4 4" />
+      <path d="M4 7h16" />
+      <path d="m16 21 4-4-4-4" />
+      <path d="M20 17H4" />
+    </svg>
+  )
+}

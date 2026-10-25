@@ -28,6 +28,10 @@
 
 长列用 `react-virtuoso` 虚拟化；每列的菜单提供 `隐藏列`，隐藏的列可从 `已隐藏的列` 栏恢复。隐藏列只是本浏览器里的界面偏好（localStorage 的 `dsh.agent-team.board.hiddenColumns`），不是数据事实。
 
+列还能折叠：标题栏的 `收起列表` 把它收成一条 44px 宽的竖条（`CollapsedBoardColumn`，`BOARD_COLLAPSED_WIDTH`），保留同一个状态图标、竖写的列名与同一个卡片数，点击竖条即在原位展开。
+
+折叠的列是标签，不是落点。竖条不注册 droppable，`columnStatusOf` 对它返回 `null`，因此拖拽预览与落点都拒绝它：卡片拖到竖条上什么都不会移动，也不会产生任何写入。键盘漫游（J/K/H/L）同样跳过它。折叠集合按 Workspace 存在本浏览器（`dsh.agent-team.board.collapsedColumns:<workspaceId>`），不是数据事实。
+
 ## 新建 Task
 
 `新建任务` 打开创建对话框，与其他 Team 对话框一样使用 dsh `Modal`（Esc 关闭）：标题、描述（纯文本域）、频道、优先级与负责人。默认值即规则：

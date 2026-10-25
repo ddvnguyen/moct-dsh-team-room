@@ -30,6 +30,10 @@ A card shows:
 
 Columns virtualise long lists with `react-virtuoso`; each column's menu offers `隐藏列`, and hidden columns come back from the `已隐藏的列` rail. Hidden columns are a UI preference in this browser (`dsh.agent-team.board.hiddenColumns` in localStorage), never a data fact.
 
+A column also folds: the header's `收起列表` control collapses it to a 44px strip (`CollapsedBoardColumn`, `BOARD_COLLAPSED_WIDTH`) that keeps the same status glyph, the name written vertically and the same card count, and clicking the strip expands it again in place.
+
+A collapsed column is a label, not a target. The strip registers no droppable and `columnStatusOf` answers `null` for it, so both the drag preview and the drop refuse it: a card dragged onto the strip moves nothing and writes nothing. The keyboard walk (J/K/H/L) skips it too. The set is per Workspace, in this browser (`dsh.agent-team.board.collapsedColumns:<workspaceId>`), never a data fact.
+
 ## Creating a Task
 
 `新建任务` opens the create dialog, a dsh `Modal` like the other Team dialogs (Escape closes it): title, description (a plain textarea), Channel, priority, and assignee. The defaults are the rules:

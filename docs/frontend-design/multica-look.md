@@ -49,6 +49,13 @@ The parity audit (`node scripts/audit-ui-parity.mjs`) walks subdirectories, so a
 sheet under `multica-ui/` follows the same focus, token and geometry rules as
 the top-level sheets.
 
+## Board
+
+The board keeps Multica's kanban rhythm; `board/board.module.css` carries it on `--ml-*`. A collapsed column is a 44px strip with the status glyph, the name written vertically and the count pill.
+
+- `board/CollapsedBoardColumn.tsx` derives from `board-column.tsx`'s strip: the glyph, the vertical name and the count, and no droppable — a collapsed column is a label, not a target.
+- `board/collapsed-columns.ts` keeps the per-Workspace collapsed set in localStorage instead of Multica's view store.
+
 ## Task detail
 
 The Thread page follows Multica's issue detail layout.

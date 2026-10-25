@@ -31,6 +31,10 @@ The Board is opened from the sidebar's main panel list — the Board row (`agent
 
 Five columns, one per Task status: `待办` (todo), `进行中` (in progress), `待评审` (in review), `已完成` (done), `已关闭` (closed).
 
+Each column's header carries `收起列表` beside the `⋯` menu's `隐藏列`: a collapse folds the column to a slim strip that keeps its icon, its name written vertically and its card count, and clicking the strip expands it again.
+
+A collapsed column accepts no drop: a card dragged onto the strip moves nothing and opens nothing, and the keyboard walk steps past it. The set is remembered per Workspace, in this browser only.
+
 `新建任务` opens the create dialog: title, description, Channel, priority and assignee. The defaults are the rules — the assignee starts at **未分配**, because creating never assigns, and the Channel defaults to the last one a Task was created in.
 
 ### Drag rules
