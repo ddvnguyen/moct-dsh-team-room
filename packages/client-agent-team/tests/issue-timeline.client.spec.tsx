@@ -373,16 +373,19 @@ describe('IssueTimeline', () => {
     expect(view.container.querySelector('[data-comment-resolved-bar]')).not.toBeNull()
 
     // Another writer resolved it while this page was open: the fresh read is
-    // the authority, so the bar names them and not the local answer.
-    view.rerender(<IssueTimeline {...props} comments={region([
+    // the authority, so the bar names them and not the local answer. The rows
+    // ride with the page they came from — the view resolves them together.
+    const fresher = region([
       messageFact(4, 'message:a', 'close me', ann, { resolved: { memberId: ann, resolvedAt: at(6) } }),
-    ])} />)
+    ])
+    view.rerender(<IssueTimeline {...props} comments={fresher} facts={fresher.items} />)
     const bar = view.container.querySelector('[data-comment-resolved-bar]') as HTMLElement
     expect(bar.textContent).toContain(zh.issueCommentResolvedBy.replace('{name}', nameOf(ann)))
 
     // The thread was reopened elsewhere: the next read says open, and the view
     // wins again — the card is back, without waiting for a remount.
-    view.rerender(<IssueTimeline {...props} comments={region([messageFact(4, 'message:a', 'close me')])} />)
+    const reopened = region([messageFact(4, 'message:a', 'close me')])
+    view.rerender(<IssueTimeline {...props} comments={reopened} facts={reopened.items} />)
     expect(view.container.querySelector('[data-comment-resolved-bar]')).toBeNull()
     expect(view.container.querySelector('[data-comment-card]')?.textContent).toContain('close me')
     expect(view.container.querySelector('[data-comment-resolve]')?.textContent).toBe(zh.issueResolveComment)

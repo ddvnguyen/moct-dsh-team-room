@@ -184,13 +184,15 @@ export function IssueSurface(props: IssueSurfaceProps) {
   }, [pending, view, baseRevision, updateTask, workspaceId, taskRef, t])
 
   /**
-   * The description's own write: fenced by the description's revision, not the
-   * Thread's, so a second writer's paragraph is never lost under this one.
-   * Not optimistic — the Host commits, the change-wake refetches, and only
-   * then does the record move — and a stale fence is a business outcome the
-   * caller reports, never an error the editor swallows.
+   * The description's own write: fenced by the revision the EDIT started from,
+   * not the one the save happens to see — otherwise a paragraph written while
+   * the editor was open would be overwritten by this one. The Thread's
+   * `baseRevision` still rides along as the request's own fence, and a stale
+   * fence is a business outcome the caller reports, never an error the editor
+   * swallows. Not optimistic: the Host commits, the change-wake refetches, and
+   * only then does the record move.
    */
-  const patchDescription = useCallback(async (body: string): Promise<string | undefined> => {
+  const patchDescription = useCallback(async (body: string, baseDescriptionRevision: number): Promise<string | undefined> => {
     if (pending || view === undefined || baseRevision === undefined) return undefined
     setPending(true)
     setError(undefined)
@@ -200,7 +202,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
         workspaceId,
         taskRef,
         baseRevision,
-        patch: { description: body, baseDescriptionRevision: view.description.revision },
+        patch: { description: body, baseDescriptionRevision },
       })
       if (!result.ok) { setError(result.error.message); return result.error.message }
       if (result.value.kind === 'stale_revision') {

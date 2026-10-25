@@ -55,6 +55,7 @@ function renderComposer(overrides: Partial<IssueComposerProps> = {}) {
     taskRef,
     baseRevision: 7,
     reply: reply as unknown as IssueComposerProps['reply'],
+    resolveComment: vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' as const } })) as unknown as IssueComposerProps['resolveComment'],
     drafts,
     loadTriggerCatalog: vi.fn(async () => []) as unknown as IssueComposerProps['loadTriggerCatalog'],
     draftKey: 'thread:thread:plan' as never,

@@ -23,8 +23,13 @@ export interface IssueDescriptionProps {
   readonly description: AgentTeamIssueDescription
   /** The display name of the Member who wrote the body. */
   readonly authorName: string
-  /** Commits the draft; resolves with the failure message, or undefined when the Host took it. */
-  readonly patchDescription: (body: string) => Promise<string | undefined>
+  /**
+   * Commits the draft against the revision the edit started from; resolves
+   * with the failure message, or undefined when the Host took it. The fence
+   * travels with the call — a record that moved while the editor was open is
+   * refused, never overwritten.
+   */
+  readonly patchDescription: (body: string, baseDescriptionRevision: number) => Promise<string | undefined>
   /** A write is in flight; the editor waits for it. */
   readonly pending: boolean
   readonly t: TeamConversationProps['t']
@@ -81,12 +86,16 @@ export function IssueDescription({ description, authorName, patchDescription, pe
   }
 
   const save = (): void => {
-    if (busy.current || pending || !editing) return
+    // The fence is the revision this edit started from: while editing it is
+    // always set, and it is what makes a record that moved meanwhile a refusal
+    // instead of an overwrite.
+    if (busy.current || pending || !editing || baseRevision === undefined) return
+    const baseDescriptionRevision = baseRevision
     busy.current = true
     setError(undefined)
     void (async () => {
       try {
-        const failure = await patchDescription(draft)
+        const failure = await patchDescription(draft, baseDescriptionRevision)
         // Committed: the editor closes and the record moves when the change-wake
         // refetches — nothing here moves the text itself. A refusal keeps the
         // draft exactly as it was.

@@ -38,11 +38,11 @@ export interface IssueViewProps {
   /** Commits a new title; resolves with the failure message, or undefined. */
   readonly onRename: (title: string) => Promise<string | undefined>
   /**
-   * Commits the description body, fenced by the description's own revision.
+   * Commits the description body against the revision the edit started from.
    * Resolves with the failure message — a stale fence among them — or
    * undefined when the Host took the write.
    */
-  readonly patchDescription: (body: string) => Promise<string | undefined>
+  readonly patchDescription: (body: string, baseDescriptionRevision: number) => Promise<string | undefined>
   /** Opens the Task's Thread, the legacy surface (D10); absent when there is no way out. */
   readonly onOpenLegacyThread?: (() => void) | undefined
   /**
@@ -189,6 +189,8 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
               mentionHandles={mentionHandles}
               workspaceId={commentWrite.workspaceId}
               taskRef={commentWrite.taskRef}
+              baseRevision={commentWrite.baseRevision}
+              resolveComment={commentWrite.resolveComment}
               getAttachment={commentWrite.getAttachment}
               resolveMessageRefs={commentWrite.resolveMessageRefs}
               quoteOf={quoteOf}

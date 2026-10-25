@@ -51,11 +51,31 @@ describe('the issue description', () => {
     fireEvent.change(draft, { target: { value: 'The edited body.' } })
     fireEvent.click(view.getByTestId('issue-description-save'))
 
-    await waitFor(() => { expect(props.patchDescription).toHaveBeenCalledWith('The edited body.') })
+    await waitFor(() => { expect(props.patchDescription).toHaveBeenCalledWith('The edited body.', 3) })
     // The editor closes on the commit, and the body does NOT move here: the
     // write is not optimistic, the change-wake refetch settles it.
     await waitFor(() => { expect(view.queryByTestId('issue-description-input')).toBeNull() })
     expect(view.getByTestId('issue-description-body').textContent).toBe('The anchor body.')
+  })
+
+  it('saves against the revision the edit started from, so a moved record refuses the write', async () => {
+    const patchDescription = vi.fn(async () => 'stale description revision')
+    const { view, props } = renderDescription({ patchDescription })
+    fireEvent.click(view.getByTestId('issue-description-edit'))
+    fireEvent.change(view.getByTestId('issue-description-input'), { target: { value: 'my words' } })
+
+    // Another writer's paragraph lands while this draft is open: the record is
+    // at revision 4, this edit still speaks for revision 3.
+    view.rerender(<IssueDescription {...props} description={description({ revision: 4, body: 'Their newer body.' })} />)
+
+    fireEvent.click(view.getByTestId('issue-description-save'))
+    // The fence travels with the call — the edit-start revision, never the one
+    // the save happens to see, which is what would overwrite theirs.
+    await waitFor(() => { expect(patchDescription).toHaveBeenCalledWith('my words', 3) })
+    // The Host refused it, and the reader's words are untouched.
+    await waitFor(() => { expect(view.getByRole('alert').textContent).toContain('stale description revision') })
+    expect(view.getByTestId('issue-description-current').textContent).toContain('Their newer body.')
+    expect((view.getByTestId('issue-description-input') as HTMLTextAreaElement).value).toBe('my words')
   })
 
   it('keeps the draft and says why when the write is refused', async () => {
