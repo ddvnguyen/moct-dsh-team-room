@@ -46,6 +46,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
       loadThreadSessions={loadThreadSessions} loadMemberActivity={loadMemberActivity} threadTurnFailures={threadTurnFailures}
       openMemberSession={openMemberSession} stopSession={stopSession} subscribeChanges={subscribeChanges}
       closeIssue={closeIssue} showSlice={() => { setIssueVariant('slice') }}
+      sidebarCollapsed={sidebarCollapsed} openSidebar={openSidebar}
       onOpenChannel={channelRef => {
         // The Channel is a face of its own: the issue closes first, so no
         // dialog-sized slot stands over the face the reader asked for.

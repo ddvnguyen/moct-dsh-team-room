@@ -111,6 +111,9 @@ interface Harness {
 
 function renderPage(options: {
   readonly pages: readonly AgentTeamThreadHistory[]
+  /** The shell column's state, as the conversation reads it: the header offers the reopen control while the column is closed. */
+  readonly sidebarCollapsed?: boolean
+  readonly openSidebar?: () => void
 }): Harness {
   const loadThreadHistory = vi.fn(async () => ({ ok: true as const, value: options.pages[loadThreadHistory.mock.calls.length - 1] ?? options.pages[0]! }))
   const showSlice = vi.fn()
@@ -139,6 +142,8 @@ function renderPage(options: {
       closeIssue={vi.fn()}
       showSlice={showSlice}
       goToThread={goToThread}
+      sidebarCollapsed={options.sidebarCollapsed}
+      openSidebar={options.openSidebar}
       t={t}
     />,
   )
@@ -162,6 +167,38 @@ describe('IssuePage', () => {
     // ask for — the same header control the slice carries.
     fireEvent.click(harness.view.getByRole('button', { name: zh.issueOpenLegacyThread }))
     expect(harness.goToThread).toHaveBeenCalledTimes(1)
+  })
+
+  it('carries the slim header, with the sidebar reopen control only while the column is closed', async () => {
+    const openSidebar = vi.fn()
+    const expanded = renderPage({ pages: [], sidebarCollapsed: false, openSidebar })
+    await waitFor(() => { expect(expanded.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    // The header is the shell's slim-header family, so the reopen control is
+    // the same control the Channel and Thread pages offer.
+    const header = expanded.view.getByTestId('issue-header')
+    expect(header.getAttribute('data-team-slim-header')).toBe('issue')
+    expect(expanded.view.queryByTestId('issue-open-sidebar')).toBeNull()
+
+    const collapsed = renderPage({ pages: [], sidebarCollapsed: true, openSidebar })
+    await waitFor(() => { expect(collapsed.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    fireEvent.click(collapsed.view.getByTestId('issue-open-sidebar'))
+    expect(openSidebar).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives every icon control in the header an accessible name', async () => {
+    const harness = renderPage({ pages: [] })
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-team-issue-page]')).not.toBeNull() })
+    // Icons alone are an a11y regression: a glyph with no name is silent to a
+    // screen reader and unnameable to a tooltip. Every icon button here carries
+    // both an accessible name and the hover text that says the same thing.
+    const header = harness.view.getByTestId('issue-header')
+    const icons = [...header.querySelectorAll('button')].filter(button => (button.textContent ?? '').trim() === '')
+    expect(icons.length).toBeGreaterThan(0)
+    for (const icon of icons) {
+      const shown = icon.outerHTML.slice(0, 160)
+      expect(icon.getAttribute('aria-label') ?? '', shown).not.toBe('')
+      expect(icon.getAttribute('title') ?? '', shown).not.toBe('')
+    }
   })
 
   /**
