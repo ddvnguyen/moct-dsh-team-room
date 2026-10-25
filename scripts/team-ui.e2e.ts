@@ -3746,15 +3746,15 @@ it('opens the issue view, renames the issue, and keeps the edit across a reload 
   await page.reload()
   const issue = page.locator('[data-team-issue-page]')
   await issue.waitFor({ timeout: 30_000 })
-  // The seven regions are all there, populated from the Host's one snapshot.
-  // The region headings are the assertion: the empty states name their region
-  // too, so a bare text match would count two.
+  // The regions are all there, populated from the Host's one snapshot. The
+  // region headings are the assertion: the empty states name their region
+  // too, so a bare text match would count two. The comment thread and the
+  // activity are one timeline region now, so one heading names both.
   await expect.poll(async () => issue.getByRole('button', { name: '编辑标题' }).count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByText('The body the issue view reads').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByText('状态', { exact: true }).count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByRole('heading', { name: '描述' }).count(), { timeout: 30_000 }).toBe(1)
-  await expect.poll(async () => issue.getByRole('heading', { name: '评论' }).count(), { timeout: 30_000 }).toBe(1)
-  await expect.poll(async () => issue.getByRole('heading', { name: '动态' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByTestId('issue-timeline').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByRole('heading', { name: '决策' }).count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByRole('heading', { name: '执行记录' }).count(), { timeout: 30_000 }).toBe(1)
   await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page.png'), fullPage: true })
