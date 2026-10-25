@@ -2691,8 +2691,12 @@ export class AgentTeamLedger {
       }
       const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'answered' as const, answers })
       const body = decisionAnswerBody(asker.handle, state.decisionRef, state.questions, answers)
+      // A record is the Human's decision. A seat answering the card it was
+      // addressed (M-37) still answers it — the card closes — but a seat call
+      // is not an Owner decision and writes no record.
+      const record = request.actor.kind === 'human' ? this.answerDecisionRecord(state, answers) : undefined
       const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId],
-        { decision: notice, decisionRecord: this.answerDecisionRecord(state, answers) })
+        { decision: notice, ...(record === undefined ? {} : { decisionRecord: record }) })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2723,6 +2727,8 @@ export class AgentTeamLedger {
   /**
    * The decision fact the Human's answer records, attached to the very
    * operation that answers the card: one decision, one operation, one record.
+   * Only the Human's answer carries it; a seat's answer resolves the card but
+   * records no decision.
    */
   private answerDecisionRecord(state: AgentTeamDecisionState, answers: readonly AgentTeamDecisionAnswer[]): AgentTeamDecisionRecordPayload {
     const taskRef = this.state.threads.get(state.threadRef)?.taskRef
@@ -4593,6 +4599,11 @@ export class AgentTeamLedger {
    * notice it already carried, with a recordRef that is a function of the
    * operation — never minted — so a replay derives the same ref and the same
    * indexes.
+   *
+   * A record is the Human's decision: a seat's answer resolves its card but
+   * records nothing, so nothing is derived for a Member's operation. A record
+   * the ledger already stores is kept as stored — an old ledger replays
+   * unchanged, including a seat answer written before this rule.
    */
   private foldDecisionRecord(target: Projection, operation: AgentTeamOperation): void {
     if (operation.kind !== 'team/thread-replied') return
@@ -4611,6 +4622,7 @@ export class AgentTeamLedger {
       }), thread.threadRef)
       return
     }
+    if (operation.actor.kind !== 'human') return
     const decision = operation.data.decision
     if (decision?.event === 'answered') {
       const card = target.decisions.get(decision.decisionRef)

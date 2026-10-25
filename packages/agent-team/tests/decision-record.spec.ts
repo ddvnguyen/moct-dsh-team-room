@@ -263,4 +263,55 @@ describe('decision records', () => {
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({ taskRef: promoted.task.taskRef, source: { kind: 'ask' } })
   })
+
+  it('9. records nothing when a seat answers the card addressed to it, and the card still closes', async () => {
+    const { pool, ledger, channel, ann } = await room()
+    const bob = await addMember(ledger, channel.channelRef, 'bob')
+    // A Task the asking seat opened: the seat follows the Thread it works in.
+    const opened = committed((await ledger.sendMessage({ requestId: requestId('open-seat'), workspaceId: alpha,
+      channelRef: channel.channelRef, body: 'Ship the release', asTask: true, actor: ann, recipients: [bob.memberId] })).value)
+    const taskRef = opened.task!.taskRef
+    const threadRef = opened.thread.threadRef
+
+    const asked = (await ledger.askDecision({ requestId: requestId('ask-seat'), workspaceId: alpha, threadRef, actor: ann,
+      target: bob.memberId, questions })).value
+    const answered = (await ledger.answerDecision({ requestId: requestId('answer-seat'), workspaceId: alpha,
+      decisionRef: asked.notice.decisionRef, actor: bob, answers: [{ selected: [0], text: 'Thursday' }] })).value
+
+    // The seat's call resolves the card like any answer.
+    expect(answered.notice).toMatchObject({ event: 'answered' })
+    expect(ledger.decision(human, { workspaceId: alpha, decisionRef: asked.notice.decisionRef })).toMatchObject({
+      status: 'answered', closedBy: bob.memberId, target: bob.memberId,
+    })
+
+    // It is a seat call, not an Owner decision: no record is written, and the
+    // operation carries none.
+    expect(ledger.decisionRecords(human, { workspaceId: alpha, taskRef }).records).toHaveLength(0)
+    const answer = storedOperations(pool).find(operation => operation.kind === 'team/thread-replied'
+      && operation.data.decision?.event === 'answered')
+    expect(answer?.kind === 'team/thread-replied' ? answer.data.decisionRecord : 'missing').toBeUndefined()
+
+    // A replay derives nothing for the Member's answer either.
+    const replayed = await legacyLedger(pool)
+    expect(replayed.decisionRecords(human, { workspaceId: alpha, taskRef }).records).toHaveLength(0)
+  })
+
+  it('10. records the Human\'s answer to a card addressed to a seat', async () => {
+    const { ledger, channel, ann, taskRef, threadRef } = await room()
+    const bob = await addMember(ledger, channel.channelRef, 'bob')
+    const asked = (await ledger.askDecision({ requestId: requestId('ask-takeover'), workspaceId: alpha, threadRef, actor: ann,
+      target: bob.memberId, questions })).value
+    await ledger.answerDecision({ requestId: requestId('answer-takeover'), workspaceId: alpha,
+      decisionRef: asked.notice.decisionRef, actor: human, answers: [{ selected: [1], text: 'Friday.' }] })
+
+    const records = ledger.decisionRecords(human, { workspaceId: alpha, taskRef }).records
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      taskRef,
+      decidedBy: human.memberId,
+      decided: 'Friday — Friday.',
+      rationale: 'Friday.',
+      source: { kind: 'ask', decisionRef: asked.notice.decisionRef },
+    })
+  })
 })
