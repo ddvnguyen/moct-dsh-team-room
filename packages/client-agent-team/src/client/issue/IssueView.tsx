@@ -18,7 +18,7 @@ import { IssueProperties } from './IssueProperties.tsx'
 import { IssueTimeline, type IssueCommentWrite } from './IssueTimeline.tsx'
 import { IssueComposer } from './IssueComposer.tsx'
 import { IssueDecisions } from './IssueDecisions.tsx'
-import { IssueExecutionLog, type IssueExecutionLogProps } from './IssueExecutionLog.tsx'
+import { IssueAgentActivity, type IssueAgentActivityProps } from './IssueAgentActivity.tsx'
 import { mergeComments, quoteResolver } from './comment-thread.ts'
 import css from './issue-view.module.css'
 
@@ -66,8 +66,9 @@ export interface IssueViewProps {
   /**
    * Which presentation hosts this tree: the whole-column page, or the slice
    * dialog over the reader's screen. The variant is presentation only — the
-   * page carries the sidebar (properties and the execution-log section), and
-   * the slice has no sidebar, so the log section renders only on the page.
+   * page carries the sidebar (the properties), and the slice has no sidebar.
+   * Every region that belongs to the column itself — the description, the
+   * decisions, the agent activity and the timeline — renders in both.
    */
   readonly variant: 'page' | 'slice'
   /** Moves the Task's status. */
@@ -83,18 +84,18 @@ export interface IssueViewProps {
   readonly commentWrite: IssueCommentWrite
   /** Answers an open ask card. */
   readonly onAnswerDecision: (decision: AgentTeamDecisionView, answers: readonly AgentTeamDecisionAnswer[]) => Promise<string | undefined>
-  /** The remotes the execution log reads: the Thread's runs, the live row, Stop. */
-  readonly execution: IssueExecutionLogProps
+  /** The remotes the agent activity reads: the Thread's runs, the live cards, Stop. */
+  readonly execution: IssueAgentActivityProps
   /** A write is in flight; the pickers and the editor wait for it. */
   readonly pending: boolean
   readonly t: TeamConversationProps['t']
 }
 
 /**
- * The issue's regions: the header, the description, the properties, the one
- * timeline (comments, runs and grouped activity in instant order), the
- * decisions and the execution log. The regions are laid out in that order, and
- * every value in them is the Host's.
+ * The issue's regions: the header, the properties (the page's sidebar), and
+ * the column — the description, the decisions, the agent activity (the running
+ * cards over the execution history) and the one timeline (comments, runs and
+ * grouped activity in instant order). Every value in them is the Host's.
  */
 export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, patchDescription, onOpenLegacyThread, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
@@ -132,10 +133,6 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
       t={t}
     />
   )
-  // The execution-log section is the page sidebar's own: it rides the column
-  // and the narrow-width drawer, and the slice — which has no sidebar —
-  // renders no log at all.
-  const log = variant === 'page' ? <IssueExecutionLog {...execution} /> : null
   return (
     <div className={css.page} data-team-issue-view>
       <IssueHeader
@@ -176,6 +173,11 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         <div className={css.main}>
           <div className={css.content}>
             <IssueDescription description={view.description} authorName={nameOf(view.description.author)} patchDescription={patchDescription} pending={pending} t={t} />
+            {/* The approved order of the column (M-77): the description the
+                issue is about, the Human's decisions, the agents working on it
+                now with the runs behind them, and then the conversation. */}
+            <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
+            <IssueAgentActivity {...execution} />
             <IssueTimeline
               comments={view.comments}
               facts={facts}
@@ -202,7 +204,6 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
               variant={variant}
               t={t}
             />
-            <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
           </div>
           {/* The composer is the column's own furniture: it pins under the
               scrolling regions, so the last row can never hide behind it and
@@ -222,7 +223,6 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         </div>
         <aside className={css.side} data-team-issue-side data-testid="issue-properties">
           {properties}
-          {log}
         </aside>
       </div>
       <Modal
@@ -233,7 +233,6 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
         contentClassName={`${css.modalBody} ${look.multicaLook}`}
       >
         {properties}
-        {log}
       </Modal>
     </div>
   )

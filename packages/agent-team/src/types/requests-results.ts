@@ -1364,6 +1364,17 @@ export type AgentTeamChangeScope =
   | { readonly kind: 'activity'; readonly workspaceId: WorkspaceId }
 
 /** One running Member Turn, as the host folds it from session events. Never persisted. */
+/**
+ * One step of a running Turn as the activity feed labels it: the tool's name
+ * and at most one path-shaped argument's basename. Never arguments, command
+ * text, output, env or credential-shaped strings.
+ */
+export interface AgentTeamActivityStep {
+  readonly tool: string
+  /** label <= 80 chars */
+  readonly label: string
+}
+
 export interface AgentTeamMemberActivity {
   readonly memberId: AgentTeamMemberId
   /** Instance slot running this Turn (multi-instance contract v2); absent for the seat's main Session (slot 0). */
@@ -1379,7 +1390,13 @@ export interface AgentTeamMemberActivity {
   /** Tool calls started in the current Turn. */
   readonly toolCount: number
   /** label <= 80 chars; never arguments, command text, output, env or credentials. */
-  readonly current?: { readonly tool: string; readonly label: string }
+  readonly current?: AgentTeamActivityStep
+  /**
+   * The running Turn's last few steps, newest last, in the same label-only
+   * shape as `current`. Empty until the Turn's first tool call, and reset with
+   * the Turn: a step of the previous Turn is never carried over.
+   */
+  readonly steps?: readonly AgentTeamActivityStep[]
   /** ISO-8601, time of the last event folded in. */
   readonly updatedAt: string
 }

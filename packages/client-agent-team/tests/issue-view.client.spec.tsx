@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within, type RenderResult } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within, type RenderResult } from '@testing-library/react'
 import type {
   AgentTeamClientMemberStatus,
   AgentTeamIssueActivityFact,
@@ -33,9 +33,11 @@ const taskRef = 'task:one' as AgentTeamTaskRef
 const human = 'member:human' as AgentTeamMemberId
 const ann = 'member:agent-ann' as AgentTeamMemberId
 
+// Every seat carries its instance list: slot 0 is the seat's home Session, and
+// the running card reads presence and the live Session from it.
 const members: readonly AgentTeamClientMemberStatus[] = [
-  { member: { memberId: human, handle: 'ddvnguyen', description: 'the human' }, workspaceIds: [workspaceId] },
-  { member: { memberId: ann, handle: 'ann', description: 'the seat' }, workspaceIds: [workspaceId] },
+  { member: { memberId: human, handle: 'ddvnguyen', description: 'the human' }, workspaceIds: [workspaceId], instances: [{ slot: 0, presence: 'available', threadRefs: [] }] },
+  { member: { memberId: ann, handle: 'ann', description: 'the seat' }, workspaceIds: [workspaceId], instances: [{ slot: 0, presence: 'available', threadRefs: [] }] },
 ] as unknown as readonly AgentTeamClientMemberStatus[]
 
 const nameOf = (memberId: AgentTeamMemberId): string => memberId === human ? 'ddvnguyen' : 'ann'
@@ -203,9 +205,17 @@ describe('IssueView', () => {
     expect(view.getByText(zh.issueActivityStatusCount.replace('{count}', '1'))).toBeTruthy()
     // 6. Decisions.
     expect(view.getByText(zh.issueDecisionsLabel)).toBeTruthy()
-    // 7. Execution log, once its read lands: the page sidebar's own region.
+    // 7. Execution history, once its read lands: the column's own region, under
+    //    the running cards — the sidebar carries the properties and nothing else.
+    const column = view.container.querySelector('[data-team-issue-view]') as HTMLElement
+    await waitFor(() => { expect(column.querySelector('[data-team-issue-execution-log]')).toBeTruthy() })
     const side = view.container.querySelector('[data-team-issue-side]')
-    await waitFor(() => { expect(side?.querySelector('[data-team-issue-execution-log]')).toBeTruthy() })
+    expect(side?.querySelector('[data-team-issue-execution-log]')).toBeNull()
+    // The approved order of the column: description, decisions, agent activity,
+    // then the timeline the comments and runs live in.
+    const order = [...column.querySelectorAll('[data-testid="issue-description"], [data-testid="issue-decisions"], [data-testid="issue-execution-log"], [data-testid="issue-timeline"]')]
+      .map(node => node.getAttribute('data-testid'))
+    expect(order).toEqual(['issue-description', 'issue-decisions', 'issue-execution-log', 'issue-timeline'])
   })
 
   it('commits a new title through the callback and keeps the draft when the write is refused', async () => {
@@ -305,20 +315,25 @@ describe('IssueView', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('carries the execution log in the page sidebar and its drawer, and not in the slice', async () => {
+  it('carries the execution history in the column of both presentations, and lists only the finished runs', async () => {
     const sessions: readonly AgentTeamThreadSessionRuns[] = [{ memberId: ann, active: run('session:live'), history: [run('session:live'), run('session:done')] }]
     const page = renderView({}, sessions)
-    const side = page.container.querySelector('[data-team-issue-side]')
-    await waitFor(() => { expect(side?.querySelector('[data-team-issue-execution-log]')).toBeTruthy() })
-    // The narrow-width drawer carries the same section below the properties.
+    const history = await waitFor(() => {
+      const node = page.container.querySelector('[data-team-issue-execution-log]')
+      expect(node).toBeTruthy()
+      return node as HTMLElement
+    })
+    // The running seat is the card above; the history lists what finished.
+    const states = [...history.querySelectorAll('[data-run-state]')].map(node => node.getAttribute('data-run-state'))
+    expect(states).toEqual(['completed'])
+    // The narrow-width drawer carries the properties; the history rides the column.
     fireEvent.click(page.getByRole('button', { name: zh.issuePropertiesOpen }))
     const drawer = await page.findByRole('dialog', { name: zh.propertiesLabel })
-    expect(drawer.querySelector('[data-team-issue-execution-log]')).toBeTruthy()
+    expect(drawer.querySelector('[data-team-issue-execution-log]')).toBeNull()
     cleanup()
-    // The slice has no sidebar: the same runs render no section there.
+    // The slice has no sidebar, but it is the same column: its history is here too.
     const slice = renderView({ variant: 'slice' }, sessions)
-    await act(async () => {})
-    expect(slice.container.querySelector('[data-team-issue-execution-log]')).toBeNull()
+    await waitFor(() => { expect(slice.container.querySelector('[data-team-issue-execution-log]')).toBeTruthy() })
   })
 
   it('shows the token total, and a floor when a run recorded no figure', async () => {
@@ -331,7 +346,7 @@ describe('IssueView', () => {
     }]
     const view = renderView({}, sessions)
     const total = await waitFor(() => {
-      const node = view.container.querySelector('[data-team-issue-side] [data-team-issue-log-total]')
+      const node = view.container.querySelector('[data-team-issue-view] [data-team-issue-log-total]')
       expect(node).toBeTruthy()
       return node as HTMLElement
     })
@@ -348,7 +363,7 @@ describe('IssueView', () => {
     }]
     const view = renderView({}, sessions)
     const section = await waitFor(() => {
-      const node = view.container.querySelector('[data-team-issue-side] [data-team-issue-execution-log]')
+      const node = view.container.querySelector('[data-team-issue-view] [data-team-issue-execution-log]')
       expect(node).toBeTruthy()
       return node as HTMLElement
     })
