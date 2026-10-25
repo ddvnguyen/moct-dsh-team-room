@@ -179,7 +179,7 @@ describe('IssuePage', () => {
       'issue-header', 'issue-title', 'issue-status', 'issue-open-legacy-thread',
       'issue-description', 'issue-description-body',
       'issue-properties', 'issue-prop-status', 'issue-prop-priority', 'issue-prop-assignee',
-      'issue-comments', 'issue-activity', 'issue-decisions', 'issue-execution-log',
+      'issue-timeline', 'issue-decisions', 'issue-execution-log',
       'issue-back-to-slice', 'issue-close',
     ]) {
       expect(harness.view.getByTestId(id), id).toBeTruthy()

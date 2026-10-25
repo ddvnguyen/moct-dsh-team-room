@@ -118,7 +118,7 @@ describe('the issue slice', () => {
     expect(view.getByTestId('issue-close')).toBeTruthy()
     // The regions are M-35's shared tree, drawn in the dialog.
     await waitFor(() => expect(view.getByText('Ship the issue view')).toBeTruthy())
-    expect(view.getByRole('heading', { name: zh.issueCommentsLabel })).toBeTruthy()
+    expect(view.getByTestId('issue-timeline')).toBeTruthy()
     // One read serves the slice: the Host's issue read, once.
     expect(loadIssueView).toHaveBeenCalledTimes(1)
   })
