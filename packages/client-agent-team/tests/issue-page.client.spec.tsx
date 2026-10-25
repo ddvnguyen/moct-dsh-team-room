@@ -128,6 +128,7 @@ function renderPage(options: {
       humanName="ddvnguyen"
       loadThreadHistory={loadThreadHistory}
       reply={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } })) as unknown as TeamConversationProps['reply']}
+      resolveComment={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } })) as unknown as TeamConversationProps['resolveComment']}
       drafts={new TeamDraftStore()}
       loadTriggerCatalog={vi.fn(async () => []) as unknown as TeamConversationProps['loadTriggerCatalog']}
       updateTask={vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' } as unknown as AgentTeamUpdateTaskResult }))}
@@ -256,5 +257,25 @@ describe('IssuePage', () => {
     // No comment is listed twice.
     expect(harness.view.getAllByText('Older comment.')).toHaveLength(1)
     expect(harness.view.getAllByText('Newest comment.')).toHaveLength(1)
+  })
+
+  it('reads a thread closed before the newest page as closed on the page it is on', async () => {
+    // The Host answered the history read with the resolution the newest page
+    // would carry: a root only reachable by paging back reads as a bar, never
+    // as an open card whose Resolve the Host would then refuse.
+    const closed = { ...message('message:51', 'Older, closed.', 51), resolved: { memberId: human, resolvedAt: '2026-10-22T02:00:00.000Z' } }
+    const harness = renderPage({ pages: [history([closed], false)] })
+    await waitFor(() => { expect(harness.view.getByText('Newest comment.')).toBeTruthy() })
+
+    fireEvent.click(harness.view.getByRole('button', { name: zh.issueCommentsMore }))
+    await waitFor(() => { expect(harness.view.container.querySelector('[data-message-ref="message:51"] [data-comment-resolved-bar]')).not.toBeNull() })
+    const row = harness.view.container.querySelector('[data-message-ref="message:51"]') as HTMLElement
+    // Collapsed to the bar, with the card behind it — no open card for a thread
+    // the Host already closed, so no Resolve control the Host would refuse.
+    expect(row.querySelector('[data-comment-card]')).toBeNull()
+    expect(row.querySelector('[data-comment-resolve]')).toBeNull()
+    const bar = row.querySelector('[data-comment-resolved-bar]') as HTMLElement
+    fireEvent.click(bar.querySelector('[data-resolved-bar-toggle]') as HTMLElement)
+    expect(bar.querySelector('[data-resolved-bar-body]')?.textContent).toContain('Older, closed.')
   })
 })

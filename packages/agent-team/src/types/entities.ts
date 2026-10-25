@@ -342,6 +342,18 @@ export interface AgentTeamMessage {
   readonly occurredAt: string
 }
 
+/**
+ * One comment thread's resolution: who closed it, and when.
+ *
+ * The Host derives it from the ledger's own resolution operations, so a reader
+ * takes the answer and never invents it.
+ */
+export interface AgentTeamCommentResolution {
+  readonly memberId: AgentTeamMemberId
+  /** The instant of the operation that closed the thread. */
+  readonly resolvedAt: string
+}
+
 /** Task overlay created by an atomic start or Human promotion. */
 export interface AgentTeamTask {
   readonly taskRef: AgentTeamTaskRef
@@ -534,6 +546,14 @@ export type AgentTeamThreadFact =
     readonly message: AgentTeamMessage
     /** Structured Member refs from the originating send operation; empty when the Message mentions nobody. */
     readonly mentions: readonly AgentTeamMemberId[]
+    /**
+     * The resolution the Host records for this comment's thread, present
+     * exactly while that thread is closed. An overlay, not a stored fact: the
+     * ledger keeps resolutions in their own index, and every read that
+     * presents comments attaches it here, so the newest page and an older page
+     * cannot disagree about a closed thread.
+     */
+    readonly resolved?: AgentTeamCommentResolution | undefined
     /** Wall-clock instant of the committing ledger operation; message facts read through to their Message. */
     readonly occurredAt: string
   }

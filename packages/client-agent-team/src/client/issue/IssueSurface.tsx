@@ -37,6 +37,8 @@ export interface IssueSurfaceProps {
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   /** The Human's answer on the issue: one comment on the Task. */
   readonly reply: TeamConversationProps['reply']
+  /** Closes or reopens one comment thread on the issue; a stale revision is a business outcome. */
+  readonly resolveComment: TeamConversationProps['resolveComment']
   /** The attachment write the composer's file pick uploads through. */
   readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
   readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
@@ -83,7 +85,7 @@ export interface IssueSurfaceProps {
  * changes what the reader sees.
  */
 export function IssueSurface(props: IssueSurfaceProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, resolveComment, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
@@ -229,7 +231,27 @@ export function IssueSurface(props: IssueSurfaceProps) {
     return undefined
   }, [answerDecision, workspaceId, read])
 
-  if (view === undefined) {
+  /**
+   * The view the tree draws: the newest page with the older pages in front of
+   * it. One snapshot is one value — a render that changed nothing else reuses
+   * it, so the comment page's identity means "a read replaced this page" and
+   * the timeline can let a fresh read outrank what it wrote itself.
+   */
+  const shown = useMemo<AgentTeamIssueView | undefined>(() => {
+    if (view === undefined) return undefined
+    if (older.length === 0) return view
+    return {
+      ...view,
+      comments: {
+        ...view.comments,
+        items: [...older, ...view.comments.items],
+        hasMore: olderHasMore,
+        cursor: older[0]?.sequence ?? view.comments.cursor,
+      },
+    }
+  }, [view, older, olderHasMore])
+
+  if (view === undefined || shown === undefined) {
     return (
       <>
         {error !== undefined
@@ -239,18 +261,6 @@ export function IssueSurface(props: IssueSurfaceProps) {
       </>
     )
   }
-
-  const shown: AgentTeamIssueView = older.length === 0
-    ? view
-    : {
-      ...view,
-      comments: {
-        ...view.comments,
-        items: [...older, ...view.comments.items],
-        hasMore: olderHasMore,
-        cursor: older[0]?.sequence ?? view.comments.cursor,
-      },
-    }
 
   return (
     <>
@@ -279,6 +289,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
           taskRef,
           baseRevision: view.thread.revision,
           reply,
+          resolveComment,
           putAttachment,
           getAttachment,
           resolveMessageRefs,

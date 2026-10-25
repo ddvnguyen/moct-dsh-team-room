@@ -12,6 +12,7 @@ import type {
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimRef,
+  AgentTeamCommentResolution,
   AgentTeamConfirmationToken,
   AgentTeamContextCheckpointRef,
   AgentTeamDirectMarker,
@@ -668,6 +669,35 @@ export type AgentTeamReplyResult =
   | AgentTeamStaleRevision
   | AgentTeamMemberNotFollowing
 
+/**
+ * Human or entitled Member intent to close or reopen one comment thread.
+ * The root Message addresses the thread; a reply is refused.
+ */
+export interface AgentTeamResolveCommentRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
+  /** The thread's root comment. */
+  readonly messageRef: AgentTeamMessageRef
+  /** `true` closes the thread; `false` reopens it. */
+  readonly resolved: boolean
+  /** The Thread revision on screen: the other Thread writes' optimistic fence. */
+  readonly baseRevision: number
+}
+
+export interface AgentTeamResolveCommentCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly threadRef: AgentTeamThreadRef
+  readonly messageRef: AgentTeamMessageRef
+  /** Present when the write closed the thread; absent when it reopened it. */
+  readonly resolved?: AgentTeamCommentResolution | undefined
+}
+
+/** A stale Thread revision is a business outcome; a reply ref or a repeat is refused. */
+export type AgentTeamResolveCommentResult = AgentTeamResolveCommentCommittedResult | AgentTeamStaleRevision
+
 /** Human intent to create one Task with an opening Message. */
 export interface AgentTeamCreateTaskRequest {
   readonly requestId: AgentTeamRequestId
@@ -1271,8 +1301,15 @@ export interface AgentTeamIssueComments {
   readonly cursor: number
 }
 
-/** One comment of the issue: the `message` arm of a Thread fact. */
-export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }>
+/** One comment of the issue: the `message` arm of a Thread fact, plus its thread's resolution. */
+export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }> & {
+  /**
+   * Present on a root comment whose thread the Host closed. A reply never
+   * carries one: a reply is not resolvable on its own, and a thread is closed
+   * by its root comment.
+   */
+  readonly resolved?: AgentTeamCommentResolution | undefined
+}
 
 /**
  * One activity of the issue: the `activity` arm of a Thread fact.
