@@ -9,15 +9,16 @@
 // and renders the slice only while the slot says the slice is open: one host,
 // one dialog, and no flag of this card's own.
 
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import type { TeamNavigation } from '../navigation.ts'
 import { useHumanIdentity, type TeamHumanIdentitySource } from '../human-identity.ts'
 import type { TeamConversationProps } from '../slots.ts'
 import { jumpToTaskThread } from '../refs.ts'
-import type { IssueContextStore } from './issue-client.ts'
+import type { IssueClient, IssueContextStore } from './issue-client.ts'
+import { type IssuePeekOrders, type PeekStepKey, orderHolding, stepPeekOrder } from './peek-order.ts'
 import { IssueSlice, type IssueSliceProps } from './IssueSlice.tsx'
 
-export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId' | 'taskRef' | 'humanName' | 'closeIssue' | 'maximize' | 'goToThread'> {
+export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId' | 'taskRef' | 'humanName' | 'closeIssue' | 'maximize' | 'goToThread' | 'step'> {
   /** The navigation slot: the issue that is open, and how it is presented. */
   readonly navigation: TeamNavigation
   /** Resolves a Task's Thread: the slice's own "go to thread" control needs it. */
@@ -26,6 +27,14 @@ export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId'
   readonly issueContext: IssueContextStore
   /** The Human the rows name: their own messages read as literal text. */
   readonly humanIdentity: TeamHumanIdentitySource
+  /**
+   * The one seam an issue is opened with, here for the walk: the next issue of
+   * the published order opens the way the reader opened this one, so the
+   * Workspace the face shows it in travels with it.
+   */
+  readonly openIssue: IssueClient['openIssue']
+  /** The order the face behind published: what the panel's keys walk (M-69). */
+  readonly peekOrder: IssuePeekOrders
 }
 
 /**
@@ -34,11 +43,23 @@ export interface IssueSliceHostProps extends Omit<IssueSliceProps, 'workspaceId'
  * slot, so the two never stand at once.
  */
 export function IssueSliceHost(props: IssueSliceHostProps) {
-  const { navigation, humanIdentity, issueContext, resolveTaskRefs, ...surface } = props
+  const { navigation, humanIdentity, issueContext, resolveTaskRefs, openIssue, peekOrder, ...surface } = props
   const snapshot = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const context = useSyncExternalStore(issueContext.subscribe, issueContext.get, issueContext.get)
   const identity = useHumanIdentity(humanIdentity)
   const taskRef = snapshot.issueRef
+  // One step of the walk (M-69): the order is the face behind to publish, the
+  // opening is the seam the reader opened this issue with — so the next issue
+  // opens in the Workspace the face shows it in, and the panel itself holds no
+  // store but the one key that names the step.
+  const step = useCallback((key: PeekStepKey) => {
+    if (taskRef === undefined) return
+    const order = orderHolding(peekOrder.get(), taskRef)
+    if (order === undefined) return
+    const next = stepPeekOrder(order, taskRef, key)
+    if (next === undefined || next.taskRef === taskRef) return
+    openIssue(next.taskRef, { workspaceId: next.workspaceId, focusOpener: next.focusOpener })
+  }, [openIssue, peekOrder, taskRef])
   // The issue is read in the Workspace it was opened from: an Inbox row may
   // name a Workspace the reader has not selected, and selecting it would
   // leave the very face the slice is over.
@@ -65,6 +86,7 @@ export function IssueSliceHost(props: IssueSliceHostProps) {
       humanName={identity.name ?? props.t('human')}
       closeIssue={() => { navigation.actions().closeIssue() }}
       maximize={() => { navigation.actions().setIssueVariant('page') }}
+      step={step}
       onOpenChannel={channelRef => {
         // The Channel is a face of its own: the issue closes first, the way
         // the Thread control does, so no dialog stands over a face.

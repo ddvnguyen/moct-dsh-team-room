@@ -349,4 +349,36 @@ describe('Team Inbox in Multica style', () => {
     expect(JSON.parse(localStorage.getItem('dsh.agent-team.navigation') ?? '').issueRef).toBeUndefined()
     await b.runtime.dispose()
   })
+
+  it('walks the queue with the panel\'s J/K, the way the board walk does', async () => {
+    wideSeat(0)
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    const card = await b.view.findByRole('button', { name: 'Inbox' })
+    const first = inboxRow('w1', 'thread:first', {
+      previewText: 'first row',
+      task: { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: 'thread:first', status: 'in_progress', resolution: 'open' },
+      thread: { threadRef: 'thread:first', taskRef: 'task:1', revision: 5 },
+    })
+    const second = inboxRow('w1', 'thread:second', {
+      previewText: 'second row',
+      task: { taskRef: 'task:2', channelRef: 'channel:engineering', threadRef: 'thread:second', status: 'todo', resolution: 'open' },
+      thread: { threadRef: 'thread:second', taskRef: 'task:2', revision: 5 },
+    })
+    b.seedInbox([first, second])
+    fireEvent.click(card)
+    await waitFor(() => expect(b.view.container.textContent).toContain('first row'))
+    fireEvent.click(await b.view.findByRole('button', { name: /first row/ }))
+    const navigation = b.runtime.ctx.get('teamNavigation')
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:1'))
+
+    // The Inbox published its queue, so the panel walks it: J opens the next
+    // row's issue and the focus lands on that row, K walks back. The walk is
+    // the face's own — the panel only carries the key.
+    fireEvent.keyDown(document, { key: 'j' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:2'))
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-task-ref')).toBe('task:2'))
+    fireEvent.keyDown(document, { key: 'k' })
+    await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:1'))
+    await b.runtime.dispose()
+  })
 })

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, IconCloseOutlineRegular, IconFullscreenOutlineRegular, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IssueSurface, type IssueSurfaceProps } from './IssueSurface.tsx'
 import { PANEL_KEY_STEP, PANEL_MIN_WIDTH, clampPanelWidth, persistPanelWidth, readPanelWidth } from './panel-width.ts'
+import type { PeekStepKey } from './peek-order.ts'
 import look from '../multica-look.module.css'
 import css from './issue-slice.module.css'
 
@@ -31,10 +32,36 @@ export interface IssueSliceProps extends Omit<IssueSurfaceProps, 'variant'> {
    * already had, kept.
    */
   readonly goToThread: () => void
+  /**
+   * One step of the walk the face behind published: the panel owns the keys
+   * (J/K/H/L and their arrows), the order they walk is the host's to know.
+   */
+  readonly step: (key: PeekStepKey) => void
 }
 
 /** The width below which the wide overlay stops working. */
 const NARROW_QUERY = '(max-width: 768px)'
+
+/** The letter keys, by the key the browser reports with no modifier held. */
+const LETTER_STEPS: Readonly<Record<string, PeekStepKey>> = { j: 'j', k: 'k', h: 'h', l: 'l' }
+
+/** The arrows mirroring them: down/up along the column, left/right across. */
+const ARROW_STEPS: Readonly<Record<string, PeekStepKey>> = { ArrowDown: 'j', ArrowUp: 'k', ArrowLeft: 'h', ArrowRight: 'l' }
+
+/**
+ * A composite widget the arrows belong to: tabs, radios, sliders and spin
+ * buttons move their own value, and `select` is caught by the field guard.
+ */
+function isArrowWidget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest('[role="tab"], [role="radio"], [role="slider"], [role="spinbutton"]') !== null
+}
+
+/** A field or a menu the keys are theirs: the composer, the title editor, a picker. */
+function isFieldTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || target.closest('textarea, input, select, [role="menu"], [role="listbox"]') !== null)
+}
 
 /**
  * True while the viewport is too narrow for the wide overlay. The slice asks
@@ -114,6 +141,43 @@ export function IssueSlice(props: IssueSliceProps) {
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [closeIssue])
+
+  // The panel's walk (M-69): J/K step through the order the face behind
+  // published, H/L between its columns, and the arrows mirror them. The order
+  // is the host's — this reads the keys and hands the host one step.
+  //
+  // The arrows are the reader's, though, not the walk's: the panel takes the
+  // focus when it opens, and a click inside it means they are reading it, so
+  // there the arrows scroll the pane they are over instead of jumping issues.
+  // A composite widget keeps its arrows either way, and a field keeps its
+  // keys — the composer inside the panel is a field.
+  useEffect(() => {
+    let readingPanel = false
+    const onPointerDown = (event: PointerEvent): void => {
+      readingPanel = panelRef.current?.contains(event.target as Node) ?? false
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.repeat || event.isComposing) return
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+      if (isFieldTarget(event.target)) return
+      let key = LETTER_STEPS[event.key]
+      if (key === undefined) {
+        const arrow = ARROW_STEPS[event.key]
+        if (arrow === undefined) return
+        const inPanel = readingPanel || (panelRef.current?.contains(event.target as Node) ?? false)
+        if (inPanel || isArrowWidget(event.target)) return
+        key = arrow
+      }
+      event.preventDefault()
+      props.step(key)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [props.step])
 
   const startDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return
