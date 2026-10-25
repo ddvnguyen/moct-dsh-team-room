@@ -1,0 +1,157 @@
+/* The issue's timeline: the comment cards, the activity groups, the run rows,
+   the paging affordance and the composer, stacked in one chronological list. */
+
+.region {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.empty {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  margin: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* The card a copied link names: marked, not scrolled past. */
+.anchored {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: var(--ml-radius-md, 8px);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+/* One run of consecutive activities: a summary line that opens to the facts. */
+.activityGroup {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.activityGroupToggle {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: var(--ml-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  gap: 8px;
+  line-height: var(--ml-text-caption-line);
+  padding: 2px 0;
+  text-align: left;
+}
+
+.activityGroupToggle:hover {
+  color: var(--ml-text);
+}
+
+.activityGroupToggle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.activityMark {
+  background: var(--ml-border-strong);
+  border-radius: 50%;
+  flex: none;
+  height: 5px;
+  width: 5px;
+}
+
+.activityFacts {
+  border-left: 2px solid var(--ml-border);
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 0 0 0 12px;
+  padding: 0 0 0 10px;
+}
+
+.activityFact {
+  color: var(--ml-text-secondary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  overflow-wrap: anywhere;
+}
+
+/* One agent run in the list: the seat, its state, its duration, its transcript. */
+.run {
+  align-items: center;
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.runMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.runHead {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--ml-text-caption);
+  gap: 8px;
+  line-height: var(--ml-text-caption-line);
+}
+
+.runHandle {
+  color: var(--ml-text);
+  font-weight: 600;
+}
+
+.runState {
+  color: var(--ml-text-secondary);
+}
+
+.runDuration {
+  color: var(--ml-text-tertiary);
+}
+
+.run[data-run-state='running'] .runState {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.run[data-run-state='failed'] .runState {
+  color: var(--dsw-alias-state-error-primary, var(--ml-text));
+}
+
+.loadOlder {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm, 6px);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.loadOlder:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.loadOlder:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.loadOlder:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}

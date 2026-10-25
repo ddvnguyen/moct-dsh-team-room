@@ -4244,7 +4244,9 @@ export class AgentTeamLedger {
     const commentFacts = messageFacts.filter(fact => fact.message.messageRef !== anchor.messageRef && !askMessageRefs.has(fact.message.messageRef))
     const carried = commentFacts.slice(-limit)
     const activityFacts = facts.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'activity' }> => fact.kind === 'activity')
-    const activities = activityFacts.slice(-50).map(fact => fact.activity).reverse()
+    // Oldest first, the ordering key still attached: the timeline merges this
+    // region with the comments on one key. The bound is unchanged.
+    const activities = activityFacts.slice(-50)
     const channel = this.requireChannel(request.workspaceId, task.channelRef)
     const taskNumber = this.taskNumbers(request.workspaceId).get(task.taskRef) ?? 0
     // The Task was created with its Thread, or by the promotion that attached

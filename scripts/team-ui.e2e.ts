@@ -3824,7 +3824,7 @@ it('posts a comment on the issue, keeps it across a reload, and nests the reply 
   await page.reload()
   const issue = page.locator('[data-team-issue-page]')
   await issue.waitFor({ timeout: 30_000 })
-  const comments = issue.locator('[data-issue-comments]')
+  const comments = issue.locator('[data-issue-timeline]')
   await comments.waitFor({ timeout: 30_000 })
 
   // The Human writes in the issue's own composer. The write is not optimistic:
@@ -3840,7 +3840,7 @@ it('posts a comment on the issue, keeps it across a reload, and nests the reply 
   await page.getByRole('button', { name: '团队', exact: true }).click()
   const reopened = page.locator('[data-team-issue-page]')
   await reopened.waitFor({ timeout: 30_000 })
-  const reopenedComments = reopened.locator('[data-issue-comments]')
+  const reopenedComments = reopened.locator('[data-issue-timeline]')
   await expect.poll(async () => reopenedComments.locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => reopenedComments.locator('[data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
 
@@ -3854,7 +3854,7 @@ it('posts a comment on the issue, keeps it across a reload, and nests the reply 
   await expect.poll(async () => reopenedComments.locator('[data-comment-reply-row] [data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A reply on the issue')
   // The parent still carries its own body, and the answer quotes it.
   await expect.poll(async () => reopenedComments.locator('[data-comment-card] [data-comment-body]').first().textContent(), { timeout: 30_000 }).toBe('A comment on the issue')
-  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-comments.png'), fullPage: true })
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-timeline.png'), fullPage: true })
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 300_000)
@@ -4063,11 +4063,12 @@ it('walks the issue journey from the board card to the legacy Thread in real Web
   await issue.waitFor({ timeout: 30_000 })
   await expect.poll(async () => page.getByTestId('issue-slice').count(), { timeout: 30_000 }).toBe(0)
 
-  // The seven regions are all there and populated from the Host's one
-  // snapshot: the description carries the body the dialog wrote, the
-  // properties carry the Task's own facts, and the regions with nothing to
-  // say are present rather than absent.
-  for (const id of ['issue-description', 'issue-properties', 'issue-comments', 'issue-activity', 'issue-decisions', 'issue-execution-log']) {
+  // The regions are all there and populated from the Host's one snapshot: the
+  // description carries the body the dialog wrote, the properties carry the
+  // Task's own facts, and the regions with nothing to say are present rather
+  // than absent. Comments and activity are one timeline, so there is one
+  // region where there used to be two.
+  for (const id of ['issue-description', 'issue-properties', 'issue-timeline', 'issue-decisions', 'issue-execution-log']) {
     await expect.poll(async () => issue.getByTestId(id).count(), { timeout: 30_000 }).toBe(1)
   }
   await expect.poll(async () => issue.getByTestId('issue-description-body').textContent(), { timeout: 30_000 }).toBe('The body the issue reads')
@@ -4096,7 +4097,7 @@ it('walks the issue journey from the board card to the legacy Thread in real Web
 
   // The Human answers on the issue itself. The write is not optimistic: the
   // row appears when the Host commits it, and the change-wake refetches.
-  const comments = reopened.getByTestId('issue-comments')
+  const comments = reopened.getByTestId('issue-timeline')
   const composer = reopened.locator('[data-team-composer]')
   await composer.locator('textarea').fill('A comment on the issue')
   await composer.locator('button[type="submit"]').click()
@@ -4108,7 +4109,7 @@ it('walks the issue journey from the board card to the legacy Thread in real Web
   await page.getByRole('button', { name: '团队', exact: true }).click()
   const afterComment = page.getByTestId('issue-page')
   await afterComment.waitFor({ timeout: 30_000 })
-  await expect.poll(async () => afterComment.getByTestId('issue-comments').locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => afterComment.getByTestId('issue-timeline').locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
 
   // The legacy Thread is one control away, in the issue's own header (D10):
   // the issue closes, and the Thread it replaced opens on the same Task.
@@ -4133,7 +4134,7 @@ it('walks the issue journey from the board card to the legacy Thread in real Web
   const back = page.getByTestId('issue-slice')
   await back.waitFor({ timeout: 30_000 })
   await expect.poll(async () => back.getByTestId('issue-title').textContent(), { timeout: 30_000 }).toBe('Issue journey, renamed')
-  await expect.poll(async () => back.getByTestId('issue-comments').locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => back.getByTestId('issue-timeline').locator('[data-comment-card]').count(), { timeout: 30_000 }).toBe(1)
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 300_000)
@@ -4271,7 +4272,7 @@ it('walks the Team history with the browser back and forward buttons in real Web
   }, sharedSnapshot)
   await sharedTab.goto(page.url())
   await sharedTab.locator('[data-team-issue-page]').waitFor({ timeout: 30_000 })
-  await expect.poll(async () => sharedTab.locator('[data-issue-comments]').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => sharedTab.locator('[data-issue-timeline]').count(), { timeout: 30_000 }).toBe(1)
   expect(await sharedTab.evaluate(() => location.pathname)).toBe(path)
   await sharedTab.screenshot({ path: join(BOARD_SHOTS, 'history-shared-link.png'), fullPage: true })
   await sharedTab.close()

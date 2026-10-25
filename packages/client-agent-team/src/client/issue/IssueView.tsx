@@ -15,8 +15,7 @@ import look from '../multica-look.module.css'
 import { IssueHeader } from './IssueHeader.tsx'
 import { IssueDescription } from './IssueDescription.tsx'
 import { IssueProperties } from './IssueProperties.tsx'
-import { IssueComments, type IssueCommentWrite } from './IssueComments.tsx'
-import { IssueActivity } from './IssueActivity.tsx'
+import { IssueTimeline, type IssueCommentWrite } from './IssueTimeline.tsx'
 import { IssueDecisions } from './IssueDecisions.tsx'
 import { IssueExecutionLog, type IssueExecutionLogProps } from './IssueExecutionLog.tsx'
 import css from './issue-view.module.css'
@@ -71,9 +70,10 @@ export interface IssueViewProps {
 }
 
 /**
- * The issue's seven regions: the header, the description, the properties, the
- * comment thread, the activity, the decisions and the execution log. The
- * regions are laid out in that order, and every value in them is the Host's.
+ * The issue's regions: the header, the description, the properties, the one
+ * timeline (comments, runs and grouped activity in instant order), the
+ * decisions and the execution log. The regions are laid out in that order, and
+ * every value in them is the Host's.
  */
 export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, onOpenLegacyThread, onOpenChannel, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
@@ -132,8 +132,11 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
       <div className={css.bodyRow}>
         <div className={css.content}>
           <IssueDescription description={view.description} authorName={nameOf(view.description.author)} t={t} />
-          <IssueComments
+          <IssueTimeline
             comments={view.comments}
+            activity={view.activity}
+            runs={view.executionLog.sessions}
+            failures={view.executionLog.failures}
             decisions={view.decisions}
             nameOf={nameOf}
             humanMemberId={humanMemberId}
@@ -142,10 +145,11 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
             onLoadOlder={onLoadOlderComments}
             loadingOlder={loadingOlderComments}
             members={members}
+            openMemberSession={execution.openMemberSession}
+            variant={variant}
             {...commentWrite}
             t={t}
           />
-          <IssueActivity activity={view.activity} nameOf={nameOf} t={t} />
           <IssueDecisions decisions={view.decisions} nameOf={nameOf} onAnswer={onAnswerDecision} t={t} />
         </div>
         <aside className={css.side} data-team-issue-side data-testid="issue-properties">

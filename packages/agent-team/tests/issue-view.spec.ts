@@ -105,7 +105,7 @@ describe('issue view', () => {
     expect(view.comments.items.map(item => item.message.body)).toEqual(['On it.'])
     expect(view.comments.hasMore).toBe(false)
     expect(view.comments.cursor).toBe(view.comments.items[0]!.sequence)
-    expect(view.activity.items.map(activity => activity.kind)).toEqual(['claim'])
+    expect(view.activity.items.map(fact => fact.activity.kind)).toEqual(['claim'])
     expect(view.decisions).toEqual([{ kind: 'card', card: expect.objectContaining({ decisionRef: asked.notice.decisionRef }) }])
     expect(view.executionLog.sessions).toEqual([])
     expect(view.executionLog.failures).toEqual([])
@@ -115,7 +115,36 @@ describe('issue view', () => {
     for (const record of storedOperations(pool)) expect(agentTeamOperationSchema.safeParse(record).success).toBe(true)
   })
 
-  it('2. answers a bare issue with empty regions and the anchor description', async () => {
+  it('2. carries each activity with the ordering key the timeline merges on', async () => {
+    const { ledger, ann, taskRef } = await room()
+    const reply = async (body: string): Promise<number> => committed((await ledger.reply({ requestId: requestId(`reply-${body}`),
+      workspaceId: alpha, taskRef, body,
+      baseRevision: ledger.threadHistory(human, { workspaceId: alpha, taskRef, limit: 1 }).thread.revision, actor: ann })).value).receipt.sequence
+    const claim = async (direction: string): Promise<number> => committed((await ledger.changeClaim({ requestId: requestId(`claim-${direction}`),
+      workspaceId: alpha, taskRef, action: 'claim', direction,
+      baseRevision: ledger.threadHistory(human, { workspaceId: alpha, taskRef, limit: 1 }).thread.revision, actor: ann })).value).receipt.sequence
+    const first = await reply('First')
+    const claimed = await claim('One')
+    const second = await reply('Second')
+
+    const view = await ledger.issueView(human, { workspaceId: alpha, taskRef })
+
+    // Oldest first, and the key rides along: the client never re-derives it.
+    expect(view.activity.items.map(fact => fact.activity.kind)).toEqual(['claim'])
+    expect(view.activity.items[0]!.sequence).toBe(claimed)
+    // The instant rides on the fact, not on the activity: an activity has none of its own.
+    expect(Number.isNaN(Date.parse(view.activity.items[0]!.occurredAt))).toBe(false)
+    // The activity sits between the two comments on the one key both arms share.
+    const order = [
+      ...view.comments.items.map(item => ({ sequence: item.sequence, kind: item.kind })),
+      ...view.activity.items.map(fact => ({ sequence: fact.sequence, kind: fact.kind })),
+    ].sort((left, right) => left.sequence - right.sequence)
+    expect(order.map(row => row.kind)).toEqual(['message', 'activity', 'message'])
+    expect(order.map(row => row.sequence)).toEqual([first, claimed, second])
+    expect(view.comments.items.map(item => item.message.body)).toEqual(['First', 'Second'])
+  })
+
+  it('3. answers a bare issue with empty regions and the anchor description', async () => {
     const { ledger, taskRef } = await room()
     const view = await ledger.issueView(human, { workspaceId: alpha, taskRef })
 
@@ -128,7 +157,7 @@ describe('issue view', () => {
     expect(view.properties.planningPhase).toBe(true)
   })
 
-  it('3. pages the older comments through the existing history path, with no repeat and no gap', async () => {
+  it('4. pages the older comments through the existing history path, with no repeat and no gap', async () => {
     const { ledger, ann, taskRef } = await room()
     for (const body of ['First', 'Second', 'Third']) {
       await ledger.reply({ requestId: requestId(`reply-${body}`), workspaceId: alpha, taskRef, body,
@@ -150,7 +179,7 @@ describe('issue view', () => {
     expect(carried.filter(body => olderBodies.includes(body))).toEqual([])
   })
 
-  it('4. carries the Host\'s planning-phase answer, and never lets the client re-derive it', async () => {
+  it('5. carries the Host\'s planning-phase answer, and never lets the client re-derive it', async () => {
     const { ledger, ann, taskRef } = await room()
 
     const planned = await ledger.issueView(human, { workspaceId: alpha, taskRef })
@@ -174,7 +203,7 @@ describe('issue view', () => {
     expect(done.claim.state).toBe('done')
   })
 
-  it('5. refuses an unknown Task, a Task of another Workspace and an out-of-range limit', async () => {
+  it('6. refuses an unknown Task, a Task of another Workspace and an out-of-range limit', async () => {
     const { ledger, taskRef } = await room()
     await expect(ledger.issueView(human, { workspaceId: alpha, taskRef: 'task:missing' as AgentTeamTaskRef })).rejects.toThrow(/unknown Task ref/)
     await expect(ledger.issueView(human, { workspaceId: beta, taskRef })).rejects.toThrow(/does not belong to Workspace/)
@@ -182,7 +211,7 @@ describe('issue view', () => {
     await expect(ledger.issueView(human, { workspaceId: alpha, taskRef, commentLimit: 101 })).rejects.toThrow(/comment limit/)
   })
 
-  it('6. carries the Doc→Task binding, and the ask message stays out of the comments', async () => {
+  it('7. carries the Doc→Task binding, and the ask message stays out of the comments', async () => {
     const { ledger, ann, channel, taskRef, threadRef } = await room()
     const bound = (await ledger.createDoc({ requestId: requestId('doc-bound'), workspaceId: alpha, threadRef, taskRef, actor: ann,
       title: 'Release plan', outline: ['Goal'] })).value
@@ -204,7 +233,7 @@ describe('issue view', () => {
       taskRef: other.task.taskRef, actor: ann, title: 'Misbound', outline: ['Goal'] })).rejects.toThrow(/does not belong to Thread/)
   })
 
-  it('7. carries every card exactly once and every record exactly once', async () => {
+  it('8. carries every card exactly once and every record exactly once', async () => {
     const { ledger, ann, taskRef, threadRef } = await room()
     const asked = (await ledger.askDecision({ requestId: requestId('ask'), workspaceId: alpha, threadRef, actor: ann, questions })).value
     await ledger.answerDecision({ requestId: requestId('answer'), workspaceId: alpha, decisionRef: asked.notice.decisionRef,

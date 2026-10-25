@@ -1274,9 +1274,23 @@ export interface AgentTeamIssueComments {
 /** One comment of the issue: the `message` arm of a Thread fact. */
 export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }>
 
-/** The issue's activity: the newest public Thread activities, newest first. */
+/**
+ * One activity of the issue: the `activity` arm of a Thread fact.
+ *
+ * The ordering key rides with the fact instead of being dropped in the
+ * projection, so the client can merge activity with comments on one key
+ * without inventing an order. No second activity shape.
+ */
+export type AgentTeamIssueActivityFact = Extract<AgentTeamThreadFact, { kind: 'activity' }>
+
+/**
+ * The issue's activity: the newest public Thread activities, oldest first.
+ *
+ * Oldest first is the timeline's order, so the merge is a walk and not a sort
+ * of two differently-ordered lists.
+ */
 export interface AgentTeamIssueActivity {
-  readonly items: readonly AgentTeamActivity[]
+  readonly items: readonly AgentTeamIssueActivityFact[]
   readonly hasMore: boolean
 }
 

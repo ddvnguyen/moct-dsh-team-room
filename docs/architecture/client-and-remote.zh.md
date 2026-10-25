@@ -79,7 +79,9 @@ UI work 的边界如下：
 
 这个入口还带两件槽里没有的事：**issue 读取的那个 Workspace**，以及**焦点要回到的那个控件**。收件箱合并了所有可见的 Workspace，所以某一行可能属于读者没有选中的那个 Workspace——选它就会离开收件箱，而那正是 slice 要浮在上面的界面——所以 issue 在该行自己的 Workspace 里读取。焦点回到读者按下的那个控件，而且它以「聚焦它的方法」而不是「一个节点」的形式记录：看板目录一变，卡片就会重绘，等到读者关闭 issue 时，记下的节点已经过期。slice 是瞬时的，页面是位置：只有页面会被持久化，所以刷新永远不会凭空打开一个没人要求过的对话框。
 
-  Issue 界面是与这些 face 正交的一个 slot，不是新的 face：snapshot 里记着当前打开的 issue 所属的 Task 以及它的呈现方式（整列的页面，或浮在当前 face 之上的对话框），底下的 face 原地不动，关闭 issue 就回到原处。issue 的内容是 Host 的 `issueView` 快照——每个 issue 一次读取，不带 variant——client 渲染它携带的七个 region；呈现方式是 client 的事，永远不是读模型上的字段。
+  Issue 界面是与这些 face 正交的一个 slot，不是新的 face：snapshot 里记着当前打开的 issue 所属的 Task 以及它的呈现方式（整列的页面，或浮在当前 face 之上的对话框），底下的 face 原地不动，关闭 issue 就回到原处。issue 的内容是 Host 的 `issueView` 快照——每个 issue 一次读取，不带 variant——client 渲染它携带的六个 region；呈现方式是 client 的事，永远不是读模型上的字段。
+
+  时间线是一个合并后的列表。合并是 client 的纯函数，输入是 Host 的评论页、动态区与 Session runs，以每一行自带的时刻为键，因此边界仍归 Host，顺序不由 client 发明。
 
   浏览器自己的后退/前进按钮会走过这些位置。Team 在导航快照之上维护一个历史栈：每次导航压入一个 `pushState` 条目——路径永远是文档自己的，只带一个 state 对象，URL 也不掺进路由这件事——而 `popstate` 是位置唯一的回放路径，所以浏览器按钮和座位自己的后退控件不会各走各的。
 
