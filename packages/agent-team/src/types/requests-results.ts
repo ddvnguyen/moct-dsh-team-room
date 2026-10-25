@@ -12,6 +12,7 @@ import type {
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimRef,
+  AgentTeamCommentResolution,
   AgentTeamConfirmationToken,
   AgentTeamContextCheckpointRef,
   AgentTeamDirectMarker,
@@ -1289,17 +1290,6 @@ export interface AgentTeamIssueProperties {
   readonly planningPhase: boolean
   readonly createdAt: string
   readonly updatedAt: string
-}
-
-/**
- * One comment thread's resolution: who closed it, and when. The Host derives it
- * from the ledger's own resolution operations, so the client reads it and never
- * invents it.
- */
-export interface AgentTeamCommentResolution {
-  readonly memberId: AgentTeamMemberId
-  /** The instant of the operation that closed the thread. */
-  readonly resolvedAt: string
 }
 
 /** The issue's comments: the newest page of the Thread's Messages, the anchor excluded. */

@@ -37,6 +37,24 @@ import css from './issue-timeline.module.css'
 /** The query parameter a copied comment link carries. */
 const COMMENT_QUERY_KEY = 'comment'
 
+/** The Host's answer to one resolve / reopen: `null` is "reopened". */
+type ResolvedAnswer = AgentTeamCommentResolution | null
+
+/** No answer at all, one shared empty map so a fresh view is not a new object. */
+const NO_ANSWERS: ReadonlyMap<AgentTeamMessageRef, ResolvedAnswer> = new Map()
+
+/**
+ * The answers this page wrote, and the comment page they were written against.
+ *
+ * The page is the whole of their life: an answer bridges the gap between the
+ * commit and the read that carries it, and a different page — a fresh view —
+ * is the Host's own snapshot, which already answers every thread it carries.
+ */
+interface ResolvedAnswers {
+  readonly page: readonly AgentTeamIssueComment[]
+  readonly answers: ReadonlyMap<AgentTeamMessageRef, ResolvedAnswer>
+}
+
 /**
  * The seams the timeline writes through: the reply, the attachments, the
  * quote resolution and the composer. They are one bundle because the page owns
@@ -115,10 +133,14 @@ export function IssueTimeline({
   const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef | undefined>(undefined)
   const [files, setFiles] = useState<readonly File[]>([])
   const [copied, setCopied] = useState<AgentTeamMessageRef | undefined>(undefined)
-  // The Host's own answers to a resolve / reopen: `null` is "reopened". The
-  // value moves here only after the write commits, so nothing is guessed — a
-  // refused write leaves the card exactly as the Host still reads it.
-  const [resolvedAnswers, setResolvedAnswers] = useState<ReadonlyMap<AgentTeamMessageRef, AgentTeamCommentResolution | null>>(new Map())
+  // The Host's own answers to a resolve / reopen. The value moves here only
+  // after the write commits, so nothing is guessed — a refused write leaves the
+  // card exactly as the Host still reads it — and it bridges only the page it
+  // was written against: once a fresh read replaces that page, the Host's own
+  // snapshot decides, so a thread reopened or re-resolved elsewhere stops
+  // being stale here without waiting for a remount.
+  const [answered, setAnswered] = useState<ResolvedAnswers>({ page: comments.items, answers: NO_ANSWERS })
+  const resolvedAnswers = answered.page === comments.items ? answered.answers : NO_ANSWERS
   const [resolving, setResolving] = useState<AgentTeamMessageRef | undefined>(undefined)
   const [resolveErrors, setResolveErrors] = useState<ReadonlyMap<AgentTeamMessageRef, string>>(new Map())
 
@@ -211,8 +233,10 @@ export function IssueTimeline({
   }, [copied])
 
   /**
-   * The thread's resolution: the Host's answer once one has landed here, and
-   * otherwise the value the view carried. A fresh read reconciles the two.
+   * The thread's resolution: the answer this page wrote, while the page it was
+   * written against is still on screen, and otherwise the value the view
+   * carries. The view is what reconciles the two — it outranks an answer as
+   * soon as it is a newer read.
    */
   const resolutionOf = useCallback((fact: AgentTeamIssueComment): AgentTeamCommentResolution | undefined => {
     if (resolvedAnswers.has(fact.message.messageRef)) return resolvedAnswers.get(fact.message.messageRef) ?? undefined
@@ -242,13 +266,18 @@ export function IssueTimeline({
       if (!result.ok) { reportResolveError(messageRef, result.error.message); return }
       const answer = result.value
       if (answer.kind !== 'committed') { reportResolveError(messageRef, t('staleRevision')); return }
-      setResolvedAnswers(current => new Map(current).set(messageRef, answer.resolved ?? null))
+      // One answer for one page: a write against a newer page starts a new
+      // map, because that page's own values already answer its other threads.
+      setAnswered(current => ({
+        page: comments.items,
+        answers: new Map(current.page === comments.items ? current.answers : undefined).set(messageRef, answer.resolved ?? null),
+      }))
     } catch (cause) {
       reportResolveError(messageRef, cause instanceof Error ? cause.message : String(cause))
     } finally {
       setResolving(undefined)
     }
-  }, [resolving, resolveComment, workspaceId, taskRef, baseRevision, reportResolveError, t])
+  }, [resolving, resolveComment, workspaceId, taskRef, baseRevision, comments.items, reportResolveError, t])
 
   const send = useCallback(async (): Promise<void> => {
     const { draft, recipients } = drafts.getSnapshot(draftKey)

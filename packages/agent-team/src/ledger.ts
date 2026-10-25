@@ -4071,8 +4071,26 @@ export class AgentTeamLedger {
     const facts = all.slice(-limit)
     const anchor = this.threadAnchor(thread.threadRef)
     return Object.freeze({ ...(task === undefined ? {} : { task }), thread, anchor, anchorMentions: this.state.mentionsByMessage.get(anchor.messageRef) ?? [],
-      claims: task === undefined ? Object.freeze([]) : this.claimsForTask(task.taskRef), facts: Object.freeze(facts),
+      claims: task === undefined ? Object.freeze([]) : this.claimsForTask(task.taskRef),
+      // The same overlay the issue view applies: a closed thread's root reads
+      // closed on the page it is actually on, not only on the newest one, so
+      // paging back never offers a Resolve the Host would refuse.
+      facts: Object.freeze(facts.map(fact => fact.kind === 'message' ? this.withCommentResolution(fact) : fact)),
       cursor: facts.length === 0 ? before : facts[0]!.sequence, hasMore: all.length > facts.length })
+  }
+
+  /**
+   * One message fact with the resolution the Host records for its thread.
+   *
+   * Both reads that present comments apply it — the issue view's newest page
+   * and the Thread history an older page comes from — so a closed thread reads
+   * closed wherever its root is carried. A reply never carries one: a thread is
+   * closed by its root. The field is an overlay, not a stored fact: the ledger
+   * keeps resolutions in their own index, folded from the operations.
+   */
+  private withCommentResolution(fact: Extract<AgentTeamThreadFact, { kind: 'message' }>): Extract<AgentTeamThreadFact, { kind: 'message' }> {
+    const resolution = this.state.commentResolutions.get(fact.message.messageRef)
+    return resolution === undefined ? fact : Object.freeze({ ...fact, resolved: resolution })
   }
 
   listClaims(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: { workspaceId: WorkspaceId; taskRef: AgentTeamTaskRef }): AgentTeamClaimList {
@@ -4360,10 +4378,7 @@ export class AgentTeamLedger {
       comments: Object.freeze({
         // A root comment carries the resolution the Host records; a reply
         // never does, because a thread is closed by its root.
-        items: Object.freeze(carried.map(fact => {
-          const resolution = this.state.commentResolutions.get(fact.message.messageRef)
-          return resolution === undefined ? fact : Object.freeze({ ...fact, resolved: resolution })
-        })),
+        items: Object.freeze(carried.map(fact => this.withCommentResolution(fact))),
         hasMore: commentFacts.length > carried.length,
         cursor: carried.at(0)?.sequence ?? 0,
       }),

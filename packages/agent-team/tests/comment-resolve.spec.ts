@@ -104,8 +104,8 @@ async function comment(ledger: AgentTeamLedger, taskRef: AgentTeamTaskRef, actor
   return replied.message.messageRef
 }
 
-async function viewOf(ledger: AgentTeamLedger, taskRef: AgentTeamTaskRef): Promise<AgentTeamIssueView> {
-  return ledger.issueView(human, { workspaceId: alpha, taskRef })
+async function viewOf(ledger: AgentTeamLedger, taskRef: AgentTeamTaskRef, commentLimit?: number): Promise<AgentTeamIssueView> {
+  return ledger.issueView(human, { workspaceId: alpha, taskRef, ...(commentLimit === undefined ? {} : { commentLimit }) })
 }
 
 describe('comment resolution', () => {
@@ -237,5 +237,38 @@ describe('comment resolution', () => {
     expect(storedOperations(pool).filter(record => record.kind === 'team/comment-resolved')).toHaveLength(1)
     await expect(ledger.resolveComment({ requestId: requestId('once'), workspaceId: alpha, taskRef,
       messageRef: root, resolved: false, baseRevision: fence, actor: human })).rejects.toThrow(/was reused with a different operation or payload/)
+  })
+
+  it('7. carries the resolution onto the older pages, where a closed root actually sits', async () => {
+    const { pool, ledger, ann, taskRef } = await room()
+    const root = await comment(ledger, taskRef, ann, 'First')
+    await comment(ledger, taskRef, ann, 'Second')
+    await comment(ledger, taskRef, ann, 'Third')
+    const closed = committed((await ledger.resolveComment({ requestId: requestId('resolve'), workspaceId: alpha, taskRef,
+      messageRef: root, resolved: true, baseRevision: revisionOf(ledger, taskRef), actor: human })).value)
+
+    // The newest page holds only 'Third', so the closed thread's root is on the
+    // older page the reader pages back to. The history read carries the same
+    // answer the issue view does: the same overlay, so no page offers a Resolve
+    // the Host would refuse with "already resolved".
+    const view = await viewOf(ledger, taskRef, 1)
+    expect(view.comments.items.map(item => item.message.body)).toEqual(['Third'])
+    const older = ledger.threadHistory(human, { workspaceId: alpha, taskRef, beforeSequence: view.comments.cursor, limit: 50 })
+    const page = older.facts.filter(fact => fact.kind === 'message')
+    expect(page.map(fact => [fact.message.body, fact.resolved])).toEqual([
+      ['Ship the board', undefined],
+      ['First', closed.resolved],
+      ['Second', undefined],
+    ])
+    // A fresh ledger over the same records reads the same page.
+    expect((await replayOf(pool)).threadHistory(human, { workspaceId: alpha, taskRef,
+      beforeSequence: view.comments.cursor, limit: 50 }).facts).toEqual(older.facts)
+
+    // Reopening removes it from the older page too: the overlay is the current
+    // state, never a history of closes.
+    await ledger.resolveComment({ requestId: requestId('reopen'), workspaceId: alpha, taskRef,
+      messageRef: root, resolved: false, baseRevision: revisionOf(ledger, taskRef), actor: human })
+    const reopened = ledger.threadHistory(human, { workspaceId: alpha, taskRef, beforeSequence: view.comments.cursor, limit: 50 })
+    expect(reopened.facts.filter(fact => fact.kind === 'message').map(fact => fact.resolved)).toEqual([undefined, undefined, undefined])
   })
 })

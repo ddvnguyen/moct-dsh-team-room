@@ -231,7 +231,27 @@ export function IssueSurface(props: IssueSurfaceProps) {
     return undefined
   }, [answerDecision, workspaceId, read])
 
-  if (view === undefined) {
+  /**
+   * The view the tree draws: the newest page with the older pages in front of
+   * it. One snapshot is one value — a render that changed nothing else reuses
+   * it, so the comment page's identity means "a read replaced this page" and
+   * the timeline can let a fresh read outrank what it wrote itself.
+   */
+  const shown = useMemo<AgentTeamIssueView | undefined>(() => {
+    if (view === undefined) return undefined
+    if (older.length === 0) return view
+    return {
+      ...view,
+      comments: {
+        ...view.comments,
+        items: [...older, ...view.comments.items],
+        hasMore: olderHasMore,
+        cursor: older[0]?.sequence ?? view.comments.cursor,
+      },
+    }
+  }, [view, older, olderHasMore])
+
+  if (view === undefined || shown === undefined) {
     return (
       <>
         {error !== undefined
@@ -241,18 +261,6 @@ export function IssueSurface(props: IssueSurfaceProps) {
       </>
     )
   }
-
-  const shown: AgentTeamIssueView = older.length === 0
-    ? view
-    : {
-      ...view,
-      comments: {
-        ...view.comments,
-        items: [...older, ...view.comments.items],
-        hasMore: olderHasMore,
-        cursor: older[0]?.sequence ?? view.comments.cursor,
-      },
-    }
 
   return (
     <>

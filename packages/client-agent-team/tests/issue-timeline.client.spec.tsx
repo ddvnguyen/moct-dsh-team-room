@@ -377,6 +377,38 @@ describe('IssueTimeline', () => {
     expect(view.container.querySelector('[data-comment-resolve]')?.textContent).toBe(zh.issueResolveComment)
   })
 
+  it('lets a fresh view outrank the answer this page wrote', async () => {
+    const resolveComment = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: 'committed' as const, receipt: { sequence: 12 }, messageRef: 'message:a' as AgentTeamMessageRef,
+        threadRef: 'thread:plan' as never, resolved: { memberId: human, resolvedAt: at(5) } },
+    })) as unknown as IssueTimelineProps['resolveComment']
+    const page = region([messageFact(4, 'message:a', 'close me')])
+    const { view, props } = renderTimeline({ comments: page, resolveComment })
+    fireEvent.click(view.container.querySelector('[data-comment-resolve]') as HTMLElement)
+    await waitFor(() => { expect(view.container.querySelector('[data-comment-resolved-bar]')).not.toBeNull() })
+
+    // The same page, rendered again for any other reason: the answer still
+    // bridges it, because the read that carries it has not landed yet.
+    view.rerender(<IssueTimeline {...props} loadingOlder />)
+    expect(view.container.querySelector('[data-comment-resolved-bar]')).not.toBeNull()
+
+    // Another writer resolved it while this page was open: the fresh read is
+    // the authority, so the bar names them and not the local answer.
+    view.rerender(<IssueTimeline {...props} comments={region([
+      messageFact(4, 'message:a', 'close me', ann, { resolved: { memberId: ann, resolvedAt: at(6) } }),
+    ])} />)
+    const bar = view.container.querySelector('[data-comment-resolved-bar]') as HTMLElement
+    expect(bar.textContent).toContain(zh.issueCommentResolvedBy.replace('{name}', nameOf(ann)))
+
+    // The thread was reopened elsewhere: the next read says open, and the view
+    // wins again — the card is back, without waiting for a remount.
+    view.rerender(<IssueTimeline {...props} comments={region([messageFact(4, 'message:a', 'close me')])} />)
+    expect(view.container.querySelector('[data-comment-resolved-bar]')).toBeNull()
+    expect(view.container.querySelector('[data-comment-card]')?.textContent).toContain('close me')
+    expect(view.container.querySelector('[data-comment-resolve]')?.textContent).toBe(zh.issueResolveComment)
+  })
+
   it('renders a comment that carries an attachment', () => {
     const withFile = messageFact(4, 'message:a', 'see the file', ann, {
       attachments: [{ attachmentId: 'attachment:1' as AgentTeamAttachmentId, name: 'report.pdf', byteSize: 1024, mediaType: 'application/pdf' }],
