@@ -183,6 +183,50 @@ export function IssueSurface(props: IssueSurfaceProps) {
     }
   }, [pending, view, baseRevision, updateTask, workspaceId, taskRef, t])
 
+  /**
+   * The description's own write: fenced by the revision the EDIT started from,
+   * not the one the save happens to see — otherwise a paragraph written while
+   * the editor was open would be overwritten by this one. The Thread's
+   * `baseRevision` still rides along as the request's own fence, and a stale
+   * fence is a business outcome the caller reports, never an error the editor
+   * swallows. Not optimistic: the Host commits, the change-wake refetches, and
+   * only then does the record move.
+   */
+  const patchDescription = useCallback(async (body: string, baseDescriptionRevision: number): Promise<string | undefined> => {
+    if (pending || view === undefined || baseRevision === undefined) return undefined
+    setPending(true)
+    setError(undefined)
+    try {
+      const result = await updateTask({
+        requestId: mintRequestId(),
+        workspaceId,
+        taskRef,
+        baseRevision,
+        patch: { description: body, baseDescriptionRevision },
+      })
+      if (!result.ok) { setError(result.error.message); return result.error.message }
+      if (result.value.kind === 'stale_revision') {
+        const message = t('staleRevision')
+        setError(message)
+        return message
+      }
+      if (result.value.kind === 'stale_description_revision') {
+        const message = t('staleDescriptionRevision')
+        setError(message)
+        return message
+      }
+      // The Host took it: the change-wake refetches and the record settles
+      // there. Nothing moves here.
+      return undefined
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      return message
+    } finally {
+      if (mounted.current) setPending(false)
+    }
+  }, [pending, view, baseRevision, updateTask, workspaceId, taskRef, t])
+
   const moveStatus = useCallback((status: TaskStatus): void => {
     if (pending || view === undefined || baseRevision === undefined) return
     const action = status === 'done' ? 'accept' : status === 'closed' ? 'close' : 'reopen'
@@ -272,6 +316,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
         humanName={humanName}
         mentionHandles={mentionHandles}
         onRename={title => patchTask({ title })}
+        patchDescription={patchDescription}
         onOpenLegacyThread={onOpenLegacyThread}
         variant={variant}
         onOpenChannel={onOpenChannel}

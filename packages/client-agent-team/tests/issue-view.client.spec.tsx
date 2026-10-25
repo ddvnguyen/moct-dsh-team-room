@@ -153,6 +153,7 @@ function renderView(overrides: Partial<React.ComponentProps<typeof IssueView>> =
       humanName="ddvnguyen"
       mentionHandles={new Map([[ann, 'ann']])}
       onRename={async () => undefined}
+      patchDescription={async () => undefined}
       onStatus={() => {}}
       onPriority={() => {}}
       onAssignee={() => {}}

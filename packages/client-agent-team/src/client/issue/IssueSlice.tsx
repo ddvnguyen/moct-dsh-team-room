@@ -99,10 +99,15 @@ export function IssueSlice(props: IssueSliceProps) {
   useEffect(() => { panelRef.current?.focus({ preventScroll: true }) }, [])
 
   // Escape closes the slice from anywhere inside it, the way the dsh `Modal`
-  // did before the panel owned its own layer.
+  // did before the panel owned its own layer — except where a control inside
+  // already took the key: the title editor's Escape cancels the edit, and an
+  // open menu's Escape closes the menu. Closing the panel under them would
+  // swallow the edit the reader was making, so a default-prevented Escape is
+  // not the panel's.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      if (event.defaultPrevented) return
       event.stopPropagation()
       closeIssue()
     }

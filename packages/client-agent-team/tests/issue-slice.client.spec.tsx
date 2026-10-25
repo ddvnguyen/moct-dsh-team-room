@@ -268,4 +268,27 @@ describe('the issue slice', () => {
     expect(view.getByRole('dialog').getAttribute('style')).toContain(`width: ${widest}px`)
     expect(view.getByTestId('issue-panel-resize').getAttribute('aria-valuemax')).toBe(String(widest))
   })
+
+  it('leaves Escape to the control inside that already handled it', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+
+    // Renaming in the slice: Escape cancels the edit. The panel's own listener
+    // takes the key only where nothing inside claimed it first, so the reader's
+    // half-written title does not cost them the issue.
+    fireEvent.click(view.getByTestId('issue-title'))
+    expect(view.getByTestId('issue-title-input')).toBeTruthy()
+    fireEvent.keyDown(view.getByTestId('issue-title-input'), { key: 'Escape' })
+    expect(view.queryByTestId('issue-title-input')).toBeNull()
+    expect(navigation.getSnapshot().issueRef).toBe(taskRef)
+    expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull()
+
+    // From anywhere else, Escape is still the panel's.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
+  })
 })
