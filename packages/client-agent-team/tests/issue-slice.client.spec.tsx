@@ -17,7 +17,7 @@ import { TeamDraftStore } from '../src/client/drafts.ts'
 import { TeamNavigation } from '../src/client/navigation.ts'
 import { TeamHumanIdentity } from '../src/client/human-identity.ts'
 import { IssueSliceHost, type IssueSliceHostProps } from '../src/client/issue/IssueSliceHost.tsx'
-import { createIssueClient } from '../src/client/issue/issue-client.ts'
+import { createIssueClient, type IssueClient } from '../src/client/issue/issue-client.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -67,7 +67,7 @@ function issueView(overrides: Partial<AgentTeamIssueView> = {}): AgentTeamIssueV
 }
 
 /** The host's seams: the issue read is the only one that matters here. */
-function seams(loadIssueView: TeamConversationProps['loadIssueView']): Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 'issueContext' | 't'> {
+function seams(loadIssueView: TeamConversationProps['loadIssueView'], issueClient: IssueClient): Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 'issueContext' | 't'> {
   return {
     loadIssueView,
     loadMembers: vi.fn(async () => ({ ok: true as const, value: [] as readonly AgentTeamClientMemberStatus[] })),
@@ -89,6 +89,11 @@ function seams(loadIssueView: TeamConversationProps['loadIssueView']): Omit<Issu
     stopSession: vi.fn(),
     resolveTaskRefs: vi.fn(async () => ({ ok: true as const, value: { resolved: [{ threadRef: 'thread:one', channelRef: 'channel:room', taskRef: 'task:one' }] } })),
     subscribeChanges: vi.fn(() => () => {}),
+    // The walk's own seams (M-69): the same client the issue opens through, so
+    // a case that publishes an order walks it and a case that publishes none
+    // finds no walk.
+    openIssue: issueClient.openIssue,
+    peekOrder: issueClient.peekOrder,
   } as unknown as Omit<IssueSliceHostProps, 'navigation' | 'humanIdentity' | 'issueContext' | 't'>
 }
 
@@ -106,7 +111,7 @@ describe('the issue slice', () => {
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
     const loadIssueView = vi.fn(async () => ({ ok: true as const, value: issueView() }))
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(loadIssueView)} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(loadIssueView, issueClient)} t={t} />)
 
     // The dialog is the slice's own surface, over the face behind it.
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
@@ -134,7 +139,7 @@ describe('the issue slice', () => {
     // face behind it never moves.
     issueClient.openIssue(taskRef, { workspaceId })
     const loadIssueView = vi.fn(async () => ({ ok: true as const, value: issueView() }))
-    render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(loadIssueView)} t={t} />)
+    render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(loadIssueView, issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
     expect(loadIssueView).toHaveBeenCalledWith({ workspaceId, taskRef }, undefined)
     // The navigation's own Workspace did not move.
@@ -146,7 +151,7 @@ describe('the issue slice', () => {
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     navigation.actions().openIssue(taskRef, 'page')
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     expect(document.querySelector('[data-team-issue-slice]')).toBeNull()
   })
 
@@ -155,7 +160,7 @@ describe('the issue slice', () => {
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
 
     // Maximize is the variant switch: the same slot, the page's presentation.
@@ -176,7 +181,7 @@ describe('the issue slice', () => {
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
-    const host = seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))
+    const host = seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)
     const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...host} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
     const resolveTaskRefs = host.resolveTaskRefs as unknown as ReturnType<typeof vi.fn>
@@ -198,7 +203,7 @@ describe('the issue slice', () => {
     opener.textContent = 'Alpha task'
     document.body.append(opener)
     issueClient.openIssue(taskRef, { workspaceId, focusOpener: () => { opener.focus({ preventScroll: true }) } })
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
     // The focus moved into the dialog, and the opener holds the focus the
     // modal layer will give back.
@@ -210,12 +215,111 @@ describe('the issue slice', () => {
     opener.remove()
   })
 
+  it('walks the order the face behind published, and gives the focus back to the card it lands on', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    // The face behind publishes its cards — two columns, each card naming the
+    // control the focus returns to — and that order is all the panel is given.
+    const refs = ['task:one', 'task:two', 'task:three'] as const
+    const cards = refs.map(ref => {
+      const card = document.createElement('button')
+      card.setAttribute('data-task-ref', ref)
+      document.body.append(card)
+      return card
+    })
+    const openerOf = (index: number) => (): void => { cards[index]?.focus({ preventScroll: true }) }
+    const second = 'task:two' as AgentTeamTaskRef
+    const third = 'task:three' as AgentTeamTaskRef
+    issueClient.peekOrder.publish({ walk: 'board' }, {
+      columns: [
+        [
+          { taskRef, workspaceId, focusOpener: openerOf(0) },
+          { taskRef: second, workspaceId, focusOpener: openerOf(1) },
+        ],
+        [{ taskRef: third, workspaceId, focusOpener: openerOf(2) }],
+      ],
+    })
+    render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+
+    // J steps to the next card of the column, and the focus lands on it: the
+    // card the reader is standing on is the one Escape will give back.
+    fireEvent.keyDown(document, { key: 'j' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBe(second))
+    expect(document.activeElement).toBe(cards[1])
+
+    // K steps back the way it came.
+    fireEvent.keyDown(document, { key: 'k' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBe(taskRef))
+    expect(document.activeElement).toBe(cards[0])
+
+    // L crosses to the next column that holds a card; H would come back.
+    fireEvent.keyDown(document, { key: 'l' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBe(third))
+    expect(document.activeElement).toBe(cards[2])
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBeUndefined())
+    await waitFor(() => expect(document.activeElement).toBe(cards[2]))
+    cards.forEach(card => card.remove())
+  })
+
+  it('steps on the letters, and leaves the arrows to the pane the reader is inside', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    const second = 'task:two' as AgentTeamTaskRef
+    issueClient.peekOrder.publish({ walk: 'inbox' }, {
+      columns: [[{ taskRef, workspaceId }, { taskRef: second, workspaceId }]],
+    })
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+    const panel = view.getByRole('dialog')
+
+    // The panel holds the focus it took on open: there the arrows belong to
+    // the pane, so ArrowDown scrolls it instead of walking to another issue.
+    fireEvent.keyDown(panel, { key: 'ArrowDown' })
+    expect(navigation.getSnapshot().issueRef).toBe(taskRef)
+
+    // The letters step from wherever they are pressed, and an arrow pressed
+    // on the face behind mirrors them.
+    fireEvent.keyDown(panel, { key: 'j' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBe(second))
+    fireEvent.keyDown(document, { key: 'ArrowUp' })
+    await waitFor(() => expect(navigation.getSnapshot().issueRef).toBe(taskRef))
+
+    // A field keeps its keys: the title editor's J is the reader's, not the
+    // walk's — the half-written title is not a step.
+    fireEvent.click(view.getByTestId('issue-title'))
+    expect(view.getByTestId('issue-title-input')).toBeTruthy()
+    fireEvent.keyDown(view.getByTestId('issue-title-input'), { key: 'j' })
+    expect(navigation.getSnapshot().issueRef).toBe(taskRef)
+  })
+
+  it('walks nothing while no face has published an order', async () => {
+    const navigation = new TeamNavigation()
+    const issueClient = createIssueClient(navigation)
+    navigation.actions().selectWorkspace(workspaceId)
+    issueClient.openIssue(taskRef)
+    render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
+    await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
+
+    // The Thread cite and the Agent page open issues over faces that publish
+    // no order; the keys are theirs to ignore, not the panel's to invent.
+    fireEvent.keyDown(document, { key: 'j' })
+    fireEvent.keyDown(document, { key: 'ArrowDown' })
+    expect(navigation.getSnapshot().issueRef).toBe(taskRef)
+  })
+
   it('names every icon control on the panel, each exactly once', async () => {
     const navigation = new TeamNavigation()
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
 
     // A glyph with no name is invisible to a screen reader, and a control that
@@ -236,7 +340,7 @@ describe('the issue slice', () => {
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
 
     // The width the reader dragged to is the width the panel opens at.
@@ -261,7 +365,7 @@ describe('the issue slice', () => {
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
 
     const widest = Math.max(360, window.innerWidth - 64)
@@ -274,7 +378,7 @@ describe('the issue slice', () => {
     const issueClient = createIssueClient(navigation)
     navigation.actions().selectWorkspace(workspaceId)
     issueClient.openIssue(taskRef)
-    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })))} t={t} />)
+    const view = render(<IssueSliceHost navigation={navigation} issueContext={issueClient.context} humanIdentity={humanIdentity()} {...seams(vi.fn(async () => ({ ok: true as const, value: issueView() })), issueClient)} t={t} />)
     await waitFor(() => expect(document.querySelector('[data-team-issue-slice]')).not.toBeNull())
 
     // Renaming in the slice: Escape cancels the edit. The panel's own listener

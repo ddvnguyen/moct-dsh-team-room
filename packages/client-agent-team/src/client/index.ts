@@ -429,6 +429,9 @@ function teamSharedRemotes(
     // instance — one implementation, four callers.
     openIssue: issueClient.openIssue,
     issueContext: issueClient.context,
+    // The order the face behind the panel published for its walk (M-69): the
+    // Board and the Inbox write it, the panel's host reads it at the keypress.
+    peekOrder: issueClient.peekOrder,
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
     loadInbox: (request: AgentTeamInboxRequest) => queries.read(inboxQuery(request), () => ctx.remote.agentTeam.inbox(request)),
     subscribeReads: (listener: () => void) => reads.subscribe(listener),

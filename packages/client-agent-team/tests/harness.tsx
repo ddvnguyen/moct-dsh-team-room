@@ -81,7 +81,7 @@ function createFixtureSidebarState(): FixtureSidebarState {
   }
 }
 
-type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main'> & { sidebarState: FixtureSidebarState }
+type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main' | 'shell.overlay'> & { sidebarState: FixtureSidebarState }
 function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
   // The shipped frame renders the keyed main cell for the selected global panel
   // and falls back to the conversation seat, so the bench follows the same rule
@@ -98,6 +98,10 @@ function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
     <button type="button" data-test-control onClick={() => { sidebarState.setCollapsed(!collapsed) }}>Toggle fixture sidebar</button>
     {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280 })}
     {renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })}
+    {/* The shell's overlay layer: the issue slice stands above every column,
+        so a suite that opens an issue meets the same layer the shipped frame
+        renders it in (M-69: the slice is what walks the published order). */}
+    {renderSlot('shell.overlay', {})}
   </div>
 }
 
@@ -1077,6 +1081,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   await runtime.root.declare({
     sidebar: { kind: 'single', scope: 'root' },
     main: { kind: 'keyed', scope: 'root' },
+    // The shipped shell's overlay layer, where the issue slice registers.
+    'shell.overlay': { kind: 'list', scope: 'root' },
   } as never, FrameWithSidebar as never)
   // The shipped store keeps a selection only while a live `main` entry owns that
   // key, so a requested panel gets a stand-in entry of its own instead of a
