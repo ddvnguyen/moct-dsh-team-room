@@ -394,6 +394,28 @@ export interface AgentTeamTask {
    * ledger written before the description existed replays unchanged.
    */
   readonly description?: AgentTeamTaskDescription | undefined
+  /**
+   * The parent Task, or `null` when the Human cleared it. Support the same
+   * `assignee` convention: omitting the key in a patch leaves it unchanged,
+   * `null` clears it. Sub-issues are never stored: the Host derives them from
+   * a reverse index over this field, so a stored copy could never contradict
+   * the parent. Optional and forward-only: ledgers written before the field
+   * existed replay unchanged.
+   */
+  readonly parentTaskRef?: AgentTeamTaskRef | null | undefined
+  /** Links only — the PRs the Human attached. No status is fetched. */
+  readonly pullRequests?: readonly AgentTeamTaskPullRequest[] | undefined
+  /** Free-form labels: trimmed, at most 40 chars each, at most 20, case-insensitively deduped. */
+  readonly labels?: readonly string[] | undefined
+  /** The due date, `YYYY-MM-DD`; `null` clears. Absent reads as none. */
+  readonly dueDate?: string | null | undefined
+}
+
+/** One PR link the Human attached to a Task: a link, not a status. */
+export interface AgentTeamTaskPullRequest {
+  readonly url: string
+  /** Optional display title; absent renders the URL. */
+  readonly title?: string | undefined
 }
 
 /**
@@ -513,9 +535,15 @@ export interface AgentTeamClaimActivity extends AgentTeamActivityBase {
 }
 
 export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
-  readonly kind: 'promote' | 'assign' | 'accept' | 'close' | 'reopen'
+  readonly kind: 'promote' | 'assign' | 'accept' | 'close' | 'reopen' | 'patch'
   /** The Member a Human assigned the Task to; present exactly when `kind` is `assign`. */
   readonly assignee?: AgentTeamMemberId | undefined
+  /**
+   * One entry per Task property the patch moved, in patch order; present
+   * exactly when `kind` is `patch`. Machine values only — the client composes
+   * the sentence, the Host never renders display text.
+   */
+  readonly change?: readonly AgentTeamTaskChange[] | undefined
   /** Claims atomically released by close; absent for other Task transitions. */
   readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
   /** Active claims the Human acceptance completed alongside the Task; absent when none were active. */
@@ -527,6 +555,26 @@ export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
    * completed-only wake semantics.
    */
   readonly acceptedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
+}
+
+/** One Task property a `patch` moved. Values are machine facts the client renders. */
+export interface AgentTeamTaskChange {
+  readonly field: 'parentTaskRef' | 'pullRequests' | 'labels' | 'dueDate'
+  /**
+   * The value after the write. `parentTaskRef`/`dueDate` are strings or `null`
+   * (cleared); `pullRequests`/`labels` carry the list after the write.
+   */
+  readonly value: string | readonly string[] | null
+  /** Values the write added; present only when the field was list-shaped and something was added. */
+  readonly added?: readonly string[]
+  /** Values the write removed; present only when the field was list-shaped and something was removed. */
+  readonly removed?: readonly string[]
+  /**
+   * The Task-ref display the ledger composed at write time from the same
+   * numbering authority the issue view reads (`#12`); present exactly when a
+   * `value` names a Task. A reader renders the answer and never re-resolves.
+   */
+  readonly label?: string | undefined
 }
 
 /** One automatic, public release summary caused by a membership lifecycle action. */

@@ -29,6 +29,7 @@ import type {
   AgentTeamTaskActivity,
   AgentTeamTaskDescription,
   AgentTeamTaskPriority,
+  AgentTeamTaskPullRequest,
   AgentTeamTaskRef,
   AgentTeamThread,
   AgentTeamThreadAttention,
@@ -768,6 +769,14 @@ export interface AgentTeamTaskPatch {
   readonly priority?: AgentTeamTaskPriority
   readonly assignee?: AgentTeamMemberId | null
   readonly position?: number
+  /** The parent Task ref, or `null` to clear; `undefined` leaves it unchanged. */
+  readonly parentTaskRef?: AgentTeamTaskRef | null
+  /** The PR links after the write; stored as sent, validated and deduped by `normalizeTaskPatch`. */
+  readonly pullRequests?: readonly AgentTeamTaskPullRequest[]
+  /** The labels after the write, validated and deduped by `normalizeTaskPatch`. */
+  readonly labels?: readonly string[]
+  /** The due date after the write, or `null` to clear. */
+  readonly dueDate?: string | null
   /** The description's own fence, bumped by every description write. */
   readonly descriptionRevision?: number
   /** The description record, when this write changed the description. */

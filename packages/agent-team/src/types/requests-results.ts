@@ -41,6 +41,7 @@ import type {
   AgentTeamTask,
   AgentTeamTaskDescription,
   AgentTeamTaskPriority,
+  AgentTeamTaskPullRequest,
   AgentTeamTaskActivity,
   AgentTeamTaskRef,
   AgentTeamThread,
@@ -741,6 +742,14 @@ export interface AgentTeamTaskPatchRequest {
   /** `null` clears the assignment; omitting the key leaves it unchanged. */
   readonly assignee?: AgentTeamMemberId | null
   readonly position?: number
+  /** The parent Task, `null` to clear; omitted leaves it unchanged. Same-workspace, no self, no cycle. */
+  readonly parentTaskRef?: AgentTeamTaskRef | null
+  /** PR links only — http(s) URLs, deduped, at most 20. The full list replaces the stored one. */
+  readonly pullRequests?: readonly AgentTeamTaskPullRequest[]
+  /** Free-form labels; the full list replaces the stored one. Trimmed, ≤40 chars each, ≤20, case-insensitively deduped. */
+  readonly labels?: readonly string[]
+  /** The due date, `YYYY-MM-DD`; `null` clears, omitted leaves it unchanged. */
+  readonly dueDate?: string | null
   /**
    * The new description body. The Human sends the text; the Host composes the
    * rest of the record (who wrote it, when, where it came from), so a client
@@ -1290,6 +1299,32 @@ export interface AgentTeamIssueProperties {
   readonly planningPhase: boolean
   readonly createdAt: string
   readonly updatedAt: string
+  /**
+   * The parent Task, host-derived. `undefined` means no parent: the client
+   * renders the picker's empty state, never a `null` fact.
+   */
+  readonly parent?: AgentTeamIssueRelated
+  /** Every Task whose `parentTaskRef` is this Task, task-number order. Derived, never stored. */
+  readonly subIssues: readonly AgentTeamIssueRelated[]
+  /** The stored PR links, in stored order. */
+  readonly pullRequests: readonly AgentTeamTaskPullRequest[]
+  /** The stored labels, in stored order. */
+  readonly labels: readonly string[]
+  /** The due date, `YYYY-MM-DD`; `undefined` reads as none. */
+  readonly dueDate?: string
+}
+
+/**
+ * One related Task the property sections name: enough to render a row and
+ * open it (`openIssue(taskRef)`), and nothing more. The Host resolves the
+ * number and title so a small view never carries a second read.
+ */
+export interface AgentTeamIssueRelated {
+  readonly taskRef: AgentTeamTaskRef
+  readonly taskNumber: number
+  /** The Task's title, or the bounded preview of its opening Message — the same rule the view's `title` uses. */
+  readonly title: string
+  readonly status: AgentTeamTask['status']
 }
 
 /** The issue's comments: the newest page of the Thread's Messages, the anchor excluded. */

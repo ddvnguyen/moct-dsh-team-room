@@ -5691,6 +5691,9 @@ export default class AgentTeam extends TypertRemoteService {
         ? `Team Task update\n${actor} assigned Task ${activity.taskRef} to you. Read Thread ${activity.threadRef} and claim the Task when you start the work.`
         : `Team Task update\n${actor} assigned Task ${activity.taskRef} to ${assignee ?? 'a Member'}.`
     }
+    if (activity.kind === 'patch') {
+      return `Team Task update\n${actor} updated the properties of Task ${activity.taskRef}.`
+    }
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''
     return `Team Task update\n${actor} ${activity.kind} Task ${activity.taskRef}.${released}`
