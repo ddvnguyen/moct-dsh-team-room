@@ -762,6 +762,28 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
         taskNumber, claimOwners: [] as readonly string[],
         // The Host answers the planning gate; a Task in `todo` holds no live Claim here.
         planningPhase: (task.status as string) === 'todo',
+        // M-92: the property sections read these answers. The double derives
+        // the parent and the sub-issues from its own board rows the way the
+        // ledger's reverse index does, and echoes the stored links, labels
+        // and date — absent means the empty shape the read model sends.
+        ...(task.parentTaskRef == null ? {} : {
+          parent: {
+            taskRef: task.parentTaskRef as string,
+            taskNumber: boardTaskNumbers.get(task.parentTaskRef as string) ?? 1,
+            title: (boardTasks.find(row => (row as { taskRef: string }).taskRef === task.parentTaskRef)?.title as string | undefined) ?? 'Untitled task',
+            status: (boardTasks.find(row => (row as { taskRef: string }).taskRef === task.parentTaskRef)?.status as string | undefined) ?? 'todo',
+          },
+        }),
+        subIssues: boardTasks.filter(row => (row as { parentTaskRef?: string }).parentTaskRef === request.taskRef)
+          .map(row => ({
+            taskRef: (row as { taskRef: string }).taskRef,
+            taskNumber: boardTaskNumbers.get((row as { taskRef: string }).taskRef) ?? 1,
+            title: (row as { title?: string }).title ?? 'Untitled task',
+            status: (row as { status: string }).status,
+          })),
+        pullRequests: (task.pullRequests as readonly { url: string; title?: string }[] | undefined) ?? [],
+        labels: (task.labels as readonly string[] | undefined) ?? [],
+        ...(task.dueDate == null ? {} : { dueDate: task.dueDate as string }),
         createdAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z',
         updatedAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z',
       },
