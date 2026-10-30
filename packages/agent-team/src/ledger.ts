@@ -99,6 +99,7 @@ import type {
   AgentTeamInboxItem,
   AgentTeamInitializedOperation,
   AgentTeamIssueDecision,
+  AgentTeamIssueRelated,
   AgentTeamIssueView,
   AgentTeamIssueViewRequest,
   AgentTeamJoinChannelRequest,
@@ -150,12 +151,14 @@ import type {
   AgentTeamStoredThreadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
+  AgentTeamTaskChange,
   AgentTeamTaskChangedOperation,
   AgentTeamTaskCreatedOperation,
   AgentTeamTaskDescription,
   AgentTeamTaskPatch,
   AgentTeamTaskPatchRequest,
   AgentTeamTaskPriority,
+  AgentTeamTaskPullRequest,
   AgentTeamTaskRequest,
   AgentTeamTaskUpdatedOperation,
   AgentTeamTaskResult,
@@ -276,6 +279,15 @@ export const AGENT_TEAM_INITIALIZE_REQUEST_ID = 'agent-team:initialize:v1' as Ag
 
 /** The closed set of board priorities; the stored value is checked against it before it reaches the table. */
 const TASK_PRIORITIES: readonly AgentTeamTaskPriority[] = ['urgent', 'high', 'medium', 'low', 'none']
+
+/** The most distinct PR links one Task may carry; a link is text, so the bound exists to keep a patch reviewable. */
+const TASK_PULL_REQUEST_LIMIT = 20
+
+/** The most labels one Task may carry. */
+const TASK_LABEL_LIMIT = 20
+
+/** Character bound of one stored label. */
+const TASK_LABEL_LENGTH = 40
 
 const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
   kind: 'human',
@@ -1756,6 +1768,7 @@ export class AgentTeamLedger {
       const { task, thread } = this.threadForActor(request.actor, request.workspaceId, request.taskRef)
       const canonical = this.canonicalTaskPatch(patch)
       if (canonical.assignee != null) this.assertAssignable(canonical.assignee, task.channelRef)
+      if (canonical.parentTaskRef != null) this.assertParentTask(request.workspaceId, request.taskRef, canonical.parentTaskRef)
       // Board fields are metadata: the Human need not have read the Thread to
       // reorder or relabel a Task, so only the revision fences the write.
       if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
@@ -1778,13 +1791,21 @@ export class AgentTeamLedger {
           })
       const nextTask: AgentTeamTask = Object.freeze({ ...task, ...opPatch })
       const assigned = canonical.assignee != null && canonical.assignee !== (task.assignee ?? null)
-      // Assignment is a public Thread fact: it is what makes the assignee (and
-      // every other follower) see the change as unread and wakes it, and what
-      // the model reads. Pure field edits append no fact and leave the Thread
-      // revision alone, so an Agent mid-reply is not made stale by a reorder.
-      const activity: AgentTeamTaskActivity | undefined = assigned
-        ? Object.freeze({ activityRef: this.ref('activity'), kind: 'assign' as const, taskRef: task.taskRef, threadRef: thread.threadRef,
-          actor: request.actor.memberId, sequence, assignee: canonical.assignee! })
+      // One entry per property the patch moved; absent when the write touched
+      // none of the four, so a reorder or a description edit appends no fact.
+      const change = this.taskPatchChange(task, canonical, request.workspaceId, this.taskNumbers(request.workspaceId))
+      // Assignment and property edits are public Thread facts: they are what
+      // makes the assignee (and every other follower) see the change as unread
+      // and wakes it, and what the models read. A patch that moved no property
+      // and no assignee leaves the Thread revision alone, so an Agent mid-reply
+      // is not made stale by a reorder.
+      const activity: AgentTeamTaskActivity | undefined = assigned || change !== undefined
+        ? Object.freeze({
+          activityRef: this.ref('activity'), kind: assigned ? 'assign' as const : 'patch' as const,
+          taskRef: task.taskRef, threadRef: thread.threadRef, actor: request.actor.memberId, sequence,
+          ...(assigned ? { assignee: canonical.assignee! } : {}),
+          ...(change === undefined ? {} : { change }),
+        })
         : undefined
       const nextThread: AgentTeamThread = activity === undefined ? thread : Object.freeze({ ...thread, revision: sequence })
       const started = assigned && !this.isFollowing(thread.threadRef, canonical.assignee!)
@@ -3786,9 +3807,18 @@ export class AgentTeamLedger {
       case 'team/task-updated': {
         const { task, thread, patch, activity } = operation.data
         if (!threadRefs.has(thread.threadRef)) return undefined
+        // One gist per action: the assignee sentence, or the property sentence
+        // `taskPatchChange` recorded. Property edits ride the assign sentence
+        // when one call moved both.
+        const changeSummary = activity?.change === undefined ? undefined : this.taskChangeSummary(activity.change, operation.data.workspaceId)
         if (activity?.assignee !== undefined) {
           const handle = this.state.members.get(activity.assignee)?.handle ?? activity.assignee
-          return event('team/task-updated', `assigned @${handle}`, { threadRef: thread.threadRef, taskRef: task.taskRef })
+          return event('team/task-updated', changeSummary === undefined
+            ? `assigned @${handle}`
+            : `assigned @${handle}, ${changeSummary}`, { threadRef: thread.threadRef, taskRef: task.taskRef })
+        }
+        if (changeSummary !== undefined) {
+          return event('team/task-updated', changeSummary, { threadRef: thread.threadRef, taskRef: task.taskRef })
         }
         // A drag only reorders a column; it is not a room-level event.
         if (Object.keys(patch).every(key => key === 'position')) return undefined
@@ -4347,12 +4377,28 @@ export class AgentTeamLedger {
     // region with the comments on one key. The bound is unchanged.
     const activities = activityFacts.slice(-50)
     const channel = this.requireChannel(request.workspaceId, task.channelRef)
-    const taskNumber = this.taskNumbers(request.workspaceId).get(task.taskRef) ?? 0
+    // One numbering pass serves the view's own task, the property sections'
+    // related rows and the reverse sub-issue index alike.
+    const numbers = this.taskNumbers(request.workspaceId)
+    const taskNumber = numbers.get(task.taskRef) ?? 0
     // The Task was created with its Thread, or by the promotion that attached
     // it to one — the promote activity is that instant.
     const promoted = activityFacts.find(fact => fact.activity.kind === 'promote')
     const createdAt = promoted?.occurredAt ?? anchor.occurredAt
     const updatedAt = facts.at(-1)?.occurredAt ?? createdAt
+    // The related rows the property sections render: the Host resolves each
+    // name and number once, so a small view never needs a second read.
+    const relatedRow = (related: AgentTeamTask): AgentTeamIssueRelated => Object.freeze({
+      taskRef: related.taskRef,
+      taskNumber: numbers.get(related.taskRef) ?? 0,
+      title: related.title ?? boundedInboxPreview(this.threadAnchorFrom(this.state, related.threadRef).body),
+      status: related.status,
+    })
+    const parentTask = task.parentTaskRef == null ? undefined : this.requireTask(request.workspaceId, task.parentTaskRef)
+    const subIssues = [...this.state.tasks.values()].filter(child => child.parentTaskRef === task.taskRef
+      && this.state.channels.get(child.channelRef)?.workspaceId === request.workspaceId)
+      .sort((left, right) => (numbers.get(left.taskRef) ?? 0) - (numbers.get(right.taskRef) ?? 0))
+      .map(relatedRow)
     return Object.freeze({
       task,
       thread,
@@ -4374,6 +4420,11 @@ export class AgentTeamLedger {
         planningPhase: this.inPlanningPhase(task),
         createdAt,
         updatedAt,
+        ...(parentTask === undefined ? {} : { parent: relatedRow(parentTask) }),
+        subIssues,
+        pullRequests: Object.freeze(task.pullRequests ?? []),
+        labels: Object.freeze(task.labels ?? []),
+        ...(task.dueDate === undefined || task.dueDate === null ? {} : { dueDate: task.dueDate }),
       }),
       comments: Object.freeze({
         // A root comment carries the resolution the Host records; a reply
@@ -5157,6 +5208,26 @@ export class AgentTeamLedger {
         if (assignee === undefined || assignee.state !== 'enabled'
           || !projection.memberships.get(task.channelRef)?.has(patch.assignee)) throw new Error('invalid Task assignee')
       }
+      // The property fields validate the same rules the write enforced: a
+      // stored record a client could not have written is a broken ledger.
+      if (patch.parentTaskRef !== undefined && patch.parentTaskRef !== null && patch.parentTaskRef !== task.taskRef) {
+        const workspaceId = operation.data.workspaceId
+        let cursor: AgentTeamTask | undefined = projection.tasks.get(this.requireRefKey(projection.tasks, patch.parentTaskRef, 'task', 'Task'))
+        if (cursor === undefined) throw new Error('invalid Task parent')
+        while (cursor.parentTaskRef != null) {
+          if (cursor.parentTaskRef === task.taskRef) throw new Error('invalid Task parent cycle')
+          cursor = projection.tasks.get(this.requireRefKey(projection.tasks, cursor.parentTaskRef, 'task', 'Task'))
+          if (cursor === undefined) throw new Error('invalid Task parent')
+          if (projection.channels.get(cursor.channelRef)?.workspaceId !== workspaceId) throw new Error('invalid Task parent')
+        }
+      }
+      if (patch.pullRequests !== undefined && !isDeepStrictEqual(patch.pullRequests, this.normalizePullRequests(patch.pullRequests))) {
+        throw new Error('invalid Task pull request links')
+     }
+      if (patch.labels !== undefined && !isDeepStrictEqual(patch.labels, this.normalizeTaskLabels(patch.labels))) {
+        throw new Error('invalid Task labels')
+      }
+      if (typeof patch.dueDate === 'string') this.normalizeDueDate(patch.dueDate)
       const assigned = patch.assignee !== undefined && patch.assignee !== null
         && patch.assignee !== (priorTask.assignee ?? null)
       if (assigned) {
@@ -5166,7 +5237,22 @@ export class AgentTeamLedger {
           || thread.revision !== operation.sequence
           || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })) throw new Error('invalid Task assignment activity')
         this.addRef(refs, activity.activityRef)
-      } else if (activity !== undefined || !isDeepStrictEqual(thread, priorThread)) {
+      } else if (activity !== undefined) {
+        // Property edits are public facts too: the patch activity must name
+        // exactly the properties the patch moved, in the order the patch
+        // states. Any other forge is the same broken Thread fact the old
+        // validator named, so the message stays as it was.
+        if (activity.kind !== 'patch' || activity.change === undefined
+          || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
+          || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef
+          || thread.revision !== operation.sequence
+          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })
+          || !isDeepStrictEqual(activity.change, this.taskPatchChange(priorTask, patch, operation.data.workspaceId,
+            this.taskNumbersFrom(projection, operation.data.workspaceId)))) {
+          throw new Error('invalid Task update thread')
+        }
+        this.addRef(refs, activity.activityRef)
+      } else if (!isDeepStrictEqual(thread, priorThread)) {
         throw new Error('invalid Task update thread')
       }
       const started = assigned && !this.isFollowingFrom(projection, thread.threadRef, patch.assignee!)
@@ -6661,10 +6747,15 @@ export class AgentTeamLedger {
    * Workspace.
    */
   private taskNumbers(workspaceId: WorkspaceId): Map<AgentTeamTaskRef, number> {
+    return this.taskNumbersFrom(this.state, workspaceId)
+  }
+
+  /** The numbering side of one arbitrary projection: record validation re-derives labels against its own snapshot. */
+  private taskNumbersFrom(projection: Projection, workspaceId: WorkspaceId): Map<AgentTeamTaskRef, number> {
     const numbers = new Map<AgentTeamTaskRef, number>()
-    for (const [taskRef, taskNumber] of this.state.taskNumberByTask) {
-      const task = this.state.tasks.get(taskRef)
-      if (task === undefined || this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+    for (const [taskRef, taskNumber] of projection.taskNumberByTask) {
+      const task = projection.tasks.get(taskRef)
+      if (task === undefined || projection.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
       numbers.set(taskRef, taskNumber)
     }
     return numbers
@@ -7330,7 +7421,8 @@ export class AgentTeamLedger {
 
   /** Keep only the provided keys, so a recorded patch is exactly what changed. */
   private normalizeTaskPatch(patch: AgentTeamTaskPatchRequest): AgentTeamTaskPatch {
-    const next: { title?: string; priority?: AgentTeamTaskPriority; assignee?: AgentTeamMemberId | null; position?: number } = {}
+    const next: { title?: string; priority?: AgentTeamTaskPriority; assignee?: AgentTeamMemberId | null; position?: number;
+      parentTaskRef?: AgentTeamTaskRef | null; pullRequests?: readonly AgentTeamTaskPullRequest[]; labels?: readonly string[]; dueDate?: string | null } = {}
     if (patch.title !== undefined) {
       const title = patch.title.trim()
       if (title === '') throw new Error('task title must not be empty')
@@ -7342,7 +7434,63 @@ export class AgentTeamLedger {
       if (!Number.isFinite(patch.position)) throw new Error('task position must be a finite number')
       next.position = patch.position
     }
+    if (patch.parentTaskRef !== undefined) next.parentTaskRef = patch.parentTaskRef
+    if (patch.pullRequests !== undefined) next.pullRequests = this.normalizePullRequests(patch.pullRequests)
+    if (patch.labels !== undefined) next.labels = this.normalizeTaskLabels(patch.labels)
+    if (patch.dueDate !== undefined) next.dueDate = patch.dueDate === null ? null : this.normalizeDueDate(patch.dueDate)
     return Object.freeze(next)
+  }
+
+  /** PR links are text, not state: http(s) URLs, deduplicated by URL, at most 20. The Host never fetches one. */
+  private normalizePullRequests(links: readonly AgentTeamTaskPullRequest[]): readonly AgentTeamTaskPullRequest[] {
+    const seen = new Set<string>()
+    const deduped: AgentTeamTaskPullRequest[] = []
+    for (const link of links) {
+      let parsed: URL
+      try {
+        parsed = new URL(link.url)
+      } catch {
+        throw new Error('a pull request link must be an http(s) URL')
+      }
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('a pull request link must be an http(s) URL')
+      const url = parsed.toString()
+      if (seen.has(url)) continue
+      seen.add(url)
+      const title = link.title?.trim()
+      deduped.push(Object.freeze({ url, ...(title === undefined || title === '' ? {} : { title: title.slice(0, 200) }) }))
+    }
+    if (deduped.length > TASK_PULL_REQUEST_LIMIT) throw new Error(`a task carries at most ${TASK_PULL_REQUEST_LIMIT} pull request links`)
+    return Object.freeze(deduped)
+  }
+
+  /** Free-form labels: trimmed, non-empty, at most 40 characters each, at most 20, case-insensitively deduped. */
+  private normalizeTaskLabels(labels: readonly string[]): readonly string[] {
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const raw of labels) {
+      const label = raw.trim()
+      if (label === '') throw new Error('task labels must not be empty')
+      if (label.length > TASK_LABEL_LENGTH) throw new Error(`task labels must not exceed ${TASK_LABEL_LENGTH} characters`)
+      const key = label.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(label)
+    }
+    if (deduped.length > TASK_LABEL_LIMIT) throw new Error(`a task carries at most ${TASK_LABEL_LIMIT} labels`)
+    return Object.freeze(deduped)
+  }
+
+  /** Strict `YYYY-MM-DD` that parses as a real calendar date; the year keeps its four digits. */
+  private normalizeDueDate(value: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('a due date must be an ISO date, YYYY-MM-DD')
+    const year = Number(value.slice(0, 4))
+    const month = Number(value.slice(5, 7))
+    const day = Number(value.slice(8, 10))
+    const date = new Date(Date.UTC(year, month - 1, day))
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+      throw new Error('a due date must be a real calendar date')
+    }
+    return value
   }
 
   /** Trim and bound a description body; absent means the description is not written. */
@@ -7415,8 +7563,102 @@ export class AgentTeamLedger {
   }
 
   private canonicalTaskPatch(patch: AgentTeamTaskPatch): AgentTeamTaskPatch {
-    if (patch.assignee === undefined) return patch
-    return Object.freeze({ ...patch, assignee: this.canonicalAssigneeRef(patch.assignee) })
+    const resolved = patch.assignee === undefined
+      ? patch
+      : Object.freeze({ ...patch, assignee: this.canonicalAssigneeRef(patch.assignee) })
+    if (resolved.parentTaskRef === undefined || resolved.parentTaskRef === null) return resolved
+    return Object.freeze({ ...resolved, parentTaskRef: this.uniqueRefKey(this.state.tasks, resolved.parentTaskRef, 'task') ?? resolved.parentTaskRef })
+  }
+
+  /**
+   * A parent must be another Task of the same Workspace, and setting it must
+   * not close a cycle. The check walks the parent's own ancestors; the child
+   * is not yet attached, so a chain that returns to it would be a cycle the
+   * reverse index could never render.
+   */
+  private assertParentTask(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef, parentTaskRef: AgentTeamTaskRef): void {
+    if (taskRef === parentTaskRef) throw new Error('a task cannot be its own parent')
+    let cursor = this.requireTask(workspaceId, parentTaskRef)
+    while (cursor.parentTaskRef != null) {
+      if (cursor.parentTaskRef === taskRef) throw new Error(`making '${parentTaskRef}' the parent of '${taskRef}' would create a cycle`)
+      cursor = this.requireTask(workspaceId, cursor.parentTaskRef)
+    }
+  }
+
+  /**
+   * One entry per property the patch moved, in patch order, machine values
+   * only — the clients compose the sentence. A patch key that left the value
+   * unchanged produces no entry, so an idempotent-looking edit appends no
+   * public fact.
+   */
+  private taskPatchChange(task: AgentTeamTask, patch: AgentTeamTaskPatch, workspaceId: WorkspaceId,
+    numbers: Map<AgentTeamTaskRef, number>): readonly AgentTeamTaskChange[] | undefined {
+    const entries: AgentTeamTaskChange[] = []
+    if (patch.parentTaskRef !== undefined && (task.parentTaskRef ?? null) !== patch.parentTaskRef) {
+      entries.push({
+        field: 'parentTaskRef', value: patch.parentTaskRef,
+        ...(patch.parentTaskRef === null ? {} : { label: this.taskDisplay(numbers, patch.parentTaskRef) }),
+      })
+    }
+    if (patch.pullRequests !== undefined) {
+      const prior = task.pullRequests ?? []
+      const priorUrls = new Set(prior.map(link => link.url))
+      const nextUrls = patch.pullRequests.map(link => link.url)
+      const nextUrlSet = new Set(nextUrls)
+      const added = nextUrls.filter(url => !priorUrls.has(url))
+      const removed = prior.map(link => link.url).filter(url => !nextUrlSet.has(url))
+      if (added.length > 0 || removed.length > 0) {
+        entries.push({ field: 'pullRequests', value: nextUrls, ...(added.length > 0 ? { added } : {}), ...(removed.length > 0 ? { removed } : {}) })
+      }
+    }
+    if (patch.labels !== undefined) {
+      const prior = task.labels ?? []
+      const priorKeys = new Set(prior.map(label => label.toLowerCase()))
+      const nextLabelSet = new Set(patch.labels.map(label => label.toLowerCase()))
+      const added = patch.labels.filter(label => !priorKeys.has(label.toLowerCase()))
+      const removed = prior.filter(label => !nextLabelSet.has(label.toLowerCase()))
+      if (added.length > 0 || removed.length > 0) {
+        entries.push({ field: 'labels', value: patch.labels, ...(added.length > 0 ? { added } : {}), ...(removed.length > 0 ? { removed } : {}) })
+      }
+    }
+    if (patch.dueDate !== undefined && (task.dueDate ?? null) !== patch.dueDate) {
+      entries.push({ field: 'dueDate', value: patch.dueDate })
+    }
+    return entries.length === 0 ? undefined : Object.freeze(entries)
+  }
+
+  /**
+   * The plain-text gist of one Task patch property change. Task-ref gists
+   * resolve the Task's display number while it stands; a ref the numbering no
+   * longer carries falls back to its raw form, as no fact is invented.
+   */
+  private taskChangeSummary(change: readonly AgentTeamTaskChange[], workspaceId: WorkspaceId): string {
+    const numbers = this.taskNumbers(workspaceId)
+    return change.map(entry => {
+      switch (entry.field) {
+        case 'parentTaskRef':
+          return entry.value === null ? 'cleared parent' : `set parent ${entry.label ?? this.taskDisplay(numbers, entry.value as AgentTeamTaskRef)}`
+        case 'pullRequests': {
+          const parts: string[] = []
+          if ((entry.added?.length ?? 0) > 0) parts.push(`added ${entry.added!.length} pull request link${entry.added!.length === 1 ? '' : 's'}`)
+          if ((entry.removed?.length ?? 0) > 0) parts.push(`removed ${entry.removed!.length}`)
+          return parts.join(', ')
+        }
+        case 'labels': {
+          const parts: string[] = []
+          if ((entry.added?.length ?? 0) > 0) parts.push(`added label ${entry.added!.join(', ')}`)
+          if ((entry.removed?.length ?? 0) > 0) parts.push(`removed label ${entry.removed!.join(', ')}`)
+          return parts.join(', ')
+        }
+        case 'dueDate':
+          return entry.value === null ? 'cleared due date' : `set due date ${entry.value}`
+      }
+    }).join(', ')
+  }
+
+  private taskDisplay(numbers: Map<AgentTeamTaskRef, number>, taskRef: AgentTeamTaskRef): string {
+    const number = numbers.get(taskRef)
+    return number === undefined ? String(taskRef) : `#${number}`
   }
 
   private assertTaskPriority(priority: AgentTeamTaskPriority): AgentTeamTaskPriority {
