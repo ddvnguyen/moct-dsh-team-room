@@ -162,6 +162,12 @@ function renderView(overrides: Partial<React.ComponentProps<typeof IssueView>> =
       onStatus={() => {}}
       onPriority={() => {}}
       onAssignee={() => {}}
+      onParent={() => {}}
+      onDueDate={() => {}}
+      onPullRequests={() => {}}
+      onLabels={() => {}}
+      taskRef={taskRef}
+      tasks={[]}
       onLoadOlderComments={() => {}}
       loadingOlderComments={false}
       commentWrite={{

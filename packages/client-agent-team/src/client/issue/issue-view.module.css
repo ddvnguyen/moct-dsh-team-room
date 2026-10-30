@@ -499,6 +499,131 @@
   white-space: nowrap;
 }
 
+/* The M-92 property sections: the parent picker, the due date, the labels,
+   the PR links and the sub-issue rows. They reuse the picker shell and the
+   grid the other rows use; what is new here is the shape of the values. */
+
+.parentNone {
+  color: var(--ml-text-tertiary);
+}
+
+.parentOption,
+.parentOrphan {
+  color: var(--ml-text);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parentOrphan {
+  cursor: default;
+  color: var(--ml-text-secondary);
+}
+
+.propRelative {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.propDue {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  padding: 2px 6px;
+}
+
+.propDue[data-overdue] {
+  background: var(--ml-danger-weak, color-mix(in srgb, var(--ml-danger, #c0392b) 10%, var(--ml-surface)));
+  border-color: var(--ml-danger, #c0392b);
+  color: var(--ml-danger, #c0392b);
+}
+
+.propLabels,
+.propPrs {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.propLabelChip,
+.propPr {
+  align-items: center;
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  column-gap: 4px;
+  display: inline-flex;
+  max-width: 100%;
+  padding: 1px 2px 1px 7px;
+}
+
+.propLabelChipText,
+.propPrLink {
+  color: var(--ml-text);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.propPrLink {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.propPrLink:hover {
+  text-decoration: underline;
+}
+
+.propRemove {
+  align-items: center;
+  border-radius: var(--ml-radius-sm);
+  /* Named target for `focus-visible` parity with the buttons above it. */
+  column-gap: 2px;
+  color: var(--ml-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
+.propRemove:hover {
+  color: var(--ml-text);
+}
+
+.propLabelAdd,
+.propInput {
+  background: transparent;
+  border: 1px dashed var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  color: var(--ml-text);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  max-width: 100%;
+  padding: 2px 6px;
+}
+
+.propLabelAdd::placeholder,
+.propInput::placeholder {
+  color: var(--ml-text-tertiary);
+}
+
+.propLabelAdd {
+  align-self: flex-start;
+}
+
 /* The comment list: one row per Message, replies indented under their parent. */
 .commentList {
   display: grid;

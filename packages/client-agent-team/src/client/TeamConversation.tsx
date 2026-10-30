@@ -42,7 +42,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
       loadIssueView={loadIssueView} loadMembers={loadMembers} loadChannels={loadChannels} humanName={humanName}
       loadThreadHistory={loadThreadHistory} reply={reply} resolveComment={resolveComment} putAttachment={putAttachment} getAttachment={getAttachment}
       resolveMessageRefs={resolveMessageRefs} drafts={drafts} loadTriggerCatalog={loadTriggerCatalog}
-      updateTask={updateTask} changeTask={changeTask} answerDecision={answerDecision}
+      updateTask={updateTask} loadBoard={loadBoard} openIssue={openIssue} changeTask={changeTask} answerDecision={answerDecision}
       loadThreadSessions={loadThreadSessions} loadMemberActivity={loadMemberActivity} threadTurnFailures={threadTurnFailures}
       openMemberSession={openMemberSession} stopSession={stopSession} subscribeChanges={subscribeChanges}
       closeIssue={closeIssue} showSlice={() => { setIssueVariant('slice') }}
