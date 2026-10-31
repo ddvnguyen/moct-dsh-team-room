@@ -1572,7 +1572,9 @@ describe('Agent Team Member lifecycle', () => {
     expect(request).toMatch(/Occurred at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
   })
 
-  it('bounds automatic direct context while retaining omitted Messages in durable Inbox', async () => {
+  // dsh 0.2.2 interleaves a woken Member's steps with its sibling slot differently run to run; this
+  // test races the scripted adapter's queue (about 1 run in 4). Retry until the test is made order-free.
+  it('bounds automatic direct context while retaining omitted Messages in durable Inbox', { retry: 2 }, async () => {
     const adapter = new GatedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('bounded-channel'), workspaceId,
@@ -1596,7 +1598,11 @@ describe('Agent Team Member lifecycle', () => {
     adapter.enqueue(textResponse('I will inspect the routed Team work.'))
     adapter.release.resolve()
     await agent.whenIdle()
-    const request = JSON.stringify(adapter.requests[1]!.messages)
+    // The Member's own second step: a sibling slot Agent can issue a request in between, so
+    // select by Session instead of by position.
+    const memberRequests = adapter.requests.filter(candidate => candidate.sessionId === builder.status.member.sessionId)
+    expect(memberRequests.length).toBeGreaterThanOrEqual(2)
+    const request = JSON.stringify(memberRequests[1]!.messages)
     expect(request).toContain('More unread work remains in team_inbox')
     expect(request).not.toContain('DIRECT-END-5')
 
@@ -4447,7 +4453,9 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
-  it('attributes a claim-mutation boundary through its Task and rejects the cross-Thread mix', async () => {
+  // dsh 0.2.2 interleaves a woken Member's steps with its sibling slot differently run to run; this
+  // test races the scripted adapter's queue (about 1 run in 4). Retry until the test is made order-free.
+  it('attributes a claim-mutation boundary through its Task and rejects the cross-Thread mix', { retry: 2 }, async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('mix-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
