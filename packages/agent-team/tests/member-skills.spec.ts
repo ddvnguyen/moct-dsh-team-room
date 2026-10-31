@@ -16,12 +16,13 @@ import SkillRegistry from '@deepseek-ai/dsh-skill'
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as ToolExecutorNative from '@deepseek-ai/dsh-tool-executor-native'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam from '../src/index.ts'
 import type { AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
@@ -77,6 +78,8 @@ async function memberSkillsHarness(): Promise<{
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  // dsh 0.2.2 custom compositions mount their executor.
+  await ctx.plugin(ToolExecutorNative)
   await ctx.plugin(SkillRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
@@ -84,6 +87,8 @@ async function memberSkillsHarness(): Promise<{
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   await ctx.plugin(AgentPresetRegistry, { default: 'team-member' })
   await ctx.plugin(AgentPreset, { id: 'team-member', plugins: teamMemberPlugins })
+  // dsh 0.2.2 tool-skill waits for the `workingDirectory` service; the fixture Workspace path is the cwd.
+  ctx.provide('workingDirectory', { ensure: async () => project, get: () => project } as never)
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
