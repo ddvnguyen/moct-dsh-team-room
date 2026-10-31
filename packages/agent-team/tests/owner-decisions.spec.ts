@@ -57,6 +57,7 @@ async function mount(ctx: Context): Promise<void> {
 async function preStep(ctx: Context, agent: Agent): Promise<PreStepDecision> {
   return agentEvents(ctx, agent).waterfall('agent/pre-step', {
     messages: [], turn: 1, step: 1, signal: new AbortController().signal,
+    modelSelection: { provider: 'mock', model: 'mock' },
   }, async () => ({ kind: 'enter', messages: [] }))
 }
 

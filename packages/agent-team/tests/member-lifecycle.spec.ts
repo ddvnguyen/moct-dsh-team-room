@@ -21,7 +21,7 @@ import AgentPresetRegistry, { type AgentPreset, type PresetDefinition } from '@d
 import LlmRuntime, { LlmError, ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import SessionTitle from '@deepseek-ai/dsh-session-title'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -29,6 +29,8 @@ import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as ToolExecutorNative from '@deepseek-ai/dsh-tool-executor-native'
+import { executeTool } from './helpers/execute-tool.ts'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, isTsxDevMode, markAgentTeamPreset, teamPresetScopeMismatchMessage, TeamMemoryClient } from '../src/index.ts'
 import { checkpointRefFor, foldTeamContextProjection } from '../src/context-projection.ts'
@@ -263,6 +265,8 @@ async function realHarness(
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  // dsh 0.2.2 custom compositions mount their executor.
+  await ctx.plugin(ToolExecutorNative)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
@@ -345,7 +349,7 @@ describe('Agent Team Member lifecycle', () => {
       ['team_message', { action: 'start', channelRef: 'channel:missing', body: 'Do not route implicitly' }],
       ['team_claim', { action: 'list', taskRef: 'task:missing' }],
     ] as const) {
-      const omitted = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`global-missing-${name}`),
+      const omitted = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`global-missing-${name}`),
         name, arguments: args, agent })
       expect(omitted.isError).toBe(true)
       if (!omitted.isError) throw new Error('Expected an explicit Workspace requirement')
@@ -355,7 +359,7 @@ describe('Agent Team Member lifecycle', () => {
     }
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('global-channel'), workspaceId: otherId,
       name: 'work', description: '', memberIds: [memberId] })
-    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId('global-start'),
+    const result = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId('global-start'),
       name: 'team_message', arguments: { action: 'start', workspace: otherId, channelRef: channel.channel.channelRef, body: 'Working in joined checkout' }, agent })
     expect(result.isError, result.isError ? result.error.message : '').toBe(false)
     expect(ctx.agentTeam.view({ workspaceId: otherId }).items[0]?.message.body).toBe('Working in joined checkout')
@@ -1026,7 +1030,7 @@ describe('Agent Team Member lifecycle', () => {
     const agent = ctx.agents.get(builder.status.member.sessionId)!
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
-      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name, arguments: args, agent })
+      const result = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name, arguments: args, agent })
       expect(result.isError, `${name} ${JSON.stringify(args)}: ${result.isError ? result.error.message : 'ok'}`).toBe(false)
       expect(result.concludesTurn).toBeUndefined()
       if (result.isError) throw new Error(result.error.message)
@@ -1068,7 +1072,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(JSON.stringify(threadDirectory.threads)).not.toContain('One follow-up reply')
     // A second Member who joined after both Threads started sees them too.
     const lateJoinerAgent = ctx.agents.get(reviewer.status.member.sessionId)!
-    const lateJoinerView = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name: 'team_view', arguments: {}, agent: lateJoinerAgent }).then(result => {
+    const lateJoinerView = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name: 'team_view', arguments: {}, agent: lateJoinerAgent }).then(result => {
       expect(result.isError).toBe(false)
       return result.value as Record<string, any>
     })
@@ -1095,7 +1099,7 @@ describe('Agent Team Member lifecycle', () => {
     const shotFact = shotHistory.facts.find(fact => fact.kind === 'message' && fact.message.attachments !== undefined)
     expect(shotFact).toBeDefined()
     expect(shotHistory.facts.some(fact => fact.kind === 'message' && new RegExp(`\\[attachment\\] .*attachments${sep === '/' ? '\\/' : '\\\\'}v1${sep === '/' ? '\\/' : '\\\\'}`).test(fact.message?.body ?? ''))).toBe(true)
-    const rejected = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'start', channelRef: channel.channel.channelRef, body: 'Never committed', attachments: ['relative/shot.png'] }, agent })
+    const rejected = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-protocol-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'start', channelRef: channel.channel.channelRef, body: 'Never committed', attachments: ['relative/shot.png'] }, agent })
     expect(rejected.isError).toBe(true)
     expect(rejected.error?.message ?? rejected.value).toMatch(/must be absolute/)
     expect(ctx.agentTeam.threadHistory({ workspaceId, threadRef: shotThreadRef as never }).facts.some(fact => fact.kind === 'message' && fact.message?.body === 'Never committed')).toBe(false)
@@ -1206,7 +1210,7 @@ describe('Agent Team Member lifecycle', () => {
     const foreign = await ctx.agentTeam.sendMessage({ requestId: requestId('memory-foreign'), workspaceId, channelRef: closed.channel.channelRef, body: 'Leads only' })
     if (ownTask.kind !== 'committed' || foreign.kind !== 'committed') throw new Error('expected committed Threads')
     let callNumber = 0
-    const call = (name: string, args: unknown) => ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`memory-${++callNumber}`), name, arguments: args, agent })
+    const call = (name: string, args: unknown) => executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`memory-${++callNumber}`), name, arguments: args, agent })
 
     // Without the MOCT backend the tools refuse with a stable code instead of guessing.
     const unavailable = await call('memory_search', {})
@@ -1293,7 +1297,7 @@ describe('Agent Team Member lifecycle', () => {
     const recipient = ctx.agents.get(reviewer.status.member.sessionId)!
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
-      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-${++callNumber}`), name, arguments: args, agent: sender })
+      const result = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-dm-${++callNumber}`), name, arguments: args, agent: sender })
       expect(result.isError).toBe(false)
       if (result.isError) throw new Error(result.error.message)
       return result.value as Record<string, any>
@@ -1344,7 +1348,7 @@ describe('Agent Team Member lifecycle', () => {
     // latest prior exchange from the reader's own side is the builder's own
     // 'still green?', so the reader (builder) reads (you → them).
     adapter.enqueue(textResponse('Thanks.'))
-    const replyFromReviewer = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-mirror-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: builder.status.member.memberId, body: 'yes, all green' }, agent: recipient })
+    const replyFromReviewer = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-dm-mirror-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: builder.status.member.memberId, body: 'yes, all green' }, agent: recipient })
     expect(replyFromReviewer.isError).toBe(false)
     adapter.enqueue(textResponse('Noted.'))
     await waitForIdle(ctx, sender)
@@ -1355,19 +1359,19 @@ describe('Agent Team Member lifecycle', () => {
     expect(mirrorText).toMatch(/\(you → them, at [^)]+\+08:00\) still green\?/)
 
     // Parameter matrix: human recipients, unknown Members, and stray fields.
-    const bad = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
+    const bad = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
     expect(bad.isError).toBe(true)
     expect(bad.error?.message ?? '').toMatch(/Agent Member/)
-    const unknown = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-unknown-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: 'member:nobody', body: 'hi' }, agent: sender })
+    const unknown = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-dm-unknown-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: 'member:nobody', body: 'hi' }, agent: sender })
     expect(unknown.isError).toBe(true)
-    const stray = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-stray-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'hi', channelRef: channel.channel.channelRef }, agent: sender })
+    const stray = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-dm-stray-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'hi', channelRef: channel.channel.channelRef }, agent: sender })
     expect(stray.isError).toBe(true)
     expect(stray.error?.message ?? '').toMatch(/does not accept/)
 
     // A suspended peer is not a sendable target: the ledger rejects the send
     // outright (nothing is recorded), which is the pre-delivery guard.
     await ctx.agentTeam.suspendMember({ requestId: requestId('dm-suspend'), memberId: reviewer.status.member.memberId })
-    const suspended = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-suspended-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'are you back?' }, agent: sender })
+    const suspended = await executeTool(ctx.tools, { signal: new AbortController().signal, callId: ToolCallId(`team-dm-suspended-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'are you back?' }, agent: sender })
     expect(suspended.isError).toBe(true)
     expect(suspended.error?.message ?? '').toMatch(/suspended/)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
@@ -1541,7 +1545,7 @@ describe('Agent Team Member lifecycle', () => {
     const peerAgent = ctx.agents.get(peer.status.member.sessionId)!
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
-      const result = await ctx.tools.execute({ signal: new AbortController().signal,
+      const result = await executeTool(ctx.tools, { signal: new AbortController().signal,
         callId: ToolCallId(`peer-mention-${++callNumber}`), name, arguments: args, agent: starterAgent })
       if (result.isError) throw new Error(result.error.message)
       return result.value as Record<string, any>
