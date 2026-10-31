@@ -1,32 +1,87 @@
 /*
- * The issue slice: the issue view as a dialog over whatever screen the reader
- * is on.
+ * The issue slice: the issue view as a panel anchored to the right edge of
+ * the frame, over whatever screen the reader is on.
  *
- * Derived from multica-x packages/views/issues/components/issue-peek.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad.
- * Copyright Index Labs. Multica License.
+ * Derived from multica-x packages/views/issues/components/issue-peek.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
  *
- * The width is the owner's screenshot's: a wide overlay (GitHub Projects'
- * issue panel), not upstream's 520px peek — the screenshot supersedes the
- * peek, so the panel is drawn at the width a wide issue overlay needs.
+ * The panel takes the frame's right edge instead of floating in the middle:
+ * the face behind it stays visible and live, and the left edge is the reader's
+ * to drag. The width is inline (the drag writes it, `panel-width.ts` remembers
+ * it), so the stylesheet only says where the panel sits and what it is made of.
+ * Under the narrow width the overlay stops working as a wide panel, so
+ * `useNarrowViewport` hands the issue to the page variant instead.
  */
 
-/* The dialog itself: a wide card, capped by the viewport. */
-.dialog {
-  width: min(960px, calc(100vw - 64px));
-  max-height: calc(100vh - 64px);
-}
-
-/* The dialog's body: the tree fills it and scrolls inside it. */
-.content {
+/* The panel itself: the frame's right edge, full height, one column. It is
+   fixed rather than absolutely placed — the dsh `Modal` it replaces portalled
+   to the body for the same reason: an overlay entry must not depend on the
+   geometry its slot wrapper happens to have. The top edge steps past the
+   frame's chrome the way the Modal's mask did, so window controls stay clear. */
+.panel {
+  position: fixed;
+  top: var(--dsh-frame-chrome-top, 0px);
+  right: 0;
+  bottom: 0;
+  /* Inside the shell's overlay layer (z-index 20), which is what keeps the
+     panel above the face behind — the Thread's sticky rows and the composer's
+     menus paint at 2 and 10, below the layer. This value only orders the panel
+     against its siblings in that layer: the popup cards (100) and the dsh
+     menus (100 / 1100) stay above it, so a menu opened over the panel is not
+     buried by it. */
+  z-index: 10;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  max-height: calc(100vh - 64px);
+  background: var(--ml-surface);
+  border-left: 1px solid var(--ml-border);
+  box-shadow: var(--dsw-elevation-prominent);
   overflow: hidden;
-  padding: 0;
 }
 
-/* The slice's own body: the chrome bar over the tree. */
+/* The panel takes the focus when it opens; the ring belongs to the controls
+   inside it, not to the container around them. */
+.panel:focus {
+  outline: none;
+}
+
+/* The drag handle: the panel's own left edge, grabbed from anywhere along it.
+   It is a child of the panel, so the strip it claims is never the face behind. */
+.handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.handle:hover {
+  background: var(--ml-brand);
+  opacity: 0.35;
+}
+
+.handle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--ml-brand));
+  outline-offset: -2px;
+}
+
+/* The icon bar: maximize, close, the way into the legacy Thread. */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ml-border);
+  background: var(--ml-surface);
+}
+
+/* The slice's own body: the icon bar over the tree, filling the panel. */
 .sliceBody {
   display: flex;
   flex-direction: column;
@@ -34,18 +89,7 @@
   min-height: 0;
 }
 
-/* The chrome bar: the two controls the slice adds over the shared tree. */
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ml-border);
-  background: var(--ml-surface);
-}
-
-/* The tree fills the dialog and passes its height down: the dialog is not a
+/* The tree fills the panel and passes its height down: the panel is not a
    scroll container — the page's panes are — so the slice carries one
    scrollbar per pane instead of a second one wrapped around them. */
 .tree {
@@ -54,18 +98,4 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-}
-
-/* Under the narrow width the overlay stops working as a wide card, so the
-   slice hands the issue to the page variant instead (the slot's variant is
-   the client's business). */
-@media (max-width: 768px) {
-  .dialog {
-    width: 100vw;
-    max-height: 100vh;
-  }
-
-  .content {
-    max-height: 100vh;
-  }
 }

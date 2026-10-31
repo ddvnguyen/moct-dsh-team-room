@@ -166,6 +166,8 @@ import type {
   AgentTeamDocsResult,
   AgentTeamDocView,
   AgentTeamReviewDocRequest,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocSectionHistory,
@@ -2996,6 +2998,20 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /**
+   * Human close or reopen of one issue comment thread, fenced by the Thread
+   * revision on screen; a stale revision is a business outcome. The ledger
+   * also admits the comment's author and the Task's assignee; this remote is
+   * the Human's, because the Human owns the issue view's comment surface.
+   */
+  @Remote('resolveComment')
+  async resolveComment(request: AgentTeamResolveCommentRequest): Promise<AgentTeamResolveCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().resolveComment({ ...request, actor })
+    if (result.committed && result.value.kind === 'committed') this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   /** Human close of one comment thread; a pending Human comment in it is withdrawn. */
   @Remote('resolveDocComment')
   async resolveDocComment(request: AgentTeamResolveDocCommentRequest): Promise<AgentTeamResolveDocCommentResult> {
@@ -5674,6 +5690,9 @@ export default class AgentTeam extends TypertRemoteService {
       return readerId !== undefined && activity.assignee === readerId
         ? `Team Task update\n${actor} assigned Task ${activity.taskRef} to you. Read Thread ${activity.threadRef} and claim the Task when you start the work.`
         : `Team Task update\n${actor} assigned Task ${activity.taskRef} to ${assignee ?? 'a Member'}.`
+    }
+    if (activity.kind === 'patch') {
+      return `Team Task update\n${actor} updated the properties of Task ${activity.taskRef}.`
     }
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''

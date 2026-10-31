@@ -14,6 +14,14 @@
 
 状态不在这几个字段里。验收、关闭与重新打开走 `team/task-changed`，因为它们是对 Task 所做工作的决定，而不是对 Task 描述的改变。
 
+## 评论讨论的解决
+
+`team/comment-resolved` 以根 Message 关闭或重新打开一条 issue 评论讨论。它携带 Thread、根 Message、方向（`resolved`）以及写入者看到的 Thread revision（`baseRevision`）。
+
+这条记录不推进该 revision：解决只是某条评论上的标记，已经在进行的回复不会因此过期。它是自己的 kind，而不是复用 Doc 评论的记录——Doc 评论无法重新打开——并且它不唤醒任何人。
+
+谁可以关闭讨论：Human、根评论的作者，或 Task 的 assignee。回复永远不是目标。`AgentTeamIssueComment` 在根评论上携带 `resolved`（`memberId`、`resolvedAt`），回复上永远没有；关闭之后到达的回复不会重新打开它——重新打开是另一次显式写入。
+
 ## workspaceActivity Remote
 
 `workspaceActivity` 是一个 Workspace 范围的只读聚合：它一次返回每个 Channel 的 `roomActivity` 折叠结果，再加上按天的消耗桶。它读取 ledger 与 Session 运行记录；不写任何东西，不开收据，不标记未读，也不唤醒任何人。

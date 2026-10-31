@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { ACTIVITY_STALE_MS, ACTIVITY_THROTTLE_MS, AgentTeamActivityFeed, activityLabel } from '../src/activity-feed.ts'
+import { ACTIVITY_STALE_MS, ACTIVITY_STEPS_MAX, ACTIVITY_THROTTLE_MS, AgentTeamActivityFeed, activityLabel } from '../src/activity-feed.ts'
 import type { AgentTeamMemberId, AgentTeamThreadRef } from '../src/types/entities.ts'
 
 const memberId = 'member:feed-a' as AgentTeamMemberId
@@ -134,6 +134,42 @@ describe('AgentTeamActivityFeed (D3 metrics)', () => {
     const serialized = JSON.stringify(feed.snapshot())
     for (const word of FORBIDDEN) expect(serialized).not.toContain(word)
     expect(serialized).toContain('read .env')
+  })
+
+  it('step feed: the last few labels are kept newest last, capped, and reset with the Turn', () => {
+    const { feed } = harness()
+    feed.onSessionEvent(memberId, step(0))
+    expect(feed.snapshot()[0]).not.toHaveProperty('steps')
+    feed.onSessionEvent(memberId, call(1, 'c1', 'read', { path: '/work/a.ts' }))
+    feed.onSessionEvent(memberId, call(2, 'c2', 'grep', { path: '/work/b.ts' }))
+    expect(feed.snapshot()[0]?.steps).toEqual([
+      { tool: 'read', label: 'read a.ts' },
+      { tool: 'grep', label: 'grep b.ts' },
+    ])
+    // The window is the last ACTIVITY_STEPS_MAX steps: older ones fall off the front.
+    for (let i = 3; i <= ACTIVITY_STEPS_MAX + 2; i += 1) {
+      feed.onSessionEvent(memberId, call(i, `c${i}`, 'edit', { path: `/work/f${i}.ts` }))
+    }
+    const steps = feed.snapshot()[0]?.steps ?? []
+    expect(steps).toHaveLength(ACTIVITY_STEPS_MAX)
+    expect(steps.at(-1)).toEqual({ tool: 'edit', label: `edit f${ACTIVITY_STEPS_MAX + 2}.ts` })
+    // A new Turn starts a new feed: the previous Turn's steps never carry over.
+    feed.onSessionEvent(memberId, step(ACTIVITY_STEPS_MAX + 3, 2))
+    expect(feed.snapshot()[0]?.steps).toBeUndefined()
+  })
+
+  it('step feed: labels only, per slot, and no argument text or secret survives it', () => {
+    const { feed } = harness()
+    const curl = 'curl -H "Authorization: Bearer sk-FAKE-123456789" https://x'
+    feed.onSessionEvent(memberId, step(0))
+    feed.onSessionEvent(memberId, step(1), 1)
+    feed.onSessionEvent(memberId, call(2, 'c1', 'bash', { command: curl }))
+    feed.onSessionEvent(memberId, call(3, 'c2', 'read', { path: '/home/u/.env' }), 1)
+    const [main, extra] = feed.snapshot()
+    expect(main?.steps).toEqual([{ tool: 'bash', label: 'bash' }])
+    expect(extra?.steps).toEqual([{ tool: 'read', label: 'read .env' }])
+    const serialized = JSON.stringify([main?.steps, extra?.steps])
+    for (const word of [...FORBIDDEN, 'curl -H', '/home/u/.env']) expect(serialized).not.toContain(word)
   })
 
   it('metric 7: a non-delivery Turn after an idle shows no Thread; the host clears its per-seat Thread map on idle (index.ts mirror)', () => {

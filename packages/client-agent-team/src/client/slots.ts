@@ -60,6 +60,8 @@ import type {
   AgentTeamDecisionNoticeResult,
   AgentTeamDecisionsRequest,
   AgentTeamDecisionsResult,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocSectionHistory,
@@ -100,6 +102,7 @@ import type { TeamChangeListener, TeamChangeScope } from './team-changes.ts'
 import type { TeamDraftStore } from './drafts.ts'
 import type { TeamHumanIdentitySource } from './human-identity.ts'
 import type { IssueClient, IssueContextStore } from './issue/issue-client.ts'
+import type { IssuePeekOrders } from './issue/peek-order.ts'
 import type { TeamTriggerCatalogItem, TeamTriggerCatalogScope } from './trigger-catalog.ts'
 
 export interface TeamNavigationSource {
@@ -217,6 +220,11 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   openIssue: IssueClient['openIssue']
   /** The open issue's client-side context: its Workspace, and its opener. */
   issueContext: IssueContextStore
+  /**
+   * The order the face behind the panel published for its walk (M-69): the
+   * Board and the Inbox publish theirs, the panel's host consumes it.
+   */
+  peekOrder: IssuePeekOrders
   /** Keyed composer draft cache; one store per Client context. */
   drafts: TeamDraftStore
   /**
@@ -238,6 +246,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   /** Archive a Channel from the Channel page's overflow menu (D1b). */
   archiveChannel: (request: AgentTeamArchiveChannelRequest) => Promise<RemoteResult<AgentTeamArchiveChannelResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>
+  /** Close or reopen one issue comment thread by its root comment, fenced by the Thread revision. */
+  resolveComment: (request: AgentTeamResolveCommentRequest) => Promise<RemoteResult<AgentTeamResolveCommentResult>>
   changeTask: (request: AgentTeamTaskRequest) => Promise<RemoteResult<AgentTeamTaskResult>>
   /** Human's own Thread Attention: follow/unfollow of this Thread as the reading Human. */
   changeAttention: (request: AgentTeamThreadAttentionRequest) => Promise<RemoteResult<AgentTeamThreadAttentionResult>>

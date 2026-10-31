@@ -60,7 +60,7 @@ Esc closes it and returns the focus to the card the reader came from, and a relo
 
 The browser's own back and forward buttons walk the Team's positions: back from a page returns to the face it opened over, and back from a slice closes it. The path never changes — the position rides the state object, not the URL.
 
-The issue is one read of the Host's own snapshot, drawn in six regions: the header (the Channel breadcrumb, `#n`, the status and the inline title editor), the description, the properties column (status, priority, assignee, created and last activity), the timeline, the decisions, and the execution log.
+The issue is one read of the Host's own snapshot, drawn in six regions: the header (the Channel breadcrumb, `#n`, the status and the inline title editor), the description, the decisions, the agent activity, the timeline, and the properties column (status, priority, assignee, created and last activity).
 
 The timeline is one chronological list: the comments with their replies, the runs of consecutive activity folded into an expandable line, and each agent run of the Thread. An activity that happened between two comments sits between them, and a run says who ran and for how long.
 
@@ -78,9 +78,17 @@ The Thread view is **legacy** (D10). It is not deleted: the issue's header carri
 
 Both surfaces read the same Host facts — a comment written on the issue is a comment on the Thread, and a Thread opened from the issue is the same Thread. It takes fixes only from here on: no new region and no new write.
 
-## The execution log
+## Running agents and the execution history
 
-The execution log lists the Sessions that ran this Thread. The active run comes first with a live clock, the tool it is running and its step count; past runs carry their duration, the token flow `in → out`, the cache share, the tool and turn counts and the model. A failed Turn is flagged, and `打开会话` opens that seat's own Session.
+The agents working on the Task right now sit in the issue's own column, above the history. There is one card per seat and instance slot running a Turn on this Thread.
+
+A card carries a spinner, `Agent is working`, the elapsed time of that Turn, how many tool calls it has made, and the last few steps it took, newest first (`Now checking card.tsx`). A seat with several instance slots names the one on its card; a single slot is not named, because there is nothing to tell apart.
+
+`打开会话` opens that slot's own Session, and `停止` cancels the Turn. A Task with nothing running shows no card at all.
+
+Under the cards, the execution history lists the runs that finished: their duration, the token flow `in → out`, the cache share, the tool and turn counts and the model. A failed Turn is flagged.
+
+The running seat is the card above it and never appears in the history, so one run is never on screen twice.
 
 The status, priority and assignee pickers sit in the issue's properties column, so a Task can be re-pointed without leaving the issue.
 
@@ -88,7 +96,7 @@ The status, priority and assignee pickers sit in the issue's properties column, 
 
 **Stop** and **Chat** answer different questions, and mixing them up costs a run.
 
-`停止` in the execution log cancels the Turn that is running right now, on that seat, for that Thread. It asks first, naming the Member whose Turn it is about to cancel, and it says what is kept: unfinished work stays in that Member's Inbox. The log does not pretend the run has stopped — it shows `停止中…` until the Host folds the run out of the active list.
+`停止` on a running card cancels the Turn that is running right now, on that seat, for that Thread. It asks first, naming the Member whose Turn it is about to cancel, and it says what is kept: unfinished work stays in that Member's Inbox. The card does not pretend the run has stopped — it shows `停止中…` until the Host folds the run out of the active list.
 
 `聊天` on the Agent page opens the Member's own Session, where the Human talks to it. It is a conversation, not a control: nothing is cancelled, no Task changes, and the Session's own history stays where it is.
 

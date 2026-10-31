@@ -584,6 +584,15 @@ const docCommentResolved: Op<'team/doc-comment-resolved'> = {
   data: { workspaceId: alpha, threadRef: memberThread, docRef: fixtureDocRef, commentRef: 'comment:protocol-fixture' as AgentTeamDocCommentRef },
 }
 
+const fixtureCommentRef = 'message:protocol-comment' as AgentTeamMessageRef
+
+const commentResolved: Op<'team/comment-resolved'> = {
+  ...opBase('operation:protocol-37', 'request:protocol-comment-resolved', 37),
+  previousOperationId,
+  kind: 'team/comment-resolved',
+  data: { workspaceId: alpha, threadRef: memberThread, messageRef: fixtureCommentRef, resolved: true, baseRevision: 5 },
+}
+
 const boardTaskRef = 'task:protocol-board' as AgentTeamTaskRef
 const boardThreadRef = 'thread:protocol-board' as AgentTeamThreadRef
 const boardMessageRef = 'message:protocol-board' as AgentTeamMessageRef
@@ -1460,6 +1469,22 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
       },
       changed: () => ledger.commentDoc({ requestId: docCommentAdded.requestId, actor: human, workspaceId: alpha,
         docRef: fixtureDocRef, sectionId: 's1', quote: 'protocol fixture', body: 'A different comment.' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/comment-resolved': {
+    stored: commentResolved,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.resolveComment({ requestId: commentResolved.requestId, actor: human, workspaceId: alpha,
+          threadRef: memberThread, messageRef: fixtureCommentRef, resolved: true, baseRevision: 5 })
+        expect(out.value.kind === 'committed' && out.value.messageRef, 'the resolve mapper answers with the stored comment').toBe(fixtureCommentRef)
+        return out
+      },
+      changed: () => ledger.resolveComment({ requestId: commentResolved.requestId, actor: human, workspaceId: alpha,
+        threadRef: memberThread, messageRef: fixtureCommentRef, resolved: false, baseRevision: 5 }),
     },
     legacy: { normalize: 'none', repair: 'none' },
     intent: { scopes: 'derived', inbox: 'none' },

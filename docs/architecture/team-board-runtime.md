@@ -14,6 +14,14 @@ Two durable records carry the Task fields the Board needs. Both are append-only 
 
 Status is not one of those fields. Acceptance, closing and reopening ride `team/task-changed`, because they are decisions about the Task's work, not about its description.
 
+## Comment thread resolution
+
+`team/comment-resolved` closes or reopens one issue comment thread by its root Message. It carries the Thread, the root Message, the direction (`resolved`) and the Thread revision the writer saw (`baseRevision`).
+
+The record does not advance that revision: a resolution is a marker on one comment, so a reply already in flight is not made stale by it. It is its own kind rather than the Doc comment's record, because a Doc comment cannot reopen, and it wakes nobody.
+
+Who may close a thread: the Human, the root comment's author, or the Task's assignee. A reply is never a target. `AgentTeamIssueComment` carries the resulting `resolved` (`memberId`, `resolvedAt`) on a root comment and never on a reply, and a reply arriving after the close does not reopen it — reopening is its own write.
+
 ## The workspaceActivity Remote
 
 `workspaceActivity` is a read-only aggregate over one Workspace: it returns the `roomActivity` fold of every Channel at once, plus per-day spend buckets. It reads the ledger and the Session runs; it writes nothing, opens no receipt, marks nothing unread and wakes nobody.

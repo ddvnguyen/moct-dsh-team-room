@@ -31,6 +31,8 @@ import type {
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
   AgentTeamClaimRef,
+  AgentTeamCommentResolution,
+  AgentTeamCommentResolvedOperation,
   AgentTeamConfirmationRequired,
   AgentTeamConfirmationToken,
   AgentTeamCreateChannelRequest,
@@ -48,6 +50,9 @@ import type {
   AgentTeamDocCommentRef,
   AgentTeamDocCommentResult,
   AgentTeamDocCommentResolvedOperation,
+  AgentTeamResolveCommentCommittedResult,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocReview,
@@ -94,6 +99,7 @@ import type {
   AgentTeamInboxItem,
   AgentTeamInitializedOperation,
   AgentTeamIssueDecision,
+  AgentTeamIssueRelated,
   AgentTeamIssueView,
   AgentTeamIssueViewRequest,
   AgentTeamJoinChannelRequest,
@@ -145,12 +151,14 @@ import type {
   AgentTeamStoredThreadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
+  AgentTeamTaskChange,
   AgentTeamTaskChangedOperation,
   AgentTeamTaskCreatedOperation,
   AgentTeamTaskDescription,
   AgentTeamTaskPatch,
   AgentTeamTaskPatchRequest,
   AgentTeamTaskPriority,
+  AgentTeamTaskPullRequest,
   AgentTeamTaskRequest,
   AgentTeamTaskUpdatedOperation,
   AgentTeamTaskResult,
@@ -271,6 +279,15 @@ export const AGENT_TEAM_INITIALIZE_REQUEST_ID = 'agent-team:initialize:v1' as Ag
 
 /** The closed set of board priorities; the stored value is checked against it before it reaches the table. */
 const TASK_PRIORITIES: readonly AgentTeamTaskPriority[] = ['urgent', 'high', 'medium', 'low', 'none']
+
+/** The most distinct PR links one Task may carry; a link is text, so the bound exists to keep a patch reviewable. */
+const TASK_PULL_REQUEST_LIMIT = 20
+
+/** The most labels one Task may carry. */
+const TASK_LABEL_LIMIT = 20
+
+/** Character bound of one stored label. */
+const TASK_LABEL_LENGTH = 40
 
 const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
   kind: 'human',
@@ -547,6 +564,11 @@ export interface AgentTeamAuthorizedResolveDocCommentRequest extends AgentTeamRe
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
 
+/** Any actor the ledger rule admits: the Human, the comment's author, or the Task's assignee. */
+export interface AgentTeamAuthorizedResolveCommentRequest extends AgentTeamResolveCommentRequest {
+  readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+}
+
 export interface AgentTeamAuthorizedCommentDocRequest extends AgentTeamCommentDocRequest {
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
@@ -699,6 +721,12 @@ interface Projection {
   readonly observationsByThread: Map<AgentTeamThreadRef, AgentTeamAttentionObservation[]>
   /** Team Documents, folded from their own operations and the submit and review notices on Thread replies. */
   readonly docs: Map<AgentTeamDocRef, AgentTeamDocState>
+  /**
+   * Closed comment threads, keyed by their root Message: who closed it and when.
+   * A reopened thread has no entry, so the map is the current state and never a
+   * history — the ledger holds the history.
+   */
+  readonly commentResolutions: Map<AgentTeamMessageRef, AgentTeamCommentResolution>
   /** Docs per home Thread, in creation order. */
   readonly docsByThread: Map<AgentTeamThreadRef, AgentTeamDocRef[]>
   /** Decision cards, folded from the ask, answer and withdraw notices on Thread replies. */
@@ -781,7 +809,7 @@ function emptyProjection(): Projection {
     anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
     threadsByWriter: new Map(),
     directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map(),
-    docs: new Map(), docsByThread: new Map(), decisions: new Map(), decisionsByThread: new Map(),
+    docs: new Map(), docsByThread: new Map(), commentResolutions: new Map(), decisions: new Map(), decisionsByThread: new Map(),
     decisionRecords: new Map(), decisionRecordsByThread: new Map(), decisionRecordsByTask: new Map(), descriptionWriteSequences: new Map() }
 }
 
@@ -1740,6 +1768,7 @@ export class AgentTeamLedger {
       const { task, thread } = this.threadForActor(request.actor, request.workspaceId, request.taskRef)
       const canonical = this.canonicalTaskPatch(patch)
       if (canonical.assignee != null) this.assertAssignable(canonical.assignee, task.channelRef)
+      if (canonical.parentTaskRef != null) this.assertParentTask(request.workspaceId, request.taskRef, canonical.parentTaskRef)
       // Board fields are metadata: the Human need not have read the Thread to
       // reorder or relabel a Task, so only the revision fences the write.
       if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
@@ -1762,13 +1791,21 @@ export class AgentTeamLedger {
           })
       const nextTask: AgentTeamTask = Object.freeze({ ...task, ...opPatch })
       const assigned = canonical.assignee != null && canonical.assignee !== (task.assignee ?? null)
-      // Assignment is a public Thread fact: it is what makes the assignee (and
-      // every other follower) see the change as unread and wakes it, and what
-      // the model reads. Pure field edits append no fact and leave the Thread
-      // revision alone, so an Agent mid-reply is not made stale by a reorder.
-      const activity: AgentTeamTaskActivity | undefined = assigned
-        ? Object.freeze({ activityRef: this.ref('activity'), kind: 'assign' as const, taskRef: task.taskRef, threadRef: thread.threadRef,
-          actor: request.actor.memberId, sequence, assignee: canonical.assignee! })
+      // One entry per property the patch moved; absent when the write touched
+      // none of the four, so a reorder or a description edit appends no fact.
+      const change = this.taskPatchChange(task, canonical, request.workspaceId, this.taskNumbers(request.workspaceId))
+      // Assignment and property edits are public Thread facts: they are what
+      // makes the assignee (and every other follower) see the change as unread
+      // and wakes it, and what the models read. A patch that moved no property
+      // and no assignee leaves the Thread revision alone, so an Agent mid-reply
+      // is not made stale by a reorder.
+      const activity: AgentTeamTaskActivity | undefined = assigned || change !== undefined
+        ? Object.freeze({
+          activityRef: this.ref('activity'), kind: assigned ? 'assign' as const : 'patch' as const,
+          taskRef: task.taskRef, threadRef: thread.threadRef, actor: request.actor.memberId, sequence,
+          ...(assigned ? { assignee: canonical.assignee! } : {}),
+          ...(change === undefined ? {} : { change }),
+        })
         : undefined
       const nextThread: AgentTeamThread = activity === undefined ? thread : Object.freeze({ ...thread, revision: sequence })
       const started = assigned && !this.isFollowing(thread.threadRef, canonical.assignee!)
@@ -2509,6 +2546,56 @@ export class AgentTeamLedger {
   }
 
   /**
+   * Close or reopen one issue comment thread, addressed by its root Message.
+   *
+   * Who may do it: the Human, the root comment's author, or the Task's
+   * assignee. It is not the Doc-comment rule reused — a Doc comment lives in
+   * the Doc's own state and is resolve-only, while an issue thread is a run of
+   * Thread Messages that must also reopen — but the shape follows it: one
+   * operation carries the direction, and it wakes nobody and adds no Inbox
+   * fact, because it is a marker on a comment rather than a claim about the
+   * Thread's other facts.
+   *
+   * The fence is the other Thread writes': the Thread revision the writer saw.
+   * The write does NOT advance it — a resolution is metadata about one comment,
+   * so it must not make a reply already in flight stale.
+   */
+  resolveComment(request: AgentTeamAuthorizedResolveCommentRequest): Promise<AgentTeamLedgerResult<AgentTeamResolveCommentResult>> {
+    return this.enqueue(async () => {
+      // The idempotent branch reads `byRequest` before any authorization or
+      // projection work, so a retry answers the stored write even after the
+      // Thread has moved on.
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameCommentResolution(existing, request)
+        return this.resolved(this.resolveCommentResult(existing))
+      }
+      const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
+      const { task, thread } = this.threadContextForActor(actor, request.workspaceId, request)
+      const comment = this.requireResolvableComment(thread.threadRef, request.messageRef)
+      if (actor.kind === 'member' && comment.sender !== actor.memberId && task?.assignee !== actor.memberId) {
+        throw new Error(`only the comment's author, the Task's assignee, or the Human can resolve '${comment.messageRef}'`)
+      }
+      if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
+      const resolved = this.state.commentResolutions.has(comment.messageRef)
+      if (request.resolved === resolved) {
+        throw new Error(request.resolved
+          ? `comment '${comment.messageRef}' is already resolved`
+          : `comment '${comment.messageRef}' is not resolved`)
+      }
+      const sequence = this.nextSequence()
+      const operation: AgentTeamCommentResolvedOperation = Object.freeze({
+        ...this.operationBase(request, sequence), kind: 'team/comment-resolved',
+        data: Object.freeze({ workspaceId: request.workspaceId, threadRef: thread.threadRef, messageRef: comment.messageRef,
+          resolved: request.resolved, baseRevision: request.baseRevision }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.resolveCommentResult(operation))
+    })
+  }
+
+  /**
    * The author asks the Human to review the Doc at its current revision. The
    * notice is a Thread reply that mentions the Human, so the Doc reaches their
    * Inbox; it is not gated on the author's unread work, because it adds no
@@ -2691,8 +2778,12 @@ export class AgentTeamLedger {
       }
       const notice: AgentTeamDecisionNotice = Object.freeze({ decisionRef: state.decisionRef, event: 'answered' as const, answers })
       const body = decisionAnswerBody(asker.handle, state.decisionRef, state.questions, answers)
+      // A record is the Owner's decision. A seat answering the card it was
+      // addressed by closes that card and records nothing, so the card keeps
+      // its own row in the issue view rather than becoming a decision row.
+      const record = request.actor.kind === 'human' ? this.answerDecisionRecord(state, answers) : undefined
       const operation = this.noticeReplyOperation(request, state.threadRef, state.channelRef, body, [asker.memberId],
-        { decision: notice, decisionRecord: this.answerDecisionRecord(state, answers) })
+        { decision: notice, ...(record === undefined ? {} : { decisionRecord: record }) })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
       return this.committed(this.decisionNoticeResult(operation))
@@ -2723,6 +2814,8 @@ export class AgentTeamLedger {
   /**
    * The decision fact the Human's answer records, attached to the very
    * operation that answers the card: one decision, one operation, one record.
+   * Only the Owner answers into a record — a seat's answer is a card answer,
+   * not the Task's decision.
    */
   private answerDecisionRecord(state: AgentTeamDecisionState, answers: readonly AgentTeamDecisionAnswer[]): AgentTeamDecisionRecordPayload {
     const taskRef = this.state.threads.get(state.threadRef)?.taskRef
@@ -2981,6 +3074,13 @@ export class AgentTeamLedger {
 
   private resolveDocCommentResult(operation: AgentTeamDocCommentResolvedOperation): AgentTeamResolveDocCommentResult {
     return Object.freeze({ receipt: this.receipt(operation), docRef: operation.data.docRef, commentRef: operation.data.commentRef })
+  }
+
+  /** Reads only the operation, so a retry answers the stored write with the same resolution. */
+  private resolveCommentResult(operation: AgentTeamCommentResolvedOperation): AgentTeamResolveCommentCommittedResult {
+    return Object.freeze({ kind: 'committed' as const, receipt: this.receipt(operation), threadRef: operation.data.threadRef,
+      messageRef: operation.data.messageRef,
+      ...(operation.data.resolved ? { resolved: Object.freeze({ memberId: operation.actor.memberId, resolvedAt: operation.occurredAt }) } : {}) })
   }
 
   private docNoticeResult(operation: AgentTeamThreadRepliedOperation): AgentTeamDocNoticeResult {
@@ -3707,9 +3807,18 @@ export class AgentTeamLedger {
       case 'team/task-updated': {
         const { task, thread, patch, activity } = operation.data
         if (!threadRefs.has(thread.threadRef)) return undefined
+        // One gist per action: the assignee sentence, or the property sentence
+        // `taskPatchChange` recorded. Property edits ride the assign sentence
+        // when one call moved both.
+        const changeSummary = activity?.change === undefined ? undefined : this.taskChangeSummary(activity.change, operation.data.workspaceId)
         if (activity?.assignee !== undefined) {
           const handle = this.state.members.get(activity.assignee)?.handle ?? activity.assignee
-          return event('team/task-updated', `assigned @${handle}`, { threadRef: thread.threadRef, taskRef: task.taskRef })
+          return event('team/task-updated', changeSummary === undefined
+            ? `assigned @${handle}`
+            : `assigned @${handle}, ${changeSummary}`, { threadRef: thread.threadRef, taskRef: task.taskRef })
+        }
+        if (changeSummary !== undefined) {
+          return event('team/task-updated', changeSummary, { threadRef: thread.threadRef, taskRef: task.taskRef })
         }
         // A drag only reorders a column; it is not a room-level event.
         if (Object.keys(patch).every(key => key === 'position')) return undefined
@@ -3788,8 +3897,10 @@ export class AgentTeamLedger {
       case 'team/initialized':
       case 'team/thread-attention-changed':
       case 'team/thread-read':
-        // Not room activity: a DM has no Channel, a read or attention change is private, and the
-        // rest is workspace or channel administration a room view does not narrate.
+      case 'team/comment-resolved':
+        // Not room activity: a DM has no Channel, a read or attention change is private, a comment
+        // resolution rides the comment in the issue view rather than the feed, and the rest is
+        // workspace or channel administration a room view does not narrate.
         return undefined
       default:
         return undefined
@@ -3990,8 +4101,26 @@ export class AgentTeamLedger {
     const facts = all.slice(-limit)
     const anchor = this.threadAnchor(thread.threadRef)
     return Object.freeze({ ...(task === undefined ? {} : { task }), thread, anchor, anchorMentions: this.state.mentionsByMessage.get(anchor.messageRef) ?? [],
-      claims: task === undefined ? Object.freeze([]) : this.claimsForTask(task.taskRef), facts: Object.freeze(facts),
+      claims: task === undefined ? Object.freeze([]) : this.claimsForTask(task.taskRef),
+      // The same overlay the issue view applies: a closed thread's root reads
+      // closed on the page it is actually on, not only on the newest one, so
+      // paging back never offers a Resolve the Host would refuse.
+      facts: Object.freeze(facts.map(fact => fact.kind === 'message' ? this.withCommentResolution(fact) : fact)),
       cursor: facts.length === 0 ? before : facts[0]!.sequence, hasMore: all.length > facts.length })
+  }
+
+  /**
+   * One message fact with the resolution the Host records for its thread.
+   *
+   * Both reads that present comments apply it — the issue view's newest page
+   * and the Thread history an older page comes from — so a closed thread reads
+   * closed wherever its root is carried. A reply never carries one: a thread is
+   * closed by its root. The field is an overlay, not a stored fact: the ledger
+   * keeps resolutions in their own index, folded from the operations.
+   */
+  private withCommentResolution(fact: Extract<AgentTeamThreadFact, { kind: 'message' }>): Extract<AgentTeamThreadFact, { kind: 'message' }> {
+    const resolution = this.state.commentResolutions.get(fact.message.messageRef)
+    return resolution === undefined ? fact : Object.freeze({ ...fact, resolved: resolution })
   }
 
   listClaims(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: { workspaceId: WorkspaceId; taskRef: AgentTeamTaskRef }): AgentTeamClaimList {
@@ -4248,12 +4377,28 @@ export class AgentTeamLedger {
     // region with the comments on one key. The bound is unchanged.
     const activities = activityFacts.slice(-50)
     const channel = this.requireChannel(request.workspaceId, task.channelRef)
-    const taskNumber = this.taskNumbers(request.workspaceId).get(task.taskRef) ?? 0
+    // One numbering pass serves the view's own task, the property sections'
+    // related rows and the reverse sub-issue index alike.
+    const numbers = this.taskNumbers(request.workspaceId)
+    const taskNumber = numbers.get(task.taskRef) ?? 0
     // The Task was created with its Thread, or by the promotion that attached
     // it to one — the promote activity is that instant.
     const promoted = activityFacts.find(fact => fact.activity.kind === 'promote')
     const createdAt = promoted?.occurredAt ?? anchor.occurredAt
     const updatedAt = facts.at(-1)?.occurredAt ?? createdAt
+    // The related rows the property sections render: the Host resolves each
+    // name and number once, so a small view never needs a second read.
+    const relatedRow = (related: AgentTeamTask): AgentTeamIssueRelated => Object.freeze({
+      taskRef: related.taskRef,
+      taskNumber: numbers.get(related.taskRef) ?? 0,
+      title: related.title ?? boundedInboxPreview(this.threadAnchorFrom(this.state, related.threadRef).body),
+      status: related.status,
+    })
+    const parentTask = task.parentTaskRef == null ? undefined : this.requireTask(request.workspaceId, task.parentTaskRef)
+    const subIssues = [...this.state.tasks.values()].filter(child => child.parentTaskRef === task.taskRef
+      && this.state.channels.get(child.channelRef)?.workspaceId === request.workspaceId)
+      .sort((left, right) => (numbers.get(left.taskRef) ?? 0) - (numbers.get(right.taskRef) ?? 0))
+      .map(relatedRow)
     return Object.freeze({
       task,
       thread,
@@ -4275,9 +4420,16 @@ export class AgentTeamLedger {
         planningPhase: this.inPlanningPhase(task),
         createdAt,
         updatedAt,
+        ...(parentTask === undefined ? {} : { parent: relatedRow(parentTask) }),
+        subIssues,
+        pullRequests: Object.freeze(task.pullRequests ?? []),
+        labels: Object.freeze(task.labels ?? []),
+        ...(task.dueDate === undefined || task.dueDate === null ? {} : { dueDate: task.dueDate }),
       }),
       comments: Object.freeze({
-        items: Object.freeze(carried),
+        // A root comment carries the resolution the Host records; a reply
+        // never does, because a thread is closed by its root.
+        items: Object.freeze(carried.map(fact => this.withCommentResolution(fact))),
         hasMore: commentFacts.length > carried.length,
         cursor: carried.at(0)?.sequence ?? 0,
       }),
@@ -4507,6 +4659,9 @@ export class AgentTeamLedger {
       case 'team/doc-comment-resolved':
         // A Doc page subscribes to its home Thread's scope, so each write refreshes it.
         return [{ kind: 'thread', threadRef: operation.data.threadRef }]
+      case 'team/comment-resolved':
+        // An open issue reads the timeline it just changed; nobody is woken.
+        return [{ kind: 'thread', threadRef: operation.data.threadRef }]
       default:
         return assertUnhandledKind(operation)
     }
@@ -4578,6 +4733,9 @@ export class AgentTeamLedger {
       case 'team/doc-section-written':
       case 'team/doc-comment-added':
       case 'team/doc-comment-resolved':
+      // A resolution is a marker on one comment: it adds no Thread fact, so no
+      // follower has unread work behind it.
+      case 'team/comment-resolved':
         return []
       default:
         return assertUnhandledKind(operation)
@@ -4593,6 +4751,11 @@ export class AgentTeamLedger {
    * notice it already carried, with a recordRef that is a function of the
    * operation — never minted — so a replay derives the same ref and the same
    * indexes.
+   *
+   * Only the Human answers into a record, so the derivation skips a member
+   * actor: a seat answering the card it was addressed is a card fact and never
+   * a Task decision, and a stored payload is read as the durable fact it is
+   * whatever the actor, leaving an older ledger's records as they were written.
    */
   private foldDecisionRecord(target: Projection, operation: AgentTeamOperation): void {
     if (operation.kind !== 'team/thread-replied') return
@@ -4611,6 +4774,7 @@ export class AgentTeamLedger {
       }), thread.threadRef)
       return
     }
+    if (operation.actor.kind !== 'human') return
     const decision = operation.data.decision
     if (decision?.event === 'answered') {
       const card = target.decisions.get(decision.decisionRef)
@@ -5044,6 +5208,34 @@ export class AgentTeamLedger {
         if (assignee === undefined || assignee.state !== 'enabled'
           || !projection.memberships.get(task.channelRef)?.has(patch.assignee)) throw new Error('invalid Task assignee')
       }
+      // The property fields validate the same rules the write enforced: a
+      // stored record a client could not have written is a broken ledger.
+      if (patch.parentTaskRef !== undefined && patch.parentTaskRef !== null) {
+        const workspaceId = operation.data.workspaceId
+        // The write refuses a Task as its own parent outright; a record that
+        // stores one would send the reverse index (and every ancestor walk)
+        // round forever, so replay refuses it with the same message as any
+        // other impossible parent.
+        if (patch.parentTaskRef === task.taskRef) throw new Error('invalid Task parent')
+        let cursor: AgentTeamTask | undefined = projection.tasks.get(this.requireRefKey(projection.tasks, patch.parentTaskRef, 'task', 'Task'))
+        if (cursor === undefined) throw new Error('invalid Task parent')
+        // The parent itself is checked, not only its ancestors: a parent in
+        // another Workspace is as impossible as an ancestor there.
+        if (projection.channels.get(cursor.channelRef)?.workspaceId !== workspaceId) throw new Error('invalid Task parent')
+        while (cursor.parentTaskRef != null) {
+          if (cursor.parentTaskRef === task.taskRef) throw new Error('invalid Task parent cycle')
+          cursor = projection.tasks.get(this.requireRefKey(projection.tasks, cursor.parentTaskRef, 'task', 'Task'))
+          if (cursor === undefined) throw new Error('invalid Task parent')
+          if (projection.channels.get(cursor.channelRef)?.workspaceId !== workspaceId) throw new Error('invalid Task parent')
+        }
+      }
+      if (patch.pullRequests !== undefined && !isDeepStrictEqual(patch.pullRequests, this.normalizePullRequests(patch.pullRequests))) {
+        throw new Error('invalid Task pull request links')
+      }
+      if (patch.labels !== undefined && !isDeepStrictEqual(patch.labels, this.normalizeTaskLabels(patch.labels))) {
+        throw new Error('invalid Task labels')
+      }
+      if (typeof patch.dueDate === 'string') this.normalizeDueDate(patch.dueDate)
       const assigned = patch.assignee !== undefined && patch.assignee !== null
         && patch.assignee !== (priorTask.assignee ?? null)
       if (assigned) {
@@ -5051,9 +5243,29 @@ export class AgentTeamLedger {
           || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
           || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef
           || thread.revision !== operation.sequence
-          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })) throw new Error('invalid Task assignment activity')
+          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })
+          // An assignment can carry property edits in the same call, so the
+          // fact's change list is re-derived here exactly as the patch branch
+          // does — a forged or stale list is the same broken fact.
+          || !isDeepStrictEqual(activity.change, this.taskPatchChange(priorTask, patch, operation.data.workspaceId,
+            this.taskNumbersFrom(projection, operation.data.workspaceId)))) throw new Error('invalid Task assignment activity')
         this.addRef(refs, activity.activityRef)
-      } else if (activity !== undefined || !isDeepStrictEqual(thread, priorThread)) {
+      } else if (activity !== undefined) {
+        // Property edits are public facts too: the patch activity must name
+        // exactly the properties the patch moved, in the order the patch
+        // states. Any other forge is the same broken Thread fact the old
+        // validator named, so the message stays as it was.
+        if (activity.kind !== 'patch' || activity.change === undefined
+          || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
+          || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef
+          || thread.revision !== operation.sequence
+          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })
+          || !isDeepStrictEqual(activity.change, this.taskPatchChange(priorTask, patch, operation.data.workspaceId,
+            this.taskNumbersFrom(projection, operation.data.workspaceId)))) {
+          throw new Error('invalid Task update thread')
+        }
+        this.addRef(refs, activity.activityRef)
+      } else if (!isDeepStrictEqual(thread, priorThread)) {
         throw new Error('invalid Task update thread')
       }
       const started = assigned && !this.isFollowingFrom(projection, thread.threadRef, patch.assignee!)
@@ -5260,6 +5472,31 @@ export class AgentTeamLedger {
         || projection.channels.get(state.doc.channelRef)?.workspaceId !== operation.data.workspaceId
         || (member !== undefined && !this.isChannelMemberFrom(projection, state.doc.channelRef, member.memberId))
         || comment.parentCommentRef !== undefined || state.resolved.has(comment.commentRef)) throw new Error('invalid Doc comment resolution')
+      return
+    }
+    if (operation.kind === 'team/comment-resolved') {
+      const member = operation.actor.kind === 'member' ? assertMember() : (assertHuman(), undefined)
+      const thread = projection.threads.get(operation.data.threadRef)
+      const comment = projection.messagesByRef.get(operation.data.messageRef)
+      const channelRef = thread === undefined ? undefined : projection.channelRefByThread.get(thread.threadRef)
+      if (thread === undefined || comment === undefined || channelRef === undefined
+        || comment.threadRef !== thread.threadRef
+        // A reply is never a target, the anchor is not a comment, and the
+        // stored fence must be the revision this record fenced on.
+        || comment.replyToMessageRef !== undefined
+        || projection.anchorByThread.get(thread.threadRef)?.messageRef === comment.messageRef
+        || thread.revision !== operation.data.baseRevision
+        // The direction must be a real transition from the prior projection.
+        || operation.data.resolved === projection.commentResolutions.has(comment.messageRef)
+        || (member !== undefined && !this.isChannelMemberFrom(projection, channelRef, member.memberId))) {
+        throw new Error('invalid comment resolution')
+      }
+      // Who may resolve, re-derived rather than trusted: the comment's author,
+      // the Task's assignee, or (as at write time) no Member at all.
+      if (member !== undefined && comment.sender !== member.memberId) {
+        const task = thread.taskRef === undefined ? undefined : projection.tasks.get(thread.taskRef)
+        if (task?.assignee !== member.memberId) throw new Error('invalid comment resolution authority')
+      }
       return
     }
     if (operation.kind === 'team/dm-sent') {
@@ -5787,6 +6024,17 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/doc-comment-resolved') {
       const state = target.docs.get(operation.data.docRef)
       if (state !== undefined) target.docs.set(operation.data.docRef, withDocCommentResolved(state, operation.data.commentRef, operation.occurredAt))
+      return
+    }
+    if (operation.kind === 'team/comment-resolved') {
+      // The map is the current state, not a history: reopening removes the
+      // entry, so a replay folds the last write and nothing else.
+      if (operation.data.resolved) {
+        target.commentResolutions.set(operation.data.messageRef,
+          Object.freeze({ memberId: operation.actor.memberId, resolvedAt: operation.occurredAt }))
+      } else {
+        target.commentResolutions.delete(operation.data.messageRef)
+      }
       return
     }
     if (operation.kind === 'team/doc-comment-added') {
@@ -6512,10 +6760,15 @@ export class AgentTeamLedger {
    * Workspace.
    */
   private taskNumbers(workspaceId: WorkspaceId): Map<AgentTeamTaskRef, number> {
+    return this.taskNumbersFrom(this.state, workspaceId)
+  }
+
+  /** The numbering side of one arbitrary projection: record validation re-derives labels against its own snapshot. */
+  private taskNumbersFrom(projection: Projection, workspaceId: WorkspaceId): Map<AgentTeamTaskRef, number> {
     const numbers = new Map<AgentTeamTaskRef, number>()
-    for (const [taskRef, taskNumber] of this.state.taskNumberByTask) {
-      const task = this.state.tasks.get(taskRef)
-      if (task === undefined || this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+    for (const [taskRef, taskNumber] of projection.taskNumberByTask) {
+      const task = projection.tasks.get(taskRef)
+      if (task === undefined || projection.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
       numbers.set(taskRef, taskNumber)
     }
     return numbers
@@ -6909,6 +7162,23 @@ export class AgentTeamLedger {
   }
 
   /**
+   * The root comment one resolution addresses.
+   *
+   * A thread is closed by its root only: a reply is not resolvable on its own,
+   * so a reply ref is refused rather than silently resolving the thread it
+   * hangs under. The anchor is the issue's opening Message, not a comment.
+   */
+  private requireResolvableComment(threadRef: AgentTeamThreadRef, messageRef: AgentTeamMessageRef): AgentTeamMessage {
+    const key = this.uniqueRefKey(this.state.messagesByRef, messageRef, 'message')
+    const comment = key === undefined ? undefined : this.state.messagesByRef.get(key)
+    if (comment === undefined) throw new Error(`unknown Message '${messageRef}' for a comment resolution`)
+    if (comment.threadRef !== threadRef) throw new Error(`Message '${comment.messageRef}' belongs to another Thread; only Thread '${threadRef}' can be resolved`)
+    if (comment.replyToMessageRef !== undefined) throw new Error('a reply cannot be resolved; resolve the comment its thread starts at')
+    if (this.threadAnchor(threadRef).messageRef === comment.messageRef) throw new Error('the opening Message is not a comment; there is nothing to resolve')
+    return comment
+  }
+
+  /**
    * Answering a Message reaches its author the way a mention does. Only an
    * author the Channel can still address joins — a departed Member stays out
    * rather than failing the reply — and a reply to one's own Message adds no one.
@@ -7129,6 +7399,16 @@ export class AgentTeamLedger {
       || !this.sameList(operation.data.mentions, recipients)) this.throwRequestCollision(request.requestId)
   }
 
+  /** One resolution is one request: the direction and its fence must match the stored record. */
+  private assertSameCommentResolution(operation: AgentTeamOperation, request: AgentTeamAuthorizedResolveCommentRequest): asserts operation is AgentTeamCommentResolvedOperation {
+    if (operation.kind !== 'team/comment-resolved' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId
+      || operation.data.messageRef !== request.messageRef
+      || operation.data.resolved !== request.resolved
+      || operation.data.baseRevision !== request.baseRevision
+      || (request.threadRef !== undefined && operation.data.threadRef !== request.threadRef)) this.throwRequestCollision(request.requestId)
+  }
+
   private assertSamePromotion(operation: AgentTeamOperation, request: AgentTeamAuthorizedPromoteThreadRequest): asserts operation is AgentTeamThreadPromotedOperation {
     if (operation.kind !== 'team/thread-promoted' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId
@@ -7154,7 +7434,8 @@ export class AgentTeamLedger {
 
   /** Keep only the provided keys, so a recorded patch is exactly what changed. */
   private normalizeTaskPatch(patch: AgentTeamTaskPatchRequest): AgentTeamTaskPatch {
-    const next: { title?: string; priority?: AgentTeamTaskPriority; assignee?: AgentTeamMemberId | null; position?: number } = {}
+    const next: { title?: string; priority?: AgentTeamTaskPriority; assignee?: AgentTeamMemberId | null; position?: number;
+      parentTaskRef?: AgentTeamTaskRef | null; pullRequests?: readonly AgentTeamTaskPullRequest[]; labels?: readonly string[]; dueDate?: string | null } = {}
     if (patch.title !== undefined) {
       const title = patch.title.trim()
       if (title === '') throw new Error('task title must not be empty')
@@ -7166,7 +7447,63 @@ export class AgentTeamLedger {
       if (!Number.isFinite(patch.position)) throw new Error('task position must be a finite number')
       next.position = patch.position
     }
+    if (patch.parentTaskRef !== undefined) next.parentTaskRef = patch.parentTaskRef
+    if (patch.pullRequests !== undefined) next.pullRequests = this.normalizePullRequests(patch.pullRequests)
+    if (patch.labels !== undefined) next.labels = this.normalizeTaskLabels(patch.labels)
+    if (patch.dueDate !== undefined) next.dueDate = patch.dueDate === null ? null : this.normalizeDueDate(patch.dueDate)
     return Object.freeze(next)
+  }
+
+  /** PR links are text, not state: http(s) URLs, deduplicated by URL, at most 20. The Host never fetches one. */
+  private normalizePullRequests(links: readonly AgentTeamTaskPullRequest[]): readonly AgentTeamTaskPullRequest[] {
+    const seen = new Set<string>()
+    const deduped: AgentTeamTaskPullRequest[] = []
+    for (const link of links) {
+      let parsed: URL
+      try {
+        parsed = new URL(link.url)
+      } catch {
+        throw new Error('a pull request link must be an http(s) URL')
+      }
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('a pull request link must be an http(s) URL')
+      const url = parsed.toString()
+      if (seen.has(url)) continue
+      seen.add(url)
+      const title = link.title?.trim()
+      deduped.push(Object.freeze({ url, ...(title === undefined || title === '' ? {} : { title: title.slice(0, 200) }) }))
+    }
+    if (deduped.length > TASK_PULL_REQUEST_LIMIT) throw new Error(`a task carries at most ${TASK_PULL_REQUEST_LIMIT} pull request links`)
+    return Object.freeze(deduped)
+  }
+
+  /** Free-form labels: trimmed, non-empty, at most 40 characters each, at most 20, case-insensitively deduped. */
+  private normalizeTaskLabels(labels: readonly string[]): readonly string[] {
+    const seen = new Set<string>()
+    const deduped: string[] = []
+    for (const raw of labels) {
+      const label = raw.trim()
+      if (label === '') throw new Error('task labels must not be empty')
+      if (label.length > TASK_LABEL_LENGTH) throw new Error(`task labels must not exceed ${TASK_LABEL_LENGTH} characters`)
+      const key = label.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(label)
+    }
+    if (deduped.length > TASK_LABEL_LIMIT) throw new Error(`a task carries at most ${TASK_LABEL_LIMIT} labels`)
+    return Object.freeze(deduped)
+  }
+
+  /** Strict `YYYY-MM-DD` that parses as a real calendar date; the year keeps its four digits. */
+  private normalizeDueDate(value: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('a due date must be an ISO date, YYYY-MM-DD')
+    const year = Number(value.slice(0, 4))
+    const month = Number(value.slice(5, 7))
+    const day = Number(value.slice(8, 10))
+    const date = new Date(Date.UTC(year, month - 1, day))
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+      throw new Error('a due date must be a real calendar date')
+    }
+    return value
   }
 
   /** Trim and bound a description body; absent means the description is not written. */
@@ -7239,8 +7576,102 @@ export class AgentTeamLedger {
   }
 
   private canonicalTaskPatch(patch: AgentTeamTaskPatch): AgentTeamTaskPatch {
-    if (patch.assignee === undefined) return patch
-    return Object.freeze({ ...patch, assignee: this.canonicalAssigneeRef(patch.assignee) })
+    const resolved = patch.assignee === undefined
+      ? patch
+      : Object.freeze({ ...patch, assignee: this.canonicalAssigneeRef(patch.assignee) })
+    if (resolved.parentTaskRef === undefined || resolved.parentTaskRef === null) return resolved
+    return Object.freeze({ ...resolved, parentTaskRef: this.uniqueRefKey(this.state.tasks, resolved.parentTaskRef, 'task') ?? resolved.parentTaskRef })
+  }
+
+  /**
+   * A parent must be another Task of the same Workspace, and setting it must
+   * not close a cycle. The check walks the parent's own ancestors; the child
+   * is not yet attached, so a chain that returns to it would be a cycle the
+   * reverse index could never render.
+   */
+  private assertParentTask(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef, parentTaskRef: AgentTeamTaskRef): void {
+    if (taskRef === parentTaskRef) throw new Error('a task cannot be its own parent')
+    let cursor = this.requireTask(workspaceId, parentTaskRef)
+    while (cursor.parentTaskRef != null) {
+      if (cursor.parentTaskRef === taskRef) throw new Error(`making '${parentTaskRef}' the parent of '${taskRef}' would create a cycle`)
+      cursor = this.requireTask(workspaceId, cursor.parentTaskRef)
+    }
+  }
+
+  /**
+   * One entry per property the patch moved, in patch order, machine values
+   * only — the clients compose the sentence. A patch key that left the value
+   * unchanged produces no entry, so an idempotent-looking edit appends no
+   * public fact.
+   */
+  private taskPatchChange(task: AgentTeamTask, patch: AgentTeamTaskPatch, workspaceId: WorkspaceId,
+    numbers: Map<AgentTeamTaskRef, number>): readonly AgentTeamTaskChange[] | undefined {
+    const entries: AgentTeamTaskChange[] = []
+    if (patch.parentTaskRef !== undefined && (task.parentTaskRef ?? null) !== patch.parentTaskRef) {
+      entries.push({
+        field: 'parentTaskRef', value: patch.parentTaskRef,
+        ...(patch.parentTaskRef === null ? {} : { label: this.taskDisplay(numbers, patch.parentTaskRef) }),
+      })
+    }
+    if (patch.pullRequests !== undefined) {
+      const prior = task.pullRequests ?? []
+      const priorUrls = new Set(prior.map(link => link.url))
+      const nextUrls = patch.pullRequests.map(link => link.url)
+      const nextUrlSet = new Set(nextUrls)
+      const added = nextUrls.filter(url => !priorUrls.has(url))
+      const removed = prior.map(link => link.url).filter(url => !nextUrlSet.has(url))
+      if (added.length > 0 || removed.length > 0) {
+        entries.push({ field: 'pullRequests', value: nextUrls, ...(added.length > 0 ? { added } : {}), ...(removed.length > 0 ? { removed } : {}) })
+      }
+    }
+    if (patch.labels !== undefined) {
+      const prior = task.labels ?? []
+      const priorKeys = new Set(prior.map(label => label.toLowerCase()))
+      const nextLabelSet = new Set(patch.labels.map(label => label.toLowerCase()))
+      const added = patch.labels.filter(label => !priorKeys.has(label.toLowerCase()))
+      const removed = prior.filter(label => !nextLabelSet.has(label.toLowerCase()))
+      if (added.length > 0 || removed.length > 0) {
+        entries.push({ field: 'labels', value: patch.labels, ...(added.length > 0 ? { added } : {}), ...(removed.length > 0 ? { removed } : {}) })
+      }
+    }
+    if (patch.dueDate !== undefined && (task.dueDate ?? null) !== patch.dueDate) {
+      entries.push({ field: 'dueDate', value: patch.dueDate })
+    }
+    return entries.length === 0 ? undefined : Object.freeze(entries)
+  }
+
+  /**
+   * The plain-text gist of one Task patch property change. Task-ref gists
+   * resolve the Task's display number while it stands; a ref the numbering no
+   * longer carries falls back to its raw form, as no fact is invented.
+   */
+  private taskChangeSummary(change: readonly AgentTeamTaskChange[], workspaceId: WorkspaceId): string {
+    const numbers = this.taskNumbers(workspaceId)
+    return change.map(entry => {
+      switch (entry.field) {
+        case 'parentTaskRef':
+          return entry.value === null ? 'cleared parent' : `set parent ${entry.label ?? this.taskDisplay(numbers, entry.value as AgentTeamTaskRef)}`
+        case 'pullRequests': {
+          const parts: string[] = []
+          if ((entry.added?.length ?? 0) > 0) parts.push(`added ${entry.added!.length} pull request link${entry.added!.length === 1 ? '' : 's'}`)
+          if ((entry.removed?.length ?? 0) > 0) parts.push(`removed ${entry.removed!.length}`)
+          return parts.join(', ')
+        }
+        case 'labels': {
+          const parts: string[] = []
+          if ((entry.added?.length ?? 0) > 0) parts.push(`added label ${entry.added!.join(', ')}`)
+          if ((entry.removed?.length ?? 0) > 0) parts.push(`removed label ${entry.removed!.join(', ')}`)
+          return parts.join(', ')
+        }
+        case 'dueDate':
+          return entry.value === null ? 'cleared due date' : `set due date ${entry.value}`
+      }
+    }).join(', ')
+  }
+
+  private taskDisplay(numbers: Map<AgentTeamTaskRef, number>, taskRef: AgentTeamTaskRef): string {
+    const number = numbers.get(taskRef)
+    return number === undefined ? String(taskRef) : `#${number}`
   }
 
   private assertTaskPriority(priority: AgentTeamTaskPriority): AgentTeamTaskPriority {
