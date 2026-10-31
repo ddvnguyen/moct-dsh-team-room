@@ -148,6 +148,10 @@
       "types": "./packages/agent-team/lib/types/mentions.d.ts",
       "default": "./packages/agent-team/lib/mentions.js"
     },
+    "./team-decisions": {
+      "types": "./packages/agent-team/lib/types/team-decisions.d.ts",
+      "default": "./packages/agent-team/lib/team-decisions.js"
+    },
     "./member-skills": {
       "types": "./packages/agent-team/lib/types/member-skills.d.ts",
       "default": "./packages/agent-team/lib/member-skills.js"

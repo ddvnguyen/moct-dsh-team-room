@@ -4123,6 +4123,42 @@ it('walks the issue journey from the board card to the legacy Thread in real Web
   await expect.poll(async () => thread.getByText('A comment on the issue').count(), { timeout: 30_000 }).toBeGreaterThan(0)
   await page.screenshot({ path: join(BOARD_SHOTS, 'journey-03-legacy-thread.png'), fullPage: true })
 
+  // The panel over a Thread face — the view the PR2 review asked for: the
+  // Thread's sticky rows and the composer's menus paint at 2 and 10, and the
+  // panel sits in the shell's overlay layer (20), so it stays on top of them.
+  // A persisted slice never survives a reload (the slot restores only the
+  // page), so the issue is seeded as the page over this Thread and then put
+  // back into its slice presentation the way a reader does: "back to the
+  // overlay".
+  const seeded = await page.evaluate(([id, ref]) => {
+    const current = JSON.parse(localStorage.getItem('dsh.agent-team.navigation') ?? '{}') as Record<string, unknown>
+    if (typeof current.threadRef !== 'string') return false
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({
+      ...current, mode: 'team', workspaceId: id, board: false, issueRef: ref, issueVariant: 'page',
+    }))
+    return true
+  }, [workspaceId, taskRef] as const)
+  expect(seeded).toBe(true)
+  await page.reload()
+  await page.getByTestId('issue-page').waitFor({ timeout: 30_000 })
+  await page.getByRole('button', { name: '回到浮层' }).click()
+  const overThread = page.getByTestId('issue-slice')
+  await overThread.waitFor({ timeout: 30_000 })
+  const onTop = await page.evaluate(() => {
+    const panel = document.querySelector('[data-team-issue-panel]') as HTMLElement | null
+    if (panel === null) return false
+    const rect = panel.getBoundingClientRect()
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + 40)
+    return hit !== null && panel.contains(hit)
+  })
+  expect(onTop).toBe(true)
+  await page.screenshot({ path: join(BOARD_SHOTS, 'issue-slice-over-thread.png'), fullPage: true })
+
+  // Leave the face the way the steps below expect it: the issue is closed
+  // again before they re-seed the board.
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => page.getByTestId('issue-slice').count(), { timeout: 30_000 }).toBe(0)
+
   // And back: the board opens the same issue, with the rename and the comment
   // still on it. The legacy view is a peer surface, not a second store.
   await page.evaluate(id => {

@@ -66,6 +66,12 @@ export interface PresenceSource {
   readonly member: { readonly role?: MemberRole | undefined; readonly instances?: number | undefined }
 }
 
+/** One step of a running Turn, label-only: the tool and at most one basename. */
+export interface ActivityStepSource {
+  readonly tool: string
+  readonly label: string
+}
+
 /** The activity-bearing slice of `AgentTeamMemberActivity`. */
 export interface ActivitySource {
   readonly memberId: string
@@ -75,7 +81,9 @@ export interface ActivitySource {
   readonly turnStartedAt: string
   readonly stepCount: number
   readonly toolCount: number
-  readonly current?: { readonly tool: string; readonly label: string } | undefined
+  readonly current?: ActivityStepSource | undefined
+  /** The running Turn's last few steps, newest last. */
+  readonly steps?: readonly ActivityStepSource[] | undefined
   readonly updatedAt: string
 }
 
