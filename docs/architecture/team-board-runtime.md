@@ -2,7 +2,7 @@
 
 English | [中文](team-board-runtime.zh.md)
 
-This note records the runtime seams the Team Board stack added: the durable op kinds a Task now owns, the read-only aggregate the Overview reads, the Host-side timer behind the Orchestrator digest, and the policy that governs the files ported from Multica. The boundaries those seams sit inside are in [`host-authority.md`](host-authority.md) and [`client-and-remote.md`](client-and-remote.md); the Collaboration semantics are in [`../team-collaboration/`](../team-collaboration/README.md).
+This note records the runtime seams the Team Board stack added: the durable op kinds a Task now owns, the read-only aggregates behind the Overview and the issue, the Host-side timer behind the Orchestrator digest, and the policy over ported Multica files. The boundaries those seams sit inside are in [`host-authority.md`](host-authority.md) and [`client-and-remote.md`](client-and-remote.md); the Collaboration semantics are in [`../team-collaboration/`](../team-collaboration/README.md).
 
 ## The Task op kinds
 
@@ -37,6 +37,19 @@ Who may close a thread: the Human, the root comment's author, or the Task's assi
 The aggregate is one extension of the `roomActivity` fold rather than a second implementation of it: the Workspace scope asks the same projection for every Channel and adds the day buckets. That is why it needs no Channel ref, why a Workspace answers before any Channel exists, and why an empty Workspace is a valid empty aggregate.
 
 The Client's Overview page reads it and follows the `workspace` and `activity` change scopes.
+
+## The issue batch's two Remotes
+
+Two Remotes came with the issue batch, and both are reads that write nothing.
+
+| Remote | What it answers |
+| --- | --- |
+| `issueView` | One Task in one snapshot: the seven regions (`title`, `description`, `properties`, `comments`, `activity`, `decisions`, `executionLog`) plus the Docs bound to the Task. |
+| `decisionRecords` | That Task's decisions, oldest first: who decided, what was decided, why, when, and the source it came from. |
+
+`issueView` carries no variant: the whole-column page and the slice dialog read the same value, so one query key serves both presentations — the presentation is the client's, as [`client-and-remote.md`](client-and-remote.md) states. It is async because it attempts a pending description promotion before it assembles, and a failed promotion still returns the view: a read never fails on a repair.
+
+Neither Remote adds an op kind. The batch's writes ride the records above — a plan's promotion is a `team/task-updated` patch fenced by `descriptionRevision`, and a decision record rides the operation that already recorded that decision — so a ledger from before this batch replays unchanged.
 
 ## The digest timer
 
