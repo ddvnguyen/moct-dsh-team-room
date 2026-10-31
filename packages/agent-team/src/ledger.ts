@@ -5210,10 +5210,18 @@ export class AgentTeamLedger {
       }
       // The property fields validate the same rules the write enforced: a
       // stored record a client could not have written is a broken ledger.
-      if (patch.parentTaskRef !== undefined && patch.parentTaskRef !== null && patch.parentTaskRef !== task.taskRef) {
+      if (patch.parentTaskRef !== undefined && patch.parentTaskRef !== null) {
         const workspaceId = operation.data.workspaceId
+        // The write refuses a Task as its own parent outright; a record that
+        // stores one would send the reverse index (and every ancestor walk)
+        // round forever, so replay refuses it with the same message as any
+        // other impossible parent.
+        if (patch.parentTaskRef === task.taskRef) throw new Error('invalid Task parent')
         let cursor: AgentTeamTask | undefined = projection.tasks.get(this.requireRefKey(projection.tasks, patch.parentTaskRef, 'task', 'Task'))
         if (cursor === undefined) throw new Error('invalid Task parent')
+        // The parent itself is checked, not only its ancestors: a parent in
+        // another Workspace is as impossible as an ancestor there.
+        if (projection.channels.get(cursor.channelRef)?.workspaceId !== workspaceId) throw new Error('invalid Task parent')
         while (cursor.parentTaskRef != null) {
           if (cursor.parentTaskRef === task.taskRef) throw new Error('invalid Task parent cycle')
           cursor = projection.tasks.get(this.requireRefKey(projection.tasks, cursor.parentTaskRef, 'task', 'Task'))
@@ -5223,7 +5231,7 @@ export class AgentTeamLedger {
       }
       if (patch.pullRequests !== undefined && !isDeepStrictEqual(patch.pullRequests, this.normalizePullRequests(patch.pullRequests))) {
         throw new Error('invalid Task pull request links')
-     }
+      }
       if (patch.labels !== undefined && !isDeepStrictEqual(patch.labels, this.normalizeTaskLabels(patch.labels))) {
         throw new Error('invalid Task labels')
       }
@@ -5235,7 +5243,12 @@ export class AgentTeamLedger {
           || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
           || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef
           || thread.revision !== operation.sequence
-          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })) throw new Error('invalid Task assignment activity')
+          || !this.sameThread(thread, { ...priorThread, revision: operation.sequence })
+          // An assignment can carry property edits in the same call, so the
+          // fact's change list is re-derived here exactly as the patch branch
+          // does — a forged or stale list is the same broken fact.
+          || !isDeepStrictEqual(activity.change, this.taskPatchChange(priorTask, patch, operation.data.workspaceId,
+            this.taskNumbersFrom(projection, operation.data.workspaceId)))) throw new Error('invalid Task assignment activity')
         this.addRef(refs, activity.activityRef)
       } else if (activity !== undefined) {
         // Property edits are public facts too: the patch activity must name

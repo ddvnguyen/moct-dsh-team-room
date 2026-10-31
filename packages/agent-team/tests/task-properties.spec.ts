@@ -337,4 +337,58 @@ describe('task property fields (M-92 S1)', () => {
     expect(view.dueDate).toBeUndefined()
     expect(view.pullRequests).toEqual([{ url: 'https://example.com/pull/1', title: 'One' }])
   })
+
+  // The replay validator is the only guard a hand-edited ledger meets, so it
+  // re-checks what the write enforced: a self parent, a parent of another
+  // Workspace, and an assign fact whose change list the patch did not produce.
+  it('11. replay refuses a forged self-parent, a cross-Workspace parent and an invented assign change', async () => {
+    const space = await room()
+    const task = await makeTask(space, 'forged')
+    // The other Workspace's Task exists before the forged record is replayed,
+    // so the replay reaches the workspace check rather than an unknown ref.
+    const betaChannel = (await space.ledger.createChannel({ requestId: requestId('forge-beta-channel'), workspaceId: beta,
+      name: 'beta-room', description: '', memberIds: [], actor: human })).value.channel
+    const betaTask = (await space.ledger.createTask({ requestId: requestId('forge-beta-task'), workspaceId: beta,
+      channelRef: betaChannel.channelRef, body: 'Beta task', title: 'Beta task', actor: human })).value.task
+    committed((await space.ledger.updateTask({ requestId: requestId('forge-labels'), workspaceId: alpha, taskRef: task.taskRef,
+      baseRevision: task.revision, actor: human, patch: { labels: ['ui'] } })).value)
+    committed((await space.ledger.updateTask({ requestId: requestId('forge-assign'), workspaceId: alpha, taskRef: task.taskRef,
+      baseRevision: revisionOf(space, task.taskRef), actor: human, patch: { assignee: space.ann.memberId } })).value)
+
+    const records = storedOperations(space.pool)
+    const updates = records.filter((record): record is Extract<AgentTeamOperation, { kind: 'team/task-updated' }> =>
+      record.kind === 'team/task-updated')
+    const labelsRecord = updates.find(record => record.data.patch.labels !== undefined)!
+    const assignRecord = updates.find(record => record.data.activity?.kind === 'assign')!
+
+    // A self parent: the write refuses it, so a stored one is forged. The
+    // task snapshot must agree with the patch, or the earlier shape check
+    // would catch it first.
+    const selfParent = {
+      ...labelsRecord,
+      data: { ...labelsRecord.data, patch: { ...labelsRecord.data.patch, parentTaskRef: task.taskRef },
+        task: { ...labelsRecord.data.task, parentTaskRef: task.taskRef } },
+    } as AgentTeamOperation
+    expect(() => replayLedger(records.map(record => record === labelsRecord ? selfParent : record)).validate())
+      .toThrow('invalid Task parent')
+
+    // A parent in another Workspace: the parent itself, not only an ancestor.
+    const crossParent = {
+      ...labelsRecord,
+      data: { ...labelsRecord.data, patch: { ...labelsRecord.data.patch, parentTaskRef: betaTask.taskRef },
+        task: { ...labelsRecord.data.task, parentTaskRef: betaTask.taskRef } },
+    } as AgentTeamOperation
+    expect(() => replayLedger(records.map(record => record === labelsRecord ? crossParent : record)).validate())
+      .toThrow('invalid Task parent')
+
+    // An assign fact claiming a label change the patch never made.
+    const inventedChange = {
+      ...assignRecord,
+      data: { ...assignRecord.data, activity: { ...assignRecord.data.activity!, change: [
+        { field: 'labels' as const, value: ['ui'], added: ['ui'] },
+      ] } },
+    } as AgentTeamOperation
+    expect(() => replayLedger(records.map(record => record === assignRecord ? inventedChange : record)).validate())
+      .toThrow('invalid Task assignment activity')
+  })
 })

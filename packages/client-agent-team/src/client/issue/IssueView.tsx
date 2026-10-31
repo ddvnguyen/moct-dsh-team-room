@@ -7,14 +7,14 @@
 // renders this same tree, so a region exists once.
 
 import { useCallback, useMemo, useState } from 'react'
-import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskPriority } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskPullRequest, AgentTeamTaskPriority, AgentTeamTaskRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
 import type { TeamConversationProps } from '../slots.ts'
 import look from '../multica-look.module.css'
 import { IssueHeader } from './IssueHeader.tsx'
 import { IssueDescription } from './IssueDescription.tsx'
-import { IssueProperties } from './IssueProperties.tsx'
+import { IssueProperties, type ParentTaskOption } from './IssueProperties.tsx'
 import { IssueTimeline, type IssueCommentWrite } from './IssueTimeline.tsx'
 import { IssueComposer } from './IssueComposer.tsx'
 import { IssueDecisions } from './IssueDecisions.tsx'
@@ -77,6 +77,20 @@ export interface IssueViewProps {
   readonly onPriority: (priority: AgentTeamTaskPriority) => void
   /** Assigns the Task, or clears the assignment with null. */
   readonly onAssignee: (memberId: AgentTeamMemberId | null) => void
+  /** Names the Task's parent, or clears it with null. Refused lines surface through the surface's error. */
+  readonly onParent: (taskRef: AgentTeamTaskRef | null) => void
+  /** Sets or clears the due date. */
+  readonly onDueDate: (dueDate: string | null) => void
+  /** Replaces the stored PR links. */
+  readonly onPullRequests: (links: readonly AgentTeamTaskPullRequest[]) => void
+  /** Replaces the stored labels. */
+  readonly onLabels: (labels: readonly string[]) => void
+  /** This Task's own ref: the parent picker must not offer the Task itself. */
+  readonly taskRef: AgentTeamTaskRef
+  /** The workspace Tasks the parent picker offers (the board's catalog read). */
+  readonly tasks: readonly ParentTaskOption[]
+  /** Opens a related Task through the one seam every card uses; absent renders the rows without it. */
+  readonly openIssue?: TeamConversationProps['openIssue'] | undefined
   /** Reads the page of older comments. */
   readonly onLoadOlderComments: () => void
   readonly loadingOlderComments: boolean
@@ -97,7 +111,7 @@ export interface IssueViewProps {
  * cards over the execution history) and the one timeline (comments, runs and
  * grouped activity in instant order). Every value in them is the Host's.
  */
-export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, patchDescription, onOpenLegacyThread, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, variant, onStatus, onPriority, onAssignee, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
+export function IssueView({ view, members, nameOf, humanMemberId, humanName, mentionHandles, onRename, patchDescription, onOpenLegacyThread, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, variant, onStatus, onPriority, onAssignee, onParent, onDueDate, onPullRequests, onLabels, tasks, openIssue, onLoadOlderComments, loadingOlderComments, commentWrite, onAnswerDecision, execution, pending, t }: IssueViewProps) {
   // Under the narrow width the property column folds into a dsh Modal, the
   // way the Thread page folds its sidebar. The column is hidden by the
   // stylesheet there and the opener appears; the Modal carries the same
@@ -123,10 +137,18 @@ export function IssueView({ view, members, nameOf, humanMemberId, humanName, men
   const properties = (
     <IssueProperties
       properties={view.properties}
+      workspaceId={commentWrite.workspaceId}
       members={assigneeOptions}
+      taskRef={view.task.taskRef}
       onStatus={onStatus}
       onPriority={onPriority}
       onAssignee={onAssignee}
+      onParent={onParent}
+      onDueDate={onDueDate}
+      onPullRequests={onPullRequests}
+      onLabels={onLabels}
+      tasks={tasks}
+      openIssue={openIssue}
       pending={pending}
       docsCount={view.docs.length}
       decisionsCount={view.decisions.length}
