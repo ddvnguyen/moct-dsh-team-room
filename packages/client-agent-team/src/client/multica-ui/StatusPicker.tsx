@@ -1,12 +1,12 @@
 // Derived from multica-x packages/views/issues/components/pickers/status-picker.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
 //
 // Rendering adapted: no workspace status catalog, no workflows and no
-// duplicate action. The list is the ledger's five derived statuses; only the
-// three human targets are enabled, because `in_progress` and `in_review` are
-// set by Claims.
+// duplicate action. The list is the ledger's five derived statuses — never a
+// Workspace's custom board lists — and only the three human targets are
+// enabled, because `in_progress` and `in_review` are set by Claims.
 
 import type { TaskStatus } from '../multica/types.ts'
-import { isHumanStatusTarget, STATUS_LABEL_KEY, STATUS_ORDER } from '../multica/status.ts'
+import { isHumanStatusTarget, ISSUE_STATUS_OPTIONS, STATUS_LABEL_KEY } from '../multica/status.ts'
 import type { TeamSidebarProps } from '../slots.ts'
 import look from '../multica-look.module.css'
 import { PickerItem, PickerMenu } from './PickerMenu.tsx'
@@ -31,7 +31,7 @@ export function StatusPicker({ status, onChange, t }: {
     >
       {close => (
         <>
-          {STATUS_ORDER.map(option => {
+          {ISSUE_STATUS_OPTIONS.map(option => {
             const enabled = isHumanStatusTarget(option)
             return (
               <PickerItem

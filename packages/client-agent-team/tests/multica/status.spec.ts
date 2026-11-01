@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it } from 'vitest'
-import { isHumanStatusTarget, isTerminalStatus, STATUS_ORDER, STATUS_RANK, statusCategoryOf, isTaskStatus } from '../../src/client/multica/status.ts'
+import { isHumanStatusTarget, isTerminalStatus, ISSUE_STATUS_OPTIONS, STATUS_ORDER, STATUS_RANK, statusCategoryOf, isTaskStatus } from '../../src/client/multica/status.ts'
 import { normalizePriority, PRIORITY_DISPLAY_ORDER, PRIORITY_ORDER, PRIORITY_RANK, isTaskPriority } from '../../src/client/multica/priority.ts'
 
 describe('multica status helpers', () => {
@@ -9,6 +9,15 @@ describe('multica status helpers', () => {
     expect(STATUS_ORDER).toEqual(['todo', 'in_progress', 'in_review', 'done', 'closed'])
     expect(STATUS_RANK.todo).toBe(0)
     expect(STATUS_RANK.closed).toBe(4)
+  })
+
+  // M-51: the issue status picker and the M-70 actions menu render this list.
+  // A Workspace's custom board lists are columns, never issuable statuses, so
+  // both surfaces must keep offering exactly the five built-ins.
+  it('offers the five built-ins, and only those, on the issue picker and the actions menu', () => {
+    expect(ISSUE_STATUS_OPTIONS).toEqual(['todo', 'in_progress', 'in_review', 'done', 'closed'])
+    expect(ISSUE_STATUS_OPTIONS).toBe(STATUS_ORDER)
+    expect(ISSUE_STATUS_OPTIONS.every(isTaskStatus)).toBe(true)
   })
 
   it('maps every status to its lifecycle category', () => {

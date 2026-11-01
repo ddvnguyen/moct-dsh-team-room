@@ -39,6 +39,7 @@ import { agentTeamDomainSpec, agentTeamOperationSchema } from '../src/spec.ts'
 import type {
   AgentTeamActivityRef,
   AgentTeamActor,
+  AgentTeamBoardStatus,
   AgentTeamAgentMember,
   AgentTeamChannel,
   AgentTeamChannelRef,
@@ -626,6 +627,30 @@ const taskUpdated: Op<'team/task-updated'> = {
     thread: { threadRef: humanThread, taskRef: fixtureTask.taskRef, revision: 36 },
     inbox: emptyInbox,
   },
+}
+
+// M-51's catalog edits: one entry each, carrying the whole resulting Board list.
+const boardStatus: AgentTeamBoardStatus = { key: 'qa', label: 'QA', category: 'started', builtin: false, archived: false }
+
+const statusCreated: Op<'team/status-created'> = {
+  ...opBase('operation:protocol-39', 'request:protocol-status-created', 39),
+  previousOperationId,
+  kind: 'team/status-created',
+  data: { workspaceId: alpha, status: boardStatus },
+}
+
+const statusUpdated: Op<'team/status-updated'> = {
+  ...opBase('operation:protocol-40', 'request:protocol-status-updated', 40),
+  previousOperationId,
+  kind: 'team/status-updated',
+  data: { workspaceId: alpha, status: { ...boardStatus, label: 'Quality' } },
+}
+
+const statusArchived: Op<'team/status-archived'> = {
+  ...opBase('operation:protocol-41', 'request:protocol-status-archived', 41),
+  previousOperationId,
+  kind: 'team/status-archived',
+  data: { workspaceId: alpha, status: { ...boardStatus, archived: true } },
 }
 
 /** What one same-request retry must produce: resolved, never a second commit. */
@@ -1520,6 +1545,55 @@ const protocol: Record<AgentTeamOperation['kind'], ProtocolRow> = {
     },
     legacy: { normalize: 'none', repair: 'none' },
     intent: { scopes: 'derived', inbox: 'delta' },
+  },
+  'team/status-created': {
+    stored: statusCreated,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.createStatus({ requestId: statusCreated.requestId, actor: human, workspaceId: alpha,
+          label: 'QA', category: 'started' })
+        expect(out.value.kind === 'committed' ? out.value.status.key : '', 'the create mapper answers with the stored list')
+          .toBe(statusCreated.data.status.key)
+        return out
+      },
+      changed: () => ledger.createStatus({ requestId: statusCreated.requestId, actor: human, workspaceId: alpha,
+        label: 'Different name', category: 'started' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/status-updated': {
+    stored: statusUpdated,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.updateStatus({ requestId: statusUpdated.requestId, actor: human, workspaceId: alpha,
+          key: 'qa', label: 'Quality', category: 'started' })
+        expect(out.value.kind === 'committed' ? out.value.status.label : '', 'the rename mapper answers with the stored list')
+          .toBe(statusUpdated.data.status.label)
+        return out
+      },
+      changed: () => ledger.updateStatus({ requestId: statusUpdated.requestId, actor: human, workspaceId: alpha,
+        key: 'qa', label: 'Something else', category: 'started' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
+  },
+  'team/status-archived': {
+    stored: statusArchived,
+    legacyShapes: [],
+    retry: {
+      same: async () => {
+        const out = await ledger.archiveStatus({ requestId: statusArchived.requestId, actor: human, workspaceId: alpha, key: 'qa' })
+        expect(out.value.kind === 'committed' ? out.value.status.archived : false, 'the archive mapper answers with the stored list')
+          .toBe(true)
+        return out
+      },
+      changed: () => ledger.archiveStatus({ requestId: statusArchived.requestId, actor: human, workspaceId: alpha, key: 'other' }),
+    },
+    legacy: { normalize: 'none', repair: 'none' },
+    intent: { scopes: 'derived', inbox: 'none' },
   },
   'team/doc-comment-resolved': {
     stored: docCommentResolved,
