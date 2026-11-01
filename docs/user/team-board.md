@@ -58,6 +58,8 @@ A card's title opens the Task's **issue**, not its Thread. The issue opens as a 
 
 Esc closes it and returns the focus to the card the reader came from, and a reload reopens it where it was. The URL's `issue` query names the Task, so a copied link opens the same issue.
 
+The browser's own back and forward buttons walk the Team's positions: back from a page returns to the face it opened over, and back from a slice closes it. The path never changes — the position rides the state object, not the URL.
+
 The issue is one read of the Host's own snapshot, drawn in six regions: the header (the Channel breadcrumb, `#n`, the status and the inline title editor), the description, the decisions, the agent activity, the timeline, and the properties column (status, priority, assignee, created and last activity).
 
 The timeline is one chronological list: the comments with their replies, the runs of consecutive activity folded into an expandable line, and each agent run of the Thread. An activity that happened between two comments sits between them, and a run says who ran and for how long.
