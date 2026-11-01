@@ -32,7 +32,7 @@ permissions:
 
 env:
   # Keep in step with ci.yml.
-  DSH_HARNESS_TAG: dsh-v0.2.0-rc.2
+  DSH_HARNESS_TAG: dsh-v0.2.2-alpha.2
 
 jobs:
   publish:

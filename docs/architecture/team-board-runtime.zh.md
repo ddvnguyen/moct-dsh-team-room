@@ -2,7 +2,7 @@
 
 [English](team-board-runtime.md) | 中文
 
-这份说明记录 Team Board 这一串改动带来的运行时接缝：Task 现在拥有的持久化 op kind、Overview 读取的只读聚合、Orchestrator 摘要背后的 Host 侧定时器，以及管理从 Multica 移植文件的策略。这些接缝所处的边界见 [`host-authority.zh.md`](host-authority.zh.md) 与 [`client-and-remote.zh.md`](client-and-remote.zh.md)；协作语义见 [`../team-collaboration/`](../team-collaboration/README.zh.md)。
+这份说明记录 Team Board 这一串改动带来的运行时接缝：Task 现在拥有的持久化 op kind、Overview 与 issue 的只读 Remote、Host 侧的摘要定时器，以及管理移植自 Multica 的文件的策略。这些接缝的边界见 [`host-authority.zh.md`](host-authority.zh.md) 与 [`client-and-remote.zh.md`](client-and-remote.zh.md)；协作语义见 [`../team-collaboration/`](../team-collaboration/README.zh.md)。
 
 ## Task 的 op kind
 
@@ -13,6 +13,14 @@
 `team/task-updated` 携带 `baseRevision` 与 `title`、`priority`、`assignee`、`position` 以及 description（`description` 与 description 自己的围栏 `descriptionRevision`）的补丁。它从不修订 Thread 的 Message。当补丁把 Task 换给另一个 Member 时，同一条记录携带公开的 `assign` Activity——新负责人的唤醒是这条记录的投影，而不是提交的副作用，因此重放会推导出同样的唤醒。
 
 状态不在这几个字段里。验收、关闭与重新打开走 `team/task-changed`，因为它们是对 Task 所做工作的决定，而不是对 Task 描述的改变。
+
+## 评论讨论的解决
+
+`team/comment-resolved` 以根 Message 关闭或重新打开一条 issue 评论讨论。它携带 Thread、根 Message、方向（`resolved`）以及写入者看到的 Thread revision（`baseRevision`）。
+
+这条记录不推进该 revision：解决只是某条评论上的标记，已经在进行的回复不会因此过期。它是自己的 kind，而不是复用 Doc 评论的记录——Doc 评论无法重新打开——并且它不唤醒任何人。
+
+谁可以关闭讨论：Human、根评论的作者，或 Task 的 assignee。回复永远不是目标。`AgentTeamIssueComment` 在根评论上携带 `resolved`（`memberId`、`resolvedAt`），回复上永远没有；关闭之后到达的回复不会重新打开它——重新打开是另一次显式写入。
 
 ## workspaceActivity Remote
 
@@ -29,6 +37,19 @@
 这个聚合是对 `roomActivity` 折叠的一次扩展，而不是它的第二份实现：Workspace 作用域向同一个投影要遍所有 Channel，再加上按天分桶。因此它不需要 Channel ref，Workspace 在任何 Channel 存在之前就能作答，空 Workspace 也是合法的空聚合。
 
 Client 的 Overview 页面读取它，并跟随 `workspace` 与 `activity` 两个变更作用域。
+
+## 这一批的两个 Remote
+
+这一批带来两个 Remote，都只读不写。
+
+| Remote | 回答什么 |
+| --- | --- |
+| `issueView` | 一个 Task 的一次快照：七个区域（`title`、`description`、`properties`、`comments`、`activity`、`decisions`、`executionLog`）以及绑定到它的 Docs。 |
+| `decisionRecords` | 这个 Task 的决策，旧到新：谁决定、决定了什么、为什么、何时，以及来源。 |
+
+`issueView` 不带 variant：整列页面与浮层读同一个值，所以一个查询键服务两种呈现——呈现方式是 client 的事，[`client-and-remote.zh.md`](client-and-remote.zh.md) 已经写明。它是异步的，因为组装前先尝试修复尚未落位的描述晋升；修复失败仍然返回视图：读不会因为修没修成而失败。
+
+两个 Remote 都不新增 op kind。这一批的写入都骑在上面那些记录上——计划晋升是 `team/task-updated` 的补丁，由 `descriptionRevision` 围栏；决策记录骑在本来就记录了该决定的操作上——所以这一批之前的 ledger 照样回放。
 
 ## 摘要定时器
 

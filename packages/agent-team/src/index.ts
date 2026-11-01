@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
-import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import { installModelSelection, type Agent, type AgentHandle, type ModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { DEFAULT_THREAD_SUMMARY_POLICY, SUMMARY_INPUT_TOKEN_CAP, SUMMARY_OUTPUT_TOKEN_CAP, THREAD_SEED_TOKEN_BUDGET, buildThreadSeed, estimateTokens, selectSummaryWindow, summaryDue, type SummaryMessageLine, type ThreadSeed, type ThreadSummaryPolicy } from './thread-summary.ts'
 import { THREAD_CONTEXT_SEED_TOKEN_BUDGET, buildThreadContextSeed } from './thread-context-seed.ts'
@@ -42,7 +42,7 @@ import { humanAvatarsRoot, readHumanAvatar, removeHumanAvatar, writeHumanAvatar 
 import { createHumanUpdateChecker } from './human-update-check.ts'
 import { AgentTeamInvariantError } from './invariant.ts'
 import { createTeamContextManagement, TeamPressurePolicy, TEAM_CONTEXT_CODEC, TEAM_JUDGE_TIMEOUT_DEFAULT_MS, TEAM_PRESSURE_GATE_SCHEMA } from './context-continuity-host.ts'
-import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_TOKENS, anchorCandidates, anchorRejection, readContextTimeline, retainedPrice, type ContextProjectionConfig, type ContextTimelineItem, type ContextTimelineSource, type PressureGate, type SurfaceMeasurement, type TransitionPlan } from '@contexera/dsh-context-continuity'
+import { CONTEXT_CONTINUITY_PROJECTION_KEY, DEFAULT_GATE_IDLE_MS, DEFAULT_GATE_TOKENS, anchorCandidates, anchorRejection, readContextTimeline, retainedPrice, type ContextProjectionConfig, type ContextProjectionState, type ContextTimelineItem, type ContextTimelineSource, type PressureGate, type SurfaceMeasurement, type TransitionPlan } from '@contexera/dsh-context-continuity'
 import { TeamContextJudge, type TeamContextJudgeConfig } from './context-judge.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSource } from './context-source.ts'
 import { boundaryByRef, carriedInputOf, checkpointByRef, checkpointRefFor, createTeamContextProjectionConfig, createTeamContextProjectionDefinition, foldTeamContextProjection, TeamContextProjectionHost } from './context-projection.ts'
@@ -166,6 +166,8 @@ import type {
   AgentTeamDocsResult,
   AgentTeamDocView,
   AgentTeamReviewDocRequest,
+  AgentTeamResolveCommentRequest,
+  AgentTeamResolveCommentResult,
   AgentTeamResolveDocCommentRequest,
   AgentTeamResolveDocCommentResult,
   AgentTeamDocSectionHistory,
@@ -658,6 +660,16 @@ class ThreadSummaryLlmUnavailable extends Error {}
 
 /** Host owner of the single Agent Team in one dshHome. */
 /** The `model/selection` payload shape: provider, model, and an optional string effort. */
+/**
+ * The Member's configured seat model, kept live by Team. dsh 0.2.2 removed the
+ * framework's mutable `ModelSelectionRef`: the Agent now owns the durable
+ * selection (`agent.model`), so this record only remembers what the seat wants
+ * and `agent.model.select()` records it on the Session.
+ */
+interface SeatModelRef {
+  current: ModelSelection
+}
+
 interface SeatModelSelection {
   readonly provider: string
   readonly model: string
@@ -717,7 +729,7 @@ export default class AgentTeam extends TypertRemoteService {
   /** Live Member per session id; drives the root session/event listener. */
   private readonly memberBySessionId = new Map<SessionId, AgentTeamMemberId>()
   /** Live selection refs let model edits take effect without disposing the Session. */
-  private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
+  private readonly modelSelections = new Map<AgentTeamMemberId, SeatModelRef>()
   /** Extra instance slots 1..N-1 per seat (multi-instance contract v2); slot 0 is `handles`. */
   private readonly slotHandles = new Map<AgentTeamMemberId, Map<number, AgentHandle>>()
   /** Seat and slot per live extra-instance Session. */
@@ -725,7 +737,7 @@ export default class AgentTeam extends TypertRemoteService {
   /** In-flight slot spawns, so one slot never starts twice. */
   private readonly slotSpawns = new Map<string, Promise<AgentHandle | undefined>>()
   /** Live selection refs of extra slots; a seat model edit reaches them like slot 0's. */
-  private readonly slotSelections = new Map<string, ModelSelectionRef>()
+  private readonly slotSelections = new Map<string, SeatModelRef>()
   /** Routes taken in this process, ahead of their durable `thread-instance-bound` commit. */
   private readonly routedSlots = new Map<string, number>()
   /** Last delivered Inbox signature per extra slot (slot 0 keeps `notifiedInbox`). */
@@ -1000,6 +1012,8 @@ export default class AgentTeam extends TypertRemoteService {
     return created
   }
 
+  /** The retained reader of the continuity projection registration; set once `onLoad` registers it. */
+  private contextProjection: { stateOf(session: Agent['session']): ContextProjectionState | undefined; dispose(): unknown } | undefined
   private readonly contextManagement = createTeamContextManagement({
     agentForMember: memberId => this.handles.get(memberId)?.agent,
     memberForAgent: agent => this.memberForAgent(agent),
@@ -1010,7 +1024,7 @@ export default class AgentTeam extends TypertRemoteService {
       // on attach, then incrementally per committed event) and keys every ref
       // to the Session that recorded it; the registry materializes the cell
       // lazily, so a Member that has not folded yet is built on this read.
-      return this.ctx.sessionProjections.stateOf(handle.agent.session, CONTEXT_CONTINUITY_PROJECTION_KEY)
+      return this.contextProjection?.stateOf(handle.agent.session)
     },
     executeTransition: (memberId, plan) => this.executeMemberTransition(memberId, plan),
     log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
@@ -1251,9 +1265,18 @@ export default class AgentTeam extends TypertRemoteService {
     // fold is session-agnostic and the state carries the identity it folds.
     // The registration rides this plugin's fiber — unloading Team removes the
     // key (and its cached cells) from later drives and snapshots.
-    this.ctx.effect(() => this.ctx.root.sessionProjections.register(
-      createTeamContextProjectionDefinition(this.contextProjectionHost),
-    ), 'agentTeam.contextProjection')
+    // Registration resolves to a retained reader (dsh 0.2.2): keep it for the
+    // per-Session state reads and release it with the fiber.
+    this.ctx.effect(async () => {
+      const registration = await this.ctx.root.sessionProjections.register(
+        createTeamContextProjectionDefinition(this.contextProjectionHost),
+      )
+      this.contextProjection = registration
+      return () => {
+        if (this.contextProjection === registration) this.contextProjection = undefined
+        void registration.dispose()
+      }
+    }, 'agentTeam.contextProjection')
     this.ctx.on('agent/error', ({ agent, error }) => {
       const member = this.memberForAgent(agent)
       if (member === undefined) {
@@ -2996,6 +3019,20 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /**
+   * Human close or reopen of one issue comment thread, fenced by the Thread
+   * revision on screen; a stale revision is a business outcome. The ledger
+   * also admits the comment's author and the Task's assignee; this remote is
+   * the Human's, because the Human owns the issue view's comment surface.
+   */
+  @Remote('resolveComment')
+  async resolveComment(request: AgentTeamResolveCommentRequest): Promise<AgentTeamResolveCommentResult> {
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().resolveComment({ ...request, actor })
+    if (result.committed && result.value.kind === 'committed') this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   /** Human close of one comment thread; a pending Human comment in it is withdrawn. */
   @Remote('resolveDocComment')
   async resolveDocComment(request: AgentTeamResolveDocCommentRequest): Promise<AgentTeamResolveDocCommentResult> {
@@ -3603,12 +3640,12 @@ export default class AgentTeam extends TypertRemoteService {
     const member = this.memberForAgent(agent)
     if (member === undefined) return undefined
     // The pressure budget must match the route the CURRENT step actually
-    // uses: the live selection ref's `assembled` capture when the step has
-    // entered prompt assembly, its `current` selection otherwise. Re-deriving
+    // uses: the Agent's recorded selection (`agent.model`), the seat's
+    // configured selection before the Session records one. Re-deriving
     // from the ledger or the Host default would race a concurrent default
     // change or live model edit and split the budget from the real route.
     const ref = this.modelSelections.get(member.memberId)
-    const selection = ref?.assembled ?? ref?.current ?? member.model ?? this.ctx.agentDefaultModel.currentSelection()
+    const selection = agent.model.current() ?? ref?.current ?? member.model ?? this.ctx.agentDefaultModel.currentSelection()
     const meter = agent.ctx.get('tokenMeter')
     const usageTokens = meter?.measure(agent.session)?.totalTokens
     if (usageTokens === undefined) return undefined
@@ -4342,7 +4379,7 @@ export default class AgentTeam extends TypertRemoteService {
       // applied to the next request and not lost during activation.
       const selection = member.model ?? this.ctx.agentDefaultModel.currentSelection()
       const agentOptions = { provider: selection.provider, model: selection.model }
-      const selected: ModelSelectionRef = { current: selection, assembled: undefined }
+      const selected: SeatModelRef = { current: selection }
       // Absent skills.allow loads every discovered private skill; a present
       // allow-list filters the catalog by name through the live ref below.
       // `swap` is bound by the provider at activation (no-op until then).
@@ -4358,7 +4395,8 @@ export default class AgentTeam extends TypertRemoteService {
           // failures by type, not by matching message text.
           throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
         }
-        installModelSelection(agentCtx, selected)
+        installModelSelection(agentCtx)
+        agent.model.select(selected.current)
         this.installSeatMemoryLock(agentCtx, agent, memberMemoryDirectoryPath(member))
         // Admission gate for pending context rollovers: once a successful
         // context_rollover result is durable, queued input must not open another
@@ -4727,15 +4765,14 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * The seat's model is authoritative (human ruling): `installModelSelection`
-   * rewrites every seat request to the Member's selection, so a pick made in
-   * the native composer is recorded but never runs. Worse, the session
-   * controller's `modelSelection` projection clears a pending pick only when a
-   * request actually uses it — so without this, the composer label would keep
-   * naming a model the seat never runs. Whenever the Session's projected next
-   * selection differs from the seat's, append the seat's selection: the label
-   * then shows what will run, and the next request header consumes it. Loop-
-   * safe: the appended event equals the seat's selection, so it never differs.
+   * The seat's model is authoritative (human ruling): a pick made in the
+   * native composer is recorded as a pending `model/selection`, and since dsh
+   * 0.2.2 no plugin can rewrite the route of a request, so the seat must undo
+   * the pick before the next step prepares. Whenever the Session's projected
+   * next selection differs from the seat's, append the seat's selection: the
+   * label then shows what will run, and the next request header consumes it.
+   * Loop-safe: the appended event equals the seat's selection, so it never
+   * differs.
    */
   private assertSeatModel(memberId: AgentTeamMemberId, agent: Agent, reason: string): void {
     const seat = this.modelSelections.get(memberId)?.current
@@ -4745,7 +4782,7 @@ export default class AgentTeam extends TypertRemoteService {
     // A fresh Session has no selection yet: its first request header records the seat's.
     if (next === null || sameModelSelection(next, wanted)) return
     try {
-      agent.session.append('model/selection', wanted)
+      agent.session.append('model/selection', wanted as ModelSelection)
       this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} model selection re-asserted to the seat's ${wanted.provider}/${wanted.model} (${reason})`)
     } catch (error) {
       this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId)} could not re-assert the seat model (${reason}): ${error instanceof Error ? error.message : String(error)}`)
@@ -5384,10 +5421,10 @@ export default class AgentTeam extends TypertRemoteService {
    * no context rollover or pressure management: they are short Thread sessions, and slot 0 keeps
    * the seat's full lifecycle.
    */
-  private async spawnSlotAgent(member: AgentTeamAgentMember, slot: number): Promise<{ readonly handle: AgentHandle; readonly selection: ModelSelectionRef }> {
+  private async spawnSlotAgent(member: AgentTeamAgentMember, slot: number): Promise<{ readonly handle: AgentHandle; readonly selection: SeatModelRef }> {
     const workspace = this.requireWorkspace(member.workspaceId)
     const current = member.model ?? this.ctx.agentDefaultModel.currentSelection()
-    const selection: ModelSelectionRef = { current, assembled: undefined }
+    const selection: SeatModelRef = { current }
     const memoryDirectory = memberMemoryDirectoryPath(member)
     const sessionId = SessionId(`agent-team-${randomUUID()}`)
     const setup = async (agentCtx: Context, agent: Agent) => {
@@ -5398,7 +5435,8 @@ export default class AgentTeam extends TypertRemoteService {
       } catch (error) {
         throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
       }
-      installModelSelection(agentCtx, selection)
+      installModelSelection(agentCtx)
+      agent.model.select(selection.current)
       // Task-16 memory rule: every slot, including slot 0, writes seat memory under the
       // per-seat revision lock; the host no longer refuses a slot for being not slot 0.
       this.installSeatMemoryLock(agentCtx, agent, memoryDirectory)
@@ -5674,6 +5712,9 @@ export default class AgentTeam extends TypertRemoteService {
       return readerId !== undefined && activity.assignee === readerId
         ? `Team Task update\n${actor} assigned Task ${activity.taskRef} to you. Read Thread ${activity.threadRef} and claim the Task when you start the work.`
         : `Team Task update\n${actor} assigned Task ${activity.taskRef} to ${assignee ?? 'a Member'}.`
+    }
+    if (activity.kind === 'patch') {
+      return `Team Task update\n${actor} updated the properties of Task ${activity.taskRef}.`
     }
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''

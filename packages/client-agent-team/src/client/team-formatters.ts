@@ -354,6 +354,30 @@ export function formatActivity(activity: AgentTeamActivity, options: {
   if (activity.kind === 'assign') return options.t('activityAssigned', { actor, assignee: activity.assignee === undefined ? '' : options.actorName(activity.assignee) })
   if (activity.kind === 'close') return options.t('activityClosed', { actor })
   if (activity.kind === 'reopen') return options.t('activityReopened', { actor })
+  if (activity.kind === 'patch') {
+    const parts = (activity.change ?? []).flatMap((change): string[] => {
+      switch (change.field) {
+        case 'parentTaskRef':
+          return [change.value === null ? options.t('activityParentCleared') : options.t('activityParentSet', { issue: change.label ?? String(change.value) })]
+        case 'pullRequests': {
+          const summary: string[] = []
+          if ((change.added?.length ?? 0) > 0) summary.push(options.t('activityPullRequestsAdded', { count: change.added!.length }))
+          if ((change.removed?.length ?? 0) > 0) summary.push(options.t('activityPullRequestsRemoved', { count: change.removed!.length }))
+          return summary
+        }
+        case 'labels': {
+          const summary: string[] = []
+          if ((change.added?.length ?? 0) > 0) summary.push(options.t('activityLabelsAdded', { labels: change.added!.join(', ') }))
+          if ((change.removed?.length ?? 0) > 0) summary.push(options.t('activityLabelsRemoved', { labels: change.removed!.join(', ') }))
+          return summary
+        }
+        case 'dueDate':
+          return [change.value === null ? options.t('activityDueDateCleared') : options.t('activityDueDateSet', { date: String(change.value) })]
+      }
+    }).join(', ')
+    // A patch fact always names at least one change; the ledger refuses a write that moved nothing.
+    return `${actor} ${parts}`
+  }
   const direction = 'claimRef' in activity
     ? options.claims.find(claim => claim.claimRef === activity.claimRef)?.direction ?? options.t('claims')
     : options.t('claims')

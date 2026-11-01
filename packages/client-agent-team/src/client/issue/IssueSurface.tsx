@@ -12,7 +12,7 @@
 // it was and says why; a stale revision is a business outcome, not an error.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamChannelRef, AgentTeamClientMemberStatus, AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamIssueComment, AgentTeamIssueView, AgentTeamMemberId, AgentTeamTaskPriority, AgentTeamTaskPullRequest, AgentTeamTaskRef, AgentTeamThreadRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TaskStatus } from '../multica/types.ts'
@@ -21,6 +21,7 @@ import type { TeamConversationProps } from '../slots.ts'
 import type { TeamDraftStore } from '../drafts.ts'
 import { mintRequestId } from '../requests.ts'
 import { IssueView } from './IssueView.tsx'
+import type { ParentTaskOption } from './IssueProperties.tsx'
 import css from './issue-view.module.css'
 
 export interface IssueSurfaceProps {
@@ -37,6 +38,8 @@ export interface IssueSurfaceProps {
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   /** The Human's answer on the issue: one comment on the Task. */
   readonly reply: TeamConversationProps['reply']
+  /** Closes or reopens one comment thread on the issue; a stale revision is a business outcome. */
+  readonly resolveComment: TeamConversationProps['resolveComment']
   /** The attachment write the composer's file pick uploads through. */
   readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
   readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
@@ -48,6 +51,18 @@ export interface IssueSurfaceProps {
   readonly loadTriggerCatalog: TeamConversationProps['loadTriggerCatalog']
   /** The board's field write: title, priority, assignee; fenced by the Thread revision. */
   readonly updateTask: TeamConversationProps['updateTask']
+  /**
+   * The board's catalog read: the workspace Tasks the parent picker offers.
+   * The picker reads the same read the board page issues — no new ledger read.
+   */
+  readonly loadBoard?: TeamConversationProps['loadBoard'] | undefined
+  /**
+   * The one seam an issue is opened with: the related rows (the parent and the
+   * sub-issues) hand it the Task row, so a click walks the same seam a card
+   * does. Presented without a way out (a peek panel) it is absent and the
+   * rows render without the seam.
+   */
+  readonly openIssue?: TeamConversationProps['openIssue'] | undefined
   /** The Task's resolution write: accept, close, reopen; fenced by the Thread revision. */
   readonly changeTask: TeamConversationProps['changeTask']
   /** The Human's answer to one open decision card. */
@@ -83,12 +98,16 @@ export interface IssueSurfaceProps {
  * changes what the reader sees.
  */
 export function IssueSurface(props: IssueSurfaceProps) {
-  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, t } = props
+  const { workspaceId, taskRef, loadIssueView, loadMembers, loadChannels, humanName, loadThreadHistory, reply, resolveComment, putAttachment, getAttachment, resolveMessageRefs, drafts, loadTriggerCatalog, updateTask, loadBoard, openIssue, changeTask, answerDecision, subscribeChanges, onOpenLegacyThread, variant, onOpenChannel, onBackToPanel, onCloseIssue, sidebarCollapsed, openSidebar, t } = props
   const [view, setView] = useState<AgentTeamIssueView>()
   const [older, setOlder] = useState<readonly AgentTeamIssueComment[]>([])
   const [olderHasMore, setOlderHasMore] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
+  // The workspace Task catalog the parent picker reads, one read per issue
+  // open (the same read the board page issues); absent when the host passes
+  // no board read.
+  const [taskOptions, setTaskOptions] = useState<readonly ParentTaskOption[]>([])
   const [humanMemberId, setHumanMemberId] = useState<AgentTeamMemberId>()
   const [error, setError] = useState<string>()
   const [pending, setPending] = useState(false)
@@ -130,9 +149,19 @@ export function IssueSurface(props: IssueSurfaceProps) {
       const workspaceView = await loadChannels({ workspaceId }).catch(() => undefined)
       if (!live || workspaceView?.ok !== true) return
       setHumanMemberId(workspaceView.value.humanMemberId)
+      if (loadBoard === undefined) return
+      const board = await loadBoard({ workspaceId }).catch(() => undefined)
+      if (!live || board?.ok !== true) return
+      const numbers = new Map(board.value.taskNumbers.map(row => [row.taskRef, row.taskNumber] as const))
+      setTaskOptions(board.value.tasks.map(task => ({
+        taskRef: task.taskRef,
+        taskNumber: numbers.get(task.taskRef) ?? 0,
+        ...(task.title === undefined ? {} : { title: task.title }),
+        status: task.status,
+      })))
     })()
     return () => { live = false }
-  }, [loadMembers, loadChannels, workspaceId])
+  }, [loadMembers, loadChannels, workspaceId, loadBoard])
 
   const threadRef = view?.thread.threadRef
 
@@ -156,7 +185,9 @@ export function IssueSurface(props: IssueSurfaceProps) {
   /** The Host's fence for a Task write: the Thread revision the snapshot carried. */
   const baseRevision = view?.thread.revision
 
-  const patchTask = useCallback(async (patch: { readonly title?: string; readonly priority?: AgentTeamTaskPriority; readonly assignee?: AgentTeamMemberId | null }): Promise<string | undefined> => {
+  const patchTask = useCallback(async (patch: { readonly title?: string; readonly priority?: AgentTeamTaskPriority; readonly assignee?: AgentTeamMemberId | null;
+    readonly parentTaskRef?: AgentTeamTaskRef | null; readonly pullRequests?: readonly AgentTeamTaskPullRequest[];
+    readonly labels?: readonly string[]; readonly dueDate?: string | null }): Promise<string | undefined> => {
     if (pending || view === undefined || baseRevision === undefined) return undefined
     setPending(true)
     setError(undefined)
@@ -171,6 +202,50 @@ export function IssueSurface(props: IssueSurfaceProps) {
       }
       // The Host committed it: the change-wake refetches, and the field settles
       // when the new snapshot arrives. Nothing moves here.
+      return undefined
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      return message
+    } finally {
+      if (mounted.current) setPending(false)
+    }
+  }, [pending, view, baseRevision, updateTask, workspaceId, taskRef, t])
+
+  /**
+   * The description's own write: fenced by the revision the EDIT started from,
+   * not the one the save happens to see — otherwise a paragraph written while
+   * the editor was open would be overwritten by this one. The Thread's
+   * `baseRevision` still rides along as the request's own fence, and a stale
+   * fence is a business outcome the caller reports, never an error the editor
+   * swallows. Not optimistic: the Host commits, the change-wake refetches, and
+   * only then does the record move.
+   */
+  const patchDescription = useCallback(async (body: string, baseDescriptionRevision: number): Promise<string | undefined> => {
+    if (pending || view === undefined || baseRevision === undefined) return undefined
+    setPending(true)
+    setError(undefined)
+    try {
+      const result = await updateTask({
+        requestId: mintRequestId(),
+        workspaceId,
+        taskRef,
+        baseRevision,
+        patch: { description: body, baseDescriptionRevision },
+      })
+      if (!result.ok) { setError(result.error.message); return result.error.message }
+      if (result.value.kind === 'stale_revision') {
+        const message = t('staleRevision')
+        setError(message)
+        return message
+      }
+      if (result.value.kind === 'stale_description_revision') {
+        const message = t('staleDescriptionRevision')
+        setError(message)
+        return message
+      }
+      // The Host took it: the change-wake refetches and the record settles
+      // there. Nothing moves here.
       return undefined
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause)
@@ -229,7 +304,27 @@ export function IssueSurface(props: IssueSurfaceProps) {
     return undefined
   }, [answerDecision, workspaceId, read])
 
-  if (view === undefined) {
+  /**
+   * The view the tree draws: the newest page with the older pages in front of
+   * it. One snapshot is one value — a render that changed nothing else reuses
+   * it, so the comment page's identity means "a read replaced this page" and
+   * the timeline can let a fresh read outrank what it wrote itself.
+   */
+  const shown = useMemo<AgentTeamIssueView | undefined>(() => {
+    if (view === undefined) return undefined
+    if (older.length === 0) return view
+    return {
+      ...view,
+      comments: {
+        ...view.comments,
+        items: [...older, ...view.comments.items],
+        hasMore: olderHasMore,
+        cursor: older[0]?.sequence ?? view.comments.cursor,
+      },
+    }
+  }, [view, older, olderHasMore])
+
+  if (view === undefined || shown === undefined) {
     return (
       <>
         {error !== undefined
@@ -239,18 +334,6 @@ export function IssueSurface(props: IssueSurfaceProps) {
       </>
     )
   }
-
-  const shown: AgentTeamIssueView = older.length === 0
-    ? view
-    : {
-      ...view,
-      comments: {
-        ...view.comments,
-        items: [...older, ...view.comments.items],
-        hasMore: olderHasMore,
-        cursor: older[0]?.sequence ?? view.comments.cursor,
-      },
-    }
 
   return (
     <>
@@ -262,6 +345,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
         humanName={humanName}
         mentionHandles={mentionHandles}
         onRename={title => patchTask({ title })}
+        patchDescription={patchDescription}
         onOpenLegacyThread={onOpenLegacyThread}
         variant={variant}
         onOpenChannel={onOpenChannel}
@@ -272,6 +356,13 @@ export function IssueSurface(props: IssueSurfaceProps) {
         onStatus={moveStatus}
         onPriority={priority => { void patchTask({ priority: normalizePriority(priority) }) }}
         onAssignee={memberId => { void patchTask({ assignee: memberId }) }}
+        onParent={taskRef => { void patchTask({ parentTaskRef: taskRef }) }}
+        onDueDate={dueDate => { void patchTask({ dueDate }) }}
+        onPullRequests={links => { void patchTask({ pullRequests: links }) }}
+        onLabels={labels => { void patchTask({ labels }) }}
+        tasks={taskOptions}
+        taskRef={taskRef}
+        openIssue={openIssue}
         onLoadOlderComments={loadOlder}
         loadingOlderComments={loadingOlder}
         commentWrite={{
@@ -279,6 +370,7 @@ export function IssueSurface(props: IssueSurfaceProps) {
           taskRef,
           baseRevision: view.thread.revision,
           reply,
+          resolveComment,
           putAttachment,
           getAttachment,
           resolveMessageRefs,

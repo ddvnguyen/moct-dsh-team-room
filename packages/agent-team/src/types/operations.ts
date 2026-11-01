@@ -29,6 +29,7 @@ import type {
   AgentTeamTaskActivity,
   AgentTeamTaskDescription,
   AgentTeamTaskPriority,
+  AgentTeamTaskPullRequest,
   AgentTeamTaskRef,
   AgentTeamThread,
   AgentTeamThreadAttention,
@@ -727,6 +728,28 @@ export interface AgentTeamDocCommentResolvedOperation extends AgentTeamOperation
   }
 }
 
+/**
+ * Durable close or reopen of one comment thread, addressed by its root Message.
+ *
+ * Unlike a Doc comment, an issue comment thread is a run of Thread Messages, so
+ * this is its own kind: `resolved` carries the direction (one kind both closes
+ * and reopens), and `baseRevision` is the Thread revision the writer saw. A
+ * reply is never a target — a thread is resolved by its root.
+ */
+export interface AgentTeamCommentResolvedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/comment-resolved'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly threadRef: AgentTeamThreadRef
+    /** The root comment of the thread: never a reply, never the anchor. */
+    readonly messageRef: AgentTeamMessageRef
+    /** `true` closes the thread; `false` reopens it. The last write wins on replay. */
+    readonly resolved: boolean
+    /** The Thread revision the writer fenced the write on. */
+    readonly baseRevision: number
+  }
+}
+
 /** Durable Human Task creation: the opening Message plus the Task overlay. */
 export interface AgentTeamTaskCreatedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/task-created'
@@ -746,6 +769,14 @@ export interface AgentTeamTaskPatch {
   readonly priority?: AgentTeamTaskPriority
   readonly assignee?: AgentTeamMemberId | null
   readonly position?: number
+  /** The parent Task ref, or `null` to clear; `undefined` leaves it unchanged. */
+  readonly parentTaskRef?: AgentTeamTaskRef | null
+  /** The PR links after the write; stored as sent, validated and deduped by `normalizeTaskPatch`. */
+  readonly pullRequests?: readonly AgentTeamTaskPullRequest[]
+  /** The labels after the write, validated and deduped by `normalizeTaskPatch`. */
+  readonly labels?: readonly string[]
+  /** The due date after the write, or `null` to clear. */
+  readonly dueDate?: string | null
   /** The description's own fence, bumped by every description write. */
   readonly descriptionRevision?: number
   /** The description record, when this write changed the description. */
@@ -808,6 +839,7 @@ export type AgentTeamOperation =
   | AgentTeamDocSectionWrittenOperation
   | AgentTeamDocCommentAddedOperation
   | AgentTeamDocCommentResolvedOperation
+  | AgentTeamCommentResolvedOperation
 
 /**
  * Why a delivery took the cold fallback (task-16, ruling 3472: one try per Turn, then the
