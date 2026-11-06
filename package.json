@@ -18,6 +18,7 @@
     "packages/agent-team/core-skills/**/*",
     "packages/tool-agent-team/lib/**/*",
     "packages/client-agent-team/lib/**/*",
+    "packages/mmx-customization/lib/**/*",
     "NOTICE",
     "licenses/**/*",
     "README.md",
@@ -37,6 +38,7 @@
     "check:team-room": "node scripts/codex-ui-sidebar-patch/verify-team-room.mjs --self-test",
     "check:artifact": "node scripts/check-artifact.mjs .",
     "smoke:install": "npm run build && node scripts/quality/dsh-smoke.mjs",
+    "smoke:mmx": "npm run build && node scripts/quality/dsh-mmx-smoke.mjs",
     "check:public-baseline": "node scripts/check-public-baseline.mjs .",
     "test": "npm run generate:typert && npm run check:facades && npm run check:docs && npm run check:core-skills && npm run check:boundaries && npm run check:versions && npm run check:multica && npm run check:market-patch && npm run check:team-room && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
@@ -45,8 +47,8 @@
     "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
     "lint": "corepack pnpm dlx oxlint@1.76.0 --disable-typescript-plugin packages scripts",
     "duplication": "jscpd --config .jscpd.json packages scripts",
-    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json && tsc -p packages/sidebar/tsconfig.json",
-    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && tsc -p packages/sidebar/tsconfig.build.json && node scripts/build-client.mjs"
+    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json && tsc -p packages/mmx-customization/tsconfig.json && tsc -p packages/sidebar/tsconfig.json",
+    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && tsc -p packages/mmx-customization/tsconfig.build.json && tsc -p packages/sidebar/tsconfig.build.json && node scripts/build-client.mjs"
   },
   "dsh": {
     "bundle": {
