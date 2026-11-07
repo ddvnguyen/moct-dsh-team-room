@@ -4,8 +4,10 @@
  *
  * The patch is applied by anchored edits (see `./edits.mjs`), not by a
  * line-based diff, so a codex-ui release that keeps the anchors needs no new
- * patch file. A release that moves an anchor fails here with the anchor's id
- * and the bundle is left untouched.
+ * patch file. The edit list carries one set per bundle SHAPE (the 1.x tab
+ * strip, the 2.x sidebar nav); the set whose anchors all match is the one
+ * applied. A bundle no set matches fails here with the closest set and the
+ * anchor that did not match, and the installed bundle is left untouched.
  *
  * Usage:
  *   node scripts/codex-ui-sidebar-patch/apply.mjs <codex-ui-package-dir> [--check|--verify]
@@ -107,12 +109,12 @@ function main(argv) {
     return 4
   }
   if (check) {
-    console.log(`patch applies cleanly to ${readVersion(packageDir)} (${patched.applied.length} edits)`)
+    console.log(`patch applies cleanly to ${readVersion(packageDir)} via "${patched.set}" (${patched.applied.length} edits)`)
     return 0
   }
   if (!existsSync(backup)) copyFileSync(bundle, backup)
   writeFileSync(bundle, patched.source)
-  console.log(`patched ${basename(packageDir)} ${readVersion(packageDir)} (${patched.applied.length} edits); original kept at ${backup}`)
+  console.log(`patched ${basename(packageDir)} ${readVersion(packageDir)} via "${patched.set}" (${patched.applied.length} edits); original kept at ${backup}`)
   return 0
 }
 
