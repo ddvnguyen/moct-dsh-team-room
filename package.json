@@ -18,7 +18,6 @@
     "packages/agent-team/core-skills/**/*",
     "packages/tool-agent-team/lib/**/*",
     "packages/client-agent-team/lib/**/*",
-    "packages/mmx-customization/lib/**/*",
     "NOTICE",
     "licenses/**/*",
     "README.md",
