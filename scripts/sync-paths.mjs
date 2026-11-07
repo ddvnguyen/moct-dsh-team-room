@@ -34,6 +34,11 @@ const own = {
   '@ddvnguyen/moct-dsh-team-room/member-skills': ['./packages/agent-team/src/member-skills.ts'],
   '@ddvnguyen/moct-dsh-team-room/tools': ['./packages/tool-agent-team/src/index.ts'],
   '@ddvnguyen/moct-dsh-team-room/client': ['./packages/client-agent-team/src/client/index.ts'],
+  // The sidebar package is a re-export alias of the mmx client half; its entry
+  // names that declared subpath, and the facades resolve it to the one
+  // implementation (source for typecheck, the built declaration for builds so
+  // the sidebar's tsc never compiles the sibling package's sources).
+  '@ddvnguyen/mmx-customization/client': ['./packages/mmx-customization/src/client/index.ts'],
 }
 
 const ownTypes = {
@@ -84,6 +89,7 @@ const buildOwn = {
   '@ddvnguyen/moct-dsh-team-room/member-skills': ['./packages/agent-team/lib/types/member-skills.d.ts'],
   '@ddvnguyen/moct-dsh-team-room/tools': ['./packages/tool-agent-team/lib/types/index.d.ts'],
   '@ddvnguyen/moct-dsh-team-room/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
+  '@ddvnguyen/mmx-customization/client': ['./packages/mmx-customization/lib/types/client/index.d.ts'],
 }
 
 const shared = {
