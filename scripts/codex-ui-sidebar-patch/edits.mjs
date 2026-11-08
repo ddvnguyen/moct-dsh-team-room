@@ -10,20 +10,34 @@
  * bump that keeps the anchors applies with no work, and a version bump that
  * moves them fails loudly with the anchor that is missing.
  *
- * What the patch adds to `@michengai/dsh-codex-ui`:
+ * The patch adds one seam per bundle SHAPE, because the sidebar itself was
+ * rewritten between them:
  *
- * 1. A native tab registry (`__dshNativeTabs`), the contract the automation
- *    plugin already uses, so a plugin can add a tab to the sidebar's tab
- *    strip (Tasks | <plugin tabs> | Channels | Schedule). The Team Room adds
- *    its `Teams` tab this way.
- * 2. A top-level panel list (`__dshTopPanels`), so the plugin panels a
- *    deployment wants next to "New task" (Context Insights, Team Detail)
- *    are rendered as top-level menu entries instead of as children of the
- *    Extensions group, which upstream puts every plugin panel into.
+ * - `tab-strip` (codex-ui <= 1.1.x). The sidebar is a strip
+ *   (Tasks | Channels | Schedule) plus a menu of panels.
+ *
+ *   1. A native tab registry (`__dshNativeTabs`), the contract the automation
+ *      plugin already uses, so a plugin can add a tab to the strip. The Team
+ *      Room adds its `Teams` tab this way.
+ *   2. A top-level panel list (`__dshTopPanels`), so the plugin panels a
+ *      deployment wants next to "New task" (Context Insights, Team Detail)
+ *      are rendered as top-level menu entries instead of as children of the
+ *      Extensions group, which upstream puts every plugin panel into.
+ *
+ * - `sidebar-nav` (codex-ui >= 2.0, the shape rc.1 ships). The strip is gone:
+ *   the sidebar is a list of `sidebar.panellist` entries split into a pinned
+ *   zone and a collapsed "More" zone, ordered and persisted by the bundle
+ *   itself. There is no tab strip and no Extensions group left upstream, so
+ *   edits 1 and 2 of the old shape have nothing to anchor to — the Team
+ *   Room's tab already stands down to its panel entry when the strip is
+ *   absent. The policy seam survives: an id published through
+ *   `__dshTopPanels` starts in the pinned zone, at the top of the list, which
+ *   is where "next to New task" moved to.
  *
  * The patch owns the mechanism only. The policy - which panels sit at the top
  * level - belongs to `@ddvnguyen/dsh-sidebar`, which publishes the ids
- * through `globalThis.__dshTopPanels`.
+ * through `globalThis.__dshTopPanels`. With nothing published each set is
+ * inert and the bundle lays out exactly as upstream.
  *
  * Every edit asserts its anchor. An anchor that is missing means the upstream
  * bundle changed shape: the applier stops and reports it instead of writing a
@@ -39,283 +53,419 @@ export const NATIVE_TABS_KEY = '__dshNativeTabs'
 /** The key the top-level panel list is published under. */
 export const TOP_PANELS_KEY = '__dshTopPanels'
 
-const REGISTRY_HELPERS = `		const NATIVE_TABS_KEY = "${NATIVE_TABS_KEY}";
-		/** Plugin tab registry; same contract dsh-automation attaches to the sidebar.workspaces component. */
-		function createNativeTabRegistry() {
-			const tabs = new Map();
-			const listeners = new Set();
-			let sorted = [];
-			const refresh = () => {
-				sorted = [...tabs.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-			};
-			const notify = () => {
-				for (const listener of listeners) listener();
-			};
-			return {
-				version: 1,
-				officialTree: void 0,
-				sessionFilters: [],
-				getTabs: () => sorted,
-				subscribe(listener) {
-					listeners.add(listener);
-					return () => {
-						listeners.delete(listener);
-					};
-				},
-				insert(tab) {
-					if (typeof tab?.id !== "string" || tab.id === "") return () => {};
-					const previous = tabs.get(tab.id);
-					tabs.set(tab.id, tab);
-					if (previous !== tab) {
-						refresh();
-						notify();
-					}
-					return () => {
-						if (tabs.get(tab.id) === tab) {
-							tabs.delete(tab.id);
-							refresh();
-							notify();
-						}
-					};
-				},
-				addSessionFilter() {
-					return () => {};
-				}
-			};
-		}
-		const EMPTY_NATIVE_TABS = [];
-		function getEmptyNativeTabs() {
-			return EMPTY_NATIVE_TABS;
-		}
-		const TOP_PANELS_KEY = "${TOP_PANELS_KEY}";
-		const EMPTY_TOP_PANELS = new Set();
-		function topPanelStore() {
-			return globalThis[TOP_PANELS_KEY];
-		}
-		function readTopPanelIds() {
-			const store = topPanelStore();
-			if (store === null || typeof store !== "object") return EMPTY_TOP_PANELS;
-			const ids = store.ids;
-			if (ids instanceof Set) return ids;
-			if (Array.isArray(ids)) return new Set(ids);
-			return EMPTY_TOP_PANELS;
-		}
-		function subscribeTopPanels(listener) {
-			const store = topPanelStore();
-			if (store === null || typeof store !== "object" || typeof store.subscribe !== "function") return () => {};
-			return store.subscribe(listener);
-		}
+const TAB_STRIP_HELPERS = `\t\tconst NATIVE_TABS_KEY = "${NATIVE_TABS_KEY}";
+\t\t/** Plugin tab registry; same contract dsh-automation attaches to the sidebar.workspaces component. */
+\t\tfunction createNativeTabRegistry() {
+\t\t\tconst tabs = new Map();
+\t\t\tconst listeners = new Set();
+\t\t\tlet sorted = [];
+\t\t\tconst refresh = () => {
+\t\t\t\tsorted = [...tabs.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+\t\t\t};
+\t\t\tconst notify = () => {
+\t\t\t\tfor (const listener of listeners) listener();
+\t\t\t};
+\t\t\treturn {
+\t\t\t\tversion: 1,
+\t\t\t\tofficialTree: void 0,
+\t\t\t\tsessionFilters: [],
+\t\t\t\tgetTabs: () => sorted,
+\t\t\t\tsubscribe(listener) {
+\t\t\t\t\tlisteners.add(listener);
+\t\t\t\t\treturn () => {
+\t\t\t\t\t\tlisteners.delete(listener);
+\t\t\t\t\t};
+\t\t\t\t},
+\t\t\t\tinsert(tab) {
+\t\t\t\t\tif (typeof tab?.id !== "string" || tab.id === "") return () => {};
+\t\t\t\t\tconst previous = tabs.get(tab.id);
+\t\t\t\t\ttabs.set(tab.id, tab);
+\t\t\t\t\tif (previous !== tab) {
+\t\t\t\t\t\trefresh();
+\t\t\t\t\t\tnotify();
+\t\t\t\t\t}
+\t\t\t\t\treturn () => {
+\t\t\t\t\t\tif (tabs.get(tab.id) === tab) {
+\t\t\t\t\t\t\ttabs.delete(tab.id);
+\t\t\t\t\t\t\trefresh();
+\t\t\t\t\t\t\tnotify();
+\t\t\t\t\t\t}
+\t\t\t\t\t};
+\t\t\t\t},
+\t\t\t\taddSessionFilter() {
+\t\t\t\t\treturn () => {};
+\t\t\t\t}
+\t\t\t};
+\t\t}
+\t\tconst EMPTY_NATIVE_TABS = [];
+\t\tfunction getEmptyNativeTabs() {
+\t\t\treturn EMPTY_NATIVE_TABS;
+\t\t}
+\t\tconst TOP_PANELS_KEY = "${TOP_PANELS_KEY}";
+\t\tconst EMPTY_TOP_PANELS = new Set();
+\t\tfunction topPanelStore() {
+\t\t\treturn globalThis[TOP_PANELS_KEY];
+\t\t}
+\t\tfunction readTopPanelIds() {
+\t\t\tconst store = topPanelStore();
+\t\t\tif (store === null || typeof store !== "object") return EMPTY_TOP_PANELS;
+\t\t\tconst ids = store.ids;
+\t\t\tif (ids instanceof Set) return ids;
+\t\t\tif (Array.isArray(ids)) return new Set(ids);
+\t\t\treturn EMPTY_TOP_PANELS;
+\t\t}
+\t\tfunction subscribeTopPanels(listener) {
+\t\t\tconst store = topPanelStore();
+\t\t\tif (store === null || typeof store !== "object" || typeof store.subscribe !== "function") return () => {};
+\t\t\treturn store.subscribe(listener);
+\t\t}
 `
 
 /**
- * The edit list. Each edit is one exact replacement: `from` must appear
- * exactly once in the bundle, and `to` replaces it.
+ * The policy seam for the 2.0 sidebar nav.
+ *
+ * The nav normalizes the saved layout against the registered panels on every
+ * change of `availableIds`, so a panel that starts in "More" stays there. The
+ * policy is applied at that normalization instead: an id it names is lifted
+ * into the pinned zone, which is what "renders at the top level" means once
+ * the Extensions group is gone.
  */
-export const EDITS = [
+const SIDEBAR_NAV_HELPERS = `\t\tconst TOP_PANELS_KEY = "${TOP_PANELS_KEY}";
+\t\tconst EMPTY_TOP_PANELS = new Set();
+\t\tfunction topPanelStore() {
+\t\t\treturn globalThis[TOP_PANELS_KEY];
+\t\t}
+\t\t/**
+\t\t* A stable snapshot: the store may publish an array, and a fresh Set on
+\t\t* every read would make useSyncExternalStore re-render forever. One Set
+\t\t* per published array.
+\t\t*/
+\t\tlet topPanelsSnapshot = {
+\t\t\tsource: void 0,
+\t\t\tids: EMPTY_TOP_PANELS
+\t\t};
+\t\tfunction readTopPanelIds() {
+\t\t\tconst store = topPanelStore();
+\t\t\tconst ids = store !== null && typeof store === "object" ? store.ids : void 0;
+\t\t\tif (ids instanceof Set) return ids;
+\t\t\tif (!Array.isArray(ids)) return EMPTY_TOP_PANELS;
+\t\t\tif (topPanelsSnapshot.source !== ids) topPanelsSnapshot = {
+\t\t\t\tsource: ids,
+\t\t\t\tids: new Set(ids)
+\t\t\t};
+\t\t\treturn topPanelsSnapshot.ids;
+\t\t}
+\t\tfunction subscribeTopPanels(listener) {
+\t\t\tconst store = topPanelStore();
+\t\t\tif (store === null || typeof store !== "object" || typeof store.subscribe !== "function") return () => {};
+\t\t\treturn store.subscribe(listener);
+\t\t}
+\t\t/**
+\t\t* The policy over a normalized layout: a panel it names sits at the top of
+\t\t* the pinned zone, in the order the saved layout gives it. With no policy
+\t\t* the layout comes back as normalized, so a stock install is unchanged.
+\t\t*/
+\t\tfunction normalizeTopPanels(saved, availableIds, topPanelIds) {
+\t\t\tconst layout = normalizeLayout(saved, availableIds);
+\t\t\tif (topPanelIds.size === 0) return layout;
+\t\t\tconst top = [];
+\t\t\tconst rest = [];
+\t\t\tfor (const id of layout.pinned) (topPanelIds.has(id) ? top : rest).push(id);
+\t\t\tconst more = [];
+\t\t\tfor (const id of layout.more) (topPanelIds.has(id) ? top : more).push(id);
+\t\t\treturn {
+\t\t\t\tpinned: [...top, ...rest],
+\t\t\t\tmore
+\t\t\t};
+\t\t}
+`
+
+/**
+ * The edit list for the tab-strip bundle (codex-ui <= 1.1.x). Each edit is one
+ * exact replacement: `from` must appear exactly once in the bundle, and `to`
+ * replaces it.
+ */
+const TAB_STRIP_EDITS = [
   {
     id: 'registry-helpers',
-    from: `		function sameCompanionTabs(left, right) {
-			return left.channels === right.channels && left.schedule === right.schedule;
-		}
+    from: `\t\tfunction sameCompanionTabs(left, right) {
+\t\t\treturn left.channels === right.channels && left.schedule === right.schedule;
+\t\t}
 `,
-    to: `		function sameCompanionTabs(left, right) {
-			return left.channels === right.channels && left.schedule === right.schedule;
-		}
-${REGISTRY_HELPERS}`,
+    to: `\t\tfunction sameCompanionTabs(left, right) {
+\t\t\treturn left.channels === right.channels && left.schedule === right.schedule;
+\t\t}
+${TAB_STRIP_HELPERS}`,
   },
   {
     id: 'sidebar-native-tabs-state',
-    from: `			const companionTabs = (0, react.useSyncExternalStore)(companionSlots?.subscribe ?? subscribeEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs);
-			const showChannels = companionTabs.channels;
-			const showSchedule = companionTabs.schedule;
-			const showCompanionTabs = showChannels || showSchedule;
+    from: `\t\t\tconst companionTabs = (0, react.useSyncExternalStore)(companionSlots?.subscribe ?? subscribeEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs);
+\t\t\tconst showChannels = companionTabs.channels;
+\t\t\tconst showSchedule = companionTabs.schedule;
+\t\t\tconst showCompanionTabs = showChannels || showSchedule;
 `,
-    to: `			const companionTabs = (0, react.useSyncExternalStore)(companionSlots?.subscribe ?? subscribeEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs);
-			const nativeRegistry = companionSlots?.nativeTabs;
-			const nativeTabs = (0, react.useSyncExternalStore)(nativeRegistry?.subscribe ?? subscribeEmptyCompanionTabs, nativeRegistry?.getTabs ?? getEmptyNativeTabs, nativeRegistry?.getTabs ?? getEmptyNativeTabs);
-			const showChannels = companionTabs.channels;
-			const showSchedule = companionTabs.schedule;
-			const showCompanionTabs = showChannels || showSchedule || nativeTabs.length > 0;
-			const activeNativeTab = imTab.startsWith("native:") ? nativeTabs.find((tab) => \`native:\${tab.id}\` === imTab) : void 0;
+    to: `\t\t\tconst companionTabs = (0, react.useSyncExternalStore)(companionSlots?.subscribe ?? subscribeEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs, companionSlots?.getSnapshot ?? getEmptyCompanionTabs);
+\t\t\tconst nativeRegistry = companionSlots?.nativeTabs;
+\t\t\tconst nativeTabs = (0, react.useSyncExternalStore)(nativeRegistry?.subscribe ?? subscribeEmptyCompanionTabs, nativeRegistry?.getTabs ?? getEmptyNativeTabs, nativeRegistry?.getTabs ?? getEmptyNativeTabs);
+\t\t\tconst showChannels = companionTabs.channels;
+\t\t\tconst showSchedule = companionTabs.schedule;
+\t\t\tconst showCompanionTabs = showChannels || showSchedule || nativeTabs.length > 0;
+\t\t\tconst activeNativeTab = imTab.startsWith("native:") ? nativeTabs.find((tab) => \`native:\${tab.id}\` === imTab) : void 0;
 `,
   },
   {
     id: 'sidebar-native-tab-reset',
-    from: `				if (imTab === "channels" && !showChannels) setImTab("tasks");
-				if (imTab === "schedule" && !showSchedule) setImTab("tasks");
-			}, [
+    from: `\t\t\t\tif (imTab === "channels" && !showChannels) setImTab("tasks");
+\t\t\t\tif (imTab === "schedule" && !showSchedule) setImTab("tasks");
+\t\t\t}, [
 `,
-    to: `				if (imTab === "channels" && !showChannels) setImTab("tasks");
-				if (imTab === "schedule" && !showSchedule) setImTab("tasks");
-				if (imTab.startsWith("native:") && activeNativeTab === void 0) setImTab("tasks");
-			}, [
-				activeNativeTab,
+    to: `\t\t\t\tif (imTab === "channels" && !showChannels) setImTab("tasks");
+\t\t\t\tif (imTab === "schedule" && !showSchedule) setImTab("tasks");
+\t\t\t\tif (imTab.startsWith("native:") && activeNativeTab === void 0) setImTab("tasks");
+\t\t\t}, [
+\t\t\t\tactiveNativeTab,
 `,
   },
   {
     id: 'sidebar-tab-label-icons',
-    from: `						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconFolderCloseMedium, { size: 14 }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.tasksTab") })]`,
-    to: `						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.tasksTab") })`,
+    from: `\t\t\t\t\t\tchildren: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconFolderCloseMedium, { size: 14 }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.tasksTab") })]`,
+    to: `\t\t\t\t\t\tchildren: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.tasksTab") })`,
   },
   {
     id: 'sidebar-tab-label-icons-channels',
-    from: `						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("svg", {
-							viewBox: "0 0 16 16",
-							width: 14,
-							height: 14,
-							fill: "none",
-							"aria-hidden": "true",
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("path", {
-								fill: "currentColor",
-								d: "M2.15 2.9h11.7v8.2H6.42L2.15 13.85V2.9Zm1.4 1.4v6.62l1.78-1.12h7.12V4.3H3.55Z"
-							})
-						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.channelsTab") })]`,
-    to: `						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.channelsTab") })`,
+    from: `\t\t\t\t\t\tchildren: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("svg", {
+\t\t\t\t\t\t\tviewBox: "0 0 16 16",
+\t\t\t\t\t\t\twidth: 14,
+\t\t\t\t\t\t\theight: 14,
+\t\t\t\t\t\t\tfill: "none",
+\t\t\t\t\t\t\t"aria-hidden": "true",
+\t\t\t\t\t\t\tchildren: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("path", {
+\t\t\t\t\t\t\t\tfill: "currentColor",
+\t\t\t\t\t\t\t\td: "M2.15 2.9h11.7v8.2H6.42L2.15 13.85V2.9Zm1.4 1.4v6.62l1.78-1.12h7.12V4.3H3.55Z"
+\t\t\t\t\t\t\t})
+\t\t\t\t\t\t}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.channelsTab") })]`,
+    to: `\t\t\t\t\t\tchildren: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.channelsTab") })`,
   },
   {
     id: 'sidebar-tab-label-icons-schedule',
-    from: `						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScheduleIcon, {}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.scheduleTab") })]`,
-    to: `						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.scheduleTab") })`,
+    from: `\t\t\t\t\t\tchildren: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ScheduleIcon, {}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.scheduleTab") })]`,
+    to: `\t\t\t\t\t\tchildren: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebar.scheduleTab") })`,
   },
   {
     id: 'sidebar-native-tab-items',
-    from: `				return items;
-			}, [
-				showChannels,
-				showSchedule,
-				t
-			]);
+    from: `\t\t\t\treturn items;
+\t\t\t}, [
+\t\t\t\tshowChannels,
+\t\t\t\tshowSchedule,
+\t\t\t\tt
+\t\t\t]);
 `,
-    to: `				return [
-					...items.map((item) => ({
-						item,
-						order: item.value === "channels" ? 20 : item.value === "schedule" ? 30 : 0
-					})),
-					...nativeTabs.map((tab) => ({
-						item: {
-							value: \`native:\${tab.id}\`,
-							id: \`dcu-tab-native-\${tab.id}\`,
-							panelId: \`dcu-panel-native-\${tab.id}\`,
-							label: tab.label
-						},
-						order: tab.order ?? 0
-					}))
-				].sort((left, right) => left.order - right.order).map((entry) => entry.item);
-			}, [
-				showChannels,
-				showSchedule,
-				nativeTabs,
-				t
-			]);
+    to: `\t\t\t\treturn [
+\t\t\t\t\t...items.map((item) => ({
+\t\t\t\t\t\titem,
+\t\t\t\t\t\torder: item.value === "channels" ? 20 : item.value === "schedule" ? 30 : 0
+\t\t\t\t\t})),
+\t\t\t\t\t...nativeTabs.map((tab) => ({
+\t\t\t\t\t\titem: {
+\t\t\t\t\t\t\tvalue: \`native:\${tab.id}\`,
+\t\t\t\t\t\t\tid: \`dcu-tab-native-\${tab.id}\`,
+\t\t\t\t\t\t\tpanelId: \`dcu-panel-native-\${tab.id}\`,
+\t\t\t\t\t\t\tlabel: tab.label
+\t\t\t\t\t\t},
+\t\t\t\t\t\torder: tab.order ?? 0
+\t\t\t\t\t}))
+\t\t\t\t].sort((left, right) => left.order - right.order).map((entry) => entry.item);
+\t\t\t}, [
+\t\t\t\tshowChannels,
+\t\t\t\tshowSchedule,
+\t\t\t\tnativeTabs,
+\t\t\t\tt
+\t\t\t]);
 `,
   },
   {
     id: 'sidebar-native-tab-body',
-    from: `								}), imTab === "channels" && showChannels ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+    from: `\t\t\t\t\t\t\t\t}), imTab === "channels" && showChannels ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 `,
-    to: `								}), activeNativeTab !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-									className: "dcu-native-workspaces",
-									children: activeNativeTab.render({
-										wide: true,
-										expandSidebar,
-										panelActive,
-										open: openSession,
-										openSession,
-										archiveSession,
-										deleteSession,
-										canDeleteSession,
-										forkSession,
-										moveSession,
-										renameSession,
-										useSessions,
-										useSessionPendingInteraction,
-										useSessionStatus,
-										useWorkspaces,
-										renderSlot
-									})
-								}) : imTab === "channels" && showChannels ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+    to: `\t\t\t\t\t\t\t\t}), activeNativeTab !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+\t\t\t\t\t\t\t\t\tclassName: "dcu-native-workspaces",
+\t\t\t\t\t\t\t\t\tchildren: activeNativeTab.render({
+\t\t\t\t\t\t\t\t\t\twide: true,
+\t\t\t\t\t\t\t\t\t\texpandSidebar,
+\t\t\t\t\t\t\t\t\t\tpanelActive,
+\t\t\t\t\t\t\t\t\t\topen: openSession,
+\t\t\t\t\t\t\t\t\t\topenSession,
+\t\t\t\t\t\t\t\t\t\tarchiveSession,
+\t\t\t\t\t\t\t\t\t\tdeleteSession,
+\t\t\t\t\t\t\t\t\t\tcanDeleteSession,
+\t\t\t\t\t\t\t\t\t\tforkSession,
+\t\t\t\t\t\t\t\t\t\tmoveSession,
+\t\t\t\t\t\t\t\t\t\trenameSession,
+\t\t\t\t\t\t\t\t\t\tuseSessions,
+\t\t\t\t\t\t\t\t\t\tuseSessionPendingInteraction,
+\t\t\t\t\t\t\t\t\t\tuseSessionStatus,
+\t\t\t\t\t\t\t\t\t\tuseWorkspaces,
+\t\t\t\t\t\t\t\t\t\trenderSlot
+\t\t\t\t\t\t\t\t\t})
+\t\t\t\t\t\t\t\t}) : imTab === "channels" && showChannels ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 `,
   },
   {
     id: 'sidebar-top-panels-state',
-    from: `			const extensionPanels = [...(0, react.useSyncExternalStore)(globalPanels?.subscribe ?? subscribeEmptyCompanionTabs, globalPanels?.getSnapshot ?? getEmptyPanels, globalPanels?.getSnapshot ?? getEmptyPanels)].sort((left, right) => left.order - right.order);
+    from: `\t\t\tconst extensionPanels = [...(0, react.useSyncExternalStore)(globalPanels?.subscribe ?? subscribeEmptyCompanionTabs, globalPanels?.getSnapshot ?? getEmptyPanels, globalPanels?.getSnapshot ?? getEmptyPanels)].sort((left, right) => left.order - right.order);
 `,
-    to: `			const extensionPanels = [...(0, react.useSyncExternalStore)(globalPanels?.subscribe ?? subscribeEmptyCompanionTabs, globalPanels?.getSnapshot ?? getEmptyPanels, globalPanels?.getSnapshot ?? getEmptyPanels)].sort((left, right) => left.order - right.order);
-			const topPanelIds = (0, react.useSyncExternalStore)(subscribeTopPanels, readTopPanelIds, readTopPanelIds);
-			const topPanels = extensionPanels.filter((panel) => topPanelIds.has(panel.id));
-			const nestedPanels = extensionPanels.filter((panel) => !topPanelIds.has(panel.id));
+    to: `\t\t\tconst extensionPanels = [...(0, react.useSyncExternalStore)(globalPanels?.subscribe ?? subscribeEmptyCompanionTabs, globalPanels?.getSnapshot ?? getEmptyPanels, globalPanels?.getSnapshot ?? getEmptyPanels)].sort((left, right) => left.order - right.order);
+\t\t\tconst topPanelIds = (0, react.useSyncExternalStore)(subscribeTopPanels, readTopPanelIds, readTopPanelIds);
+\t\t\tconst topPanels = extensionPanels.filter((panel) => topPanelIds.has(panel.id));
+\t\t\tconst nestedPanels = extensionPanels.filter((panel) => !topPanelIds.has(panel.id));
 `,
   },
   {
     id: 'sidebar-top-panels-render',
-    from: `									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(MenuIcon, { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconNewChatOutlineMedium, { size: 16 }) }), t("sidebar.newTask")]
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: "dcu-extensions-group",
+    from: `\t\t\t\t\t\t\t\t\tchildren: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(MenuIcon, { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconNewChatOutlineMedium, { size: 16 }) }), t("sidebar.newTask")]
+\t\t\t\t\t\t\t\t}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+\t\t\t\t\t\t\t\t\tclassName: "dcu-extensions-group",
 `,
-    to: `									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(MenuIcon, { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconNewChatOutlineMedium, { size: 16 }) }), t("sidebar.newTask")]
-								}), topPanels.map((panel) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
-									type: "button",
-									"aria-current": activePanelId === panel.id ? "page" : void 0,
-									onClick: () => {
-										selectPanel?.(panel.id);
-									},
-									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(MenuIcon, { children: renderSlot("sidebar.panellist", {
-										size: 16,
-										active: activePanelId === panel.id
-									}, { only: panel.id }) }), panel.label]
-								}, panel.id)), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: "dcu-extensions-group",
+    to: `\t\t\t\t\t\t\t\t\tchildren: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(MenuIcon, { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconNewChatOutlineMedium, { size: 16 }) }), t("sidebar.newTask")]
+\t\t\t\t\t\t\t\t}), topPanels.map((panel) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+\t\t\t\t\t\t\t\t\ttype: "button",
+\t\t\t\t\t\t\t\t\t"aria-current": activePanelId === panel.id ? "page" : void 0,
+\t\t\t\t\t\t\t\t\tonClick: () => {
+\t\t\t\t\t\t\t\t\t\tselectPanel?.(panel.id);
+\t\t\t\t\t\t\t\t\t},
+\t\t\t\t\t\t\t\t\tchildren: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(MenuIcon, { children: renderSlot("sidebar.panellist", {
+\t\t\t\t\t\t\t\t\t\tsize: 16,
+\t\t\t\t\t\t\t\t\t\tactive: activePanelId === panel.id
+\t\t\t\t\t\t\t\t\t}, { only: panel.id }) }), panel.label]
+\t\t\t\t\t\t\t\t}, panel.id)), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+\t\t\t\t\t\t\t\t\tclassName: "dcu-extensions-group",
 `,
   },
   {
     id: 'sidebar-nested-panels-render',
-    from: `													extensionPanels.map((panel) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
-														type: "button",
-														tabIndex: extensionsOpen ? 0 : -1,
+    from: `\t\t\t\t\t\t\t\t\t\t\t\t\textensionPanels.map((panel) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: "button",
+\t\t\t\t\t\t\t\t\t\t\t\t\t\ttabIndex: extensionsOpen ? 0 : -1,
 `,
-    to: `													nestedPanels.map((panel) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
-														type: "button",
-														tabIndex: extensionsOpen ? 0 : -1,
+    to: `\t\t\t\t\t\t\t\t\t\t\t\t\tnestedPanels.map((panel) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+\t\t\t\t\t\t\t\t\t\t\t\t\t\ttype: "button",
+\t\t\t\t\t\t\t\t\t\t\t\t\t\ttabIndex: extensionsOpen ? 0 : -1,
 `,
   },
   {
     id: 'plugin-native-tab-registry',
-    from: `			const companionSlots = createCompanionTabSource(ctx.slots);
-			const globalPanels = createGlobalPanelSource(ctx.slots, ctx.locale);
+    from: `\t\t\tconst companionSlots = createCompanionTabSource(ctx.slots);
+\t\t\tconst globalPanels = createGlobalPanelSource(ctx.slots, ctx.locale);
 `,
-    to: `			const companionSlots = createCompanionTabSource(ctx.slots);
-			const nativeTabRegistry = createNativeTabRegistry();
-			companionSlots.nativeTabs = nativeTabRegistry;
-			CodexWorkspaceBrowser[NATIVE_TABS_KEY] = nativeTabRegistry;
-			ctx.effect(() => () => {
-				if (CodexWorkspaceBrowser[NATIVE_TABS_KEY] === nativeTabRegistry) delete CodexWorkspaceBrowser[NATIVE_TABS_KEY];
-			}, "michengai-codex-ui: native tab registry");
-			const globalPanels = createGlobalPanelSource(ctx.slots, ctx.locale);
+    to: `\t\t\tconst companionSlots = createCompanionTabSource(ctx.slots);
+\t\t\tconst nativeTabRegistry = createNativeTabRegistry();
+\t\t\tcompanionSlots.nativeTabs = nativeTabRegistry;
+\t\t\tCodexWorkspaceBrowser[NATIVE_TABS_KEY] = nativeTabRegistry;
+\t\t\tctx.effect(() => () => {
+\t\t\t\tif (CodexWorkspaceBrowser[NATIVE_TABS_KEY] === nativeTabRegistry) delete CodexWorkspaceBrowser[NATIVE_TABS_KEY];
+\t\t\t}, "michengai-codex-ui: native tab registry");
+\t\t\tconst globalPanels = createGlobalPanelSource(ctx.slots, ctx.locale);
 `,
   },
 ]
 
 /**
- * Apply every edit to a bundle's source.
+ * The edit list for the sidebar-nav bundle (codex-ui >= 2.0). Same contract:
+ * one exact replacement per edit, each anchor must appear exactly once.
+ */
+const SIDEBAR_NAV_EDITS = [
+  {
+    id: 'sidebar-nav-top-panels-helpers',
+    from: `\t\tconst SIDEBAR_LAYOUT_KEY = "michengai.codex-ui.sidebar-layout.v1";
+\t\tconst isStringArray$1 = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+`,
+    to: `\t\tconst SIDEBAR_LAYOUT_KEY = "michengai.codex-ui.sidebar-layout.v1";
+${SIDEBAR_NAV_HELPERS}\t\tconst isStringArray$1 = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+`,
+  },
+  {
+    id: 'sidebar-nav-top-panels-state',
+    from: `\t\t\tconst layoutRef = (0, react.useRef)(layout);
+\t\t\tlayoutRef.current = layout;
+\t\t\t(0, react.useEffect)(() => {
+\t\t\t\tsetLayout((prev) => {
+\t\t\t\t\tconst next = normalizeLayout(prev, availableIds);
+`,
+    to: `\t\t\tconst layoutRef = (0, react.useRef)(layout);
+\t\t\tlayoutRef.current = layout;
+\t\t\tconst topPanelIds = (0, react.useSyncExternalStore)(subscribeTopPanels, readTopPanelIds, readTopPanelIds);
+\t\t\t(0, react.useEffect)(() => {
+\t\t\t\tsetLayout((prev) => {
+\t\t\t\t\tconst next = normalizeTopPanels(prev, availableIds, topPanelIds);
+`,
+  },
+  {
+    id: 'sidebar-nav-top-panels-deps',
+    from: `\t\t\t\t\treturn next;
+\t\t\t\t});
+\t\t\t}, [availableIds]);
+`,
+    to: `\t\t\t\t\treturn next;
+\t\t\t\t});
+\t\t\t}, [
+\t\t\t\tavailableIds,
+\t\t\t\ttopPanelIds
+\t\t\t]);
+`,
+  },
+]
+
+/**
+ * The edit sets, oldest bundle shape first. A patch run picks the one set whose
+ * every anchor is present exactly once.
+ */
+export const EDIT_SETS = [
+  { id: 'tab-strip', shape: 'codex-ui <= 1.1.x', edits: TAB_STRIP_EDITS },
+  { id: 'sidebar-nav', shape: 'codex-ui >= 2.0', edits: SIDEBAR_NAV_EDITS },
+]
+
+/** Why one edit does not match a bundle. */
+function anchorProblem(source, edit) {
+  const first = source.indexOf(edit.from)
+  if (first === -1) return 'missing'
+  if (source.indexOf(edit.from, first + 1) !== -1) return 'ambiguous'
+  return undefined
+}
+
+/**
+ * Apply the edit set that matches a bundle's shape.
  *
  * @param {string} source the published `lib/client.js`
- * @returns {{ source: string, applied: string[] }} the patched source and the applied edit ids
- * @throws when an anchor is missing or ambiguous: the caller must not write a
- *   bundle it could not patch completely.
+ * @returns {{ source: string, applied: string[], set: string }} the patched
+ *   source, the applied edit ids and the id of the set that matched
+ * @throws when no set matches: the caller must not write a bundle it could not
+ *   patch completely. The message names the closest set and the anchor that
+ *   did not match, so a codex-ui release that moved it is a one-line fix.
  */
 export function applySidebarPatch(source) {
-  let patched = source
-  const applied = []
-  for (const edit of EDITS) {
-    const first = patched.indexOf(edit.from)
-    if (first === -1) {
-      throw new Error(`codex-ui sidebar patch: anchor for edit "${edit.id}" is missing. The published bundle changed shape; review the edit before applying it.`)
+  const unmatched = []
+  for (const set of EDIT_SETS) {
+    const problems = set.edits
+      .map((edit) => ({ edit, problem: anchorProblem(source, edit) }))
+      .filter((entry) => entry.problem !== undefined)
+    if (problems.length === 0) {
+      let patched = source
+      const applied = []
+      for (const edit of set.edits) {
+        const first = patched.indexOf(edit.from)
+        patched = patched.slice(0, first) + edit.to + patched.slice(first + edit.from.length)
+        applied.push(edit.id)
+      }
+      return { source: patched, applied, set: set.id }
     }
-    if (patched.indexOf(edit.from, first + 1) !== -1) {
-      throw new Error(`codex-ui sidebar patch: anchor for edit "${edit.id}" is ambiguous (appears more than once).`)
-    }
-    patched = patched.slice(0, first) + edit.to + patched.slice(first + edit.from.length)
-    applied.push(edit.id)
+    unmatched.push({ set, problems })
   }
-  return { source: patched, applied }
+  const closest = unmatched.sort((left, right) => left.problems.length - right.problems.length)[0]
+  const first = closest.problems[0]
+  const ambiguity = first.problem === 'ambiguous' ? ' is ambiguous (appears more than once)' : ' is missing'
+  throw new Error(
+    `codex-ui sidebar patch: no edit set matches this bundle. Closest is "${closest.set.id}" (${closest.set.shape}): ` +
+      `anchor for edit "${first.edit.id}"${ambiguity}. The published bundle changed shape; ` +
+      `review the edit before applying it.`,
+  )
 }

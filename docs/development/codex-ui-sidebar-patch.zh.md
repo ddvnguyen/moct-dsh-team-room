@@ -22,6 +22,15 @@
 
 补丁通过带锚点的编辑（`scripts/codex-ui-sidebar-patch/edits.mjs`）应用，而不是基于行号的 diff。锚点未变的 codex-ui 版本无需新补丁；锚点被移动的版本会让应用器报出失配的编辑 id，并且不改动已安装的包。
 
+## 两种 bundle 形态
+
+rc.1 重写了侧栏，因此编辑列表按形态各带一份编辑集（`EDIT_SETS`）：
+
+- `tab-strip`（codex-ui <= 1.1.x）：上文说的页签条与 Extensions 分组，两个接缝都加在这里。
+- `sidebar-nav`（codex-ui >= 2.0）：页签条已经不存在，侧栏变成 `sidebar.panellist` 列表，分「常驻」与折叠的「更多」两区。已无页签条可锚定，Teams 页签退回它的面板入口——插件自己会探测页签条。策略接缝仍在：通过 `__dshTopPanels` 发布的 id 默认落在常驻区最上方，即「紧挨 New task」现在所在的位置。什么都不发布时，布局保持上游原样。
+
+`apply.mjs` 应用锚点全部匹配的那一份，并报告是哪一份。任何一份都不匹配时，它报出最接近的一份与失配的锚点，且不改动已安装的包。
+
 ## 策略归谁
 
 `@ddvnguyen/dsh-sidebar` 通过 `globalThis.__dshTopPanels` 发布顶层面板 id（`dsh-context`、`agent-team-settings`），并用 CSS `order` 排列菜单子项。没有补丁时该发布不产生任何效果，主机保持自己的布局；该插件从不把 React 拥有的节点搬出菜单。
@@ -37,5 +46,5 @@ dsh-x profile 带有一个 `postinstall` 钩子，每次 profile 安装后都会
 ## codex-ui 发版时检查什么
 
 1. `node scripts/codex-ui-sidebar-patch/apply.mjs <codex-ui-dir> --check` —— 补丁仍然适用。
-2. 若不适用，读报错给出的编辑 id，找到上游的新形态并调整锚点。不要重写功能：编辑列表就是功能本身。
+2. 若不适用，读报错给出的编辑集与编辑 id，找到上游的新形态并调整该锚点；侧栏被重写成两份编辑集都不认识的样子时，新增一份。不要重写功能：编辑列表就是功能本身。
 3. `node scripts/codex-ui-sidebar-patch/generate.mjs <version>` 生成该版本可审阅的 diff。
