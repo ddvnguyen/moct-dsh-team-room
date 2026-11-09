@@ -547,6 +547,34 @@
   font-family: inherit;
 }
 
+/* The trailing "+ Add list": the board's own control, at the end of the columns. */
+.addListButton {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--ml-border);
+  border-radius: var(--ml-radius-card);
+  color: var(--ml-text-secondary);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.addListButton:hover { background: var(--ml-surface-hover); color: var(--ml-text); }
+
+/* Why a menu entry is disabled, beside the entry it explains. */
+.columnMenuHint {
+  color: var(--ml-text-tertiary);
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+  max-width: 220px;
+  padding: 4px 8px;
+}
+
 .dialogError {
   color: var(--ml-priority-urgent);
   font-size: var(--ml-text-caption);
@@ -557,6 +585,7 @@
 .collapsedColumn:focus-visible,
 .columnMenuButton:focus-visible,
 .columnAddButton:focus-visible,
+.addListButton:focus-visible,
 .hiddenShowButton:focus-visible,
 .filterChipClear:focus-visible,
 .filterSearch:focus-visible {

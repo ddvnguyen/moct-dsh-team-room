@@ -147,6 +147,15 @@ import type {
   AgentTeamStaleDocRevision,
   AgentTeamStaleRevision,
   AgentTeamStatus,
+  AgentTeamCreateStatusRequest,
+  AgentTeamUpdateStatusRequest,
+  AgentTeamArchiveStatusRequest,
+  AgentTeamBoardStatus,
+  AgentTeamStatusArchivedOperation,
+  AgentTeamStatusCategory,
+  AgentTeamStatusCreatedOperation,
+  AgentTeamStatusResult,
+  AgentTeamStatusUpdatedOperation,
   AgentTeamStoredMessage,
   AgentTeamStoredThreadFact,
   AgentTeamTask,
@@ -288,6 +297,30 @@ const TASK_LABEL_LIMIT = 20
 
 /** Character bound of one stored label. */
 const TASK_LABEL_LENGTH = 40
+
+/** Character bound of one Board list's name. */
+const STATUS_LABEL_LENGTH = 40
+
+/**
+ * The five built-in Board lists, in board order.
+ *
+ * A constant, not a stored catalog entry: they are derived from Claims and
+ * resolution (`deriveTaskStatus`) and their behaviour is category-driven, so
+ * no operation can rename, archive or reorder one. `builtin: true` is what
+ * makes the board and the Host agree that a list is not editable.
+ */
+export const AGENT_TEAM_BUILTIN_STATUSES: readonly AgentTeamBoardStatus[] = Object.freeze([
+  Object.freeze({ key: 'todo', label: 'Todo', category: 'unstarted' as const, builtin: true, archived: false }),
+  Object.freeze({ key: 'in_progress', label: 'In progress', category: 'started' as const, builtin: true, archived: false }),
+  Object.freeze({ key: 'in_review', label: 'In review', category: 'started' as const, builtin: true, archived: false }),
+  Object.freeze({ key: 'done', label: 'Done', category: 'done' as const, builtin: true, archived: false }),
+  Object.freeze({ key: 'closed', label: 'Closed', category: 'closed' as const, builtin: true, archived: false }),
+])
+
+/** The catalog is per Workspace, so one entry's projection key carries its Workspace. */
+function statusCatalogKey(workspaceId: WorkspaceId, key: string): string {
+  return `${workspaceId}\u0000${key}`
+}
 
 const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
   kind: 'human',
@@ -520,6 +553,18 @@ export interface AgentTeamAuthorizedPromoteThreadRequest extends AgentTeamPromot
   readonly actor: AgentTeamHumanActor
 }
 
+export interface AgentTeamAuthorizedCreateStatusRequest extends AgentTeamCreateStatusRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedUpdateStatusRequest extends AgentTeamUpdateStatusRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedArchiveStatusRequest extends AgentTeamArchiveStatusRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
 export interface AgentTeamAuthorizedThreadAttentionRequest extends AgentTeamThreadAttentionRequest {
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
 }
@@ -673,6 +718,8 @@ interface Projection {
   readonly memberships: Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>
   readonly claims: Map<AgentTeamClaimRef, AgentTeamClaim>
   readonly tasks: Map<AgentTeamTaskRef, AgentTeamTask>
+  /** Custom Board lists per Workspace, keyed by `statusCatalogKey`; the five built-ins are never stored. */
+  readonly statuses: Map<string, AgentTeamBoardStatus>
   readonly threads: Map<AgentTeamThreadRef, AgentTeamThread>
   readonly attention: Map<string, AgentTeamThreadAttention>
   readonly directMarkers: Map<string, AgentTeamDirectMarker>
@@ -802,7 +849,7 @@ function foldSessionTurn(prior: AgentTeamSessionRun | undefined, data: AgentTeam
 
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), participations: new Map(), memberships: new Map(),
-    claims: new Map(), tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
+    claims: new Map(), tasks: new Map(), statuses: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], claimsByTask: new Map(), factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     messagesByRef: new Map(),
     attentionByThread: new Map(), previousSessions: new Map(), threadSessions: new Map(), threadInstances: new Map(), sessionRuns: new Map(), sessionTurns: new Map(), threadSummaries: new Map(), rolloverSeeds: new Map(),
@@ -1769,6 +1816,7 @@ export class AgentTeamLedger {
       const canonical = this.canonicalTaskPatch(patch)
       if (canonical.assignee != null) this.assertAssignable(canonical.assignee, task.channelRef)
       if (canonical.parentTaskRef != null) this.assertParentTask(request.workspaceId, request.taskRef, canonical.parentTaskRef)
+      if (canonical.statusKey != null) this.assertPlaceableStatus(task, canonical.statusKey)
       // Board fields are metadata: the Human need not have read the Thread to
       // reorder or relabel a Task, so only the revision fences the write.
       if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
@@ -2111,7 +2159,7 @@ export class AgentTeamLedger {
       }
       const sequence = this.nextSequence()
       const projected = new Map(this.state.claims).set(claim.claimRef, claim)
-      const nextTask: AgentTeamTask = Object.freeze({ ...task, status: this.deriveTaskStatus(task.taskRef, projected.values()) })
+      const nextTask: AgentTeamTask = this.placedTask(task, this.deriveTaskStatus(task.taskRef, projected.values()))
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
       const activity: AgentTeamClaimActivity = Object.freeze({
         activityRef: this.ref('activity'), kind: activityKind, taskRef: task.taskRef,
@@ -2176,7 +2224,7 @@ export class AgentTeamLedger {
       const resolution = request.action === 'reopen' ? 'open' as const : request.action === 'accept' ? 'accepted' as const : 'closed' as const
       const status = resolution === 'accepted' ? 'done' as const : resolution === 'closed' ? 'closed' as const
         : this.deriveTaskStatus(task.taskRef, claims)
-      const nextTask: AgentTeamTask = Object.freeze({ ...task, resolution, status })
+      const nextTask: AgentTeamTask = Object.freeze({ ...this.placedTask(task, status), resolution })
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
       const activity: AgentTeamTaskActivity = Object.freeze({ activityRef: this.ref('activity'), kind: request.action,
         taskRef: task.taskRef, threadRef: task.threadRef, actor: request.actor.memberId, sequence,
@@ -2197,6 +2245,197 @@ export class AgentTeamLedger {
       this.apply(operation)
       return this.committed(this.taskResult(operation))
     })
+  }
+
+  /**
+   * Human-only: add one Board list to a Workspace's status catalog.
+   *
+   * The key is a slug minted from the name and then frozen for the list's
+   * whole life: a Task's placement and the board's column id are both keyed by
+   * it, so a rename must not move it.
+   */
+  createStatus(request: AgentTeamAuthorizedCreateStatusRequest): Promise<AgentTeamLedgerResult<AgentTeamStatusResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameStatusWrite(existing, request, 'team/status-created',
+          (status) => status.label === this.normalizeStatusLabel(request.label) && status.category === request.category)
+        return this.resolved(this.statusResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const label = this.normalizeStatusLabel(request.label)
+      const category = this.assertStatusCategory(request.category)
+      this.assertStatusLabelFree(request.workspaceId, label, undefined)
+      const status: AgentTeamBoardStatus = Object.freeze({
+        key: this.mintStatusKey(request.workspaceId, label), label, category, builtin: false, archived: false,
+      })
+      const operation: AgentTeamStatusCreatedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/status-created',
+        data: Object.freeze({ workspaceId: request.workspaceId, status }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.statusResult(operation))
+    })
+  }
+
+  /**
+   * Human-only: rename a custom list and, optionally, re-categorise it.
+   *
+   * Built-in lists are derived state, and an archived list draws no column, so
+   * neither can be renamed: the Host refuses them with the reason the board
+   * shows on the disabled menu entry.
+   */
+  updateStatus(request: AgentTeamAuthorizedUpdateStatusRequest): Promise<AgentTeamLedgerResult<AgentTeamStatusResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameStatusWrite(existing, request, 'team/status-updated',
+          (status) => status.key === request.key && status.label === this.normalizeStatusLabel(request.label) && status.category === request.category)
+        return this.resolved(this.statusResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const prior = this.requireCustomStatus(request.workspaceId, request.key, 'renamed')
+      const label = this.normalizeStatusLabel(request.label)
+      const category = this.assertStatusCategory(request.category)
+      this.assertStatusLabelFree(request.workspaceId, label, prior.key)
+      const status: AgentTeamBoardStatus = Object.freeze({ ...prior, label, category })
+      const operation: AgentTeamStatusUpdatedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/status-updated',
+        data: Object.freeze({ workspaceId: request.workspaceId, status }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.statusResult(operation))
+    })
+  }
+
+  /**
+   * Human-only: archive a custom list.
+   *
+   * Refused while the list still holds cards — with the count — because the
+   * alternative is a hidden bulk move the Human never asked for. An archived
+   * entry stays in the catalog so a Task recorded against it still reads back.
+   */
+  archiveStatus(request: AgentTeamAuthorizedArchiveStatusRequest): Promise<AgentTeamLedgerResult<AgentTeamStatusResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameStatusWrite(existing, request, 'team/status-archived',
+          (status) => status.key === request.key)
+        return this.resolved(this.statusResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const prior = this.requireCustomStatus(request.workspaceId, request.key, 'archived')
+      const held = this.tasksHoldingStatus(request.workspaceId, prior.key)
+      if (held > 0) throw new Error(`Board list '${prior.label}' still holds ${held} ${held === 1 ? 'task' : 'tasks'}; move them first`)
+      const status: AgentTeamBoardStatus = Object.freeze({ ...prior, archived: true })
+      const operation: AgentTeamStatusArchivedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/status-archived',
+        data: Object.freeze({ workspaceId: request.workspaceId, status }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.statusResult(operation))
+    })
+  }
+
+  /** The catalog a reader sees: the five built-ins, then this Workspace's custom lists in creation order. */
+  private statusCatalog(workspaceId: WorkspaceId): readonly AgentTeamBoardStatus[] {
+    return this.statusCatalogFrom(this.state, workspaceId)
+  }
+
+  private statusCatalogFrom(projection: Projection, workspaceId: WorkspaceId): readonly AgentTeamBoardStatus[] {
+    const prefix = statusCatalogKey(workspaceId, '')
+    const custom = [...projection.statuses.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, status]) => status)
+    return Object.freeze([...AGENT_TEAM_BUILTIN_STATUSES, ...custom])
+  }
+
+  /** One list of one Workspace, built-in or custom; `undefined` when the key is not in the catalog. */
+  private statusOf(projection: Projection, workspaceId: WorkspaceId, key: string): AgentTeamBoardStatus | undefined {
+    return AGENT_TEAM_BUILTIN_STATUSES.find(status => status.key === key)
+      ?? projection.statuses.get(statusCatalogKey(workspaceId, key))
+  }
+
+  /** A custom list that may still be renamed or archived: unknown, built-in and archived all refuse with their reason. */
+  private requireCustomStatus(workspaceId: WorkspaceId, key: string, verb: 'renamed' | 'archived'): AgentTeamBoardStatus {
+    if (AGENT_TEAM_BUILTIN_STATUSES.some(status => status.key === key)) throw new Error(`built-in list '${key}' cannot be ${verb}`)
+    const status = this.state.statuses.get(statusCatalogKey(workspaceId, key))
+    if (status === undefined) throw new Error(`unknown list '${key}'`)
+    if (status.archived) throw new Error(`archived list '${status.label}' cannot be ${verb}`)
+    return status
+  }
+
+  private normalizeStatusLabel(label: string): string {
+    const trimmed = label.trim()
+    if (trimmed === '') throw new Error('a list name must not be empty')
+    if (trimmed.length > STATUS_LABEL_LENGTH) throw new Error(`a list name must not exceed ${STATUS_LABEL_LENGTH} characters`)
+    return trimmed
+  }
+
+  private assertStatusCategory(category: AgentTeamStatusCategory): AgentTeamStatusCategory {
+    if (category !== 'unstarted' && category !== 'started' && category !== 'done' && category !== 'closed') {
+      throw new Error(`unknown list category '${String(category)}'`)
+    }
+    return category
+  }
+
+  /** One live list per name in a Workspace: two columns a reader cannot tell apart are never built. */
+  private assertStatusLabelFree(workspaceId: WorkspaceId, label: string, exceptKey: string | undefined): void {
+    const lowered = label.toLowerCase()
+    for (const status of this.statusCatalog(workspaceId)) {
+      if (status.builtin || status.archived || status.key === exceptKey) continue
+      if (status.label.toLowerCase() === lowered) throw new Error(`a list named '${status.label}' already exists`)
+    }
+  }
+
+  private mintStatusKey(workspaceId: WorkspaceId, label: string): string {
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '') || 'list'
+    if (!this.statusKeyTaken(workspaceId, slug)) return slug
+    for (let suffix = 2; suffix < 100; suffix += 1) {
+      const candidate = `${slug}-${suffix}`
+      if (!this.statusKeyTaken(workspaceId, candidate)) return candidate
+    }
+    throw new Error(`cannot mint a key for list '${label}'`)
+  }
+
+  /** A key is spent forever: built-in, live or archived — reusing one would silently adopt old placements. */
+  private statusKeyTaken(workspaceId: WorkspaceId, key: string): boolean {
+    return AGENT_TEAM_BUILTIN_STATUSES.some(status => status.key === key)
+      || this.state.statuses.has(statusCatalogKey(workspaceId, key))
+  }
+
+  private tasksHoldingStatus(workspaceId: WorkspaceId, key: string): number {
+    let held = 0
+    for (const task of this.state.tasks.values()) {
+      if (task.statusKey !== key) continue
+      if (this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+      held += 1
+    }
+    return held
+  }
+
+  private statusResult(operation: AgentTeamOperation) {
+    const status = operation.kind === 'team/status-created' || operation.kind === 'team/status-updated' || operation.kind === 'team/status-archived'
+      ? operation.data.status
+      : undefined
+    if (status === undefined) throw new Error('not a Board list operation')
+    return { kind: 'committed' as const, receipt: this.receipt(operation), status }
+  }
+
+  private assertSameStatusWrite(
+    operation: AgentTeamOperation,
+    request: AgentTeamCreateStatusRequest | AgentTeamUpdateStatusRequest | AgentTeamArchiveStatusRequest,
+    kind: 'team/status-created' | 'team/status-updated' | 'team/status-archived',
+    matches: (status: AgentTeamBoardStatus) => boolean,
+  ): void {
+    const recorded = operation.kind === 'team/status-created' || operation.kind === 'team/status-updated' || operation.kind === 'team/status-archived'
+      ? operation
+      : undefined
+    if (recorded === undefined || recorded.kind !== kind || recorded.data.workspaceId !== request.workspaceId
+      || !matches(recorded.data.status)) this.throwRequestCollision(request.requestId)
   }
 
   removeMember(request: AgentTeamAuthorizedRemoveMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamRemoveMemberResult>> {
@@ -4317,6 +4556,7 @@ export class AgentTeamLedger {
     const nextCursor = selected.length === 0 ? cursor : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
     return Object.freeze({
       humanMemberId: initialization.data.humanMemberId,
+      statuses: Object.freeze(this.statusCatalog(request.workspaceId)),
       workspaces: Object.freeze(memberId === undefined ? [] : this.workspacesOfFrom(this.state, memberId)
         .map(workspaceId => Object.freeze({ workspaceId, default: workspaceId === this.state.members.get(memberId)?.workspaceId }))),
       channels: Object.freeze(channels),
@@ -4631,6 +4871,11 @@ export class AgentTeamLedger {
       case 'team/task-created':
       case 'team/task-updated':
         return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
+      case 'team/status-created':
+      case 'team/status-updated':
+      case 'team/status-archived':
+        // A catalog edit is a Workspace-level fact: no Thread content moved.
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }]
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/turn-failure-notice':
@@ -4736,6 +4981,10 @@ export class AgentTeamLedger {
       // A resolution is a marker on one comment: it adds no Thread fact, so no
       // follower has unread work behind it.
       case 'team/comment-resolved':
+      // A catalog edit wakes nobody: it adds no Thread fact and no unread work.
+      case 'team/status-created':
+      case 'team/status-updated':
+      case 'team/status-archived':
         return []
       default:
         return assertUnhandledKind(operation)
@@ -5049,6 +5298,36 @@ export class AgentTeamLedger {
       this.validateReleaseCleanup(operation.data, projection, prior.memberId, threadRefs, operation.sequence, refs)
       return
     }
+    if (operation.kind === 'team/status-created' || operation.kind === 'team/status-updated' || operation.kind === 'team/status-archived') {
+      assertHuman()
+      const { workspaceId, status } = operation.data
+      this.normalizeStatusLabel(status.label)
+      this.assertStatusCategory(status.category)
+      if (status.builtin) throw new Error('invalid Board list: built-in lists are never stored')
+      const recorded = projection.statuses.get(statusCatalogKey(workspaceId, status.key))
+      const others = this.statusCatalogFrom(projection, workspaceId)
+        .filter(entry => !entry.builtin && !entry.archived && entry.key !== status.key)
+      if (operation.kind === 'team/status-created') {
+        if (recorded !== undefined || status.archived) throw new Error('invalid Board list creation')
+        if (others.some(entry => entry.label.toLowerCase() === status.label.toLowerCase())) throw new Error('invalid Board list creation: duplicate name')
+      } else {
+        // A rename or an archival edits the entry it read; the key never moves.
+        if (recorded === undefined || recorded.builtin || recorded.archived) throw new Error('invalid Board list edit')
+        if (operation.kind === 'team/status-updated') {
+          if (status.archived || status.label.trim() !== status.label || status.label.length > STATUS_LABEL_LENGTH) throw new Error('invalid Board list edit')
+          if (others.some(entry => entry.label.toLowerCase() === status.label.toLowerCase())) throw new Error('invalid Board list edit: duplicate name')
+        } else {
+          if (!status.archived || status.label !== recorded.label || status.category !== recorded.category) throw new Error('invalid Board list archival')
+          // Archival is refused while the list holds cards, so a record that hid one is a broken ledger.
+          const channels = new Set([...projection.channels.values()]
+            .filter(channel => channel.workspaceId === workspaceId).map(channel => channel.channelRef))
+          for (const task of projection.tasks.values()) {
+            if (task.statusKey === status.key && channels.has(task.channelRef)) throw new Error('invalid Board list archival: the list still holds a task')
+          }
+        }
+      }
+      return
+    }
     if (operation.kind === 'team/thread-attention-changed') {
       const actor = operation.actor.kind === 'member' ? assertMember() : (assertHuman(), undefined)
       if (operation.data.memberId !== operation.actor.memberId) throw new Error('Attention operation has wrong actor')
@@ -5236,6 +5515,8 @@ export class AgentTeamLedger {
         throw new Error('invalid Task labels')
       }
       if (typeof patch.dueDate === 'string') this.normalizeDueDate(patch.dueDate)
+      if (typeof patch.statusKey === 'string') this.normalizeStatusKey(patch.statusKey)
+      this.assertRecordedPlacement(projection, operation.data.workspaceId, task)
       const assigned = patch.assignee !== undefined && patch.assignee !== null
         && patch.assignee !== (priorTask.assignee ?? null)
       if (assigned) {
@@ -5350,6 +5631,9 @@ export class AgentTeamLedger {
         || (operation.actor.kind === 'member' && previousClaim.owner !== operation.actor.memberId)
         || claim.state !== (operation.kind === 'team/claim-done' ? 'done' : 'released'))) throw new Error('invalid Claim transition')
       if (task.status !== this.deriveResolvedTaskStatus(task, new Map(projection.claims).set(claim.claimRef, claim).values())) throw new Error('invalid Claim Task status')
+      // Q5 enforced on replay: a Claim that moved the status leaves the list.
+      if (task.statusKey !== this.carriedStatusKey(priorTask, task.status)) throw new Error('invalid Claim Task placement')
+      this.assertRecordedPlacement(projection, operation.data.workspaceId, task)
       this.addRef(refs, activity.activityRef)
       if (creates) this.addRef(refs, claim.claimRef)
       const expectedInbox = creates && !this.isFollowingFrom(projection, thread.threadRef, operation.actor.memberId)
@@ -5394,6 +5678,9 @@ export class AgentTeamLedger {
           && !this.sameList(activity.acceptedClaimRefs, expectedAcceptedClaimRefs))) {
         throw new Error('invalid Task state transition')
       }
+      // Q5 enforced on replay: accept, close and reopen all leave the list.
+      if (task.statusKey !== this.carriedStatusKey(priorTask, task.status)) throw new Error('invalid Task placement')
+      this.assertRecordedPlacement(projection, operation.data.workspaceId, task)
       const priorClaims = [...(projection.claimsByTask.get(task.taskRef) ?? [])].sort((left, right) => left.claimRef.localeCompare(right.claimRef))
       const operationClaims = [...operation.data.claims].sort((left, right) => left.claimRef.localeCompare(right.claimRef))
       if (priorClaims.length !== operationClaims.length || priorClaims.some((claim, index) => claim.claimRef !== operationClaims[index]?.claimRef)) throw new Error('invalid Task Claim set')
@@ -5998,6 +6285,12 @@ export class AgentTeamLedger {
       target.threadSessions.set(operation.data.threadRef, byMember)
       const bindings = byMember.get(operation.data.memberId) ?? []
       byMember.set(operation.data.memberId, [...bindings, Object.freeze({ ...operation.data, sequence: operation.sequence })])
+      return
+    }
+    if (operation.kind === 'team/status-created' || operation.kind === 'team/status-updated' || operation.kind === 'team/status-archived') {
+      // `Map.set` on an existing key keeps its position, so the catalog's order
+      // is creation order and a rename never moves a column.
+      target.statuses.set(statusCatalogKey(operation.data.workspaceId, operation.data.status.key), operation.data.status)
       return
     }
     if (operation.kind === 'team/thread-attention-changed' || operation.kind === 'team/thread-read') {
@@ -6782,6 +7075,45 @@ export class AgentTeamLedger {
     return [...projection.claims.values()].some(claim => claim.owner === memberId && claim.taskRef === taskRef && claim.state === 'active')
   }
 
+  /**
+   * Q5: a card that changes lifecycle status leaves the custom list it was
+   * placed in. The board and the issue view tell one story — a Task the issue
+   * view calls Done is never left sitting in "QA".
+   *
+   * Both writers of `status` (a Claim and a Human resolution) go through
+   * `placedTask`, and replay enforces the same rule, so a ledger cannot record
+   * a Task whose column contradicts its status.
+   */
+  private carriedStatusKey(task: AgentTeamTask, status: AgentTeamTask['status']): string | null | undefined {
+    return task.statusKey != null && status !== task.status ? null : task.statusKey
+  }
+
+  /** The Task after one lifecycle write: the new status, with the placement it keeps or loses. */
+  private placedTask(task: AgentTeamTask, status: AgentTeamTask['status']): AgentTeamTask {
+    const statusKey = this.carriedStatusKey(task, status)
+    return Object.freeze(statusKey === undefined ? { ...task, status } : { ...task, status, statusKey })
+  }
+
+  /** A placement must name a live custom list of the Task's own Workspace; a built-in key is never a placement. */
+  private assertPlaceableStatus(task: AgentTeamTask, key: string): void {
+    const workspaceId = this.state.channels.get(task.channelRef)?.workspaceId
+    const status = workspaceId === undefined ? undefined : this.state.statuses.get(statusCatalogKey(workspaceId, key))
+    if (status === undefined) throw new Error(`unknown list '${key}'`)
+    if (status.archived) throw new Error(`archived list '${status.label}' cannot hold cards`)
+  }
+
+  /** Replay's half of `assertPlaceableStatus`: a record naming an unknown or archived list is a broken ledger. */
+  private assertRecordedPlacement(projection: Projection, workspaceId: WorkspaceId, task: AgentTeamTask): void {
+    if (task.statusKey == null) return
+    const status = projection.statuses.get(statusCatalogKey(workspaceId, task.statusKey))
+    if (status === undefined || status.archived) throw new Error('invalid Task placement')
+  }
+
+  private normalizeStatusKey(key: string): string {
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(key)) throw new Error(`malformed list key '${key}'`)
+    return key
+  }
+
   private deriveResolvedTaskStatus(task: AgentTeamTask, claims: Iterable<AgentTeamClaim>): AgentTeamTask['status'] {
     return task.resolution === 'accepted' ? 'done' : task.resolution === 'closed' ? 'closed' : this.deriveTaskStatus(task.taskRef, claims)
   }
@@ -7435,7 +7767,8 @@ export class AgentTeamLedger {
   /** Keep only the provided keys, so a recorded patch is exactly what changed. */
   private normalizeTaskPatch(patch: AgentTeamTaskPatchRequest): AgentTeamTaskPatch {
     const next: { title?: string; priority?: AgentTeamTaskPriority; assignee?: AgentTeamMemberId | null; position?: number;
-      parentTaskRef?: AgentTeamTaskRef | null; pullRequests?: readonly AgentTeamTaskPullRequest[]; labels?: readonly string[]; dueDate?: string | null } = {}
+      parentTaskRef?: AgentTeamTaskRef | null; pullRequests?: readonly AgentTeamTaskPullRequest[]; labels?: readonly string[]; dueDate?: string | null;
+      statusKey?: string | null } = {}
     if (patch.title !== undefined) {
       const title = patch.title.trim()
       if (title === '') throw new Error('task title must not be empty')
@@ -7451,6 +7784,7 @@ export class AgentTeamLedger {
     if (patch.pullRequests !== undefined) next.pullRequests = this.normalizePullRequests(patch.pullRequests)
     if (patch.labels !== undefined) next.labels = this.normalizeTaskLabels(patch.labels)
     if (patch.dueDate !== undefined) next.dueDate = patch.dueDate === null ? null : this.normalizeDueDate(patch.dueDate)
+    if (patch.statusKey !== undefined) next.statusKey = patch.statusKey === null ? null : this.normalizeStatusKey(patch.statusKey)
     return Object.freeze(next)
   }
 

@@ -4,7 +4,9 @@
 // assignee/project/property column heads are gone. Multica's virtualization
 // handoff (Virtuoso seed + threshold) is kept in a reduced form — plain render
 // below the threshold, `react-virtuoso` above it — and the workflow hints and
-// scroll-memento plumbing are not ported.
+// scroll-memento plumbing are not ported. M-51: the head reads a column model
+// (built-in or custom list) and the `⋯` menu carries Rename and Archive
+// beside Hide, disabled with the reason where the Host would refuse.
 
 import { memo, useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useDroppable } from '@dnd-kit/core'
@@ -12,12 +14,12 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { Virtuoso } from 'react-virtuoso'
 import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from '../slots.ts'
-import type { TaskStatus } from '../multica/types.ts'
+import type { ActivitySource, TaskStatus } from '../multica/types.ts'
 import { StatusHeading } from '../multica-ui/StatusHeading.tsx'
 import { DraggableBoardCard, type BoardCardUpdate } from './BoardCard.tsx'
 import type { AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
-import type { ActivitySource } from '../multica/types.ts'
 import type { BoardCardTask } from './board-types.ts'
+import { columnLabel, type BoardColumnModel } from './board-columns.ts'
 import css from './board.module.css'
 
 export const BOARD_COL_WIDTH = 280
@@ -29,7 +31,7 @@ const BOARD_VIRTUALIZE_THRESHOLD = 30
 const EMPTY_ACTIVITIES: readonly ActivitySource[] = Object.freeze([])
 
 export interface BoardColumnProps {
-  readonly status: TaskStatus
+  readonly column: BoardColumnModel
   readonly tasks: readonly BoardCardTask[]
   readonly locked: boolean
   /**
@@ -38,9 +40,13 @@ export interface BoardColumnProps {
    */
   readonly onCardClick: (task: BoardCardTask, focusOpener?: (() => void) | undefined) => void
   readonly onCardUpdate: (taskRef: string, update: BoardCardUpdate) => void
-  readonly onHide: (status: TaskStatus) => void
+  readonly onHide: (column: BoardColumnModel) => void
   /** Folds the column to the slim strip; `…` › Hide column is a separate affordance. */
   readonly onToggleCollapse: () => void
+  /** Opens the list editor on this column; `undefined` for a built-in list. */
+  readonly onRename?: ((column: BoardColumnModel) => void) | undefined
+  /** Asks to archive this column; `undefined` for a built-in list. */
+  readonly onArchive?: ((column: BoardColumnModel) => void) | undefined
   readonly onCreate: () => void
   readonly members: readonly AssigneeOption[]
   readonly activities: readonly ActivitySource[]
@@ -48,8 +54,9 @@ export interface BoardColumnProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, onCardClick, onCardUpdate, onHide, onToggleCollapse, onCreate, members, activities, settlingRefs, t }: BoardColumnProps) {
-  const { setNodeRef, isOver } = useDroppable({ id: `status:${status}` })
+export const BoardColumn = memo(function BoardColumn({ column, tasks, locked, onCardClick, onCardUpdate, onHide,
+  onToggleCollapse, onRename, onArchive, onCreate, members, activities, settlingRefs, t }: BoardColumnProps) {
+  const { setNodeRef, isOver } = useDroppable({ id: column.id })
   const [menuOpen, setMenuOpen] = useState(false)
   // The column's scroll container is both dnd-kit's droppable and Virtuoso's
   // customScrollParent, so a merged callback ref feeds the element to both.
@@ -106,11 +113,21 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
         />
       )
 
+  // A built-in list is derived state: the Host refuses to rename or archive it,
+  // so the menu says so instead of offering the write.
+  const renameBlocked = column.builtin ? t('boardListBuiltinRename') : undefined
+  const archiveBlocked = column.builtin ? t('boardListBuiltinArchive') : undefined
+
   return (
-    <div className={css.column} data-status={status} data-testid="board-column">
+    <div className={css.column} data-status={column.key} data-column-key={column.key} data-testid="board-column">
       <div className={css.columnHeader}>
         <span className={css.columnHeaderLeft}>
-          <StatusHeading status={status} count={tasks.length} t={t} />
+          <StatusHeading
+            {...(column.builtin ? { status: column.key as TaskStatus } : {})}
+            label={columnLabel(column, t)}
+            count={tasks.length}
+            t={t}
+          />
         </span>
         <span className={css.columnActions}>
           {/* Never pressed: a collapsed column renders the strip instead of this
@@ -141,9 +158,33 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
               </button>
             )}
           >
-            <button type="button" className={css.hiddenShowButton} onClick={() => { setMenuOpen(false); onHide(status) }}>
+            <button
+              type="button"
+              className={css.hiddenShowButton}
+              data-testid="board-rename-list"
+              disabled={onRename === undefined}
+              title={renameBlocked}
+              aria-describedby={renameBlocked === undefined ? undefined : 'board-rename-blocked'}
+              onClick={() => { setMenuOpen(false); onRename?.(column) }}
+            >
+              {t('boardRenameList')}
+            </button>
+            <button
+              type="button"
+              className={css.hiddenShowButton}
+              data-testid="board-archive-list"
+              disabled={onArchive === undefined}
+              title={archiveBlocked}
+              aria-describedby={archiveBlocked === undefined ? undefined : 'board-archive-blocked'}
+              onClick={() => { setMenuOpen(false); onArchive?.(column) }}
+            >
+              {t('boardArchiveList')}
+            </button>
+            <button type="button" className={css.hiddenShowButton} data-testid="board-hide-list" onClick={() => { setMenuOpen(false); onHide(column) }}>
               {t('boardHideColumn')}
             </button>
+            {renameBlocked !== undefined && <p id="board-rename-blocked" className={css.columnMenuHint}>{renameBlocked}</p>}
+            {archiveBlocked !== undefined && <p id="board-archive-blocked" className={css.columnMenuHint}>{archiveBlocked}</p>}
           </Menu>
           <button type="button" className={css.columnAddButton} aria-label={t('boardNewTask')} onClick={onCreate}>+</button>
         </span>
@@ -152,7 +193,7 @@ export const BoardColumn = memo(function BoardColumn({ status, tasks, locked, on
         <div
           ref={mergedRef}
           className={`${css.columnScroll} ${isOver && !locked ? css.columnOver : ''}`}
-          data-column-scroll={status}
+          data-column-scroll={column.key}
         >
           <SortableContext items={tasks.map(task => task.taskRef)} strategy={verticalListSortingStrategy}>
             {cards}

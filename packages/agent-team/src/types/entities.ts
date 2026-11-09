@@ -354,6 +354,28 @@ export interface AgentTeamCommentResolution {
   readonly resolvedAt: string
 }
 
+/** The four lifecycle categories a Board list can carry; accept/close/reopen stay category-driven. */
+export type AgentTeamStatusCategory = 'unstarted' | 'started' | 'done' | 'closed'
+
+/**
+ * One Board list in a Workspace's status catalog.
+ *
+ * The five built-ins are a constant (`AGENT_TEAM_BUILTIN_STATUSES`): never
+ * stored, never editable. Every other entry is durable — created by
+ * `team/status-created`, renamed by `team/status-updated`, archived by
+ * `team/status-archived` — and its `key` is the column id's own key, so a
+ * column stays `status:<key>` and the hidden / collapsed sets keep working.
+ * An archived list stays in the catalog (a Task that still points at it reads
+ * back), but it draws no column and refuses a rename.
+ */
+export interface AgentTeamBoardStatus {
+  readonly key: string
+  readonly label: string
+  readonly category: AgentTeamStatusCategory
+  readonly builtin: boolean
+  readonly archived: boolean
+}
+
 /** Task overlay created by an atomic start or Human promotion. */
 export interface AgentTeamTask {
   readonly taskRef: AgentTeamTaskRef
@@ -409,6 +431,19 @@ export interface AgentTeamTask {
   readonly labels?: readonly string[] | undefined
   /** The due date, `YYYY-MM-DD`; `null` clears. Absent reads as none. */
   readonly dueDate?: string | null | undefined
+  /**
+   * The custom Board list the Human placed this card in. Absent means "the
+   * built-in column for my derived status": the card sits in the column its
+   * `status` names.
+   *
+   * Placement only — it never moves `status`, whose derivation stays the one
+   * authority accept/close/reopen read. A lifecycle change clears it to `null`
+   * (Q5, the board never disagrees with the issue view), and archiving a list
+   * is refused while any Task still holds it. Optional and forward-only: a
+   * ledger written before the catalog exists replays unchanged, and absent and
+   * `null` both read as "the built-in column for my status".
+   */
+  readonly statusKey?: string | null | undefined
 }
 
 /** One PR link the Human attached to a Task: a link, not a status. */

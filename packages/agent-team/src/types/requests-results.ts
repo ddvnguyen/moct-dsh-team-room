@@ -38,6 +38,8 @@ import type {
   AgentTeamModelSelection,
   AgentTeamOperationId,
   AgentTeamRequestId,
+  AgentTeamBoardStatus,
+  AgentTeamStatusCategory,
   AgentTeamTask,
   AgentTeamTaskDescription,
   AgentTeamTaskPriority,
@@ -751,6 +753,12 @@ export interface AgentTeamTaskPatchRequest {
   /** The due date, `YYYY-MM-DD`; `null` clears, omitted leaves it unchanged. */
   readonly dueDate?: string | null
   /**
+   * The custom list to place the card in, or `null` to send it back to the
+   * built-in column for its derived status. Omitted leaves the placement
+   * unchanged. Placement never moves the Task's status.
+   */
+  readonly statusKey?: string | null
+  /**
    * The new description body. The Human sends the text; the Host composes the
    * rest of the record (who wrote it, when, where it came from), so a client
    * cannot forge "this came from an approved plan".
@@ -775,6 +783,44 @@ export type AgentTeamUpdateTaskResult =
   | AgentTeamUpdateTaskCommittedResult
   | AgentTeamStaleRevision
   | AgentTeamStaleDescriptionRevision
+
+/** Human intent to add one Board list to a Workspace's status catalog. */
+export interface AgentTeamCreateStatusRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  /** The list's name, trimmed; the catalog refuses a duplicate inside the Workspace. */
+  readonly label: string
+  readonly category: AgentTeamStatusCategory
+}
+
+/** Human intent to rename a custom Board list, and optionally re-categorise it. */
+export interface AgentTeamUpdateStatusRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly key: string
+  readonly label: string
+  readonly category: AgentTeamStatusCategory
+}
+
+/** Human intent to archive a custom Board list; refused while the list still holds cards. */
+export interface AgentTeamArchiveStatusRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly key: string
+}
+
+export type AgentTeamStatusRequest =
+  | AgentTeamCreateStatusRequest
+  | AgentTeamUpdateStatusRequest
+  | AgentTeamArchiveStatusRequest
+
+export interface AgentTeamStatusCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly status: AgentTeamBoardStatus
+}
+
+export type AgentTeamStatusResult = AgentTeamStatusCommittedResult
 
 /**
  * A description write whose base fence is stale.
@@ -1188,6 +1234,13 @@ export interface AgentTeamViewRequest {
 /** Bounded public collaboration facts plus a continuation sequence. */
 export interface AgentTeamView {
   readonly humanMemberId: AgentTeamMemberId
+  /**
+   * The Workspace's Board lists, in column order: the five built-ins first,
+   * then the custom lists in creation order (archived ones included, flagged).
+   * The board draws its columns from this, so a list added or renamed shows up
+   * on the next read rather than on the next release.
+   */
+  readonly statuses: readonly AgentTeamBoardStatus[]
   /** Every Workspace the viewing Member participates in — the address book for the optional `workspace` selector; `default` marks the Workspace its Session roots in. */
   readonly workspaces: readonly AgentTeamWorkspaceParticipation[]
   readonly channels: readonly AgentTeamChannel[]

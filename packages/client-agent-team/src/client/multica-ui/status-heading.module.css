@@ -27,6 +27,9 @@
   white-space: nowrap;
 }
 
+/* A custom list has no derived status glyph; the ring keeps its label aligned. */
+.customGlyph { flex: 0 0 auto; color: var(--ml-text-tertiary); }
+
 .count {
   color: var(--ml-text-tertiary);
   font-size: var(--ml-text-caption);

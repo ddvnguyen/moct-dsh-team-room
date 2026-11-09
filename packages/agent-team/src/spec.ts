@@ -166,6 +166,18 @@ const taskDescriptionSchema = z.object({
   editedAt: z.string().optional(),
 }).strict()
 
+// One Board list of a Workspace's status catalog. A stored operation carries
+// the whole resulting entry, so replay reads state and never recomputes a
+// label, a category or a key from the request that wrote it.
+const statusKeySchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/)
+const statusSchema = z.object({
+  key: statusKeySchema,
+  label: z.string().min(1),
+  category: z.union([z.literal('unstarted'), z.literal('started'), z.literal('done'), z.literal('closed')]),
+  builtin: z.boolean(),
+  archived: z.boolean(),
+}).strict()
+
 const taskSchema = z.object({
   taskRef: taskRefSchema,
   channelRef: channelRefSchema,
@@ -185,6 +197,10 @@ const taskSchema = z.object({
   // The description record, optional for the same reason: a Task whose
   // description was never written has none.
   description: taskDescriptionSchema.optional(),
+  // M-51's placement, optional for the same reason: a Task written before the
+  // catalog existed has none, and absent and `null` both mean "my built-in
+  // column".
+  statusKey: statusKeySchema.nullable().optional(),
 }).strict()
 
 const taskPatchSchema = z.object({
@@ -194,6 +210,7 @@ const taskPatchSchema = z.object({
   position: z.number().finite().optional(),
   descriptionRevision: z.number().int().nonnegative().optional(),
   description: taskDescriptionSchema.optional(),
+  statusKey: statusKeySchema.nullable().optional(),
 }).strict()
 
 const threadSchema = z.object({
@@ -650,6 +667,24 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       thread: threadSchema,
       inbox: inboxDeltaSchema,
     }).strict().transform(omitUndefined),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/status-created'),
+    data: z.object({ workspaceId: workspaceIdSchema, status: statusSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/status-updated'),
+    data: z.object({ workspaceId: workspaceIdSchema, status: statusSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/status-archived'),
+    data: z.object({ workspaceId: workspaceIdSchema, status: statusSchema }).strict(),
   }).strict(),
   z.object({
     ...operationBase,

@@ -12,6 +12,10 @@ import type {
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamCreateTaskRequest,
+  AgentTeamCreateStatusRequest,
+  AgentTeamUpdateStatusRequest,
+  AgentTeamArchiveStatusRequest,
+  AgentTeamStatusResult,
   AgentTeamCreateTaskResult,
   AgentTeamInbox,
   AgentTeamInboxRequest,
@@ -285,6 +289,12 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => Promise<RemoteResult<AgentTeamIssueView>>
   /** Board create: one unassigned Task with its opening Message. */
   createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
+  /** The Workspace's status catalog: add one Board list (Human-only on the Host). */
+  createStatus: (request: AgentTeamCreateStatusRequest) => Promise<RemoteResult<AgentTeamStatusResult>>
+  /** Rename a custom list, and optionally re-categorise it; the key never moves. */
+  updateStatus: (request: AgentTeamUpdateStatusRequest) => Promise<RemoteResult<AgentTeamStatusResult>>
+  /** Archive a custom list; the Host refuses one that still holds cards. */
+  archiveStatus: (request: AgentTeamArchiveStatusRequest) => Promise<RemoteResult<AgentTeamStatusResult>>
   /** Board field write: title/priority/assignee/position, fenced by the Thread revision. */
   updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
   /** Running Turns (A13 v2) for the activity line above the composer; in-memory on the Host, never persisted. */

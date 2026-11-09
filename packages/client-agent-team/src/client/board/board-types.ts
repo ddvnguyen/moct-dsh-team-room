@@ -10,6 +10,8 @@ export interface BoardCardTask {
   readonly channelRef: AgentTeamChannelRef
   readonly threadRef: AgentTeamThreadRef
   readonly status: TaskStatus
+  /** The custom list the card is placed in; absent or `null` means its built-in column. */
+  readonly statusKey?: string | null | undefined
   readonly taskNumber: number
   readonly channelName: string
   /** The Task Thread's current revision: the fence every board write sends. */
