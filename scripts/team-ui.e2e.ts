@@ -3747,17 +3747,19 @@ it('opens the issue view, renames the issue, and keeps the edit across a reload 
   const issue = page.locator('[data-team-issue-page]')
   await issue.waitFor({ timeout: 30_000 })
   // The regions are all there, populated from the Host's one snapshot.
-  // The region headings are the assertion: the empty states name their region
-  // too, so a bare text match would count two. The timeline is the exception —
-  // M-67 folded comments, activity and runs into one region whose name is the
-  // section's aria-label, not a heading, so it is asserted by its own hook.
+  // The regions are all there, populated from the Host's one snapshot,
+  // asserted by their own hooks — the same pattern the board-card issue
+  // journey uses, so a section-label rename (M-77) cannot break this again.
+  // The empty states name their region too, so a bare text match would count
+  // two. The description body and the property row assert the population.
   await expect.poll(async () => issue.getByRole('button', { name: '编辑标题' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByTestId('issue-description-body').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByText('The body the issue view reads').count(), { timeout: 30_000 }).toBe(1)
-  await expect.poll(async () => issue.getByText('状态', { exact: true }).count(), { timeout: 30_000 }).toBe(1)
-  await expect.poll(async () => issue.getByRole('heading', { name: '描述' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByTestId('issue-properties').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByTestId('issue-prop-status').count(), { timeout: 30_000 }).toBe(1)
   await expect.poll(async () => issue.getByTestId('issue-timeline').count(), { timeout: 30_000 }).toBe(1)
-  await expect.poll(async () => issue.getByRole('heading', { name: '决策' }).count(), { timeout: 30_000 }).toBe(1)
-  await expect.poll(async () => issue.getByRole('heading', { name: '执行记录' }).count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByTestId('issue-decisions').count(), { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => issue.getByTestId('issue-execution-log').count(), { timeout: 30_000 }).toBe(1)
   await page.screenshot({ path: join(BOARD_SHOTS, 'issue-page.png'), fullPage: true })
 
   // The title is the Human's to change, and the write is not optimistic: the
