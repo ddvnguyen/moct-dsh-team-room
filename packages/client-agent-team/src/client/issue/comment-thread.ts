@@ -1,4 +1,5 @@
-import type { AgentTeamIssueComment, AgentTeamIssueDecision, AgentTeamMessageRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamIssueComment, AgentTeamIssueDecision, AgentTeamMemberId, AgentTeamMessageRef } from '@ddvnguyen/moct-dsh-team-room/types'
+import { cachedResolvedMessageRef } from '../refs.ts'
 
 /**
  * The ask message of every decision row.
@@ -133,4 +134,50 @@ export function committedCommentFact(
   mentions: AgentTeamIssueComment['mentions'],
 ): AgentTeamIssueComment {
   return { kind: 'message', sequence: message.sequence, message, mentions, occurredAt: message.occurredAt }
+}
+
+/**
+ * One list of message facts: a message present twice is one row, oldest first.
+ * The read model's page, the pages read after it and the rows this surface
+ * committed since all merge through here, so no surface keeps a second list.
+ */
+export function mergeComments(facts: readonly AgentTeamIssueComment[]): readonly AgentTeamIssueComment[] {
+  const byRef = new Map<AgentTeamMessageRef, AgentTeamIssueComment>()
+  for (const fact of facts) byRef.set(fact.message.messageRef, fact)
+  return [...byRef.values()].sort((left, right) => left.message.sequence - right.message.sequence)
+}
+
+/** The gist of one body, for a quote line. */
+export function excerptOf(body: string): string {
+  const firstLine = body.split('\n', 1)[0] ?? ''
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine
+}
+
+/** The quote a reply shows: who is being answered and the line that says it. */
+export interface IssueReplyQuote {
+  readonly senderName: string
+  readonly excerpt: string
+  readonly memberId?: AgentTeamMemberId | undefined
+}
+
+/**
+ * The one resolver a reply's quote goes through: the loaded fact when the
+ * message is on screen, the Host's resolution when it is not. The timeline's
+ * cards and the composer's banner both read it, so a reply never quotes a
+ * different message than the card it was started from.
+ */
+export function quoteResolver(
+  factByRef: ReadonlyMap<AgentTeamMessageRef, AgentTeamIssueComment>,
+  nameOf: (memberId: AgentTeamMemberId) => string,
+): (messageRef: AgentTeamMessageRef) => IssueReplyQuote | undefined {
+  return messageRef => {
+    const fact = factByRef.get(messageRef)
+    if (fact !== undefined) {
+      return { senderName: nameOf(fact.message.sender), memberId: fact.message.sender, excerpt: excerptOf(fact.message.body) }
+    }
+    const resolved = cachedResolvedMessageRef(messageRef)
+    return resolved === undefined
+      ? undefined
+      : { senderName: nameOf(resolved.sender), memberId: resolved.sender, excerpt: resolved.excerpt }
+  }
 }

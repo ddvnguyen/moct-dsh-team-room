@@ -12,6 +12,7 @@ import type {
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimRef,
+  AgentTeamCommentResolution,
   AgentTeamConfirmationToken,
   AgentTeamContextCheckpointRef,
   AgentTeamDirectMarker,
@@ -40,6 +41,7 @@ import type {
   AgentTeamTask,
   AgentTeamTaskDescription,
   AgentTeamTaskPriority,
+  AgentTeamTaskPullRequest,
   AgentTeamTaskActivity,
   AgentTeamTaskRef,
   AgentTeamThread,
@@ -668,6 +670,35 @@ export type AgentTeamReplyResult =
   | AgentTeamStaleRevision
   | AgentTeamMemberNotFollowing
 
+/**
+ * Human or entitled Member intent to close or reopen one comment thread.
+ * The root Message addresses the thread; a reply is refused.
+ */
+export interface AgentTeamResolveCommentRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
+  /** The thread's root comment. */
+  readonly messageRef: AgentTeamMessageRef
+  /** `true` closes the thread; `false` reopens it. */
+  readonly resolved: boolean
+  /** The Thread revision on screen: the other Thread writes' optimistic fence. */
+  readonly baseRevision: number
+}
+
+export interface AgentTeamResolveCommentCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly threadRef: AgentTeamThreadRef
+  readonly messageRef: AgentTeamMessageRef
+  /** Present when the write closed the thread; absent when it reopened it. */
+  readonly resolved?: AgentTeamCommentResolution | undefined
+}
+
+/** A stale Thread revision is a business outcome; a reply ref or a repeat is refused. */
+export type AgentTeamResolveCommentResult = AgentTeamResolveCommentCommittedResult | AgentTeamStaleRevision
+
 /** Human intent to create one Task with an opening Message. */
 export interface AgentTeamCreateTaskRequest {
   readonly requestId: AgentTeamRequestId
@@ -711,6 +742,14 @@ export interface AgentTeamTaskPatchRequest {
   /** `null` clears the assignment; omitting the key leaves it unchanged. */
   readonly assignee?: AgentTeamMemberId | null
   readonly position?: number
+  /** The parent Task, `null` to clear; omitted leaves it unchanged. Same-workspace, no self, no cycle. */
+  readonly parentTaskRef?: AgentTeamTaskRef | null
+  /** PR links only — http(s) URLs, deduped, at most 20. The full list replaces the stored one. */
+  readonly pullRequests?: readonly AgentTeamTaskPullRequest[]
+  /** Free-form labels; the full list replaces the stored one. Trimmed, ≤40 chars each, ≤20, case-insensitively deduped. */
+  readonly labels?: readonly string[]
+  /** The due date, `YYYY-MM-DD`; `null` clears, omitted leaves it unchanged. */
+  readonly dueDate?: string | null
   /**
    * The new description body. The Human sends the text; the Host composes the
    * rest of the record (who wrote it, when, where it came from), so a client
@@ -1260,6 +1299,32 @@ export interface AgentTeamIssueProperties {
   readonly planningPhase: boolean
   readonly createdAt: string
   readonly updatedAt: string
+  /**
+   * The parent Task, host-derived. `undefined` means no parent: the client
+   * renders the picker's empty state, never a `null` fact.
+   */
+  readonly parent?: AgentTeamIssueRelated
+  /** Every Task whose `parentTaskRef` is this Task, task-number order. Derived, never stored. */
+  readonly subIssues: readonly AgentTeamIssueRelated[]
+  /** The stored PR links, in stored order. */
+  readonly pullRequests: readonly AgentTeamTaskPullRequest[]
+  /** The stored labels, in stored order. */
+  readonly labels: readonly string[]
+  /** The due date, `YYYY-MM-DD`; `undefined` reads as none. */
+  readonly dueDate?: string
+}
+
+/**
+ * One related Task the property sections name: enough to render a row and
+ * open it (`openIssue(taskRef)`), and nothing more. The Host resolves the
+ * number and title so a small view never carries a second read.
+ */
+export interface AgentTeamIssueRelated {
+  readonly taskRef: AgentTeamTaskRef
+  readonly taskNumber: number
+  /** The Task's title, or the bounded preview of its opening Message — the same rule the view's `title` uses. */
+  readonly title: string
+  readonly status: AgentTeamTask['status']
 }
 
 /** The issue's comments: the newest page of the Thread's Messages, the anchor excluded. */
@@ -1271,8 +1336,15 @@ export interface AgentTeamIssueComments {
   readonly cursor: number
 }
 
-/** One comment of the issue: the `message` arm of a Thread fact. */
-export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }>
+/** One comment of the issue: the `message` arm of a Thread fact, plus its thread's resolution. */
+export type AgentTeamIssueComment = Extract<AgentTeamThreadFact, { kind: 'message' }> & {
+  /**
+   * Present on a root comment whose thread the Host closed. A reply never
+   * carries one: a reply is not resolvable on its own, and a thread is closed
+   * by its root comment.
+   */
+  readonly resolved?: AgentTeamCommentResolution | undefined
+}
 
 /**
  * One activity of the issue: the `activity` arm of a Thread fact.
@@ -1327,6 +1399,17 @@ export type AgentTeamChangeScope =
   | { readonly kind: 'activity'; readonly workspaceId: WorkspaceId }
 
 /** One running Member Turn, as the host folds it from session events. Never persisted. */
+/**
+ * One step of a running Turn as the activity feed labels it: the tool's name
+ * and at most one path-shaped argument's basename. Never arguments, command
+ * text, output, env or credential-shaped strings.
+ */
+export interface AgentTeamActivityStep {
+  readonly tool: string
+  /** label <= 80 chars */
+  readonly label: string
+}
+
 export interface AgentTeamMemberActivity {
   readonly memberId: AgentTeamMemberId
   /** Instance slot running this Turn (multi-instance contract v2); absent for the seat's main Session (slot 0). */
@@ -1342,7 +1425,13 @@ export interface AgentTeamMemberActivity {
   /** Tool calls started in the current Turn. */
   readonly toolCount: number
   /** label <= 80 chars; never arguments, command text, output, env or credentials. */
-  readonly current?: { readonly tool: string; readonly label: string }
+  readonly current?: AgentTeamActivityStep
+  /**
+   * The running Turn's last few steps, newest last, in the same label-only
+   * shape as `current`. Empty until the Turn's first tool call, and reset with
+   * the Turn: a step of the previous Turn is never carried over.
+   */
+  readonly steps?: readonly AgentTeamActivityStep[]
   /** ISO-8601, time of the last event folded in. */
   readonly updatedAt: string
 }

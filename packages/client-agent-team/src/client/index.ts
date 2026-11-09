@@ -43,6 +43,7 @@ import type {
   AgentTeamReviewDocRequest,
   AgentTeamAnswerDecisionRequest,
   AgentTeamDecisionsRequest,
+  AgentTeamResolveCommentRequest,
   AgentTeamResolveDocCommentRequest,
   AgentTeamDocSectionHistoryRequest,
   AgentTeamWriteDocSectionRequest,
@@ -428,6 +429,9 @@ function teamSharedRemotes(
     // instance — one implementation, four callers.
     openIssue: issueClient.openIssue,
     issueContext: issueClient.context,
+    // The order the face behind the panel published for its walk (M-69): the
+    // Board and the Inbox write it, the panel's host reads it at the keypress.
+    peekOrder: issueClient.peekOrder,
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
     loadInbox: (request: AgentTeamInboxRequest) => queries.read(inboxQuery(request), () => ctx.remote.agentTeam.inbox(request)),
     subscribeReads: (listener: () => void) => reads.subscribe(listener),
@@ -546,6 +550,7 @@ function teamSeatInject(
       putAttachment: (request: AgentTeamPutAttachmentRequest) => ctx.remote.agentTeam.putAttachment(request),
       getAttachment: (request: AgentTeamGetAttachmentRequest) => ctx.remote.agentTeam.getAttachment(request),
       reply: (request: AgentTeamReplyRequest) => ctx.remote.agentTeam.reply(request),
+      resolveComment: (request: AgentTeamResolveCommentRequest) => ctx.remote.agentTeam.resolveComment(request),
       changeTask: (request: AgentTeamTaskRequest) => ctx.remote.agentTeam.changeTask(request),
       promoteThread: (request: AgentTeamPromoteThreadRequest) => ctx.remote.agentTeam.promoteThread(request),
       resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => ctx.remote.agentTeam.resolveTaskRefs(request),

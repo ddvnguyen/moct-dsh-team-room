@@ -58,9 +58,13 @@ The issue surface has **two presentations over one tree**: the page, which takes
 
 One seam opens it — `openIssue(taskRef)` — from the board, the Inbox, a Task cited in a Thread and a seat's Task, and the slice adds no navigation flag of its own: the `issueRef` / `issueVariant` slot is the position's, and the slice is an overlay rather than a place.
 
-The seam carries two facts the slot does not: the **Workspace** the issue is read in, and the **control the focus returns to**. The Inbox merges every visible Workspace, so a row may name one the reader has not selected — selecting it would leave the Inbox, the very face the slice is over — and the issue reads in the row's own Workspace instead.
+The seam and the context beside it carry three facts the slot does not: the **Workspace** the issue is read in, the **control the focus returns to**, and the **order the face behind published** for the panel's walk. The Inbox merges every visible Workspace, so a row may name one the reader has not selected — selecting it would leave the Inbox, the very face the slice is over — and the issue reads in the row's own Workspace instead.
 
 The focus returns to the control the reader invoked, named as a way to focus it rather than as a node: a board card is re-drawn whenever the catalog moves, and a captured node would be stale by the time the reader closes the issue. The slice is transient and the page is a position: only the page is persisted, so a reload never re-opens a dialog nobody asked for.
+
+The panel walks that order: `J`/`K` step to the next and previous issue of it, `H`/`L` move between its columns (an empty one is skipped), and the arrows mirror them while the reader is not inside the panel, so a pane keeps its own scrolling. Each step names the control the focus returns to, so Escape after a step gives the focus to the card or the row the reader is standing on.
+
+That order is a face's own fact, published into the issue client beside the context — the Board publishes one column per walkable column, a collapsed one never entering the walk, and the Inbox its queue in the order the reader sees it — and the panel never reads the navigation for it: a face that publishes nothing has no walk.
 
 The browser's own back and forward buttons walk those positions. The Team keeps a history stack over the navigation snapshot: one `pushState` entry per navigation — the path is the document's and never changes, the state object carries the position, and the URL stays out of the routing business — and `popstate` is the only way a position comes back, so the browser's button and the seat's own back control cannot disagree.
 

@@ -375,7 +375,8 @@ describe('Team board page', () => {
     const cardOf = (taskRef: string): HTMLElement =>
       [...b.view.container.querySelectorAll<HTMLElement>('[data-testid="board-card"]')].find(entry => entry.getAttribute('data-task-ref') === taskRef)!
 
-    // The card opens the slice over the board; the walk belongs to the board.
+    // The card opens the slice over the board; the board publishes its order
+    // and the panel walks it (M-69), so the keys below are the panel's.
     fireEvent.click(within(cardOf('task:a')).getByRole('button', { name: 'Alpha task' }))
     await waitFor(() => expect(navigation?.getSnapshot().issueRef).toBe('task:a'))
 

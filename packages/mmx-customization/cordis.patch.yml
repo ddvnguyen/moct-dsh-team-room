@@ -1,0 +1,14 @@
+# One row for both halves: the host half owns the public listener and the
+# browser half is discovered through `dsh.client` in package.json.
+#
+# `publicPort` is the number the browser (and the tunnel in front of the lane)
+# reaches; the stock `webServer` keeps its own loopback port, because a wildcard
+# listener and a loopback listener cannot share one. A deployment that runs a
+# different number restates this row by id — a patch replaces the targeted row's
+# whole config, so `publicHost` and `trustedHosts` must be restated together
+# with it.
+- insert:
+    - id: mmx-customization
+      name: '@ddvnguyen/mmx-customization'
+      config:
+        publicPort: 3180

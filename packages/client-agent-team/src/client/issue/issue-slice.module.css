@@ -22,6 +22,13 @@
   top: var(--dsh-frame-chrome-top, 0px);
   right: 0;
   bottom: 0;
+  /* Inside the shell's overlay layer (z-index 20), which is what keeps the
+     panel above the face behind — the Thread's sticky rows and the composer's
+     menus paint at 2 and 10, below the layer. This value only orders the panel
+     against its siblings in that layer: the popup cards (100) and the dsh
+     menus (100 / 1100) stay above it, so a menu opened over the panel is not
+     buried by it. */
+  z-index: 10;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;

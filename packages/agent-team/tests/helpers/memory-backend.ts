@@ -96,6 +96,12 @@ class MemoryKvUnit implements KvUnit {
     this.medium.tables.get(table)?.delete(key)
   }
 
+  async deleteRecords(table: string, keys: readonly string[]): Promise<void> {
+    this.assertOpen()
+    this.pool.consumeInjectedFailure()
+    for (const key of keys) this.medium.tables.get(table)?.delete(key)
+  }
+
   async setGlobal(value: unknown): Promise<void> {
     this.assertOpen()
     this.pool.consumeInjectedFailure()

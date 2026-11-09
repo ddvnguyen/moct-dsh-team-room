@@ -10,6 +10,12 @@
  * - an entry is removed on `agent/status` idle and on `agent/error`;
  * - an entry whose `updatedAt` is older than STALE_MS is dropped on read;
  * - at most one invalidation per seat per THROTTLE_MS window.
+ *
+ * A running entry also carries the last few step labels of its Turn
+ * (`ACTIVITY_STEPS_MAX`), newest last: what `activityLabel` made of each tool
+ * call, so a reader sees the shape of the work and not just its newest call.
+ * The feed is the only source of those labels — no assistant text, no
+ * arguments, no second Session read path.
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { AgentTeamMemberActivity } from './types/requests-results.ts'
@@ -18,6 +24,8 @@ import type { AgentTeamMemberId, AgentTeamThreadRef } from './types/entities.ts'
 export const ACTIVITY_STALE_MS = 5 * 60 * 1000
 export const ACTIVITY_THROTTLE_MS = 500
 export const ACTIVITY_LABEL_MAX = 80
+/** How many of the running Turn's recent step labels the snapshot carries. */
+export const ACTIVITY_STEPS_MAX = 3
 const TOOL_NAME_MAX = 40
 const SHELL_LIKE = /shell|bash|pwsh|powershell|exec|command|terminal/i
 const PATH_KEYS = ['path', 'file_path', 'filePath'] as const
@@ -43,6 +51,7 @@ interface ActivityEntry {
   stepCount: number
   toolCount: number
   current: { readonly tool: string; readonly label: string } | undefined
+  readonly steps: { readonly tool: string; readonly label: string }[]
   readonly pendingCalls: Map<string, string>
   updatedAt: number
   lastEmit: number
@@ -117,6 +126,10 @@ export class AgentTeamActivityFeed {
         entry.toolCount += 1
         entry.pendingCalls.set(event.data.callId, event.data.name)
         entry.current = activityLabel(event.data.name, event.data.arguments)
+        // The step feed a card renders: the same label, kept as history so the
+        // reader sees what the Turn has been doing, not only its newest call.
+        entry.steps.push(entry.current)
+        if (entry.steps.length > ACTIVITY_STEPS_MAX) entry.steps.shift()
         this.touch(entry, time)
         return
       }
@@ -162,6 +175,7 @@ export class AgentTeamActivityFeed {
         stepCount: entry.stepCount,
         toolCount: entry.toolCount,
         ...(entry.current !== undefined ? { current: Object.freeze({ ...entry.current }) } : {}),
+        ...(entry.steps.length > 0 ? { steps: Object.freeze(entry.steps.map(step => Object.freeze({ ...step }))) } : {}),
         updatedAt: new Date(entry.updatedAt).toISOString(),
       }))
     }
@@ -193,6 +207,7 @@ export class AgentTeamActivityFeed {
       stepCount: 0,
       toolCount: 0,
       current: undefined,
+      steps: [],
       timer: undefined,
       pendingCalls: new Map(),
       updatedAt: time,

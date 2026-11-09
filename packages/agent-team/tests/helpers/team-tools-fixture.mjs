@@ -4,23 +4,26 @@
 // points here with a file: URL. This file lives beside the spec, where its
 // package imports resolve through the repository's node_modules.
 import { apply as applyAgentTeamTools } from '@ddvnguyen/moct-dsh-team-room/tools'
-import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+// dsh 0.2.2 dropped defineContentToolFixture: a fixture is an ordinary tool whose
+// output schema carries the text and whose renderer shows it.
+const textTool = (name, description, text) => defineTool({
+  name,
+  description,
+  parameters: {},
+  output: {
+    schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', required: true } } },
+    render: (_args, value) => [{ type: 'text', text: value.text }],
+  },
+  execute: async () => ({ text }),
+})
 
 export const name = 'test-team-tools'
 export const inject = ['tools']
 
 export function apply(scope) {
   applyAgentTeamTools(scope)
-  scope.tools.register(defineContentToolFixture({
-    name: 'ordinary_tool',
-    description: 'ordinary',
-    parameters: {},
-    execute: async () => [{ type: 'text', text: 'ordinary ok' }],
-  }))
-  scope.tools.register(defineContentToolFixture({
-    name: 'spare_tool',
-    description: 'spare',
-    parameters: {},
-    execute: async () => [{ type: 'text', text: 'spare ok' }],
-  }))
+  scope.tools.register(textTool('ordinary_tool', 'ordinary', 'ordinary ok'))
+  scope.tools.register(textTool('spare_tool', 'spare', 'spare ok'))
 }

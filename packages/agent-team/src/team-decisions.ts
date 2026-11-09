@@ -1,3 +1,5 @@
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamChannelRef,
   AgentTeamDecisionAnswer,
@@ -24,6 +26,9 @@ export const DECISION_CONTEXT_LIMIT = 1200
 export const DECISION_LABEL_LIMIT = 40
 export const DECISION_DESCRIPTION_LIMIT = 200
 export const DECISION_ANSWER_TEXT_LIMIT = 2000
+
+/** How many current Owner decisions an agent-facing read carries: the newest ones. */
+export const OWNER_DECISIONS_LIMIT = 10
 
 /**
  * Replay-derived state of one decision card. The ledger rebuilds it from the
@@ -145,6 +150,79 @@ export function decisionView(state: AgentTeamDecisionState, taskRef?: AgentTeamT
  */
 export function decisionRecordView(state: AgentTeamDecisionRecordState, supersedes?: AgentTeamDecisionRecordRef): AgentTeamDecisionRecord {
   return Object.freeze({ ...state, ...(supersedes === undefined ? {} : { supersedes }) })
+}
+
+/**
+ * A Task's current Owner decisions: the records another record replaced are
+ * dropped, and the newest ones are kept, oldest first. `supersedes` is the
+ * ledger's derived link, so "current" is one rule for every reader instead of
+ * a second notion maintained next to the record list.
+ */
+export function currentDecisionRecords(records: readonly AgentTeamDecisionRecord[], limit = OWNER_DECISIONS_LIMIT): readonly AgentTeamDecisionRecord[] {
+  const superseded = new Set(records.flatMap(record => record.supersedes === undefined ? [] : [record.supersedes]))
+  return Object.freeze(records.filter(record => !superseded.has(record.recordRef)).slice(-limit))
+}
+
+/** The parts of one current decision a reader's one-line render needs. */
+export interface OwnerDecisionLineSource {
+  readonly recordRef: string
+  readonly decided: string
+  readonly rationale: string
+}
+
+/** One line per current decision, every line carrying its record ref. */
+export function ownerDecisionLines(records: readonly OwnerDecisionLineSource[]): string[] {
+  return records.map(record => {
+    const rationale = record.rationale.replace(/\s+/g, ' ').trim()
+    return `${record.recordRef} · ${record.decided}${rationale === '' ? '' : ` — because ${rationale}`}`
+  })
+}
+
+/** The Host reads one Member's current Task decisions need; the Host service satisfies this. */
+export interface OwnerDecisionsHost {
+  memberForAgent(agent: Agent): { readonly memberId: AgentTeamMemberId } | undefined
+  members(): readonly {
+    readonly member: { readonly memberId: AgentTeamMemberId }
+    readonly instances: readonly { readonly sessionId?: string | undefined; readonly threadRefs: readonly AgentTeamThreadRef[] }[]
+  }[]
+  workspacesForAgent(agent: Agent): readonly { readonly workspaceId: WorkspaceId }[]
+  resolveThreadRefs(request: { readonly workspaceId: WorkspaceId; readonly threadRefs: readonly AgentTeamThreadRef[] }): {
+    readonly resolved: readonly { readonly threadRef: AgentTeamThreadRef; readonly taskRef?: AgentTeamTaskRef | undefined }[]
+  }
+  decisionRecords(request: { readonly workspaceId: WorkspaceId; readonly taskRef: AgentTeamTaskRef }): {
+    readonly records: readonly AgentTeamDecisionRecord[]
+  }
+}
+
+/** The Task one Session is working in and its current Owner decisions. */
+export interface OwnerDecisions {
+  readonly taskRef: AgentTeamTaskRef
+  readonly decisions: readonly AgentTeamDecisionRecord[]
+}
+
+/**
+ * The current Owner decisions of the Task the Session is working in: the Task
+ * of the Thread its instance slot is bound to, resolved through the Host's own
+ * reads. Undefined when no Thread of this Session is bound to a Task, or when
+ * the Session is not a live seat — the caller then injects nothing rather than
+ * guessing a Task.
+ */
+export function ownerDecisionsForAgent(host: OwnerDecisionsHost, agent: Agent): OwnerDecisions | undefined {
+  const member = host.memberForAgent(agent)
+  if (member === undefined) return undefined
+  const status = host.members().find(entry => entry.member.memberId === member.memberId)
+  const instance = status?.instances.find(entry => entry.sessionId === agent.id) ?? status?.instances[0]
+  const threadRef = instance?.threadRefs.at(-1)
+  if (threadRef === undefined) return undefined
+  for (const participation of host.workspacesForAgent(agent)) {
+    const resolved = host.resolveThreadRefs({ workspaceId: participation.workspaceId, threadRefs: [threadRef] }).resolved[0]
+    if (resolved === undefined) continue
+    const taskRef = resolved.taskRef
+    if (taskRef === undefined) return undefined
+    const records = host.decisionRecords({ workspaceId: participation.workspaceId, taskRef }).records
+    return Object.freeze({ taskRef, decisions: currentDecisionRecords(records) })
+  }
+  return undefined
 }
 
 /**

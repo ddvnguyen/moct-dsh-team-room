@@ -112,6 +112,11 @@ export class MoctOperationsTable<K extends string = string, V = StoredRecord> im
     throw new MoctTeamError(405, 'APPEND_ONLY', 'agent-team operations are append-only')
   }
 
+  /** Append-only as well: a batch delete is refused like a single one. */
+  async deleteMany(_keys: readonly K[]): Promise<number> {
+    throw new MoctTeamError(405, 'APPEND_ONLY', 'agent-team operations are append-only')
+  }
+
   /** Read-modify-write through `put`, so the same fail-closed rule applies. */
   async update(key: K, fn: (current: V) => V): Promise<V> {
     const current = this.records.get(key)

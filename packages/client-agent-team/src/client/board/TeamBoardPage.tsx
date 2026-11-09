@@ -109,9 +109,13 @@ export interface TeamBoardPageProps {
   /** The global opener: the issue opens as a slice over the board. */
   readonly openIssue: TeamConversationProps['openIssue']
   /**
+   * The order the panel's walk takes (M-69): the board publishes its columns
+   * here, and holds no keys of its own.
+   */
+  readonly peekOrder: TeamConversationProps['peekOrder']
+  /**
    * The navigation slot: the board reads the open issue's Task from it, to
-   * step between the issues with the keyboard and to scroll the card the
-   * reader is on into view.
+   * scroll the card the reader is on into view.
    */
   readonly navigation: TeamConversationProps['navigation']
   readonly t: TeamSidebarProps['t']
@@ -154,7 +158,7 @@ function useRequestIds() {
   }), [])
 }
 
-export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, openIssue, navigation, t }: TeamBoardPageProps) {
+export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, openIssue, peekOrder, navigation, t }: TeamBoardPageProps) {
   const [rows, setRows] = useState<readonly BoardCardTask[]>()
   const [channels, setChannels] = useState<readonly { readonly channelRef: AgentTeamChannelRef; readonly name: string }[]>([])
   const [members, setMembers] = useState<readonly AssigneeOption[]>([])
@@ -590,7 +594,8 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   })), [activities, columnTasks])
 
   // The open issue's Task: the slice the reader is in, if any. The board
-  // reads it to walk between the issues and to scroll the card into view.
+  // scrolls the card into view; the walk between the issues is the panel's
+  // (M-69), over the order published just below.
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const openTaskRef = navigationState.issueVariant === 'slice' ? navigationState.issueRef : undefined
 
@@ -604,52 +609,25 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       taskRefs: (columnTasks.get(status) ?? []).map(task => task.taskRef),
     })), [visibleStatuses, collapsed, columnTasks])
 
-  // J/K step between the issues of the column, H/L between the columns. The
-  // walk is the board's: a slice opened over another face has no board to
-  // walk, and the keys do nothing there. A field or a menu keeps its own
-  // keys — the comment composer inside the slice is a field.
+  // J/K step between the issues of the column, H/L between the columns — and
+  // the board publishes that order instead of holding the keys (M-69): the
+  // panel owns the keyboard and walks what the face behind it published, so a
+  // slice opened over the Inbox walks the Inbox, and a slice over a face that
+  // publishes nothing does not walk at all. Each card carries its own opener,
+  // so closing the issue after a step gives the focus to the card the reader
+  // is standing on.
+  const peekOwner = useRef<object>({})
   useEffect(() => {
-    if (openTaskRef === undefined) return undefined
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
-      const target = event.target
-      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('textarea, input, select, [role="menu"], [role="listbox"]') !== null)) return
-      const key = event.key.toLowerCase()
-      if (key !== 'j' && key !== 'k' && key !== 'h' && key !== 'l') return
-      const column = walkableColumns.findIndex(entry => entry.taskRefs.includes(openTaskRef))
-      if (column === -1) return
-      const current = walkableColumns[column]
-      if (current === undefined) return
-      const taskRefs = current.taskRefs
-      const index = taskRefs.indexOf(openTaskRef)
-      let nextColumn = column
-      let nextIndex = index
-      if (key === 'j') nextIndex = Math.min(index + 1, taskRefs.length - 1)
-      else if (key === 'k') nextIndex = Math.max(index - 1, 0)
-      else {
-        // H/L move between the columns, to the nearest one that holds a card:
-        // a walk that lands on an empty column is a walk that stops.
-        nextColumn = column
-        for (let step = 1; step < walkableColumns.length; step += 1) {
-          const candidate = key === 'l' ? column + step : column - step
-          const entry = walkableColumns[candidate]
-          if (entry === undefined || entry.taskRefs.length === 0) continue
-          nextColumn = candidate
-          break
-        }
-        if (nextColumn === column) return
-        const neighbour = walkableColumns[nextColumn]
-        if (neighbour === undefined) return
-        nextIndex = Math.min(index, Math.max(neighbour.taskRefs.length - 1, 0))
-      }
-      const nextRef = walkableColumns[nextColumn]?.taskRefs[nextIndex]
-      if (nextRef === undefined || nextRef === openTaskRef) return
-      event.preventDefault()
-      openIssue(nextRef, { workspaceId })
-    }
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey) }
-  }, [openTaskRef, walkableColumns, openIssue, workspaceId])
+    const owner = peekOwner.current
+    peekOrder.publish(owner, {
+      columns: walkableColumns.map(column => column.taskRefs.map(taskRef => ({
+        taskRef,
+        workspaceId,
+        focusOpener: focusCardOf(taskRef),
+      }))),
+    })
+    return () => { peekOrder.unpublish(owner) }
+  }, [focusCardOf, peekOrder, walkableColumns, workspaceId])
 
   // The card the reader is on is scrolled into view: the slice opens over
   // the board, and the walk moves from card to card.

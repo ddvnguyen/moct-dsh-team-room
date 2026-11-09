@@ -25,6 +25,7 @@ const CATEGORY: Readonly<Record<AgentTeamActivity['kind'], 'status' | 'claim'>> 
   accept: 'status',
   close: 'status',
   reopen: 'status',
+  patch: 'status',
   claim: 'claim',
   done: 'claim',
   release: 'claim',

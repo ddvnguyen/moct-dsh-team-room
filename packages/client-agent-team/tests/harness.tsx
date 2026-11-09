@@ -81,7 +81,7 @@ function createFixtureSidebarState(): FixtureSidebarState {
   }
 }
 
-type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main'> & { sidebarState: FixtureSidebarState }
+type FrameProps = PropsRuntime<'root'> & PropsRenderSlots<'sidebar' | 'main' | 'shell.overlay'> & { sidebarState: FixtureSidebarState }
 function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
   // The shipped frame renders the keyed main cell for the selected global panel
   // and falls back to the conversation seat, so the bench follows the same rule
@@ -98,6 +98,10 @@ function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
     <button type="button" data-test-control onClick={() => { sidebarState.setCollapsed(!collapsed) }}>Toggle fixture sidebar</button>
     {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280 })}
     {renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })}
+    {/* The shell's overlay layer: the issue slice stands above every column,
+        so a suite that opens an issue meets the same layer the shipped frame
+        renders it in (M-69: the slice is what walks the published order). */}
+    {renderSlot('shell.overlay', {})}
   </div>
 }
 
@@ -758,6 +762,28 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
         taskNumber, claimOwners: [] as readonly string[],
         // The Host answers the planning gate; a Task in `todo` holds no live Claim here.
         planningPhase: (task.status as string) === 'todo',
+        // M-92: the property sections read these answers. The double derives
+        // the parent and the sub-issues from its own board rows the way the
+        // ledger's reverse index does, and echoes the stored links, labels
+        // and date — absent means the empty shape the read model sends.
+        ...(task.parentTaskRef == null ? {} : {
+          parent: {
+            taskRef: task.parentTaskRef as string,
+            taskNumber: boardTaskNumbers.get(task.parentTaskRef as string) ?? 1,
+            title: (boardTasks.find(row => (row as { taskRef: string }).taskRef === task.parentTaskRef)?.title as string | undefined) ?? 'Untitled task',
+            status: (boardTasks.find(row => (row as { taskRef: string }).taskRef === task.parentTaskRef)?.status as string | undefined) ?? 'todo',
+          },
+        }),
+        subIssues: boardTasks.filter(row => (row as { parentTaskRef?: string }).parentTaskRef === request.taskRef)
+          .map(row => ({
+            taskRef: (row as { taskRef: string }).taskRef,
+            taskNumber: boardTaskNumbers.get((row as { taskRef: string }).taskRef) ?? 1,
+            title: (row as { title?: string }).title ?? 'Untitled task',
+            status: (row as { status: string }).status,
+          })),
+        pullRequests: (task.pullRequests as readonly { url: string; title?: string }[] | undefined) ?? [],
+        labels: (task.labels as readonly string[] | undefined) ?? [],
+        ...(task.dueDate == null ? {} : { dueDate: task.dueDate as string }),
         createdAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z',
         updatedAt: anchor?.occurredAt ?? '2026-08-21T10:00:00.000Z',
       },
@@ -1077,6 +1103,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; nativeTabs?: bo
   await runtime.root.declare({
     sidebar: { kind: 'single', scope: 'root' },
     main: { kind: 'keyed', scope: 'root' },
+    // The shipped shell's overlay layer, where the issue slice registers.
+    'shell.overlay': { kind: 'list', scope: 'root' },
   } as never, FrameWithSidebar as never)
   // The shipped store keeps a selection only while a live `main` entry owns that
   // key, so a requested panel gets a stand-in entry of its own instead of a

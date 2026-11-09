@@ -23,12 +23,14 @@ import AgentPresetRegistry from '@deepseek-ai/dsh-agent-preset-registry'
 import LlmRuntime, { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as ToolExecutorNative from '@deepseek-ai/dsh-tool-executor-native'
+import { executeTool } from './helpers/execute-tool.ts'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_TOOL_NAMES } from '../src/index.ts'
@@ -182,6 +184,8 @@ async function buildSharedHarness(): Promise<{
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  // dsh 0.2.2 custom compositions mount their executor.
+  await ctx.plugin(ToolExecutorNative)
   await ctx.plugin(SkillRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
@@ -430,7 +434,7 @@ describe('Agent Team member tool policy', () => {
     const engine = await import('@deepseek-ai/dsh-session-query')
     // The tool plugin ships in the adjacent Harness checkout (read-only
     // reference); it is not a Team dependency, so the spike loads it by path.
-    const toolPluginModule = await import(pathToFileURL(join(harnessDir, 'packages/session-query/tool-session-query/lib/index.js')).href)
+    const toolPluginModule = await import(pathToFileURL(join(harnessDir, 'packages/experimental/tool-session-query/lib/index.js')).href)
     const toolPlugin = {
       name: 'tool-session-query',
       inject: toolPluginModule.inject as readonly string[],
@@ -473,7 +477,7 @@ describe('Agent Team member tool policy', () => {
     expect(toolNames(ctx, ordinary.agent)).not.toContain('session_search')
 
     // The tool executes against the Member-scoped engine instance.
-    const result = await holderAgent.ctx.tools.execute({
+    const result = await executeTool(holderAgent.ctx.tools, {
       callId: ToolCallId('spike-call'),
       name: 'session_search',
       arguments: { query: 'anything' },
