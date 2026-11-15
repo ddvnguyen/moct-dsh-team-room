@@ -24,14 +24,20 @@ try {
   for (const link of harnessZodLinks) {
     try {
       const original = await realpath(link)
-      if (original === bundleZodDir) continue
+      if (original === bundleZodDir) {
+        console.error(`[generate-typert] zod link already at bundle copy: ${link}`)
+        continue
+      }
       await rm(link, { recursive: true, force: true })
       await symlink(bundleZodDir, link, 'file')
       restoredZodLinks.push([link, original])
-    } catch {
+      console.error(`[generate-typert] redirected ${link} -> bundle zod (was ${original})`)
+    } catch (error) {
+      console.error(`[generate-typert] zod redirect skipped for ${link}: ${error instanceof Error ? error.message : String(error)}`)
       continue
     }
   }
+  if (restoredZodLinks.length === 0) throw new Error('generate-typert: no harness zod link redirected; single-zod invariant unenforced')
   await cp(join(packageRoot, 'src'), join(tempPackage, 'src'), { recursive: true })
   const manifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
   await writeFile(join(tempPackage, 'package.json'), JSON.stringify({
