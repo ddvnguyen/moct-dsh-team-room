@@ -469,3 +469,68 @@ export function applySidebarPatch(source) {
       `review the edit before applying it.`,
   )
 }
+
+/** Marker the applier looks for in the installed `lib/index.mjs` to recognise the server-half session-gate compat below. */
+export const SERVER_PATCH_MARKER = 'dsh-connection-admit-compat';
+
+/**
+ * The server-half session-gate compat, as one anchored edit against the
+ * published `lib/index.mjs`.
+ *
+ * The certified harness exposes `connection.requestRejection()`; the merged
+ * harness removed it in favour of `connection.admit()` (M-377). The published
+ * 2.2.4 bundle treats a missing `requestRejection` as fatal and answers 503
+ * on every business REST route (`/sections`, `/dependencies`, ...), so the
+ * lane's sidebar reports dozens of failed requests after the harness merge.
+ * The compat probes `admit()` first and falls back to `requestRejection()`,
+ * keeping the old verdict mapping (401 stays login, anything else is an
+ * untrusted/cross-site refusal). When neither method exists the old 503
+ * stands, so a future upstream that fixes the call keeps working.
+ */
+export const SERVER_EDITS = [
+  {
+    id: 'server-admit-compat',
+    from: '\t\tconst connection = ctx.get("connection");\n\t\tif (typeof connection?.requestRejection !== "function") {\n\t\t\tctx.logger.warn("Codex UI 业务 REST 认证不可用：缺少 connection.requestRejection。");\n\t\t\treturn reject(503, "宿主认证服务暂不可用。");\n\t\t}\n\t\tconst rejection = connection.requestRejection(request);',
+    to: '		const connection = ctx.get("connection");\n/* dsh-connection-admit-compat: merged harness exposes admit(), not requestRejection() (M-377). */\n		const rejection = typeof connection?.admit === "function"\n			? (() => {\n					const admission = connection.admit({ headers: request.headers, method: request.method, url: request.url });\n					return "rejection" in admission ? admission.rejection : void 0;\n				})()\n			: (typeof connection?.requestRejection === "function"\n				? connection.requestRejection(request)\n				: void 0);\n		if (rejection === void 0 && typeof connection?.admit !== "function" && typeof connection?.requestRejection !== "function") {\n			ctx.logger.warn("Codex UI \\u4e1a\\u52a1 REST \\u8ba4\\u8bc1\\u4e0d\\u53ef\\u7528\\u3002");\n			return reject(503, "\\u5bbf\\u4e3b\\u8ba4\\u8bc1\\u670d\\u52a1\\u6682\\u4e0d\\u53ef\\u7528\\u3002");\n		}',
+  },
+];
+
+/**
+ * Apply the server-half compat to the published `lib/index.mjs`.
+ *
+ * @param {string} source the published `lib/index.mjs`
+ * @returns {{ source: string, applied: string[], skipped: string[] }} the
+ *   patched source, applied ids, and ids skipped because the bundle already
+ *   carries the compat or no longer references `requestRejection` at all (a
+ *   fixed upstream). An anchor that moved while the bundle still calls
+ *   `requestRejection` is a patch failure, not a skip: the seat would keep
+ *   503ing.
+ * @throws when the anchor moved but the bundle still references
+ *   `requestRejection`, or when an anchor is ambiguous: the caller must not
+ *   write a bundle it could not patch completely.
+ */
+export function applyServerPatch(source) {
+  let patched = source;
+  const applied = [];
+  const skipped = [];
+  for (const edit of SERVER_EDITS) {
+    if (patched.includes(SERVER_PATCH_MARKER)) {
+      skipped.push(edit.id);
+      continue;
+    }
+    const first = patched.indexOf(edit.from);
+    if (first === -1) {
+      if (!patched.includes('requestRejection')) {
+        skipped.push(edit.id);
+        continue;
+      }
+      throw new Error(`codex-ui server patch: anchor for edit "${edit.id}" is missing but the bundle still references requestRejection. The published bundle changed shape; review the edit before applying it.`);
+    }
+    if (patched.indexOf(edit.from, first + 1) !== -1) {
+      throw new Error(`codex-ui server patch: anchor for edit "${edit.id}" is ambiguous (appears more than once).`);
+    }
+    patched = patched.slice(0, first) + edit.to + patched.slice(first + edit.from.length);
+    applied.push(edit.id);
+  }
+  return { source: patched, applied, skipped };
+}
