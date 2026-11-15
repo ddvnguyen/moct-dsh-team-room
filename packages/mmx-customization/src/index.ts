@@ -194,8 +194,8 @@ async function createTokenMinter(ctx: Context, credentials: object): Promise<Coo
   const owner = (scopes !== null && typeof scopes === 'object' && 'root' in scopes
     ? (scopes as { root: unknown }).root
     : undefined)
-    ?? (typeof Context.root === 'symbol' && scopes !== null && typeof scopes === 'object' && Context.root in scopes
-      ? (scopes as Record<symbol, unknown>)[Context.root]
+    ?? (scopes !== null && typeof scopes === 'object' && (Context as unknown as Record<string, unknown>)['root'] !== undefined && typeof (Context as unknown as Record<string, unknown>)['root'] === 'symbol' && ((Context as unknown as Record<string, symbol>)['root'] as symbol) in scopes
+      ? (scopes as Record<symbol, unknown>)[((Context as unknown as Record<string, symbol>)['root'] as symbol)]
       : undefined)
   if (owner === null || (typeof owner !== 'object' && typeof owner !== 'function')) return undefined
   try {

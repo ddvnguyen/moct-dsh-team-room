@@ -1276,7 +1276,7 @@ export default class AgentTeam extends TypertRemoteService {
       const instanceRoot = scopes !== null && typeof scopes === 'object' && 'root' in scopes
         ? (scopes as { root: unknown }).root
         : undefined
-      const staticKey: unknown = (Context as unknown as Record<PropertyKey, unknown>).root
+      const staticKey: unknown = (Context as unknown as Record<string, unknown>)['root']
       const staticRoot = scopes !== null && typeof scopes === 'object' && typeof staticKey === 'symbol' && staticKey in scopes
         ? (scopes as Record<symbol, unknown>)[staticKey]
         : undefined
