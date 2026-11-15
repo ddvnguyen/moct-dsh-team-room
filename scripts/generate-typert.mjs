@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs'
-import { cp, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { continuityDir } from './continuity-dir.mjs'
@@ -13,30 +13,8 @@ const { default: ts } = await import(pathToFileURL(join(harnessRoot, 'node_modul
 const packageRoot = resolve(projectRoot, 'packages/agent-team')
 const tempPackage = await mkdtemp(join(harnessRoot, 'packages/external-agent-team-'))
 const aggregate = join(tempPackage, 'tsconfig.host.json')
-const harnessZodLink = join(harnessRoot, 'node_modules', 'zod')
-let harnessZodOriginal = undefined
 
 try {
-  // Single zod for the temp analysis program: harness sources pulled into the
-  // analysis (storage-domain et al) resolve `zod` through the harness install
-  // while copied bundle sources resolve the linked bundle copy below — two
-  // instantiations of the same generic, TS2379 under
-  // exactOptionalPropertyTypes when the two versions differ (cert 4.4.3 vs
-  // bundle 4.6.6). Point the harness install's top-level `zod` at the bundle
-  // copy for the duration of this script (restored in `finally`), so every
-  // importer in the program shares one instantiation. The temp package's own
-  // linked copy (linkRootDependency below) covers the bundle sources; this
-  // covers the harness sources. pnpm-managed symlinks are replaced, never
-  // deleted: the original target is re-linked on the way out.
-  try {
-    harnessZodOriginal = await realpath(harnessZodLink)
-  } catch {
-    harnessZodOriginal = undefined
-  }
-  if (harnessZodOriginal !== undefined) {
-    await rm(harnessZodLink, { recursive: true, force: true })
-    await symlink(join(projectRoot, 'node_modules', 'zod'), harnessZodLink, 'file')
-  }
   await cp(join(packageRoot, 'src'), join(tempPackage, 'src'), { recursive: true })
   const manifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
   await writeFile(join(tempPackage, 'package.json'), JSON.stringify({
@@ -175,13 +153,6 @@ try {
     clientConfig: join(tempPackage, 'tsconfig.client-missing.json'),
     faces: ['host'],
     packages: ['@ddvnguyen/moct-dsh-team-room'],
-    // The temp package merges bundle sources with harness sources that
-    // resolve a different zod through the harness install than the linked
-    // bundle copy the bundle sources resolve (TS2379 under
-    // exactOptionalPropertyTypes when the two differ). Skip the per-project
-    // diagnostic gate — the analyzer program below still type-checks the
-    // same files; only the fail-loud duplicate gate is off.
-    checkDiagnostics: false,
   }).analyze()
   const face = workspace.faces.find(candidate => candidate.face === 'host')
   if (face === undefined) throw new Error('Typert did not analyze the Agent Team Host face')
@@ -199,8 +170,4 @@ try {
   await writeFile(join(output, 'typert.remote-client.d.ts.map'), artifact.remote.dtsMap)
 } finally {
   await rm(tempPackage, { recursive: true, force: true })
-  if (harnessZodOriginal !== undefined) {
-    await rm(harnessZodLink, { recursive: true, force: true })
-    await symlink(harnessZodOriginal, harnessZodLink, 'file')
-  }
 }
