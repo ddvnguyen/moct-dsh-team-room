@@ -14,8 +14,8 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
-import type { ConnectionIndexResponse, ConnectionTrustRequest, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
-import type { ConnectionIndexRequest } from '@deepseek-ai/dsh-host-authentication-token/src/types.ts'
+import type { ConnectionTrustRequest, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import type { ConnectionIndexRequest, ConnectionIndexResponse } from '@deepseek-ai/dsh-host-authentication-token/src/types.ts'
 import { BrowserAuth } from '@deepseek-ai/dsh-host-authentication-token/src/browser-auth.ts'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import { createPublicListener, type PublicListener } from './proxy.ts'
@@ -114,7 +114,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (web === undefined || connection === undefined || credentials === undefined) {
     throw new Error('mmx-customization: webServer, connection and credentials must be active before this row mounts')
   }
-  const auth = await BrowserAuth.create(ctx.root, credentials, 30)
+  const auth = await BrowserAuth.create(ctx[Context.root], credentials, 30)
   const listener: PublicListener = createPublicListener({
     upstream: web.getOrigin(),
     host: config.publicHost,
