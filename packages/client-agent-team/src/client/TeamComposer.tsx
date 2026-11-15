@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, ReactNode } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@ddvnguyen/moct-dsh-team-room/types'
 import { IconAgentPresetOutlineMedium, IconChecklistOutlineMedium, IconPaperclipOutlineMedium, IconSendOutlineRegular, IconUserOutlineRegular, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
-import { TextSearchIndex } from '@deepseek-ai/dsh-util-text-search'
+import { rankTriggerNames } from './rank-trigger-names.ts'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import type { TeamTriggerCatalogItem } from './trigger-catalog.ts'
@@ -51,11 +51,9 @@ function findSlashTrigger(draft: string, caret: number): TriggerMatch | undefine
 function matchingTriggerGroups(catalog: readonly TeamTriggerCatalogItem[], match: TriggerMatch, draft: string) {
   const atDraftStart = /^\s*$/u.test(draft.slice(0, match.start))
   const eligible = catalog.filter(item => atDraftStart || item.leadingOnly !== true)
-  const rank = <T extends { readonly name: string }>(items: readonly T[]): readonly T[] =>
-    new TextSearchIndex(items, (item) => ({ fuzzy: [item.name] })).search(match.query)
   return {
-    commands: rank(eligible.filter(item => item.kind === 'command')),
-    skills: rank(eligible.filter(item => item.kind === 'skill')),
+    commands: rankTriggerNames(eligible.filter(item => item.kind === 'command'), match.query),
+    skills: rankTriggerNames(eligible.filter(item => item.kind === 'skill'), match.query),
     notices: eligible.filter(item => item.kind === 'notice'),
   }
 }
