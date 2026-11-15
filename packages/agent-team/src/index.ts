@@ -1273,12 +1273,14 @@ export default class AgentTeam extends TypertRemoteService {
       // `Context.root` symbol key. Probe for the neck both generations share —
       // `sessionProjections.register` — with `in` narrowing, so both compile.
       const scopes: unknown = this.ctx
-      const root = (scopes !== null && typeof scopes === 'object' && 'root' in scopes
+      const instanceRoot = scopes !== null && typeof scopes === 'object' && 'root' in scopes
         ? (scopes as { root: unknown }).root
-        : undefined)
-        ?? (typeof Context.root === 'symbol' && scopes !== null && typeof scopes === 'object' && Context.root in scopes
-          ? (scopes as Record<symbol, unknown>)[Context.root]
-          : undefined)
+        : undefined
+      const staticKey: unknown = (Context as unknown as Record<PropertyKey, unknown>).root
+      const staticRoot = scopes !== null && typeof scopes === 'object' && typeof staticKey === 'symbol' && staticKey in scopes
+        ? (scopes as Record<symbol, unknown>)[staticKey]
+        : undefined
+      const root = instanceRoot ?? staticRoot
       if (root === null || typeof root !== 'object' || !('sessionProjections' in root)) {
         throw new Error('agentTeam.contextProjection: no root context available')
       }
