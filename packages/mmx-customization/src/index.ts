@@ -6,23 +6,28 @@
  *
  *  Client half: the MOCT sidebar (see `./client/index.ts`).
  *
- *  Why a plugin and not a fork patch: the seams this half uses are stock public
- *  API — `webServer.getOrigin()`, `connection.authenticatedUrl()`,
- *  `connection.authorizeIndex()` and `connection.requestRejection()` — so an
+ *  Why a plugin and not a fork patch: the seams it uses are stock public API —
+ *  `webServer.getOrigin()`, `connection.admit()` for the Host/Origin fence,
+ *  and the default `host-authentication-token` minters (`authenticatedUrl()`
+ *  for the launch token, `authorizeIndex()` for the cookie exchange) — so an
  *  upstream tag needs no `git am`. The fence stays the core's: the browser's
  *  `Host` survives the hop and `trustedHosts` still decides admission.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import type { ConnectionIndexResponse, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import type { HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import { BrowserAuth } from '@deepseek-ai/dsh-host-authentication-token/src/browser-auth.ts'
+import type {
+  ConnectionIndexResponse,
+} from '@deepseek-ai/dsh-host-authentication-token/src/types.ts'
 import { createPublicListener, type PublicListener } from './proxy.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'mmx-customization'
 
 /** Services required before the public listener can be built. */
-export const inject = ['webServer', 'connection']
+export const inject = ['webServer', 'connection', 'credentials']
 
 /** Plugin config, as the composition row spells it. */
 export interface Config {
@@ -65,19 +70,36 @@ function validate(config: Config): void {
   }
 }
 
+/** The token plugin's cookie exchange, bound to this process's secret and launch token. */
+export interface CookieMinter {
+  /** Append the process launch token to a caller-supplied base URL. */
+  authenticatedUrl(baseUrl: string): string
+  /** Run the `/` token-for-cookie exchange against a sink response. */
+  authorizeIndex(
+    req: { method?: string; url?: string; headers: Record<string, string | undefined> },
+    res: ConnectionIndexResponse,
+    secure?: boolean,
+  ): boolean
+}
+
 /**
  * Mint one browser-session cookie for a request authority.
  *
- * `authenticatedUrl()` is the only place the process launch token surfaces, so
- * the token is handed to `authorizeIndex()` in-process and never leaves it: the
- * exchange's `303` and `set-cookie` are captured from a response that is thrown
- * away, and only the cookie value is kept. The audience of that cookie is the
- * authority this call was made for, which is why it is minted per request.
- * @param connection - the Host Connection service.
+ * The mint runs the same in-process exchange a browser tab performs on `/`:
+ * the process launch token is appended to the URL and handed to the token
+ * plugin's `authorizeIndex()` against a response that is thrown away, and only
+ * the `set-cookie` value is kept. The token lives only in that in-process
+ * request target — it is never sent on the wire and the browser never sees it.
+ * The audience of that cookie is the authority this call was made for, which is
+ * why it is minted per request.
+ * @param minter - the token plugin's exchange, sharing this process's secret and launch token.
  * @param authority - the request `Host` the cookie is bound to.
+ * @param secure - whether the receiving listener uses TLS; the minted cookie carries `Secure` when it does.
  * @returns the cookie as a `Cookie` header value, or undefined when the exchange failed.
  */
-export function mintCookie(connection: HostConnectionHandle, authority: string): string | undefined {
+export function mintCookie(minter: CookieMinter, authority: string, secure = false): string | undefined {
+  const token = new URL(minter.authenticatedUrl('http://dsh.invalid/')).searchParams.get('token')
+  if (token === null || token.length === 0) return undefined
   let cookie: string | undefined
   const response: ConnectionIndexResponse = {
     writeHead(_status, headers) {
@@ -87,40 +109,48 @@ export function mintCookie(connection: HostConnectionHandle, authority: string):
     },
     end() { /* the exchange's body is never used */ },
   }
-  const url = new URL(connection.authenticatedUrl(`http://${authority}/`))
-  connection.authorizeIndex({
+  minter.authorizeIndex({
     method: 'GET',
-    url: `${url.pathname}${url.search}`,
+    url: `/?token=${encodeURIComponent(token)}`,
     headers: { host: authority },
-  }, response)
+  }, response, secure)
   return cookie
 }
 
 /**
  * Mount the public listener and keep it for this plugin's lifetime.
- * @param ctx - plugin context; `webServer` and `connection` are already active.
+ * @param ctx - plugin context; `webServer`, `connection` and `credentials` are
+ * already active, and the default `host-authentication-token` row is composed
+ * ahead of this one so both share one secret and one launch token.
  * @param config - the composition row's config.
  */
-export function apply(ctx: Context, config: Config): void {
+export async function apply(ctx: Context, config: Config): Promise<void> {
   validate(config)
   const web = ctx.get('webServer')
-  const connection = ctx.get('connection')
+  const connection: HostConnectionHandle | undefined = ctx.get('connection')
+  const credentials = ctx.get('credentials')
   // `inject` above is the contract; failing loudly beats a silent no-listener boot.
-  if (web === undefined || connection === undefined) {
-    throw new Error('mmx-customization: webServer and connection must be active before this row mounts')
+  if (web === undefined || connection === undefined || credentials === undefined) {
+    throw new Error('mmx-customization: webServer, connection and credentials must be active before this row mounts')
   }
+  const secure = web.protocol === 'https:'
+  // The token plugin owns the signing secret and the launch token; this row
+  // reuses its exchange. `BrowserAuth.create()` keeps one launch token per root
+  // context and loads the same stored secret, so cookies minted here verify
+  // against the stock fence on the loopback listener.
+  const minter: CookieMinter = await BrowserAuth.create(ctx.root, credentials, 30)
   const listener: PublicListener = createPublicListener({
     upstream: web.getOrigin(),
     host: config.publicHost,
-    mintCookie: authority => mintCookie(connection, authority),
+    mintCookie: (authority) => mintCookie(minter, authority, secure),
     refusal: (request) => {
       // A narrowed authority list refuses before the fence is asked; the fence
-      // then answers 403 for an untrusted Host and 401 for "no cookie yet",
-      // which is exactly the state this proxy exists to resolve.
+      // then answers 403 for an untrusted Host, while the minted-cookie state
+      // this proxy produces admits — so only a 403 refusal stops the hop.
       const authority = request.headers.host
       if ((config.trustedHosts?.length ?? 0) > 0 && !admittedAuthority(authority, config.trustedHosts)) return 403
-      const rejection = connection.requestRejection({ headers: request.headers })
-      return rejection === 403 ? 403 : undefined
+      const admission = connection.admit({ headers: request.headers })
+      return 'rejection' in admission && admission.rejection === 403 ? 403 : undefined
     },
   })
 
