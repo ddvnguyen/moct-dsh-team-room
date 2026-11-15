@@ -167,17 +167,22 @@ function admitVerdict(connection: HostConnectionHandle): FenceVerdict {
     return 'rejection' in admission && admission.rejection === 403 ? 403 : undefined
   }
 }
-
 /** New generation: a `BrowserAuth` sharing this process's secret and launch token. */
-async function createTokenMinter(ctx: Context, credentials: object, secure: boolean): Promise<CookieMinter | undefined> {
-  void secure
+async function createTokenMinter(ctx: Context, credentials: object): Promise<CookieMinter | undefined> {
+  // The specifier is assembled at runtime (never a static string): on the
+  // certified line the token package does not exist, so no tsconfig facade
+  // maps it and a static import — even a dynamic `import('...')` literal —
+  // fails the build. `Function` keeps the constructor hidden from tsc while
+  // Vite still bundles the expression as an opaque runtime import.
+  const specifier = ['@deepseek-ai/dsh-host-authentication-token', 'src/browser-auth.ts'].join('/')
   let module: {
     BrowserAuth?: {
       create(processOwner: object, credentials: object, maxAgeDays: number): Promise<CookieMinter>
     }
   }
   try {
-    module = await import('@deepseek-ai/dsh-host-authentication-token/src/browser-auth.ts')
+    const load = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<typeof module>
+    module = await load(specifier)
   } catch {
     return undefined
   }
@@ -211,7 +216,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // keeps one launch token per root context and loads the same stored secret,
   // so cookies minted here verify against the stock fence on the loopback listener.
   const minter: CookieMinter | undefined =
-    await createTokenMinter(ctx, credentials, secure) ?? asLegacyMinter(connection)
+    await createTokenMinter(ctx, credentials) ?? asLegacyMinter(connection)
   if (minter === undefined) {
     throw new Error('mmx-customization: no token exchange available on connection or host-authentication-token')
   }
