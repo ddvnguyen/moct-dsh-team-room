@@ -96,7 +96,7 @@ function Frame({ renderSlot, usePanelInfo, sidebarState }: FrameProps) {
   // present while the column is closed and absent while it is open.
   return <div {...(collapsed ? { 'data-sidebar-collapsed': true } : {})}>
     <button type="button" data-test-control onClick={() => { sidebarState.setCollapsed(!collapsed) }}>Toggle fixture sidebar</button>
-    {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280 })}
+    {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280, drawer: false })}
     {renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })}
     {/* The shell's overlay layer: the issue slice stands above every column,
         so a suite that opens an issue meets the same layer the shipped frame

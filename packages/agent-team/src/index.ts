@@ -1268,7 +1268,7 @@ export default class AgentTeam extends TypertRemoteService {
     // Registration resolves to a retained reader (dsh 0.2.2): keep it for the
     // per-Session state reads and release it with the fiber.
     this.ctx.effect(async () => {
-      const registration = await this.ctx.root.sessionProjections.register(
+      const registration = await this.ctx[Context.root].sessionProjections.register(
         createTeamContextProjectionDefinition(this.contextProjectionHost),
       )
       this.contextProjection = registration

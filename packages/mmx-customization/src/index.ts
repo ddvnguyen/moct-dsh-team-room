@@ -188,7 +188,7 @@ async function createTokenMinter(ctx: Context, credentials: object): Promise<Coo
   }
   if (module.BrowserAuth === undefined) return undefined
   try {
-    return await module.BrowserAuth.create(ctx.root, credentials, 30)
+    return await module.BrowserAuth.create(ctx[Context.root], credentials, 30)
   } catch {
     return undefined
   }
