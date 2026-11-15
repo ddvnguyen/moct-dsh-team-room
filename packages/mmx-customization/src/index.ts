@@ -15,9 +15,22 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import type { ConnectionTrustRequest, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
-import type { ConnectionIndexRequest, ConnectionIndexResponse } from '@deepseek-ai/dsh-host-authentication-token/src/types.ts'
-import { BrowserAuth } from '@deepseek-ai/dsh-host-authentication-token/src/browser-auth.ts'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
+
+/** Minimal shape of the upstream token-exchange request/response. */
+interface ConnectionIndexRequest extends ConnectionTrustRequest {
+  readonly method?: string | undefined
+  readonly url?: string | undefined
+}
+interface ConnectionIndexResponse {
+  writeHead(status: number, headers?: Readonly<Record<string, string>>): unknown
+  end(body?: string): unknown
+}
+/** Minimal shape of the BrowserAuth handle used for cookie minting. */
+interface BrowserAuthHandle {
+  authenticatedUrl(baseUrl: string): string
+  authorizeIndex(req: ConnectionIndexRequest, res: ConnectionIndexResponse): boolean
+}
 import { createPublicListener, type PublicListener } from './proxy.ts'
 
 /** Stable Cordis plugin name. */
@@ -80,7 +93,7 @@ function validate(config: Config): void {
  * @param authority - the request `Host` the cookie is bound to.
  * @returns the cookie as a `Cookie` header value, or undefined when the exchange failed.
  */
-export function mintCookie(auth: BrowserAuth, connection: HostConnectionHandle, authority: string): string | undefined {
+export function mintCookie(auth: BrowserAuthHandle, connection: HostConnectionHandle, authority: string): string | undefined {
   let cookie: string | undefined
   const response: ConnectionIndexResponse = {
     writeHead(_status, headers) {
@@ -114,7 +127,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (web === undefined || connection === undefined || credentials === undefined) {
     throw new Error('mmx-customization: webServer, connection and credentials must be active before this row mounts')
   }
-  const auth = await BrowserAuth.create(ctx[Context.root], credentials, 30)
+  const authSpecifier: string = '@deepseek-ai/dsh-host-authentication-token/lib/browser-auth.js'
+  const authModule = await import(authSpecifier)
+  const auth = await (authModule as { BrowserAuth: { create: (owner: unknown, creds: unknown, days: number) => Promise<BrowserAuthHandle> } }).BrowserAuth.create(ctx[Context.root], credentials, 30)
   const listener: PublicListener = createPublicListener({
     upstream: web.getOrigin(),
     host: config.publicHost,
