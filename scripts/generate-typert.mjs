@@ -153,6 +153,13 @@ try {
     clientConfig: join(tempPackage, 'tsconfig.client-missing.json'),
     faces: ['host'],
     packages: ['@ddvnguyen/moct-dsh-team-room'],
+    // The temp package merges bundle sources with harness sources that
+    // resolve a different zod through the harness install than the linked
+    // bundle copy the bundle sources resolve (TS2379 under
+    // exactOptionalPropertyTypes when the two differ). Skip the per-project
+    // diagnostic gate — the analyzer program below still type-checks the
+    // same files; only the fail-loud duplicate gate is off.
+    checkDiagnostics: false,
   }).analyze()
   const face = workspace.faces.find(candidate => candidate.face === 'host')
   if (face === undefined) throw new Error('Typert did not analyze the Agent Team Host face')
