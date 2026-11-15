@@ -17,6 +17,9 @@ import type {
   AgentTeamUpdateTaskRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateTaskRequest,
+  AgentTeamCreateStatusRequest,
+  AgentTeamUpdateStatusRequest,
+  AgentTeamArchiveStatusRequest,
   AgentTeamGetAttachmentRequest,
   AgentTeamJoinWorkspaceRequest,
   AgentTeamLeaveWorkspaceRequest,
@@ -448,6 +451,9 @@ function teamSharedRemotes(
     loadIssueView: (request: AgentTeamIssueViewRequest, threadRef?: AgentTeamThreadRef) => queries.read(issueViewQuery(request, threadRef), () => ctx.remote.agentTeam.issueView(request)),
     createTask: (request: AgentTeamCreateTaskRequest) => ctx.remote.agentTeam.createTask(request),
     updateTask: (request: AgentTeamUpdateTaskRequest) => ctx.remote.agentTeam.updateTask(request),
+    createStatus: (request: AgentTeamCreateStatusRequest) => ctx.remote.agentTeam.createStatus(request),
+    updateStatus: (request: AgentTeamUpdateStatusRequest) => ctx.remote.agentTeam.updateStatus(request),
+    archiveStatus: (request: AgentTeamArchiveStatusRequest) => ctx.remote.agentTeam.archiveStatus(request),
     loadMemberActivity: (request: AgentTeamMemberActivityRequest) => queries.read(activityQuery(request), () => ctx.remote.agentTeam.memberActivity(request)),
     // A run's failure reasons are read per Thread. The Agent page's Runs tab
     // needs them from the sidebar seat too, so they live with the shared

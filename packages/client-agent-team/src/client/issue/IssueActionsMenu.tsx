@@ -20,7 +20,7 @@ import { useState, type ReactNode } from 'react'
 import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconEllipsisOutlineRegular, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamMemberId, AgentTeamTaskPriority, AgentTeamTaskRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TaskStatus } from '../multica/types.ts'
-import { STATUS_LABEL_KEY, STATUS_ORDER, isHumanStatusTarget } from '../multica/status.ts'
+import { STATUS_LABEL_KEY, ISSUE_STATUS_OPTIONS, isHumanStatusTarget } from '../multica/status.ts'
 import { PRIORITY_DISPLAY_ORDER, PRIORITY_LABEL_KEY, normalizePriority } from '../multica/priority.ts'
 import { issueShareHref } from '../history.ts'
 import { ActorAvatar, PickerItem, PriorityIcon, StatusIcon, type AssigneeOption } from '../multica-ui/index.ts'
@@ -152,7 +152,7 @@ export function IssueActionsMenu({ taskRef, status, priority, assignee, members,
         {level === 'status' && (
           <>
             {backRow}
-            {STATUS_ORDER.map(option => {
+            {ISSUE_STATUS_OPTIONS.map(option => {
               const enabled = isHumanStatusTarget(option)
               return (
                 <PickerItem

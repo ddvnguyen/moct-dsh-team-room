@@ -1,10 +1,12 @@
 // Derived from multica-x packages/views/issues/components/board-view.tsx @ 18fa9f728a9e25f2465df2789631edb2a75442ad. Copyright Index Labs. Multica License.
 //
-// Rendering adapted: five fixed status columns built from the `view` catalog;
-// no projects, custom statuses, workflows, saved views or pagination. The
-// house rule replaces Multica's optimistic mutations: a drop never moves data
-// locally — the Remote commits, the change wake refetches, and only then does
-// the card move; a rejected drop snaps the preview back with an inline hint.
+// Rendering adapted: no projects, workflows, saved views or pagination. The
+// columns come from the Workspace's status catalog (the five built-ins plus
+// the lists the Human added), so a new list is a column on the next read — no
+// reload, no release. The house rule replaces Multica's optimistic mutations:
+// a drop never moves data locally — the Remote commits, the change wake
+// refetches, and only then does the card move; a rejected drop snaps the
+// preview back with an inline hint.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -23,6 +25,7 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {
+  AgentTeamBoardStatus,
   AgentTeamChannelRef,
   AgentTeamMemberId,
   AgentTeamTaskPriority,
@@ -31,6 +34,10 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamCreateTaskRequest,
   AgentTeamCreateTaskResult,
+  AgentTeamCreateStatusRequest,
+  AgentTeamUpdateStatusRequest,
+  AgentTeamArchiveStatusRequest,
+  AgentTeamStatusResult,
   AgentTeamMemberActivityResult,
   AgentTeamUpdateTaskRequest,
   AgentTeamUpdateTaskResult,
@@ -38,30 +45,31 @@ import type {
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamConversationProps, TeamSidebarProps } from '../slots.ts'
-import type { ActivitySource, TaskStatus } from '../multica/types.ts'
-import { STATUS_LABEL_KEY, STATUS_ORDER } from '../multica/status.ts'
+import type { ActivitySource } from '../multica/types.ts'
 import { filterTasks, isEmptyTaskFilters, type TaskFilters } from '../multica/filter.ts'
 import { sortTasks } from '../multica/sort.ts'
-import {
-  buildColumns,
-  findColumn,
-  makeKanbanCollision,
-  statusGroupId,
-  statusOfColumnId,
-} from '../multica/drag-utils.ts'
+import { findColumn, makeKanbanCollision } from '../multica/drag-utils.ts'
 import { mintRequestId } from '../requests.ts'
 import type { AssigneeOption } from '../multica-ui/AssigneePicker.tsx'
+import { planPositionWrites } from './reorder.ts'
 import { BoardCardContent } from './BoardCard.tsx'
 import { BoardColumn, BOARD_COL_WIDTH } from './BoardColumn.tsx'
 import { CollapsedBoardColumn } from './CollapsedBoardColumn.tsx'
 import { readCollapsedColumns, toggleCollapsedColumn, writeCollapsedColumns } from './collapsed-columns.ts'
 import { BoardFilterBar } from './BoardFilterBar.tsx'
-import { CreateTaskDialog } from './CreateTaskDialog.tsx'
-import { HiddenColumnsPanel } from './HiddenColumnsPanel.tsx'
-import { dropAction, mayDrop } from './drop-rules.ts'
-import { planPositionWrites } from './reorder.ts'
 import { useDragSettle } from './use-drag-settle.ts'
 import { useBoardDragPan } from './use-board-drag-pan.ts'
+import { CreateTaskDialog } from './CreateTaskDialog.tsx'
+import { HiddenColumnsPanel } from './HiddenColumnsPanel.tsx'
+import { StatusEditorDialog, type StatusDraft } from './StatusEditorDialog.tsx'
+import {
+  boardColumns,
+  buildBoardMirror,
+  columnIdOf,
+  columnLabel,
+  columnDrop,
+  type BoardColumnModel,
+} from './board-columns.ts'
 import type { BoardCardTask } from './board-types.ts'
 import look from '../multica-look.module.css'
 import css from './board.module.css'
@@ -69,17 +77,15 @@ import css from './board.module.css'
 const HIDDEN_KEY = 'dsh.agent-team.board.hiddenColumns'
 
 /**
- * Every column id the board knows: today the five status columns are the whole
- * set, and M-51's status catalog is the seam that widens this one list.
+ * The hidden set is keyed by column key, not by display label: a built-in
+ * key is the status it always was, so a preference stored before custom lists
+ * existed still hides exactly what it hid, and a renamed list stays hidden.
  */
-const KNOWN_COLUMN_IDS: ReadonlySet<string> = new Set(STATUS_ORDER.map(statusGroupId))
-
-function readHiddenColumns(): TaskStatus[] {
+function readHiddenColumns(): string[] {
   if (typeof localStorage === 'undefined') return []
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((entry): entry is TaskStatus =>
-      typeof entry === 'string' && STATUS_ORDER.includes(entry as TaskStatus)) : []
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : []
   } catch (error) {
     // A corrupt or blocked preference falls back to "nothing hidden"; it never blocks the board.
     void error
@@ -87,7 +93,7 @@ function readHiddenColumns(): TaskStatus[] {
   }
 }
 
-function writeHiddenColumns(hidden: readonly TaskStatus[]): void {
+function writeHiddenColumns(hidden: readonly string[]): void {
   if (typeof localStorage === 'undefined') return
   try {
     localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden))
@@ -104,6 +110,10 @@ export interface TeamBoardPageProps {
   readonly loadMemberActivity: (request: { readonly workspaceId: WorkspaceId }) => Promise<RemoteResult<AgentTeamMemberActivityResult>>
   readonly createTask: (request: AgentTeamCreateTaskRequest) => Promise<RemoteResult<AgentTeamCreateTaskResult>>
   readonly updateTask: (request: AgentTeamUpdateTaskRequest) => Promise<RemoteResult<AgentTeamUpdateTaskResult>>
+  /** The catalog writes: one editor, three Host operations. */
+  readonly createStatus: (request: AgentTeamCreateStatusRequest) => Promise<RemoteResult<AgentTeamStatusResult>>
+  readonly updateStatus: (request: AgentTeamUpdateStatusRequest) => Promise<RemoteResult<AgentTeamStatusResult>>
+  readonly archiveStatus: (request: AgentTeamArchiveStatusRequest) => Promise<RemoteResult<AgentTeamStatusResult>>
   readonly changeTask: TeamConversationProps['changeTask']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   /** The global opener: the issue opens as a slice over the board. */
@@ -158,17 +168,23 @@ function useRequestIds() {
   }), [])
 }
 
-export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask, changeTask, subscribeChanges, openIssue, peekOrder, navigation, t }: TeamBoardPageProps) {
+/** Which list the editor is open on: none, a new list, or one existing custom list. */
+type ListEditor = { readonly mode: 'add' } | { readonly mode: 'rename'; readonly column: BoardColumnModel }
+
+export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberActivity, createTask, updateTask,
+  createStatus, updateStatus, archiveStatus, changeTask, subscribeChanges, openIssue, peekOrder, navigation, t }: TeamBoardPageProps) {
   const [rows, setRows] = useState<readonly BoardCardTask[]>()
+  const [statuses, setStatuses] = useState<readonly AgentTeamBoardStatus[]>([])
   const [channels, setChannels] = useState<readonly { readonly channelRef: AgentTeamChannelRef; readonly name: string }[]>([])
   const [members, setMembers] = useState<readonly AssigneeOption[]>([])
   const [activities, setActivities] = useState<readonly ActivitySource[]>([])
   const [loadError, setLoadError] = useState<string>()
   const [notice, setNotice] = useState<Notice>()
   const [filters, setFilters] = useState<TaskFilters>({ channelRefs: [], assignees: [], priorities: [], statuses: [], text: '' })
-  const [hidden, setHidden] = useState<TaskStatus[]>(readHiddenColumns)
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => readCollapsedColumns(workspaceId, KNOWN_COLUMN_IDS))
+  const [hidden, setHidden] = useState<string[]>(readHiddenColumns)
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => readCollapsedColumns(workspaceId, new Set()))
   const [createOpen, setCreateOpen] = useState(false)
+  const [editor, setEditor] = useState<ListEditor>()
   const [activeTask, setActiveTask] = useState<BoardCardTask | null>(null)
   // The board's own root: the card the reader was on is found in it, and the
   // focus goes back to it when the issue closes.
@@ -193,6 +209,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     }
     const view = viewResult.value
     setChannels(view.channels.map(channel => ({ channelRef: channel.channelRef, name: channel.name })))
+    setStatuses(view.statuses ?? [])
     setRows(deriveRows(view))
     if (memberResult.ok) {
       setMembers(memberResult.value.map(member => ({ memberId: member.member.memberId, handle: member.member.handle })))
@@ -219,7 +236,9 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     void reloadActivityRef.current()
     // Claims, resolutions and field writes commit to Channel and Thread scopes
     // only, so the Task stream is the scope-less one (as the Inbox's is);
-    // activity wakes move the live badges.
+    // activity wakes move the live badges. A catalog edit commits a Workspace
+    // fact and reaches this same scope-less stream, so a new list draws without
+    // a reload.
     const stopTasks = subscribeChanges(undefined, update => {
       if (update.type === 'failed') setLoadError(update.message)
       else void reloadRef.current()
@@ -231,9 +250,11 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   }, [subscribeChanges, workspaceId])
 
   // --- Derivation ---
-  const visibleStatuses = useMemo(() => STATUS_ORDER.filter(status => !hidden.includes(status)), [hidden])
-  const columnIds = useMemo(() => visibleStatuses.map(statusGroupId), [visibleStatuses])
+  const columns = useMemo(() => boardColumns(statuses), [statuses])
+  const visibleColumns = useMemo(() => columns.filter(column => !hidden.includes(column.key)), [columns, hidden])
+  const columnIds = useMemo(() => visibleColumns.map(column => column.id), [visibleColumns])
   const columnIdSet = useMemo(() => new Set(columnIds), [columnIds])
+  const hiddenColumns = useMemo(() => columns.filter(column => hidden.includes(column.key)), [columns, hidden])
   const filtered = useMemo(() => {
     const base = rows ?? []
     const sorted = sortTasks(base, 'position', 'asc')
@@ -243,28 +264,30 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   filteredRef.current = filtered
   const columnIdsRef = useRef(columnIds)
   columnIdsRef.current = columnIds
+  const columnsRef = useRef(visibleColumns)
+  columnsRef.current = visibleColumns
 
   const {
-    columns,
+    columns: mirror,
     setColumns,
-    columnsRef,
+    columnsRef: mirrorRef,
     isDraggingRef,
     isSettlingRef,
     recentlyMovedRef,
     settleVersion,
     beginSettle,
-  } = useDragSettle(() => buildColumns(rows ?? [], columnIds))
+  } = useDragSettle(() => buildBoardMirror(rows ?? [], visibleColumns))
 
   // Between drags the mirror follows the loaded rows; during a drag or a
   // settle it is frozen by the locks.
   useEffect(() => {
     if (!isDraggingRef.current && !isSettlingRef.current) {
-      setColumns(buildColumns(filtered, columnIds))
+      setColumns(buildBoardMirror(filtered, visibleColumns))
     }
-  }, [filtered, columnIds, settleVersion, setColumns, isDraggingRef, isSettlingRef])
+  }, [filtered, visibleColumns, settleVersion, setColumns, isDraggingRef, isSettlingRef])
 
   const resyncColumns = useCallback(() => {
-    setColumns(buildColumns(filteredRef.current, columnIdsRef.current))
+    setColumns(buildBoardMirror(filteredRef.current, columnsRef.current))
   }, [setColumns])
 
   const taskMap = useMemo(() => new Map<string, BoardCardTask>(filtered.map(task => [task.taskRef as string, task])), [filtered])
@@ -281,13 +304,13 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   )
   const pan = useBoardDragPan<HTMLDivElement>()
 
-  // A collapsed column and a hidden one both resolve to no status: a drop over
+  // A collapsed column and a hidden one both resolve to no column: a drop over
   // either moves nothing and writes nothing.
-  const columnStatusOf = useCallback((columnId: string): TaskStatus | null => {
-    const status = statusOfColumnId(columnId)
-    if (status === null || !visibleStatuses.includes(status)) return null
-    return collapsed.has(columnId) ? null : status
-  }, [collapsed, visibleStatuses])
+  const columnOf = useCallback((columnId: string): BoardColumnModel | null => {
+    const column = columnsRef.current.find(candidate => candidate.id === columnId)
+    if (column === undefined || collapsed.has(columnId)) return null
+    return column
+  }, [collapsed])
 
   // --- Screen-reader announcements (dnd-kit's defaults are English only) ---
   const announcements = useMemo<Announcements>(() => {
@@ -295,18 +318,18 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       const task = taskMapRef.current.get(id)
       return task === undefined ? id : task.title ?? `#${task.taskNumber}`
     }
-    const columnLabel = (overId: string): string => {
-      const columnId = findColumn(columnsRef.current, overId, columnIdSet)
-      const status = columnId === null ? null : statusOfColumnId(columnId)
-      return status === null ? '' : t(STATUS_LABEL_KEY[status])
+    const columnName = (overId: string): string => {
+      const columnId = findColumn(mirrorRef.current, overId, columnIdSet)
+      const column = columnId === null ? undefined : columnsRef.current.find(candidate => candidate.id === columnId)
+      return column === undefined ? '' : columnLabel(column, t)
     }
     return {
       onDragStart: ({ active }) => t('boardAnnounceStart', { title: titleOf(active.id as string) }),
-      onDragOver: ({ active, over }) => over === null ? undefined : t('boardAnnounceOver', { title: titleOf(active.id as string), column: columnLabel(over.id as string) }),
-      onDragEnd: ({ active, over }) => over === null ? t('boardAnnounceCancel', { title: titleOf(active.id as string) }) : t('boardAnnounceDrop', { title: titleOf(active.id as string), column: columnLabel(over.id as string) }),
+      onDragOver: ({ active, over }) => over === null ? undefined : t('boardAnnounceOver', { title: titleOf(active.id as string), column: columnName(over.id as string) }),
+      onDragEnd: ({ active, over }) => over === null ? t('boardAnnounceCancel', { title: titleOf(active.id as string) }) : t('boardAnnounceDrop', { title: titleOf(active.id as string), column: columnName(over.id as string) }),
       onDragCancel: ({ active }) => t('boardAnnounceCancel', { title: titleOf(active.id as string) }),
     }
-  }, [columnIdSet, columnsRef, t])
+  }, [columnIdSet, mirrorRef, t])
 
   // --- Drag handlers ---
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -324,7 +347,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       const overCol = findColumn(prev, overId, columnIdSet)
       if (!activeCol || !overCol || activeCol === overCol) return prev
       // A collapsed column is a label, not a target: the preview never crosses into it.
-      if (columnStatusOf(overCol) === null) return prev
+      if (columnOf(overCol) === null) return prev
       recentlyMovedRef.current = true
       const oldIds = (prev[activeCol] ?? []).filter(id => id !== activeId)
       const newIds = [...(prev[overCol] ?? [])]
@@ -332,7 +355,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       newIds.splice(overIndex >= 0 ? overIndex : newIds.length, 0, activeId)
       return { ...prev, [activeCol]: oldIds, [overCol]: newIds }
     })
-  }, [columnIdSet, columnStatusOf, recentlyMovedRef, setColumns])
+  }, [columnIdSet, columnOf, recentlyMovedRef, setColumns])
 
   /** Marks one card settling until the write's answer is in. */
   const beginCardSettle = useCallback((taskRef: string) => {
@@ -375,7 +398,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     }
     const activeId = active.id as string
     const overId = over.id as string
-    const cols = columnsRef.current
+    const cols = mirrorRef.current
     const activeCol = findColumn(cols, activeId, columnIdSet)
     const overCol = findColumn(cols, overId, columnIdSet)
     if (!activeCol || !overCol) {
@@ -388,18 +411,20 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       return
     }
 
-    // The origin is the Task's own status, not the mirror column: onDragOver
-    // has already moved the card across the mirror, so a cross-column drop
-    // would otherwise read as a same-column reorder.
-    const currentStatus = task.status
-    const targetStatus = columnStatusOf(overCol)
-    if (targetStatus === null) {
+    // A collapsed or hidden column is a label, not a target: the drop writes nothing.
+    const target = columnOf(overCol)
+    if (target === null) {
       resyncColumns()
       return
     }
 
+    // The origin is the Task's own column, not the mirror column: onDragOver
+    // has already moved the card across the mirror, so a cross-column drop
+    // would otherwise read as a same-column reorder.
+    const originColumnId = columnIdOf(task, columnsRef.current)
+
     // Same-column reorder: persist a position between the neighbours.
-    if (targetStatus === currentStatus) {
+    if (originColumnId === target.id) {
       const ids = cols[activeCol] ?? []
       const oldIndex = ids.indexOf(activeId)
       const newIndex = ids.indexOf(overId)
@@ -443,10 +468,17 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       return
     }
 
-    // Cross-column drop. The human rules: done/closed/todo only, and todo
-    // only from done/closed. The locked live statuses answer with a hint and
-    // a snap-back — the preview is discarded, no Remote is called.
-    if (!mayDrop(currentStatus, targetStatus) || (targetStatus !== 'todo' && targetStatus !== 'done' && targetStatus !== 'closed')) {
+    // Cross-column drop. A built-in column keeps its rules (done/closed/todo,
+    // and todo only from a terminal status); a custom column is placement.
+    // A refused drop answers with a hint and a snap-back — the preview is
+    // discarded, no Remote is called.
+    const drop = columnDrop(task, target, columnsRef.current)
+    if (drop.kind === 'reorder') {
+      // The mirror moved the card inside one column after the origin was read.
+      resyncColumns()
+      return
+    }
+    if (drop.kind === 'locked') {
       resyncColumns()
       setNotice({ text: t('boardDropLocked'), tone: 'info' })
       return
@@ -457,7 +489,23 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     // the settle release resyncs the mirror. On a refusal the resync snaps the
     // card back and the notice explains why.
     const release = beginCardSettle(activeId)
-    const action = dropAction(targetStatus)
+    if (drop.kind === 'place') {
+      const key = `place:${task.taskRef}:${drop.statusKey ?? 'none'}:${task.threadRevision}`
+      void (async () => {
+        const result = await updateTask({
+          requestId: requestIds.forIntent(key),
+          workspaceId,
+          taskRef: task.taskRef,
+          baseRevision: task.threadRevision,
+          patch: { statusKey: drop.statusKey },
+        })
+        if (conclude(result, key)) void reloadRef.current()
+        else resyncColumns()
+        release()
+      })()
+      return
+    }
+    const action = drop.kind
     const key = `status:${task.taskRef}:${action}:${task.threadRevision}`
     void (async () => {
       const result = await changeTask({
@@ -471,7 +519,7 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
       else resyncColumns()
       release()
     })()
-  }, [beginCardSettle, changeTask, columnIdSet, columnStatusOf, columnsRef, conclude, isDraggingRef, requestIds, resyncColumns, setColumns, t, updateTask, workspaceId])
+  }, [beginCardSettle, changeTask, columnIdSet, columnOf, conclude, isDraggingRef, mirrorRef, requestIds, resyncColumns, setColumns, t, updateTask, workspaceId])
 
   const handleDragCancel = useCallback(() => {
     isDraggingRef.current = false
@@ -543,23 +591,58 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
     throw new Error(failureText(result.error, t))
   }, [createTask, requestIds, t, workspaceId])
 
-  const hideColumn = useCallback((status: TaskStatus) => {
+  const hideColumn = useCallback((column: BoardColumnModel) => {
     setHidden(prev => {
-      const next = prev.includes(status) ? prev : [...prev, status]
+      const next = prev.includes(column.key) ? prev : [...prev, column.key]
       writeHiddenColumns(next)
       return next
     })
   }, [])
 
-  const showColumn = useCallback((status: TaskStatus) => {
+  const showColumn = useCallback((column: BoardColumnModel) => {
     setHidden(prev => {
-      const next = prev.filter(entry => entry !== status)
+      const next = prev.filter(entry => entry !== column.key)
       writeHiddenColumns(next)
       return next
     })
   }, [])
 
   const openCreate = useCallback(() => { setCreateOpen(true) }, [])
+  const openRename = useCallback((column: BoardColumnModel) => { setEditor({ mode: 'rename', column }) }, [])
+  const openAddList = useCallback(() => { setEditor({ mode: 'add' }) }, [])
+
+  /** One editor, two directions: `+ Add list` and a column's Rename both land here. */
+  const handleListSave = useCallback(async (draft: StatusDraft) => {
+    const current = editor
+    if (current === undefined) return
+    const key = `list:${current.mode}:${current.mode === 'rename' ? current.column.key : ''}:${draft.label}:${draft.category}`
+    const result = current.mode === 'add'
+      ? await createStatus({ requestId: requestIds.forIntent(key), workspaceId, label: draft.label, category: draft.category })
+      : await updateStatus({ requestId: requestIds.forIntent(key), workspaceId, key: current.column.key, label: draft.label, category: draft.category })
+    if (!result.ok) throw new Error(failureText(result.error, t))
+    requestIds.settle(key)
+    setEditor(undefined)
+    setNotice(undefined)
+    void reloadRef.current()
+  }, [createStatus, editor, requestIds, t, updateStatus, workspaceId])
+
+  /**
+   * Archive is refused by the Host while the list still holds cards, with the
+   * count in the message: the notice says it, and no card is moved behind the
+   * Human's back.
+   */
+  const handleArchive = useCallback(async (column: BoardColumnModel) => {
+    const key = `archive:${column.key}`
+    const result = await archiveStatus({ requestId: requestIds.forIntent(key), workspaceId, key: column.key })
+    if (!result.ok) {
+      setNotice({ text: failureText(result.error, t), tone: 'error' })
+      void reloadRef.current()
+      return
+    }
+    requestIds.settle(key)
+    setNotice(undefined)
+    void reloadRef.current()
+  }, [archiveStatus, requestIds, reloadRef, t, workspaceId])
 
   const toggleCollapse = useCallback((columnId: string) => {
     setCollapsed(prev => {
@@ -570,28 +653,32 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   }, [workspaceId])
 
   // The preference is per Workspace and the board stays mounted when the reader
-  // switches Workspace, so the set is re-read when the id changes.
+  // switches Workspace, so the set is re-read when the id changes — and when
+  // the catalog first arrives, because a collapsed custom list's id is not
+  // known before the read.
+  const catalogIds = columns.map(column => column.id).join('|')
   const collapsedWorkspace = useRef(workspaceId)
   useEffect(() => {
-    if (collapsedWorkspace.current === workspaceId) return
+    const workspaceChanged = collapsedWorkspace.current !== workspaceId
     collapsedWorkspace.current = workspaceId
-    setCollapsed(readCollapsedColumns(workspaceId, KNOWN_COLUMN_IDS))
-  }, [workspaceId])
+    if (!workspaceChanged && catalogIds === '') return
+    setCollapsed(readCollapsedColumns(workspaceId, new Set(catalogIds === '' ? [] : catalogIds.split('|'))))
+  }, [workspaceId, catalogIds])
 
   // The columns' tasks and live badges, derived once per render of the mirror.
   // `visibleTaskMap` is the frozen map while a drag or settle holds the mirror, the live one otherwise.
   const visibleTaskMap = taskMapRef.current
-  const columnTasks = useMemo(() => new Map(STATUS_ORDER.map(status => {
-    const ids = columns[statusGroupId(status)] ?? []
-    return [status, ids.flatMap(id => {
+  const columnTasks = useMemo(() => new Map(visibleColumns.map(column => {
+    const ids = mirror[column.id] ?? []
+    return [column.id, ids.flatMap(id => {
       const task = visibleTaskMap.get(id)
       return task === undefined ? [] : [task]
     })] as const
-  })), [columns, visibleTaskMap])
-  const columnActivities = useMemo(() => new Map(STATUS_ORDER.map(status => {
-    const threads = new Set((columnTasks.get(status) ?? []).map(task => task.threadRef as string))
-    return [status, activities.filter(activity => activity.threadRef !== undefined && threads.has(activity.threadRef))] as const
-  })), [activities, columnTasks])
+  })), [mirror, visibleColumns, visibleTaskMap])
+  const columnActivities = useMemo(() => new Map(visibleColumns.map(column => {
+    const threads = new Set((columnTasks.get(column.id) ?? []).map(task => task.threadRef as string))
+    return [column.id, activities.filter(activity => activity.threadRef !== undefined && threads.has(activity.threadRef))] as const
+  })), [activities, columnTasks, visibleColumns])
 
   // The open issue's Task: the slice the reader is in, if any. The board
   // scrolls the card into view; the walk between the issues is the panel's
@@ -602,12 +689,12 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
   // The columns as they stand, with the Tasks in each: the walk moves
   // between the issues of a column, and between the columns. A collapsed
   // column shows no cards, so the walk never opens an issue into it.
-  const walkableColumns = useMemo(() => visibleStatuses
-    .filter(status => !collapsed.has(statusGroupId(status)))
-    .map(status => ({
-      status,
-      taskRefs: (columnTasks.get(status) ?? []).map(task => task.taskRef),
-    })), [visibleStatuses, collapsed, columnTasks])
+  const walkableColumns = useMemo(() => visibleColumns
+    .filter(column => !collapsed.has(column.id))
+    .map(column => ({
+      columnId: column.id,
+      taskRefs: (columnTasks.get(column.id) ?? []).map(task => task.taskRef),
+    })), [visibleColumns, collapsed, columnTasks])
 
   // J/K step between the issues of the column, H/L between the columns — and
   // the board publishes that order instead of holding the keys (M-69): the
@@ -686,32 +773,36 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
             <div className={css.emptyBoard}>{t('boardEmpty')}</div>
           ) : (
             <>
-              {visibleStatuses.map(status => collapsed.has(statusGroupId(status)) ? (
+              {visibleColumns.map(column => collapsed.has(column.id) ? (
                 <CollapsedBoardColumn
-                  key={status}
-                  status={status}
-                  count={(columnTasks.get(status) ?? []).length}
-                  onExpand={() => { toggleCollapse(statusGroupId(status)) }}
+                  key={column.id}
+                  column={column}
+                  count={(columnTasks.get(column.id) ?? []).length}
+                  onExpand={() => { toggleCollapse(column.id) }}
                   t={t}
                 />
               ) : (
                 <BoardColumn
-                  key={status}
-                  status={status}
-                  tasks={columnTasks.get(status) ?? []}
-                  locked={activeTask !== null && !mayDrop(activeTask.status, status)}
+                  key={column.id}
+                  column={column}
+                  tasks={columnTasks.get(column.id) ?? []}
+                  locked={activeTask !== null && columnDrop(activeTask, column, columnsRef.current).kind === 'locked'}
                   onCardClick={handleCardClick}
                   onCardUpdate={handleCardUpdate}
                   onHide={hideColumn}
-                  onToggleCollapse={() => { toggleCollapse(statusGroupId(status)) }}
+                  onToggleCollapse={() => { toggleCollapse(column.id) }}
+                  {...(column.builtin ? {} : { onRename: openRename, onArchive: handleArchive })}
                   onCreate={openCreate}
                   members={members}
-                  activities={columnActivities.get(status) ?? []}
+                  activities={columnActivities.get(column.id) ?? []}
                   settlingRefs={settlingRefs}
                   t={t}
                 />
               ))}
-              {hidden.length > 0 && <HiddenColumnsPanel hidden={hidden} onShow={showColumn} t={t} />}
+              <button type="button" className={css.addListButton} data-testid="board-add-list" onClick={openAddList}>
+                + {t('boardAddList')}
+              </button>
+              {hiddenColumns.length > 0 && <HiddenColumnsPanel columns={hiddenColumns} onShow={showColumn} t={t} />}
             </>
           )}
         </div>
@@ -740,6 +831,15 @@ export function TeamBoardPage({ workspaceId, loadBoard, loadMembers, loadMemberA
           t={t}
         />
       )}
+      {editor !== undefined && (
+        <StatusEditorDialog
+          mode={editor.mode}
+          {...(editor.mode === 'rename' ? { initial: { label: columnLabel(editor.column, t), category: editor.column.category } } : {})}
+          onSave={async draft => { await handleListSave(draft) }}
+          onClose={() => setEditor(undefined)}
+          t={t}
+        />
+      )}
     </div>
   )
 }
@@ -764,6 +864,7 @@ function deriveRows(view: AgentTeamView): readonly BoardCardTask[] {
       channelRef: task.channelRef,
       threadRef: task.threadRef,
       status: task.status,
+      ...(task.statusKey == null ? {} : { statusKey: task.statusKey }),
       taskNumber: number,
       channelName: channelNames.get(task.channelRef) ?? task.channelRef,
       threadRevision: revisions.get(task.threadRef) ?? 0,

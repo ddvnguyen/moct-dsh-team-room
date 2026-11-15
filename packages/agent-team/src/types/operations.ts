@@ -24,6 +24,7 @@ import type {
   AgentTeamMessageRef,
   AgentTeamRequestId,
   AgentTeamStoredMessage,
+  AgentTeamBoardStatus,
   AgentTeamStoredThreadReadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
@@ -781,6 +782,12 @@ export interface AgentTeamTaskPatch {
   readonly descriptionRevision?: number
   /** The description record, when this write changed the description. */
   readonly description?: AgentTeamTaskDescription
+  /**
+   * The custom list the card is placed in after the write, or `null` for "the
+   * built-in column for my derived status". Omitting the key leaves the
+   * placement unchanged. Placement never moves `status`.
+   */
+  readonly statusKey?: string | null
 }
 
 /** Durable Human Task field update; it does not revise the Thread's Messages. */
@@ -795,6 +802,39 @@ export interface AgentTeamTaskUpdatedOperation extends AgentTeamOperationBase {
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta
+  }
+}
+
+/**
+ * Durable Human catalog edit: a new Board list in one Workspace.
+ *
+ * The operation carries the whole resulting entry, so replay reads the
+ * catalog straight from the log instead of recomputing a label or a category
+ * from the request that made it.
+ */
+export interface AgentTeamStatusCreatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/status-created'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly status: AgentTeamBoardStatus
+  }
+}
+
+/** Durable Human catalog edit: a custom list's label and category, after the write. */
+export interface AgentTeamStatusUpdatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/status-updated'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly status: AgentTeamBoardStatus
+  }
+}
+
+/** Durable Human catalog edit: a custom list archived; it keeps its entry and clears from the board. */
+export interface AgentTeamStatusArchivedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/status-archived'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly status: AgentTeamBoardStatus
   }
 }
 
@@ -831,6 +871,9 @@ export type AgentTeamOperation =
   | AgentTeamTaskChangedOperation
   | AgentTeamTaskCreatedOperation
   | AgentTeamTaskUpdatedOperation
+  | AgentTeamStatusCreatedOperation
+  | AgentTeamStatusUpdatedOperation
+  | AgentTeamStatusArchivedOperation
   | AgentTeamThreadAttentionChangedOperation
   | AgentTeamThreadReadOperation
   | AgentTeamMemberRemovedOperation

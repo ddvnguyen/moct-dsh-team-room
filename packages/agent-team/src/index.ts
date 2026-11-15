@@ -188,6 +188,10 @@ import type {
   AgentTeamCreateTaskRequest,
   AgentTeamCreateTaskResult,
   AgentTeamUpdateTaskRequest,
+  AgentTeamCreateStatusRequest,
+  AgentTeamUpdateStatusRequest,
+  AgentTeamArchiveStatusRequest,
+  AgentTeamStatusResult,
   AgentTeamUpdateTaskResult,
   AgentTeamSetHumanProfileRequest,
   AgentTeamSetHumanProfileResult,
@@ -2606,6 +2610,55 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireWorkspace(request.workspaceId)
     try {
       const result = await this.requireLedger().updateTask({ ...request, actor: agentTeamHumanActor() })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      throw assignableRemoteError(error)
+    }
+  }
+
+  /**
+   * Human-only: add one Board list to the Workspace's status catalog.
+   *
+   * There is no workspace role in this codebase — `member:human` is the only
+   * Human identity and every write already passes `agentTeamHumanActor()` — so
+   * "workspace admins only" is the Human, and the board offers the control to
+   * that one reader.
+   */
+  @Remote('createStatus')
+  async createStatus(request: AgentTeamCreateStatusRequest): Promise<AgentTeamStatusResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    try {
+      const result = await this.requireLedger().createStatus({ ...request, actor: agentTeamHumanActor() })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      throw assignableRemoteError(error)
+    }
+  }
+
+  /** Human-only: rename a custom Board list, and optionally re-categorise it. The key never moves. */
+  @Remote('updateStatus')
+  async updateStatus(request: AgentTeamUpdateStatusRequest): Promise<AgentTeamStatusResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    try {
+      const result = await this.requireLedger().updateStatus({ ...request, actor: agentTeamHumanActor() })
+      this.emitCommittedOutcome(result)
+      return result.value
+    } catch (error) {
+      throw assignableRemoteError(error)
+    }
+  }
+
+  /** Human-only: archive a custom Board list; refused while it still holds cards. */
+  @Remote('archiveStatus')
+  async archiveStatus(request: AgentTeamArchiveStatusRequest): Promise<AgentTeamStatusResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    try {
+      const result = await this.requireLedger().archiveStatus({ ...request, actor: agentTeamHumanActor() })
       this.emitCommittedOutcome(result)
       return result.value
     } catch (error) {
