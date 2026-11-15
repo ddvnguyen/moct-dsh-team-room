@@ -66,6 +66,94 @@
   outline-offset: 1px;
 }
 
+/* M-72: the resolution line a closed thread's card carries, and the reason a
+   refused resolve / reopen write was refused. Both sit under the header, where
+   the state they describe is read first. */
+.resolvedLine {
+  align-items: baseline;
+  color: var(--ml-text-secondary);
+  display: flex;
+  font-size: var(--ml-text-caption);
+  gap: 6px;
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+}
+
+.resolveError {
+  color: var(--dsw-alias-state-error-primary, var(--ml-text));
+  font-size: var(--ml-text-caption);
+  line-height: var(--ml-text-caption-line);
+  margin: 0;
+}
+
+/* The collapsed bar a resolved thread renders as: one row with the thread's
+   state and its Reopen action, over the body the toggle reveals. Upstream's
+   bar is a muted single line; the Team Room keeps it on the same look surface
+   as the card so collapsing is a change of shape, not of palette. */
+.bar {
+  background: var(--ml-surface);
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.barRow {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.barToggle {
+  align-items: baseline;
+  background: none;
+  border: 0;
+  color: var(--ml-text-secondary);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  font-size: var(--ml-text-caption);
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.barToggle:hover {
+  color: var(--ml-text);
+}
+
+.barToggle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.barTitle {
+  color: var(--ml-text);
+  flex: none;
+  font-weight: 600;
+}
+
+.barMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.barTime {
+  color: var(--ml-text-tertiary);
+  flex: none;
+}
+
+.barBody {
+  display: flex;
+  flex-direction: column;
+}
+
 .quote {
   border-left: 2px solid var(--ml-border);
   color: var(--ml-text-tertiary);

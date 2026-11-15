@@ -35,7 +35,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json && node ../../scripts/build-client.mjs @ddvnguyen/dsh-sidebar",
+    "build": "npm --prefix ../mmx-customization run build && npm run clean && tsc -p tsconfig.build.json && node ../../scripts/build-client.mjs @ddvnguyen/dsh-sidebar",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build"

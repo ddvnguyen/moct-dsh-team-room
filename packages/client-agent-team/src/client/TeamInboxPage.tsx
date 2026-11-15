@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import type { AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamInboxItem, AgentTeamMemberId, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
+import type { AgentTeamDecisionAnswer, AgentTeamDecisionView, AgentTeamInboxItem, AgentTeamMemberId, AgentTeamTaskRef, AgentTeamThreadTurnFailure } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
@@ -63,6 +63,8 @@ interface TeamInboxPageProps {
   readonly selectThread: TeamConversationProps['selectThread']
   /** The global opener: the issue opens as a slice over the Inbox. */
   readonly openIssue: TeamConversationProps['openIssue']
+  /** The order the panel's walk takes (M-69): the Inbox publishes its queue. */
+  readonly peekOrder: TeamConversationProps['peekOrder']
   /** The Human's display name, from the Client's one identity projection. */
   readonly humanName: string
   readonly humanAvatarUrl?: string | undefined
@@ -96,7 +98,7 @@ const RECENT_ROWS_LIMIT = 5
  * drop after the Thread is read through the same path the queue always
  * drained; archive is the reader's own unfollow.
  */
-export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecisions, answerDecision, threadTurnFailures, readThread, changeAttention, subscribeChanges, selectWorkspace, selectThread, openIssue, humanName, humanAvatarUrl, t }: TeamInboxPageProps) {
+export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecisions, answerDecision, threadTurnFailures, readThread, changeAttention, subscribeChanges, selectWorkspace, selectThread, openIssue, peekOrder, humanName, humanAvatarUrl, t }: TeamInboxPageProps) {
   const workspaces = useWorkspaces(state => state.items)
   const [rows, setRows] = useState<readonly TeamInboxRow[]>()
   const [recentRows, setRecentRows] = useState<readonly TeamInboxRow[]>([])
@@ -314,6 +316,19 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
     openIssue(taskRef, { workspaceId: row.workspaceId, focusOpener })
   }, [openThread, openIssue])
 
+  // The row the focus goes back to when the issue closes after a step (M-69).
+  // The row is found by its Task, not by a captured node: the queue re-draws
+  // whenever the projection moves, and a captured row would be stale by the
+  // time the reader closes the issue. A row scrolled out of the virtualized
+  // window has nothing to focus, so the seam does nothing there.
+  const focusRowOf = useCallback((taskRef: AgentTeamTaskRef): (() => void) => () => {
+    const root = rootRef.current
+    if (root === null) return
+    const row = [...root.querySelectorAll<HTMLElement>('[data-task-ref]')]
+      .find(entry => entry.getAttribute('data-task-ref') === taskRef)
+    row?.focus({ preventScroll: true })
+  }, [])
+
   // Row activation: on a wide seat a plain click selects the row into the
   // detail pane and a modifier click opens the Thread (Multica's own grammar);
   // on a narrow one the click is the Thread — full-screen detail, the shape
@@ -390,6 +405,24 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, loadMembers, loadDecis
     { kind: 'heading' as const, key: `group:${group.severity}`, severity: group.severity, label: t(INBOX_SEVERITY_KEYS[group.severity]), count: group.rows.length },
     ...group.rows.map(entry => ({ kind: 'row' as const, key: entry.facet.id, row: entry.row, facet: entry.facet })),
   ]), [groups, t])
+
+  // The order the panel's walk takes (M-69): the Inbox publishes its queue in
+  // the order the reader sees it — the severity bands, in band order — as the
+  // one column there is, so J/K step through the rows and H/L has nothing to
+  // move between. A row without a Task has no issue to open, so it is not a
+  // step. Each row carries its own opener, so Escape after a step gives the
+  // focus back to the row the reader is standing on.
+  const peekOwner = useRef<object>({})
+  useEffect(() => {
+    const owner = peekOwner.current
+    peekOrder.publish(owner, {
+      columns: [groups.flatMap(group => group.rows).flatMap(entry => {
+        const taskRef = entry.row.item.task?.taskRef
+        return taskRef === undefined ? [] : [{ taskRef, workspaceId: entry.row.workspaceId, focusOpener: focusRowOf(taskRef) }]
+      })],
+    })
+    return () => { peekOrder.unpublish(owner) }
+  }, [focusRowOf, groups, peekOrder])
 
   // The page rides the shared conversation seat: the same header band, 880px
   // reading column, responsive gutters, and scrollbar gutter as Channel and

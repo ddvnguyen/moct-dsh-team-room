@@ -820,16 +820,42 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       commentRef: docCommentRefSchema,
     }).strict(),
   }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/comment-resolved'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      threadRef: threadRefSchema,
+      // The thread's root comment; a reply is never a target.
+      messageRef: messageRefSchema,
+      resolved: z.boolean(),
+      baseRevision: z.number().int().nonnegative(),
+    }).strict(),
+  }).strict(),
 ])
 
 /** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */
 export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = storedAgentTeamOperationSchema.transform(stampOperationMessages)
 
 /** Versioned durable Agent Team declaration; v1 is the first public ledger format and older local media reject at open. */
+// The schema crosses a zod-copy boundary here: generate-typert.mjs analyzes
+// these sources inside the harness checkout, where harness sources resolve
+// the checkout's zod while bundle sources resolve the linked bundle copy —
+// two instantiations of the same generic, TS2379 under
+// exactOptionalPropertyTypes when the versions differ (cert 4.4.3 vs bundle
+// 4.6.6). `never` is assignable to the `ZodType<V>` parameter without
+// mentioning any zod instantiation, so no cross-copy comparison happens;
+// the explicit `<K, V>` arguments keep the precise table type for every
+// downstream consumer. Runtime validation is unchanged (the value still
+// carries the full schema object).
+const operationsTable = domainTable<AgentTeamOperationId, AgentTeamOperation>(
+  agentTeamOperationSchema as unknown as never,
+)
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
   version: 1,
   tables: {
-    operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
+    operations: operationsTable,
   },
 })

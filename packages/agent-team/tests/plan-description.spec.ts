@@ -59,6 +59,7 @@ function refusingTable(
       await table.put(key, value)
     },
     delete: key => table.delete(key),
+    deleteMany: keys => table.deleteMany(keys),
     update: (key, fn) => table.update(key, fn),
   }
 }

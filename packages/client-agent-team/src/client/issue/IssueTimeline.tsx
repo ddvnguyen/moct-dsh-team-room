@@ -14,16 +14,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  AgentTeamAttachmentId, AgentTeamClientMemberStatus, AgentTeamIssueActivity, AgentTeamIssueComment, AgentTeamIssueComments,
+  AgentTeamClientMemberStatus, AgentTeamCommentResolution, AgentTeamIssueActivity, AgentTeamIssueComment, AgentTeamIssueComments,
   AgentTeamIssueDecision, AgentTeamMemberId, AgentTeamMessageRef, AgentTeamTaskRef, AgentTeamThreadSessionRuns,
   AgentTeamThreadTurnFailure,
 } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { TeamComposer } from '../TeamComposer.tsx'
-import { CommentCard, type CommentCardReply } from '../multica/comment-card.tsx'
-import { buildCommentThread, committedCommentFact, decisionAskMessageRefs } from './comment-thread.ts'
-import { mentionedMemberIds, mentionNamesOf, type MentionHandle } from '../team-formatters.ts'
-import { mintRequestId, uploadComposerFiles } from '../requests.ts'
+import { CommentCard, ResolvedThreadBar, type CommentCardReply } from '../multica/comment-card.tsx'
+import { buildCommentThread, decisionAskMessageRefs } from './comment-thread.ts'
+import { mentionNamesOf, type MentionHandle } from '../team-formatters.ts'
+import { mintRequestId } from '../requests.ts'
 import { cachedResolvedMessageRef, hostMessageRefLookup, resolveUnknownMessageRefs, useResolvedMessageRefVersion } from '../refs.ts'
 import type { TeamDraftKey, TeamDraftStore } from '../drafts.ts'
 import type { TeamConversationProps } from '../slots.ts'
@@ -36,6 +35,24 @@ import css from './issue-timeline.module.css'
 
 /** The query parameter a copied comment link carries. */
 const COMMENT_QUERY_KEY = 'comment'
+
+/** The Host's answer to one resolve / reopen: `null` is "reopened". */
+type ResolvedAnswer = AgentTeamCommentResolution | null
+
+/** No answer at all, one shared empty map so a fresh view is not a new object. */
+const NO_ANSWERS: ReadonlyMap<AgentTeamMessageRef, ResolvedAnswer> = new Map()
+
+/**
+ * The answers this page wrote, and the comment page they were written against.
+ *
+ * The page is the whole of their life: an answer bridges the gap between the
+ * commit and the read that carries it, and a different page — a fresh view —
+ * is the Host's own snapshot, which already answers every thread it carries.
+ */
+interface ResolvedAnswers {
+  readonly page: readonly AgentTeamIssueComment[]
+  readonly answers: ReadonlyMap<AgentTeamMessageRef, ResolvedAnswer>
+}
 
 /**
  * The seams the timeline writes through: the reply, the attachments, the
@@ -51,6 +68,8 @@ export interface IssueCommentWrite {
   readonly baseRevision: number
   /** The write: one comment on the issue. */
   readonly reply: TeamConversationProps['reply']
+  /** The write: close or reopen one comment thread; the card's value moves when the Host answers. */
+  readonly resolveComment: TeamConversationProps['resolveComment']
   readonly putAttachment?: TeamConversationProps['putAttachment'] | undefined
   readonly getAttachment?: TeamConversationProps['getAttachment'] | undefined
   /** Quote context for the replies whose parent is not on screen. */
@@ -60,9 +79,15 @@ export interface IssueCommentWrite {
   readonly draftKey: TeamDraftKey
 }
 
-export interface IssueTimelineProps extends IssueCommentWrite {
+export interface IssueTimelineProps extends Pick<IssueCommentWrite, 'workspaceId' | 'taskRef' | 'baseRevision' | 'resolveComment' | 'getAttachment' | 'resolveMessageRefs'> {
   /** The Host's comment region: the Messages, oldest first, the anchor excluded. */
   readonly comments: AgentTeamIssueComments
+  /**
+   * The rows this surface renders: the read model's page merged with the rows
+   * committed since, resolved once by the view that owns both — the region
+   * keeps no list of its own.
+   */
+  readonly facts: readonly AgentTeamIssueComment[]
   /** The Host's activity region: the newest fifty, oldest first, ordering key attached. */
   readonly activity: AgentTeamIssueActivity
   /** The Thread's Session runs, one per seat, the live one included. */
@@ -79,6 +104,10 @@ export interface IssueTimelineProps extends IssueCommentWrite {
   readonly humanName: string
   /** Every seat's handle, so a mention names the person it names. */
   readonly mentionHandles: ReadonlyMap<AgentTeamMemberId, string>
+  /** The quote a reply shows, resolved against the facts the view owns. */
+  readonly quoteOf: (messageRef: AgentTeamMessageRef) => { readonly senderName: string; readonly excerpt: string; readonly memberId?: AgentTeamMemberId | undefined } | undefined
+  /** The reply buttons write the target here; the composer reads it back from the view. */
+  readonly onReply: (messageRef: AgentTeamMessageRef) => void
   /** Reads the page of older comments; the Host pages by `comments.cursor`. */
   readonly onLoadOlder: () => void
   readonly loadingOlder: boolean
@@ -102,17 +131,20 @@ export interface IssueTimelineProps extends IssueCommentWrite {
  * through the seams it is given.
  */
 export function IssueTimeline({
-  comments, activity, runs, failures, decisions, nameOf, humanMemberId, humanName, mentionHandles, workspaceId, taskRef, baseRevision,
-  onLoadOlder, loadingOlder, members, openMemberSession, variant, reply, putAttachment, getAttachment, resolveMessageRefs, drafts,
-  loadTriggerCatalog, draftKey, t,
+  comments, facts, activity, runs, failures, decisions, nameOf, humanMemberId, humanName, mentionHandles, workspaceId, taskRef, baseRevision,
+  quoteOf, onReply: markReply, onLoadOlder, loadingOlder, members, openMemberSession, variant, resolveComment, getAttachment, resolveMessageRefs, t,
 }: IssueTimelineProps) {
-  const [posted, setPosted] = useState<readonly AgentTeamIssueComment[]>([])
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | undefined>(undefined)
-  const [confirmation, setConfirmation] = useState<string | undefined>(undefined)
-  const [replyTarget, setReplyTarget] = useState<AgentTeamMessageRef | undefined>(undefined)
-  const [files, setFiles] = useState<readonly File[]>([])
   const [copied, setCopied] = useState<AgentTeamMessageRef | undefined>(undefined)
+  // The Host's own answers to a resolve / reopen. The value moves here only
+  // after the write commits, so nothing is guessed — a refused write leaves the
+  // card exactly as the Host still reads it — and it bridges only the page it
+  // was written against: once a fresh read replaces that page, the Host's own
+  // snapshot decides, so a thread reopened or re-resolved elsewhere stops
+  // being stale here without waiting for a remount.
+  const [answered, setAnswered] = useState<ResolvedAnswers>({ page: comments.items, answers: NO_ANSWERS })
+  const resolvedAnswers = answered.page === comments.items ? answered.answers : NO_ANSWERS
+  const [resolving, setResolving] = useState<AgentTeamMessageRef | undefined>(undefined)
+  const [resolveErrors, setResolveErrors] = useState<ReadonlyMap<AgentTeamMessageRef, string>>(new Map())
 
   // The link a reader arrived on, read once: the timeline scrolls that card
   // into view. A ref that is not in the rendered window is a no-op.
@@ -129,9 +161,8 @@ export function IssueTimeline({
   }, [])
 
   const askRefs = useMemo(() => decisionAskMessageRefs(decisions), [decisions])
-  // One list: the region the Host carried and the rows this surface committed
-  // since. A message present in both is one row.
-  const facts = useMemo(() => mergeComments([...comments.items, ...posted]), [comments.items, posted])
+  // One list, resolved by the view: the region's rows arrive merged, so this
+  // region never keeps a second copy of the Task's comments.
   const tree = useMemo(() => buildCommentThread(facts, askRefs), [facts, askRefs])
 
   // The one timeline: roots only (a reply never splits a root from its answer),
@@ -149,15 +180,10 @@ export function IssueTimeline({
   const failedSessions = useMemo(() => new Set(failures.map(failure => failure.sessionId)), [failures])
   const handleByMember = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle])), [members])
 
-  // The quote of the message a reply answers: the loaded fact when it is on
-  // screen, the Host's resolution when it is not.
+  // The facts, resolved by the view: the region reads the same list the
+  // composer's quote reads, so a reply never quotes a different message than
+  // the card it was started from.
   const factByRef = useMemo(() => new Map(facts.map(fact => [fact.message.messageRef, fact])), [facts])
-  const quoteOf = useCallback((messageRef: AgentTeamMessageRef): { readonly senderName: string; readonly excerpt: string } | undefined => {
-    const fact = factByRef.get(messageRef)
-    if (fact !== undefined) return { senderName: nameOf(fact.message.sender), excerpt: excerptOf(fact.message.body) }
-    const resolved = cachedResolvedMessageRef(messageRef)
-    return resolved === undefined ? undefined : { senderName: nameOf(resolved.sender), excerpt: resolved.excerpt }
-  }, [factByRef, nameOf])
 
   // Parents that are not on screen still answer: the Host resolves them, and
   // the quote fills in when it lands.
@@ -202,59 +228,54 @@ export function IssueTimeline({
     return () => { clearTimeout(timer) }
   }, [copied])
 
-  const send = useCallback(async (): Promise<void> => {
-    const { draft, recipients } = drafts.getSnapshot(draftKey)
-    if (pending || draft.trim() === '') return
-    setPending(true)
-    setError(undefined)
+  /**
+   * The thread's resolution: the answer this page wrote, while the page it was
+   * written against is still on screen, and otherwise the value the view
+   * carries. The view is what reconciles the two — it outranks an answer as
+   * soon as it is a newer read.
+   */
+  const resolutionOf = useCallback((fact: AgentTeamIssueComment): AgentTeamCommentResolution | undefined => {
+    if (resolvedAnswers.has(fact.message.messageRef)) return resolvedAnswers.get(fact.message.messageRef) ?? undefined
+    return fact.resolved
+  }, [resolvedAnswers])
+
+  const reportResolveError = useCallback((messageRef: AgentTeamMessageRef, reason: string): void => {
+    setResolveErrors(current => new Map(current).set(messageRef, t('issueCommentResolvedFailed', { reason })))
+  }, [t])
+
+  /**
+   * One resolve / reopen, written through the Host and read back from its
+   * answer. Nothing is shown before the commit: a refused write leaves the
+   * thread exactly as it was and says why. The fence is the Thread revision
+   * the region reads — the composer's write owns the same one, and neither
+   * guesses at it.
+   */
+  const toggleResolved = useCallback(async (messageRef: AgentTeamMessageRef, resolved: boolean): Promise<void> => {
+    if (resolving !== undefined) return
+    setResolving(messageRef)
+    setResolveErrors(current => {
+      if (!current.has(messageRef)) return current
+      const next = new Map(current)
+      next.delete(messageRef)
+      return next
+    })
     try {
-      let attachmentIds: readonly AgentTeamAttachmentId[] = []
-      if (files.length > 0) {
-        if (putAttachment === undefined) { setError(t('issueCommentAttachmentUnavailable')); return }
-        const upload = await uploadComposerFiles(putAttachment, workspaceId, files)
-        if (!upload.ok) { setError(upload.error); return }
-        attachmentIds = upload.attachmentIds
-      }
-      const result = await reply({
-        requestId: mintRequestId(),
-        workspaceId,
-        taskRef,
-        body: draft.trim(),
-        baseRevision,
-        recipients: [...recipients].sort(),
-        ...(replyTarget === undefined ? {} : { replyToMessageRef: replyTarget }),
-        ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }),
-      })
-      if (!result.ok) { setError(result.error.message); return }
-      if (result.value.kind === 'committed') {
-        // The write committed: the row appears now, and the change-wake refetch
-        // reconciles the list. Nothing was inserted before the commit.
-        const committed = result.value
-        const mentions = [...new Set([...recipients, ...mentionedMemberIds(draft, members)])].sort()
-        setPosted(current => mergeComments([...current, committedCommentFact(committed.message, mentions)]))
-        drafts.clear(draftKey)
-        setFiles([])
-        setReplyTarget(undefined)
-        setConfirmation(undefined)
-      } else if (result.value.kind === 'confirmation_required') {
-        setConfirmation(result.value.confirmationToken)
-      } else if (result.value.kind === 'unread_required') {
-        setError(t('unreadRequired', { count: result.value.unreadCount }))
-      } else if (result.value.kind === 'stale_revision') {
-        setError(t('staleRevision'))
-      } else {
-        setError(t('issueCommentRejected'))
-      }
+      const result = await resolveComment({ requestId: mintRequestId(), workspaceId, taskRef, messageRef, resolved, baseRevision })
+      if (!result.ok) { reportResolveError(messageRef, result.error.message); return }
+      const answer = result.value
+      if (answer.kind !== 'committed') { reportResolveError(messageRef, t('staleRevision')); return }
+      // One answer for one page: a write against a newer page starts a new
+      // map, because that page's own values already answer its other threads.
+      setAnswered(current => ({
+        page: comments.items,
+        answers: new Map(current.page === comments.items ? current.answers : undefined).set(messageRef, answer.resolved ?? null),
+      }))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      reportResolveError(messageRef, cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setPending(false)
+      setResolving(undefined)
     }
-  }, [drafts, draftKey, pending, files, putAttachment, workspaceId, reply, taskRef, baseRevision, replyTarget, members, t])
-
-  const replyParent = replyTarget === undefined ? undefined : quoteOf(replyTarget)
-  const replyParentMember = replyTarget === undefined ? undefined : factByRef.get(replyTarget)?.message.sender
-
+  }, [resolving, resolveComment, workspaceId, taskRef, baseRevision, comments.items, reportResolveError, t])
   return (
     <section className={css.region} aria-label={t('issueTimelineLabel')} data-issue-timeline="" data-testid="issue-timeline">
       {rows.length === 0
@@ -279,6 +300,30 @@ export function IssueTimeline({
               }
               const fact = row.entry
               const messageRef = fact.message.messageRef
+              const resolution = resolutionOf(fact)
+              const resolveError = resolveErrors.get(messageRef)
+              const card = (
+                <CommentCard
+                  author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
+                  body={fact.message.body}
+                  human={fact.message.sender === humanMemberId}
+                  occurredAt={fact.message.occurredAt}
+                  mentionNames={mentionNamesOfFact(fact)}
+                  attachments={fact.message.attachments}
+                  {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
+                  {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
+                  replies={repliesOf(fact)}
+                  orphan={tree.roots.find(root => root.fact.message.messageRef === messageRef)?.orphan ?? false}
+                  {...(resolution === undefined ? {} : { resolved: { by: nameOf(resolution.memberId), at: resolution.resolvedAt } })}
+                  onReply={() => { markReply(messageRef) }}
+                  onCopyLink={() => { copyLink(messageRef) }}
+                  linkCopied={copied === messageRef}
+                  {...(resolution === undefined ? { onToggleResolved: () => { void toggleResolved(messageRef, true) } } : {})}
+                  resolvePending={resolving === messageRef}
+                  {...(resolveError === undefined ? {} : { resolveError })}
+                  t={t}
+                />
+              )
               return (
                 <div
                   key={messageRef}
@@ -286,22 +331,19 @@ export function IssueTimeline({
                   data-message-ref={messageRef}
                   className={messageRef === anchor ? css.anchored : undefined}
                 >
-                  <CommentCard
-                    author={{ name: nameOf(fact.message.sender), kind: fact.message.sender === humanMemberId ? 'human' : 'agent' }}
-                    body={fact.message.body}
-                    human={fact.message.sender === humanMemberId}
-                    occurredAt={fact.message.occurredAt}
-                    mentionNames={mentionNamesOfFact(fact)}
-                    attachments={fact.message.attachments}
-                    {...(getAttachment === undefined ? {} : { loadAttachment: getAttachment })}
-                    {...(fact.message.replyToMessageRef === undefined ? {} : { replyTo: quoteOf(fact.message.replyToMessageRef) })}
-                    replies={repliesOf(fact)}
-                    orphan={tree.roots.find(root => root.fact.message.messageRef === messageRef)?.orphan ?? false}
-                    onReply={() => { setReplyTarget(messageRef) }}
-                    onCopyLink={() => { copyLink(messageRef) }}
-                    linkCopied={copied === messageRef}
-                    t={t}
-                  />
+                  {/* A closed thread collapses to one bar; opening it shows
+                      the same card an open thread shows. */}
+                  {resolution === undefined ? card : (
+                    <ResolvedThreadBar
+                      resolved={{ by: nameOf(resolution.memberId), at: resolution.resolvedAt }}
+                      onReopen={() => { void toggleResolved(messageRef, false) }}
+                      reopenPending={resolving === messageRef}
+                      reopenError={resolveError}
+                      t={t}
+                    >
+                      {card}
+                    </ResolvedThreadBar>
+                  )}
                 </div>
               )
             })}
@@ -313,44 +355,7 @@ export function IssueTimeline({
         </button>
       )}
       {activity.hasMore && <p className={css.empty} data-issue-activity-more="">{t('issueActivityMore')}</p>}
-      <TeamComposer
-        key={draftKey}
-        members={members}
-        drafts={drafts}
-        loadTriggerCatalog={loadTriggerCatalog}
-        draftKey={draftKey}
-        pending={pending}
-        {...(confirmation === undefined ? {} : { confirmation })}
-        {...(error === undefined ? {} : { error })}
-        onEdit={() => { setConfirmation(undefined); setError(undefined) }}
-        onSubmit={() => { void send() }}
-        placeholder={t('issueCommentPlaceholder')}
-        pendingFiles={files}
-        onFilesChange={setFiles}
-        {...(replyParent === undefined ? {} : {
-          replyTo: {
-            ...(replyParentMember === undefined ? {} : { memberId: replyParentMember }),
-            senderName: replyParent.senderName,
-            excerpt: replyParent.excerpt,
-          },
-          onCancelReply: () => { setReplyTarget(undefined) },
-        })}
-        {...(humanMemberId === undefined ? {} : { humanMemberId })}
-        t={t}
-      />
     </section>
   )
 }
 
-/** One list of message facts: a message present twice is one row, oldest first. */
-function mergeComments(facts: readonly AgentTeamIssueComment[]): readonly AgentTeamIssueComment[] {
-  const byRef = new Map<AgentTeamMessageRef, AgentTeamIssueComment>()
-  for (const fact of facts) byRef.set(fact.message.messageRef, fact)
-  return [...byRef.values()].sort((left, right) => left.message.sequence - right.message.sequence)
-}
-
-/** The gist of one body, for a quote line. */
-function excerptOf(body: string): string {
-  const firstLine = body.split('\n', 1)[0] ?? ''
-  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}…` : firstLine
-}

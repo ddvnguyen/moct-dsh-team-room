@@ -47,7 +47,7 @@ export class SqliteKvUnit implements KvUnit {
    * @param onClose - Backend callback releasing this unit's open-name slot.
    */
   constructor(
-    db: DatabaseSync,
+    private readonly db: DatabaseSync,
     private readonly descriptor: KvUnitDescriptor,
     private readonly onClose: () => void,
   ) {
@@ -116,6 +116,21 @@ export class SqliteKvUnit implements KvUnit {
   deleteRecord(table: string, key: string): Promise<void> {
     return this.settle(() => {
       this.statementsFor(table).remove.run(key)
+    })
+  }
+
+  /** One transaction: the whole batch is removed or none of it is. */
+  deleteRecords(table: string, keys: readonly string[]): Promise<void> {
+    return this.settle(() => {
+      const remove = this.statementsFor(table).remove
+      this.db.exec('BEGIN')
+      try {
+        for (const key of new Set(keys)) remove.run(key)
+        this.db.exec('COMMIT')
+      } catch (error) {
+        this.db.exec('ROLLBACK')
+        throw error
+      }
     })
   }
 

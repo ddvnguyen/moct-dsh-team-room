@@ -19,6 +19,12 @@ const targets = [
     env: { DSH_AGENT_TEAM_BUILD_RUNTIME: '1' },
   },
   {
+    name: '@ddvnguyen/mmx-customization',
+    dir: join(projectRoot, 'packages/mmx-customization'),
+    manifest: join(projectRoot, 'packages/mmx-customization/package.json'),
+    env: {},
+  },
+  {
     name: '@ddvnguyen/dsh-sidebar',
     dir: join(projectRoot, 'packages/sidebar'),
     manifest: join(projectRoot, 'packages/sidebar/package.json'),

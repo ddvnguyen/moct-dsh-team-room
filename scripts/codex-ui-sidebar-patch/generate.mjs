@@ -37,7 +37,7 @@ function main(argv) {
     mkdirSync(outDir, { recursive: true })
     const outFile = join(outDir, `codex-ui-${version}-sidebar.diff`)
     writeFileSync(outFile, unifiedDiff(`a/lib/client.js`, `b/lib/client.js`, tarball, patched.source))
-    console.log(`wrote ${outFile} (${patched.applied.length} edits)`)
+    console.log(`wrote ${outFile} via "${patched.set}" (${patched.applied.length} edits)`)
     return 0
   } catch (error) {
     console.error(String(error instanceof Error ? error.message : error))

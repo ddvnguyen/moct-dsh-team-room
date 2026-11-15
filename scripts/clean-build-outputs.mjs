@@ -7,6 +7,7 @@ const outputDirs = [
   'packages/agent-team/lib',
   'packages/tool-agent-team/lib',
   'packages/client-agent-team/lib',
+  'packages/mmx-customization/lib',
   'packages/sidebar/lib',
 ]
 

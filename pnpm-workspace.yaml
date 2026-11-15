@@ -26,3 +26,11 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-storage-sqlite@0.1.5-rc.1'
   - '@contexera/dsh-context-continuity'
   - '@contexera/dsh-jev@0.1.2'
+
+# Single zod for the typer analysis (TS2379 under exactOptionalPropertyTypes
+# when the bundle copy 4.6.6 and the harness checkout copy 4.4.3 mix):
+# generate-typert.mjs copies bundle sources into a temp package inside the
+# harness checkout; the temp tsconfig maps bare `zod` to the linked bundle
+# copy. This override backstops the same invariant for every other consumer.
+overrides:
+  zod: 4.6.6

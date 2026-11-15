@@ -1,7 +1,7 @@
 // The issue's client-side seam and context.
 //
 // The navigation slot (the `issueRef` / `issueVariant` pair) says WHICH issue
-// is open and HOW it is presented. Two facts the slot does not carry travel
+// is open and HOW it is presented. Three facts the slot does not carry travel
 // beside it, here:
 //
 // - the Workspace the issue is read in. The Inbox merges every visible
@@ -11,8 +11,11 @@
 //   behind it never moves.
 // - the control the reader invoked. The focus returns to it when the slice
 //   closes.
+// - the order the face behind published (M-69). The panel's J/K/H/L walk
+//   what the view shows, so the order is a face's own fact: the Board and
+//   the Inbox publish theirs here, the panel reads it at the keypress.
 //
-// Neither is a navigation flag: this context is not persisted, it is not part
+// None is a navigation flag: this context is not persisted, it is not part
 // of the snapshot, and it never touches the face flags. The slot stays the
 // navigation's.
 
@@ -20,6 +23,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import { focusWithoutRing } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamTaskRef } from '@ddvnguyen/moct-dsh-team-room/types'
 import type { TeamNavigation } from '../navigation.ts'
+import { createIssuePeekOrders, type IssuePeekOrders } from './peek-order.ts'
 
 /**
  * Gives the focus to one control. The reader's own control is named as a
@@ -86,6 +90,12 @@ export interface IssueClient {
   readonly openIssue: (taskRef: AgentTeamTaskRef, options?: IssueOpenOptions) => void
   /** The open issue's context. */
   readonly context: IssueContextStore
+  /**
+   * The order the face behind published for the panel's walk (M-69): one
+   * instance for the whole client, beside the context, because the panel in
+   * the overlay slot and the faces in the main seat share no provider.
+   */
+  readonly peekOrder: IssuePeekOrders
 }
 
 /**
@@ -132,6 +142,7 @@ export function createIssueClient(navigation: TeamNavigation): IssueClient {
   }
   return {
     context: store,
+    peekOrder: createIssuePeekOrders(),
     openIssue: (taskRef, options) => {
       const workspaceId = options?.workspaceId ?? navigation.getSnapshot().workspaceId
       // The Host reads the issue in a Workspace; without one there is nothing

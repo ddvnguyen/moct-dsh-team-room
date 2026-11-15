@@ -11,7 +11,7 @@ import { IssuePage } from './issue/IssuePage.tsx'
 import { jumpToTaskThread } from './refs.ts'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, back, closeIssue, openIssue, issueContext, setIssueVariant, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanIdentity, loadTriggerCatalog, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, threadReplyStats, threadTurnFailures, loadThreadSessions, subscribeChanges, loadMembers, loadMemberActivity, loadInbox, loadBoard, loadIssueView, createTask, updateTask, stopSession, sendMessage, joinChannel, removeChannelMember, archiveChannel, reply, changeTask, promoteThread, changeAttention, resolveComment, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, back, closeIssue, openIssue, issueContext, peekOrder, setIssueVariant, resolveTaskRefs, resolveThreadRefs, resolveMessageRefs, loadDocs, loadDoc, commentDoc, reviewDoc, writeDocSection, resolveDocComment, loadDocSectionHistory, loadDecisions, answerDecision, selectDoc, openMemberSession, openSidebar, useSidebarCollapsed }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   // The open issue's context: the Workspace it is read in, and the control the
   // focus returns to. An Inbox row may name a Workspace the reader has not
@@ -40,9 +40,9 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     const issueRef = navigationState.issueRef
     return <IssuePage key={`issue:${issueRef}`} workspaceId={issueWorkspaceId} taskRef={issueRef}
       loadIssueView={loadIssueView} loadMembers={loadMembers} loadChannels={loadChannels} humanName={humanName}
-      loadThreadHistory={loadThreadHistory} reply={reply} putAttachment={putAttachment} getAttachment={getAttachment}
+      loadThreadHistory={loadThreadHistory} reply={reply} resolveComment={resolveComment} putAttachment={putAttachment} getAttachment={getAttachment}
       resolveMessageRefs={resolveMessageRefs} drafts={drafts} loadTriggerCatalog={loadTriggerCatalog}
-      updateTask={updateTask} changeTask={changeTask} answerDecision={answerDecision}
+      updateTask={updateTask} loadBoard={loadBoard} openIssue={openIssue} changeTask={changeTask} answerDecision={answerDecision}
       loadThreadSessions={loadThreadSessions} loadMemberActivity={loadMemberActivity} threadTurnFailures={threadTurnFailures}
       openMemberSession={openMemberSession} stopSession={stopSession} subscribeChanges={subscribeChanges}
       closeIssue={closeIssue} showSlice={() => { setIssueVariant('slice') }}
@@ -66,7 +66,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // whole catalog, so it needs the selected Workspace. Selecting the Board
     // clears the Channel/Thread faces, and a card pick hands the seat to the
     // Thread setters like every other face change.
-    return <TeamBoardPage key="board" workspaceId={current.workspaceId} loadBoard={loadBoard} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} createTask={createTask} updateTask={updateTask} changeTask={changeTask} subscribeChanges={subscribeChanges} openIssue={openIssue} navigation={navigation} t={t} />
+    return <TeamBoardPage key="board" workspaceId={current.workspaceId} loadBoard={loadBoard} loadMembers={loadMembers} loadMemberActivity={loadMemberActivity} createTask={createTask} updateTask={updateTask} changeTask={changeTask} subscribeChanges={subscribeChanges} openIssue={openIssue} peekOrder={peekOrder} navigation={navigation} t={t} />
   }
   if (navigationState.inbox === true) {
     // The Inbox page is global: it merges every visible Workspace and needs no
@@ -78,7 +78,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, drafts, humanId
     // Turn failures that lift a row into the action-required band, the roster
     // the detail pane names actors from, and the read/unfollow Remotes the
     // pane's actions speak.
-    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} loadMembers={loadMembers} loadDecisions={loadDecisions} answerDecision={answerDecision} threadTurnFailures={threadTurnFailures} readThread={readThread} changeAttention={changeAttention} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} openIssue={openIssue} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
+    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} loadMembers={loadMembers} loadDecisions={loadDecisions} answerDecision={answerDecision} threadTurnFailures={threadTurnFailures} readThread={readThread} changeAttention={changeAttention} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} openIssue={openIssue} peekOrder={peekOrder} humanName={humanName} {...(identity.avatarUrl === undefined ? {} : { humanAvatarUrl: identity.avatarUrl })} t={t} />
   }
   if (current !== undefined && navigationState.threadRef !== undefined && navigationState.docRef !== undefined) {
     const { threadRef, channelRef, taskRef, taskNumber } = navigationState

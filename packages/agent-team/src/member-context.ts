@@ -9,6 +9,7 @@ import type { AgentTeamAgentMember, AgentTeamMemberRole } from './types.ts'
 import { memberMemoryDirectoryPath } from './member-runtime.ts'
 import { memoryRevision, seatMemoryGuard } from './seat-memory.ts'
 import { TEAM_MEMORY_BEGIN } from './team-memory.ts'
+import { ownerDecisionLines, ownerDecisionsForAgent, type OwnerDecisions } from './team-decisions.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
 
@@ -25,6 +26,8 @@ declare module '@deepseek-ai/dsh-llm' {
 const MAX_MEMORY_BYTES = 16 * 1024
 const BEGIN = '<team-member-private-memory>'
 const END = '</team-member-private-memory>'
+const DECISIONS_BEGIN = '<team-owner-decisions>'
+const DECISIONS_END = '</team-owner-decisions>'
 
 export function apply(ctx: Context): void {
   ctx.on('agent/pre-step', async ({ agent, signal }, next): Promise<PreStepDecision> => {
@@ -55,6 +58,15 @@ export function apply(ctx: Context): void {
     }
     const workspaces = renderMemberWorkspaces(host.workspacesForAgent(agent))
     const text = `${renderMemberIdentity(member)}\n\n${memory}${workspaces === '' ? '' : `\n\n${workspaces}`}`
+    // The Owner's current decisions on the Task this Session works in. A read
+    // that cannot answer injects nothing and never blocks the step.
+    let decisions: string | undefined
+    try {
+      const current = ownerDecisionsForAgent(host, agent)
+      decisions = current === undefined ? undefined : renderOwnerDecisions(current)
+    } catch {
+      decisions = undefined
+    }
     // Team memory rides beside the identity block as its own message, so each
     // is re-entered only when its own text changes. A missing or failing
     // backend yields no block and never blocks or fails the step.
@@ -77,11 +89,13 @@ export function apply(ctx: Context): void {
         ? [event.data.content[0].text]
         : []
     })
-    const latestText = visible.find(entry => !entry.startsWith(TEAM_MEMORY_BEGIN))
+    const latestText = visible.find(entry => !entry.startsWith(TEAM_MEMORY_BEGIN) && !entry.startsWith(DECISIONS_BEGIN))
     const latestTeamMemory = visible.find(entry => entry.startsWith(TEAM_MEMORY_BEGIN))
+    const latestDecisions = visible.find(entry => entry.startsWith(DECISIONS_BEGIN))
     const messages = [
       ...(latestText === text ? [] : [text]),
       ...(teamMemory === undefined || latestTeamMemory === teamMemory ? [] : [teamMemory]),
+      ...(decisions === undefined || latestDecisions === decisions ? [] : [decisions]),
     ].map(entry => createUserMessage({
       content: [{ type: 'text', text: entry }],
       source: { kind: name, form: 'instructions' },
@@ -109,6 +123,26 @@ export function renderMemberIdentity(member: Pick<AgentTeamAgentMember, 'handle'
     : `Team identity: you are @${member.handle} — ${member.description}`
   // Absent role renders exactly as before: old Members keep their prompt.
   return member.role === undefined ? identity : `${identity}\n\n${MEMBER_ROLE_PROMPTS[member.role]}`
+}
+
+/**
+ * The Owner's current decisions on one Task: the newest ones, one line each,
+ * every line naming its record. A re-sent block is a text comparison, so an
+ * unchanged Task injects nothing on its next step.
+ */
+export function renderOwnerDecisions(current: OwnerDecisions): string {
+  const lines = current.decisions.length === 0
+    ? ['The Owner has not decided anything on this Task yet.']
+    : ownerDecisionLines(current.decisions)
+  return [
+    DECISIONS_BEGIN,
+    `Owner decisions on ${current.taskRef} — current, newest last; a superseded decision is dropped and this block replaces all earlier such context.`,
+    ...lines.map(line => line.replaceAll(DECISIONS_BEGIN, '[escaped begin marker]').replaceAll(DECISIONS_END, '[escaped end marker]')),
+    ...(current.decisions.length === 0
+      ? []
+      : ['Work to these decisions; when one is ambiguous or a new choice appears, ask the Owner with team_ask instead of deciding for them.']),
+    DECISIONS_END,
+  ].join('\n')
 }
 
 /** A current address list, not a copy of instructions from another checkout. */

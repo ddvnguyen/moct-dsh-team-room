@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@ddvnguyen/moct-dsh-team-room/host'
 import { formatTeamTimestamp } from '@ddvnguyen/moct-dsh-team-room/time-format'
+import { ownerDecisionLines, ownerDecisionsForAgent } from '@ddvnguyen/moct-dsh-team-room/team-decisions'
 import { registerContextTools } from './context-tools.ts'
 import { registerMemoryTools } from './memory-tools.ts'
 import { registerDocTools } from './doc-tools.ts'
@@ -636,7 +637,7 @@ const teamClaim = defineTool({
 
 const teamView = defineTool({
   name: 'team_view',
-  description: 'Discover your authorized Team addresses: current Channels, a newest-first page of top-level Threads (each with its bounded anchor subject; Task standing inline on taskful rows), current Members, and an「active task threads」section listing the work in flight right now — every in_progress / in_review Task Thread in your Channels, with its subject and the Members already on it. This is an address book, not a work queue: unread work lives in team_inbox, and a Thread is read with team_thread read. Consult the active-task-threads section when a Workspace change surprises you, or before you claim or commit, to tell in-flight work from a real conflict and avoid riding onto someone else\'s unpushed work — it is independent of your own unread. The cursor pages Thread rows only.',
+  description: 'Discover your authorized Team addresses: current Channels, a newest-first page of top-level Threads (each with its bounded anchor subject; Task standing inline on taskful rows), current Members, an「active task threads」section listing the work in flight right now — every in_progress / in_review Task Thread in your Channels, with its subject and the Members already on it — and an「owner decisions」section carrying the Owner\'s current decisions on the Task you are working in, each naming its record. This is an address book, not a work queue: unread work lives in team_inbox, and a Thread is read with team_thread read. Consult the active-task-threads section when a Workspace change surprises you, or before you claim or commit, to tell in-flight work from a real conflict and avoid riding onto someone else\'s unpushed work — it is independent of your own unread. The cursor pages Thread rows only.',
   parameters: {
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     limit: { type: 'number' }, cursor: { type: 'number' }, workspace: workspaceParam,
@@ -659,6 +660,9 @@ const teamView = defineTool({
         members: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { memberId: { type: 'string', required: true }, name: { type: 'string', required: true } } } },
       } } },
       tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number' } } } },
+      decisions: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
+        recordRef: { type: 'string', required: true }, decided: { type: 'string', required: true }, rationale: { type: 'string', required: true }, decidedAt: { type: 'string', required: true },
+      } } },
       cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true }, page: { type: 'string' },
     } },
     // Address book, newest Thread first: labelled sections, one bounded
@@ -693,6 +697,12 @@ const teamView = defineTool({
         if (value.activeTaskThreads.length === 0) lines.push('No task thread is in flight in this Workspace.')
         else lines.push(...value.activeTaskThreads.map(t => `${t.threadRef} · ${t.channelRef} · ${t.status}${t.taskNumber === undefined ? '' : ` · #${t.taskNumber}`}${t.members.length === 0 ? '' : ` · ${t.members.map(m => `@${m.name}`).join(', ')}`} — ${t.subject} · last activity ${formatTeamTimestamp(t.lastActivityAt)}`))
         lines.push('Use this when a Workspace change surprises you, or before you claim or commit — to see who is already on a Task rather than riding onto their in-flight work. It is not the unread queue; unread work still lives in team_inbox.')
+        // Only the current decisions appear: a decision another record replaced
+        // is history, and the pre-step context carries this same list.
+        if ((value.decisions ?? []).length > 0) {
+          lines.push('', 'Owner decisions — current on the Task you are working in, newest last')
+          lines.push(...ownerDecisionLines(value.decisions))
+        }
       }
       return [{ type: 'text', text: lines.join('\n') }]
     },
@@ -707,6 +717,17 @@ const teamView = defineTool({
     // Threads. Every other `view` caller stays on the bounded page projection.
     const view = host.viewForAgent(agent, { workspaceId, ...(args.channelRef === undefined ? {} : { channelRef: args.channelRef as never }), ...(args.limit === undefined ? {} : { limit: args.limit }), ...(args.cursor === undefined ? {} : { cursor: args.cursor }), topLevelOnly: true, includeActivities: false, direction: 'before', includeCatalog: true })
     const visibleMemberIds = new Set(view.members.map(membership => membership.memberId))
+    // The Owner's current decisions on the Task this Session works in: the same
+    // read, exclusion rule and cap the pre-step context carries. A read that
+    // cannot answer yields the empty array instead of failing the directory.
+    let decisions: { recordRef: string; decided: string; rationale: string; decidedAt: string }[] = []
+    try {
+      const current = ownerDecisionsForAgent(host, agent)
+      decisions = current === undefined ? [] : current.decisions.map(record => ({ recordRef: record.recordRef, decided: record.decided,
+        rationale: record.rationale, decidedAt: record.decidedAt }))
+    } catch {
+      decisions = []
+    }
     return {
       workspaceId,
       workspaces: view.workspaces.map(participation => ({ workspaceId: participation.workspaceId,
@@ -736,6 +757,7 @@ const teamView = defineTool({
         status: t.status, subject: t.subject, lastActivityAt: t.lastActivityAt,
         ...(t.taskNumber === undefined ? {} : { taskNumber: t.taskNumber }),
         members: t.members.map(m => ({ memberId: m.memberId, name: m.name })) })),
+      decisions,
       cursor: view.cursor, hasMore: view.hasMore,
       ...(args.cursor === undefined ? {} : { page: 'threads' as const }),
     }

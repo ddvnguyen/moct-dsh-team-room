@@ -1,5 +1,12 @@
 # @ddvnguyen/dsh-sidebar
 
+> **Re-export alias, kept published for one release.** The sidebar now lives in
+> [`@ddvnguyen/mmx-customization`](../mmx-customization). This package stays
+> published so an existing profile that installs it keeps its sidebar without a
+> profile edit: `src/client/index.ts` only re-exports that package's client
+> entry, and the browser bundle is built from that entry (no second copy of the
+> code). New installs should use `@ddvnguyen/mmx-customization`.
+
 A client-only DeepSeek Harness plugin that organises the codex-ui sidebar and
 hides the hardcoded "IM Assistant" entry. It merges the two behaviours that
 previously shipped as two separate build artefacts (the sidebar layout and the
@@ -46,7 +53,9 @@ cd packages/sidebar && npm run build
 `tsc` emits the host half and the declarations under `lib/types`; the browser
 bundle comes from the Harness `tsdown` through the repository's own
 `scripts/build-client.mjs`, so a sibling `../deepseek-harness` checkout is
-required — the same contract the repository's other client bundle has.
+required — the same contract the repository's other client bundle has. Building
+this package through the repository's root `npm run build` also builds
+`packages/mmx-customization` first: the client entry re-exports its declarations.
 
 ## Peer dependencies
 

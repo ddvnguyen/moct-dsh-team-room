@@ -61,6 +61,9 @@ export function InboxListItem({ row, facet, selected, showWorkspace, human, t, o
     data-selected={selected || undefined}
     data-named={named || undefined}
     data-severity={severity}
+    // The row's Task, the way the board card carries it: the walk's opener
+    // finds the row to give the focus back to when the issue closes (M-69).
+    data-task-ref={item.task?.taskRef}
     onClick={onActivate}
   >
     <span className={css.rowActor}>

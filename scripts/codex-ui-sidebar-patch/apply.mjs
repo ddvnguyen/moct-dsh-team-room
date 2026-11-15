@@ -4,8 +4,8 @@
  *
  * The patch is applied by anchored edits (see `./edits.mjs`), not by a
  * line-based diff, so a codex-ui release that keeps the anchors needs no new
- * patch file. A release that moves an anchor fails here with the anchor's id
- * and the bundle is left untouched.
+ * patch file. The edit list carries one set per bundle SHAPE (the 1.x tab
+ * strip, the 2.x sidebar nav); the set whose anchors all match is the one
  *
  * Usage:
  *   node scripts/codex-ui-sidebar-patch/apply.mjs <codex-ui-package-dir> [--check|--verify]
@@ -17,7 +17,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import { applySidebarPatch, PATCH_MARKER } from './edits.mjs'
+import { applyServerPatch, applySidebarPatch, PATCH_MARKER, SERVER_PATCH_MARKER } from './edits.mjs'
 
 /**
  * Parse-check the patched bundle before it is written.
@@ -67,12 +67,17 @@ function main(argv) {
   }
   const packageDir = resolve(target)
   const bundle = join(packageDir, 'lib', 'client.js')
+  const serverBundle = join(packageDir, 'lib', 'index.mjs')
   const backup = join(dirname(bundle), 'client.js.orig')
   if (!existsSync(bundle)) {
     console.error(`no client bundle at ${bundle}`)
     return 2
   }
+  const serverExists = existsSync(serverBundle)
   let source = readFileSync(bundle, 'utf8')
+  // The server half (`lib/index.mjs`) carries the session-gate compat
+  // (M-377): without it the merged harness 503s every business REST route.
+  // The applier verifies it the same way it verifies the sidebar patch.
   if (verify) {
     // The bundle as it is installed, not the pristine copy next to it: the
     // question is whether the package the lane will serve carries the
@@ -80,6 +85,13 @@ function main(argv) {
     if (!source.includes(PATCH_MARKER)) {
       console.error(`codex-ui ${readVersion(packageDir)} does not carry the sidebar patch (${PATCH_MARKER} is absent)`)
       return 1
+    }
+    if (serverExists) {
+      const serverSource = readFileSync(serverBundle, 'utf8')
+      if (!serverSource.includes(SERVER_PATCH_MARKER) && serverSource.includes('requestRejection')) {
+        console.error(`codex-ui ${readVersion(packageDir)} does not carry the server session-gate compat (${SERVER_PATCH_MARKER} is absent)`)
+        return 1
+      }
     }
     console.log(`codex-ui ${readVersion(packageDir)} carries the sidebar patch`)
     return 0
@@ -107,12 +119,45 @@ function main(argv) {
     return 4
   }
   if (check) {
-    console.log(`patch applies cleanly to ${readVersion(packageDir)} (${patched.applied.length} edits)`)
+    console.log(`patch applies cleanly to ${readVersion(packageDir)} via "${patched.set}" (${patched.applied.length} edits)`)
+    if (serverExists) {
+      const serverSource = readFileSync(serverBundle, 'utf8')
+      try {
+        const serverPatched = applyServerPatch(serverSource)
+        console.log(`server compat: ${serverPatched.applied.length} applied, ${serverPatched.skipped.length} skipped`)
+      } catch (error) {
+        console.error(String(error instanceof Error ? error.message : error))
+        return 3
+      }
+    }
     return 0
   }
   if (!existsSync(backup)) copyFileSync(bundle, backup)
   writeFileSync(bundle, patched.source)
-  console.log(`patched ${basename(packageDir)} ${readVersion(packageDir)} (${patched.applied.length} edits); original kept at ${backup}`)
+  console.log(`patched ${basename(packageDir)} ${readVersion(packageDir)} via "${patched.set}" (${patched.applied.length} edits); original kept at ${backup}`)
+  if (serverExists) {
+    const serverSource = readFileSync(serverBundle, 'utf8')
+    let serverPatched
+    try {
+      serverPatched = applyServerPatch(serverSource)
+    } catch (error) {
+      console.error(String(error instanceof Error ? error.message : error))
+      return 3
+    }
+    if (serverPatched.applied.length > 0) {
+      const serverBackup = join(dirname(serverBundle), 'index.mjs.orig')
+      const parseError = parses(serverPatched.source, dirname(serverBundle))
+      if (parseError !== undefined) {
+        console.error(`the patched server bundle does not parse; the installed bundle was left untouched:\n${parseError}`)
+        return 4
+      }
+      if (!existsSync(serverBackup)) copyFileSync(serverBundle, serverBackup)
+      writeFileSync(serverBundle, serverPatched.source)
+      console.log(`patched server half ${basename(packageDir)} ${readVersion(packageDir)} (${serverPatched.applied.length} edits); original kept at ${serverBackup}`)
+    } else {
+      console.log(`server half already compatible (${serverPatched.skipped.join(', ') || 'nothing to do'})`)
+    }
+  }
   return 0
 }
 

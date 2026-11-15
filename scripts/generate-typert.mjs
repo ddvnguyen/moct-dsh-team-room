@@ -97,14 +97,40 @@ try {
   await mkdir(jevTarget, { recursive: true })
   await cp(join(jevSource, 'package.json'), join(jevTarget, 'package.json'))
   await cp(join(jevSource, 'lib'), join(jevTarget, 'lib'), { recursive: true })
+  // One zod for the whole temp program: read the harness base's own `paths`
+  // and re-emit them here with the bundle zod first. A child `paths` would
+  // REPLACE (not merge with) the base mapping, stranding every other bare
+  // specifier — so inline the full table instead of extending. The bundle
+  // zod (linked into the temp package's node_modules) shadows the
+  // checkout's own copy: copied bundle sources and pulled-in harness
+  // sources (storage-domain) then share one instantiation. Without this
+  // the analysis fails with TS2379 under exactOptionalPropertyTypes when
+  // the two zods differ (cert 4.4.3 vs bundle 4.6.6).
+  const harnessBaseRead = ts.readConfigFile(join(harnessRoot, 'tsconfig.base.json'), ts.sys.readFile)
+  if (harnessBaseRead.error !== undefined) throw new Error(ts.flattenDiagnosticMessageText(harnessBaseRead.error.messageText, '\n'))
+  const basePaths = harnessBaseRead.config?.compilerOptions?.paths ?? {}
   await writeFile(join(tempPackage, 'tsconfig.json'), JSON.stringify({
-    extends: '../../tsconfig.base.json',
     include: ['src'],
     compilerOptions: {
+      target: 'es2024',
+      module: 'esnext',
+      moduleResolution: 'bundler',
+      strict: true,
+      skipLibCheck: true,
+      esModuleInterop: true,
+      allowImportingTsExtensions: true,
+      rewriteRelativeImportExtensions: true,
+      verbatimModuleSyntax: false,
+      exactOptionalPropertyTypes: true,
+      noImplicitOverride: true,
+      noFallthroughCasesInSwitch: true,
+      types: ['node'],
       noEmit: true,
       rootDir: 'src',
       noUnusedLocals: false,
       noUnusedParameters: false,
+      baseUrl: harnessRoot,
+      paths: { zod: [join(tempPackage, 'node_modules', 'zod')], ...basePaths },
     },
     references: [{ path: '../../packages/typert/protocol' }],
   }))

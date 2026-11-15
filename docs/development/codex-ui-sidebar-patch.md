@@ -22,6 +22,15 @@ The patch also strips the icons from the strip's own tab titles, so the strip re
 
 The patch is applied by anchored edits (`scripts/codex-ui-sidebar-patch/edits.mjs`), not by a line-based diff. A codex-ui release that keeps the anchors needs no new patch; a release that moves one fails the applier with the id of the edit that no longer matches, and the installed bundle is left untouched.
 
+## Two bundle shapes
+
+rc.1 rewrote the sidebar, so the file carries one edit set per shape (`EDIT_SETS`):
+
+- `tab-strip` (codex-ui <= 1.1.x): the strip and the Extensions group above; both seams are added here.
+- `sidebar-nav` (codex-ui >= 2.0): the strip is gone. The sidebar is now a `sidebar.panellist` list split into a pinned zone and a collapsed "More" zone. Nothing is left to anchor the tab seam to, so the Team tab stands down to its panel entry — the plugin detects the strip. The policy seam survives: an id published through `__dshTopPanels` starts at the top of the pinned zone, where "next to New task" moved to. With nothing published, the layout stays upstream's own.
+
+`apply.mjs` applies the set whose anchors all match and names it. A bundle no set matches fails with the closest set and the anchor that did not match; the installed bundle is left untouched.
+
 ## Who owns the policy
 
 `@ddvnguyen/dsh-sidebar` publishes the top-level panel ids (`dsh-context`, `agent-team-settings`) through `globalThis.__dshTopPanels` and orders the menu's children with CSS `order`. Without the patch the publication has no effect and the host keeps its own layout; the plugin never moves a React-owned node out of the menu.
@@ -37,5 +46,5 @@ The dsh-x profile carries a `postinstall` hook that runs the applier after every
 ## What to check when codex-ui releases
 
 1. `node scripts/codex-ui-sidebar-patch/apply.mjs <codex-ui-dir> --check` — the patch still applies.
-2. If it does not, read the reported edit id, find the new upstream shape, and adjust the anchor. Do not re-author the feature: the edit list is the feature.
+2. If it does not, read the reported set and edit id, find the new upstream shape, and adjust that anchor — or add a set when the sidebar was rewritten into a shape neither set knows. Do not re-author the feature: the edit list is the feature.
 3. `node scripts/codex-ui-sidebar-patch/generate.mjs <version>` writes the reviewable diff for the release.

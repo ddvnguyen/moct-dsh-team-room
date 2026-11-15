@@ -8,8 +8,14 @@
 // attachment area, and a flat list of replies one indent step below — and
 // takes every fact from props. The reply tree is one level deep by the ledger's
 // shape, so the port renders one level and invents no deeper tree.
+//
+// M-72 adds the one control upstream's card has and this port now earns: the
+// resolve / reopen action on the root card's header, and the bar a resolved
+// thread collapses to (`ResolvedThreadBar`, upstream's `resolved-bar` timeline
+// item in `issue-detail.tsx`). Both take the Host's answer as a prop and write
+// through a callback: the card never guesses the next state.
 
-import { Fragment, useMemo } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamMessageAttachment, AgentTeamMessageRef } from '@ddvnguyen/moct-dsh-team-room/types'
@@ -28,6 +34,17 @@ export interface CommentCardAuthor {
   readonly avatarUrl?: string | undefined
   /** The seat's description, shown as the name's tooltip. */
   readonly title?: string | undefined
+}
+
+/**
+ * One comment thread's resolution as this card presents it: the Host's facts,
+ * with the resolver's member id already named.
+ */
+export interface CommentResolution {
+  /** Display name of the Member who closed the thread. */
+  readonly by: string
+  /** The instant the Host recorded for the close. */
+  readonly at: string
 }
 
 /** One reply: a row under its parent, with the message it answers. */
@@ -73,6 +90,21 @@ export interface CommentCardProps {
   readonly onCopyLink?: (() => void) | undefined
   /** The link was just copied: the control says so, then reverts. */
   readonly linkCopied?: boolean | undefined
+  /**
+   * The thread's resolution, as the Host answered it; absent while it is open.
+   * The card shows it and never sets it: the value moves when the Host does.
+   */
+  readonly resolved?: CommentResolution | undefined
+  /**
+   * Asks the Host to close the thread (or reopen it, when `resolved` is set).
+   * Absent on a card the reader cannot resolve — including the card inside a
+   * resolved bar, where the bar itself carries Reopen.
+   */
+  readonly onToggleResolved?: (() => void) | undefined
+  /** The resolve / reopen write is in flight; the control waits for the Host. */
+  readonly resolvePending?: boolean | undefined
+  /** Why the last resolve / reopen write was refused, in the Host's words. */
+  readonly resolveError?: string | undefined
   readonly t?: TeamConversationProps['t'] | undefined
 }
 
@@ -84,7 +116,7 @@ export interface CommentCardProps {
  * author, the instant, the body and the attachments, and it never re-derives
  * any of them.
  */
-export function CommentCard({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, replies, orphan, onReply, onCopyLink, linkCopied, t }: CommentCardProps) {
+export function CommentCard({ author, body, human, occurredAt, mentionNames, attachments, loadAttachment, replyTo, replies, orphan, onReply, onCopyLink, linkCopied, resolved, onToggleResolved, resolvePending, resolveError, t }: CommentCardProps) {
   return (
     <article className={[look.multicaLook, css.card].join(' ')} data-comment-card="" data-comment-orphan={orphan === true ? '' : undefined}>
       <header className={css.header}>
@@ -101,7 +133,21 @@ export function CommentCard({ author, body, human, occurredAt, mentionNames, att
             {t?.('replyMessage') ?? 'Reply'}
           </button>
         )}
+        {onToggleResolved !== undefined && (
+          <button type="button" className={css.replyAction} data-comment-resolve="" disabled={resolvePending === true} onClick={onToggleResolved}>
+            {resolved === undefined
+              ? (t?.('issueResolveComment') ?? 'Resolve thread')
+              : (t?.('issueReopenComment') ?? 'Reopen')}
+          </button>
+        )}
       </header>
+      {resolved !== undefined && (
+        <p className={css.resolvedLine} data-comment-resolved="">
+          <span>{t?.('issueCommentResolvedBy', { name: resolved.by }) ?? `Resolved by ${resolved.by}`}</span>
+          <time dateTime={resolved.at} title={formatAbsoluteTime(resolved.at)}>{formatMessageTime(resolved.at)}</time>
+        </p>
+      )}
+      {resolveError !== undefined && <p className={css.resolveError} role="alert" data-comment-resolve-error="">{resolveError}</p>}
       {replyTo !== undefined && <p className={css.quote} data-comment-quote="">
         <span className={css.quoteAuthor}>{replyTo.senderName}</span>
         <span className={css.quoteText}>{replyTo.excerpt}</span>
@@ -143,6 +189,53 @@ function CommentRow({ author, body, human, occurredAt, mentionNames, attachments
           <TeamAttachmentStrip attachments={attachments} {...(loadAttachment === undefined ? {} : { loadAttachment })} {...(t === undefined ? {} : { t })} />
         </div>
       )}
+    </div>
+  )
+}
+
+export interface ResolvedThreadBarProps {
+  /** The Host's resolution: who closed the thread, and when. */
+  readonly resolved: CommentResolution
+  /** Asks the Host to reopen the thread; the card comes back when it answers. */
+  readonly onReopen?: (() => void) | undefined
+  readonly reopenPending?: boolean | undefined
+  readonly reopenError?: string | undefined
+  /** The thread itself: the root card with its replies, rendered when expanded. */
+  readonly children: ReactNode
+  readonly t?: TeamConversationProps['t'] | undefined
+}
+
+/**
+ * A resolved comment thread, collapsed to one bar.
+ *
+ * The thread is not gone: the bar says who closed it and when, and opening it
+ * renders the same card the timeline renders for an open thread. Reopen is the
+ * Host's write — the bar asks, the card returns when the answer lands — so a
+ * refused write leaves the thread closed and says why.
+ */
+export function ResolvedThreadBar({ resolved, onReopen, reopenPending, reopenError, children, t }: ResolvedThreadBarProps) {
+  const [expanded, setExpanded] = useState(false)
+  const label = expanded
+    ? (t?.('issueResolvedThreadCollapse') ?? 'Collapse the thread')
+    : (t?.('issueResolvedThreadExpand') ?? 'Expand the thread')
+  return (
+    <div className={[look.multicaLook, css.bar].join(' ')} data-comment-resolved-bar="">
+      <div className={css.barRow}>
+        <button type="button" className={css.barToggle} data-resolved-bar-toggle="" aria-expanded={expanded} aria-label={label} onClick={() => { setExpanded(!expanded) }}>
+          <span className={css.barTitle}>{t?.('issueResolvedThreadBar') ?? 'Resolved thread'}</span>
+          <span className={css.barMeta}>
+            {t?.('issueCommentResolvedBy', { name: resolved.by }) ?? `Resolved by ${resolved.by}`}
+          </span>
+          <time className={css.barTime} dateTime={resolved.at} title={formatAbsoluteTime(resolved.at)}>{formatMessageTime(resolved.at)}</time>
+        </button>
+        {onReopen !== undefined && (
+          <button type="button" className={css.replyAction} data-comment-reopen="" disabled={reopenPending === true} onClick={onReopen}>
+            {t?.('issueReopenComment') ?? 'Reopen'}
+          </button>
+        )}
+      </div>
+      {reopenError !== undefined && <p className={css.resolveError} role="alert" data-comment-resolve-error="">{reopenError}</p>}
+      {expanded && <div className={css.barBody} data-resolved-bar-body="">{children}</div>}
     </div>
   )
 }
