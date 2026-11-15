@@ -7,22 +7,24 @@
  *  Client half: the MOCT sidebar (see `./client/index.ts`).
  *
  *  Why a plugin and not a fork patch: the seams this half uses are stock public
- *  API — `webServer.getOrigin()`, `connection.authenticatedUrl()`,
- *  `connection.authorizeIndex()` and `connection.requestRejection()` — so an
+ *  API — `webServer.getOrigin()`, `connection.admit()`,
+ *  `auth.authenticatedUrl()` and `auth.authorizeIndex()` — so an
  *  upstream tag needs no `git am`. The fence stays the core's: the browser's
  *  `Host` survives the hop and `trustedHosts` still decides admission.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-host-webserver'
-import type { ConnectionIndexResponse, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import { Context } from '@deepseek-ai/cordis'
+import type { ConnectionIndexResponse, ConnectionTrustRequest, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import type { ConnectionIndexRequest } from '@deepseek-ai/dsh-host-authentication-token/src/types.ts'
+import { BrowserAuth } from '@deepseek-ai/dsh-host-authentication-token/src/browser-auth.ts'
+import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import { createPublicListener, type PublicListener } from './proxy.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'mmx-customization'
 
 /** Services required before the public listener can be built. */
-export const inject = ['webServer', 'connection']
+export const inject = ['webServer', 'connection', 'credentials']
 
 /** Plugin config, as the composition row spells it. */
 export interface Config {
@@ -73,11 +75,12 @@ function validate(config: Config): void {
  * exchange's `303` and `set-cookie` are captured from a response that is thrown
  * away, and only the cookie value is kept. The audience of that cookie is the
  * authority this call was made for, which is why it is minted per request.
+ * @param auth - the BrowserAuth instance sharing this process's launch token.
  * @param connection - the Host Connection service.
  * @param authority - the request `Host` the cookie is bound to.
  * @returns the cookie as a `Cookie` header value, or undefined when the exchange failed.
  */
-export function mintCookie(connection: HostConnectionHandle, authority: string): string | undefined {
+export function mintCookie(auth: BrowserAuth, connection: HostConnectionHandle, authority: string): string | undefined {
   let cookie: string | undefined
   const response: ConnectionIndexResponse = {
     writeHead(_status, headers) {
@@ -87,40 +90,44 @@ export function mintCookie(connection: HostConnectionHandle, authority: string):
     },
     end() { /* the exchange's body is never used */ },
   }
-  const url = new URL(connection.authenticatedUrl(`http://${authority}/`))
-  connection.authorizeIndex({
+  const url = new URL(auth.authenticatedUrl(`http://${authority}/`))
+  const indexRequest: ConnectionIndexRequest = {
     method: 'GET',
     url: `${url.pathname}${url.search}`,
     headers: { host: authority },
-  }, response)
+  }
+  auth.authorizeIndex(indexRequest, response)
   return cookie
 }
 
 /**
  * Mount the public listener and keep it for this plugin's lifetime.
- * @param ctx - plugin context; `webServer` and `connection` are already active.
+ * @param ctx - plugin context; `webServer`, `connection` and `credentials` are already active.
  * @param config - the composition row's config.
  */
-export function apply(ctx: Context, config: Config): void {
+export async function apply(ctx: Context, config: Config): Promise<void> {
   validate(config)
   const web = ctx.get('webServer')
   const connection = ctx.get('connection')
+  const credentials = ctx.get('credentials') as CredentialProvider | undefined
   // `inject` above is the contract; failing loudly beats a silent no-listener boot.
-  if (web === undefined || connection === undefined) {
-    throw new Error('mmx-customization: webServer and connection must be active before this row mounts')
+  if (web === undefined || connection === undefined || credentials === undefined) {
+    throw new Error('mmx-customization: webServer, connection and credentials must be active before this row mounts')
   }
+  const auth = await BrowserAuth.create(ctx.root, credentials, 30)
   const listener: PublicListener = createPublicListener({
     upstream: web.getOrigin(),
     host: config.publicHost,
-    mintCookie: authority => mintCookie(connection, authority),
+    mintCookie: authority => mintCookie(auth, connection, authority),
     refusal: (request) => {
       // A narrowed authority list refuses before the fence is asked; the fence
       // then answers 403 for an untrusted Host and 401 for "no cookie yet",
       // which is exactly the state this proxy exists to resolve.
       const authority = request.headers.host
       if ((config.trustedHosts?.length ?? 0) > 0 && !admittedAuthority(authority, config.trustedHosts)) return 403
-      const rejection = connection.requestRejection({ headers: request.headers })
-      return rejection === 403 ? 403 : undefined
+      const trustRequest: ConnectionTrustRequest = { headers: request.headers }
+      const admission = connection.admit(trustRequest)
+      return ('rejection' in admission && admission.rejection === 403) ? 403 : undefined
     },
   })
 
