@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs'
-import { cp, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { continuityDir } from './continuity-dir.mjs'
@@ -13,31 +13,8 @@ const { default: ts } = await import(pathToFileURL(join(harnessRoot, 'node_modul
 const packageRoot = resolve(projectRoot, 'packages/agent-team')
 const tempPackage = await mkdtemp(join(harnessRoot, 'packages/external-agent-team-'))
 const aggregate = join(tempPackage, 'tsconfig.host.json')
-const restoredZodLinks = []
 
 try {
-  const bundleZodDir = join(projectRoot, 'node_modules', 'zod')
-  const harnessZodLinks = [
-    join(harnessRoot, 'node_modules', 'zod'),
-    join(harnessRoot, 'packages', 'storage', 'storage-domain', 'node_modules', 'zod'),
-  ]
-  for (const link of harnessZodLinks) {
-    try {
-      const original = await realpath(link)
-      if (original === bundleZodDir) {
-        console.error(`[generate-typert] zod link already at bundle copy: ${link}`)
-        continue
-      }
-      await rm(link, { recursive: true, force: true })
-      await symlink(bundleZodDir, link, 'file')
-      restoredZodLinks.push([link, original])
-      console.error(`[generate-typert] redirected ${link} -> bundle zod (was ${original})`)
-    } catch (error) {
-      console.error(`[generate-typert] zod redirect skipped for ${link}: ${error instanceof Error ? error.message : String(error)}`)
-      continue
-    }
-  }
-  if (restoredZodLinks.length === 0) throw new Error('generate-typert: no harness zod link redirected; single-zod invariant unenforced')
   await cp(join(packageRoot, 'src'), join(tempPackage, 'src'), { recursive: true })
   const manifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
   await writeFile(join(tempPackage, 'package.json'), JSON.stringify({
@@ -193,12 +170,4 @@ try {
   await writeFile(join(output, 'typert.remote-client.d.ts.map'), artifact.remote.dtsMap)
 } finally {
   await rm(tempPackage, { recursive: true, force: true })
-  for (const [link, original] of restoredZodLinks) {
-    try {
-      await rm(link, { recursive: true, force: true })
-      await symlink(original, link, 'file')
-    } catch {
-      continue
-    }
-  }
 }
