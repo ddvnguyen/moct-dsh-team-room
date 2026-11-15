@@ -1268,13 +1268,38 @@ export default class AgentTeam extends TypertRemoteService {
     // Registration resolves to a retained reader (dsh 0.2.2): keep it for the
     // per-Session state reads and release it with the fiber.
     this.ctx.effect(async () => {
-      const registration = await this.ctx.root.sessionProjections.register(
+      // Root access drifted between harness generations: the certified line
+      // exposes it as the `root` instance property, the merged line as the
+      // `Context.root` symbol key. Probe for the neck both generations share —
+      // `sessionProjections.register` — with `in` narrowing, so both compile.
+      const scopes: unknown = this.ctx
+      const instanceRoot = scopes !== null && typeof scopes === 'object' && 'root' in scopes
+        ? (scopes as { root: unknown }).root
+        : undefined
+      const staticKey: unknown = (Context as unknown as Record<string, unknown>)['root']
+      const staticRoot = scopes !== null && typeof scopes === 'object' && typeof staticKey === 'symbol' && staticKey in scopes
+        ? (scopes as Record<symbol, unknown>)[staticKey]
+        : undefined
+      const root = instanceRoot ?? staticRoot
+      if (root === null || typeof root !== 'object' || !('sessionProjections' in root)) {
+        throw new Error('agentTeam.contextProjection: no root context available')
+      }
+      const registry = (root as { sessionProjections: unknown }).sessionProjections
+      if (registry === null || typeof registry !== 'object' || !('register' in registry)) {
+        throw new Error('agentTeam.contextProjection: root has no sessionProjections registry')
+      }
+      const register = (registry as { register: unknown }).register
+      if (typeof register !== 'function') {
+        throw new Error('agentTeam.contextProjection: sessionProjections.register is not callable')
+      }
+      const registration = await (register as (def: unknown) => Promise<{ stateOf(session: Agent['session']): ContextProjectionState | undefined; dispose(): unknown }>).call(
+        registry,
         createTeamContextProjectionDefinition(this.contextProjectionHost),
       )
-      this.contextProjection = registration
+      this.contextProjection = registration as unknown as typeof this.contextProjection
       return () => {
-        if (this.contextProjection === registration) this.contextProjection = undefined
-        void registration.dispose()
+        if (this.contextProjection === registration as unknown as typeof this.contextProjection) this.contextProjection = undefined
+        void (registration as unknown as { dispose(): unknown }).dispose()
       }
     }, 'agentTeam.contextProjection')
     this.ctx.on('agent/error', ({ agent, error }) => {

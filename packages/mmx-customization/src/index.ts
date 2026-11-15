@@ -187,8 +187,19 @@ async function createTokenMinter(ctx: Context, credentials: object): Promise<Coo
     return undefined
   }
   if (module.BrowserAuth === undefined) return undefined
+  // Root access drifted between harness generations (instance `root` on the
+  // certified line, `Context.root` symbol key on the merged line). Narrow
+  // with `in` so both compile; `create()` keys the launch token off identity.
+  const scopes: unknown = ctx
+  const owner = (scopes !== null && typeof scopes === 'object' && 'root' in scopes
+    ? (scopes as { root: unknown }).root
+    : undefined)
+    ?? (scopes !== null && typeof scopes === 'object' && (Context as unknown as Record<string, unknown>)['root'] !== undefined && typeof (Context as unknown as Record<string, unknown>)['root'] === 'symbol' && ((Context as unknown as Record<string, symbol>)['root'] as symbol) in scopes
+      ? (scopes as Record<symbol, unknown>)[((Context as unknown as Record<string, symbol>)['root'] as symbol)]
+      : undefined)
+  if (owner === null || (typeof owner !== 'object' && typeof owner !== 'function')) return undefined
   try {
-    return await module.BrowserAuth.create(ctx.root, credentials, 30)
+    return await module.BrowserAuth.create(owner as object, credentials, 30)
   } catch {
     return undefined
   }
