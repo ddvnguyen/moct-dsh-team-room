@@ -357,7 +357,7 @@ describe('Agent Team shipping contract', () => {
       '@dnd-kit/utilities': '3.2.2',
       'react-virtuoso': '4.18.7',
       yaml: '^2.9.1',
-      zod: '^4.4.3',
+      zod: '4.6.6',
     })
     expect(bundleManifest.dsh.client).toEqual({
       platform: 'web',
